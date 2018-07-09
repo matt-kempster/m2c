@@ -46,7 +46,7 @@ class NumberLiteral(object):
 
 @attr.s(frozen=True)
 class AddressMode(object):
-    lhs: Optional[NumberLiteral] = attr.ib()
+    lhs: Optional[Union[NumberLiteral, Macro]] = attr.ib()
     rhs: 'Argument' = attr.ib()
 
     def __str__(self):
@@ -131,7 +131,8 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             m = parse_arg_elems(arg_elems)
             assert m is not None
             expect(')')
-            return Macro(macro_name, m)
+            # A macro may be the lhs of an AddressMode, so we don't return here.
+            value = Macro(macro_name, m)
         elif tok == ')':
             break
         elif tok in ('-' + string.digits):
@@ -140,8 +141,10 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             value = NumberLiteral(parse_number(arg_elems))
         elif tok == '(':
             # Address mode.
-            # There was possibly an offset, so value could be a NumberLiteral.
-            assert value is None or isinstance(value, NumberLiteral)
+            # There was possibly an offset, so value could be a NumberLiteral or Macro.
+            assert (value is None or
+                    isinstance(value, NumberLiteral) or
+                    isinstance(value, Macro))
             expect('(')
             # Get what is being dereferenced.
             rhs = parse_arg_elems(arg_elems)
@@ -179,7 +182,7 @@ def parse_arg(arg: str) -> Optional[Argument]:
     return parse_arg_elems(arg_elems)
 
 
-@attr.s(frozen=True)
+@attr.s  # TODO: Make frozen again, if appropriate.
 class Instruction(object):
     mnemonic: str = attr.ib()
     args: List[Argument] = attr.ib()
@@ -475,32 +478,20 @@ class TypeHint:
     value: Any = attr.ib()
     # TODO: Figure out
 
-def load_upper(args):
-    if isinstance(args[1], Macro):
-        # Something like "lui REG %hi(arg)". Just take "arg".
-        assert args[1].macro_name == 'hi'
-        return args[1].argument
-    elif isinstance(args[1], BinOp):
+def load_upper(args, reg):
+    if isinstance(args[1], BinOp):
         # Something like "lui REG (lhs >> 16)". Just take "lhs".
         assert args[1].op == '>>'
         assert args[1].rhs == NumberLiteral(16)
         return args[1].lhs
-    else:
+    elif isinstance(args[1], NumberLiteral):
         # Something like "lui 0x1", meaning 0x10000. Shift left and return.
-        assert isinstance(args[1], NumberLiteral)
         return c.BinaryOp(left=args[1], op='<<', right=NumberLiteral(16))
-
-def load_lower(args):
-    if isinstance(args[1], Macro):
-        # Something like "lw REG %lo(arg)(OFFSET)". We (hopefully) already
-        # handled this above, so return None.
-        assert args[1].macro_name == 'lo'
-        return None
     else:
-        # Regular lw.
-        return TypeHint(type='s32', value=args[1])
+        # Something like "lui REG %hi(arg)", but we got rid of the macro.
+        return args[1]
 
-def handle_ori(args):
+def handle_ori(args, reg):
     if isinstance(args[1], BinOp):
         # Something like "ori REG (lhs & 0xFFFF)". We (hopefully) already
         # handled this above, so return None.
@@ -511,6 +502,35 @@ def handle_ori(args):
         # Regular bitwise OR.
         return c.BinaryOp(left=reg[args[0]], op='<', right=reg[args[1]]),
 
+@attr.s
+class LocalVar:
+    location: int = attr.ib()
+    # TODO: Complete
+
+def handle_addi(args, reg):
+    if len(args) == 2:
+        # Used to be "addi REG %lo(...)", but we got rid of the macro.
+        # Return the former argument of the macro.
+        return args[1]
+    elif args[1].register_name == 'sp':
+        assert isinstance(args[2], NumberLiteral)
+        return c.UnaryOp(op='&', expr=LocalVar(args[2]))
+    else:
+        # Regular binary addition.
+        return c.BinaryOp(left=reg[args[1]], op='+', right=args[2])
+
+
+def deref(arg, reg):
+    if isinstance(arg, AddressMode):
+        assert isinstance(arg.rhs, Register)
+        if arg.rhs.register_name == 'sp':
+            return LocalVar(location=arg.lhs)
+        else:
+            return AddressMode(lhs=arg.lhs, rhs=reg[arg.rhs])
+    else:
+        assert isinstance(arg, Register)
+        return reg[arg]
+
 # BEWARE: This function (and its constituent inner functions) are currently
 # completely untested. I just pushed them to this branch because I am about
 # to go on vacation and figure someone might want to look at it.
@@ -520,44 +540,61 @@ def translate_to_ast(function: Function):
     is_leaf: bool = True
 
     local_vars_region_bottom: int = 0
-    return_addr_location: Optional[int] = None
-    callee_save_regs: Dict[str, int] = {}
+    return_addr_location: int = 0
+    callee_save_reg_locations: Dict[Register, int] = {}
 
-    flow_analysis: FlowAnalysis = do_flow_analysis(function)
+    def find_stack_info(flow_analysis: FlowAnalysis) -> None:
+        nonlocal allocated_stack_size, is_leaf, local_vars_region_bottom
+        nonlocal return_addr_location, callee_save_reg_locations
 
-    def find_stack_info():
         start_node: Node = flow_analysis.nodes[0]
         for inst in start_node.block.instructions:
-            if inst.mnemonic == 'addiu' and inst.args[0].register_name == 'sp':
+            if not inst.args:
+                continue
+
+            destination = typing.cast(Register, inst.args[0])
+
+            if inst.mnemonic == 'addiu' and destination.register_name == 'sp':
                 # Moving the stack pointer.
                 assert isinstance(inst.args[2], NumberLiteral)
                 allocated_stack_size = -inst.args[2].value
-            elif inst.mnemonic == 'sw' and inst.args[0].register_name == 'ra':
+            elif inst.mnemonic == 'sw' and destination.register_name == 'ra':
                 # Saving the return address on the stack.
-                assert isinstance(inst.args[2], AddressMode)
-                assert isinstance(inst.args[2].rhs, Register)
-                assert inst.args[2].rhs.register_name == 'sp'
+                assert isinstance(inst.args[1], AddressMode)
+                assert isinstance(inst.args[1].rhs, Register)
+                assert inst.args[1].rhs.register_name == 'sp'
                 is_leaf = False
-                if inst.args[2].lhs:
-                    return_addr_location = inst.args[2].lhs.value
+                if inst.args[1].lhs:
+                    assert isinstance(inst.args[1].lhs, NumberLiteral)
+                    return_addr_location = inst.args[1].lhs.value
                 else:
                     # Note that this should only happen in the rare case that
                     # this function only calls subroutines with no arguments.
                     return_addr_location = 0
-            elif all(
-                inst.mnemonic == 'sw',
-                inst.args[0].is_callee_save(),
-                isinstance(inst.args[2], AddressMode),
-                inst.args[2].rhs.register_name == 'sp'
-            ):
+            elif (inst.mnemonic == 'sw' and
+                  destination.is_callee_save() and
+                  isinstance(inst.args[1], AddressMode) and
+                  isinstance(inst.args[1].rhs, Register) and
+                  inst.args[1].rhs.register_name == 'sp'):
                 # Initial saving of callee-save register onto the stack.
-                assert isinstance(inst.args[2].rhs, Register)
-                callee_save_regs[inst.args[0].register_name] = inst.args[2].lhs.value
-        if is_leaf and callee_save_regs:
-            local_vars_region_bottom = max(callee_save_regs.values()) + 4
+                assert isinstance(inst.args[1].rhs, Register)
+                if inst.args[1].lhs:
+                    assert isinstance(inst.args[1].lhs, NumberLiteral)
+                    callee_save_reg_locations[destination] = inst.args[1].lhs.value
+                else:
+                    callee_save_reg_locations[destination] = 0
+
+        if is_leaf and callee_save_reg_locations:
+            # In a leaf with callee-save registers, the local variables
+            # lie directly above those registers.
+            local_vars_region_bottom = max(callee_save_reg_locations.values()) + 4
         elif is_leaf:
+            # In a leaf without callee-save registers, the local variables
+            # lie directly at the bottom of the stack.
             local_vars_region_bottom = 0
         else:
+            # In a non-leaf, the local variables lie above the location of the
+            # return address.
             local_vars_region_bottom = return_addr_location + 4
 
     def in_local_var_region(location: int) -> bool:
@@ -566,12 +603,12 @@ def translate_to_ast(function: Function):
     def translate_block_body(block: Block, reg: Dict[Register, Any]):
         cases_source_first_expression = {
             # Storage instructions
-            'sb': lambda a: Store(size=8, source=reg[a[0]], dest=reg[a[1]]),
-            'sh': lambda a: Store(size=16, source=reg[a[0]], dest=reg[a[1]]),
-            'sw': lambda a: Store(size=32, source=reg[a[0]], dest=reg[a[1]]),
+            'sb': lambda a: Store(size=8, source=reg[a[0]], dest=deref(a[1], reg)),
+            'sh': lambda a: Store(size=16, source=reg[a[0]], dest=deref(a[1], reg)),
+            'sw': lambda a: Store(size=32, source=reg[a[0]], dest=deref(a[1], reg)),
             # Floating point storage/conversion
-            'swc1': lambda a: Store(size=32, source=reg[a[0]], dest=reg[a[1]], float=True),
-            'sdc1': lambda a: Store(size=64, source=reg[a[0]], dest=reg[a[1]], float=True),
+            'swc1': lambda a: Store(size=32, source=reg[a[0]], dest=deref(a[1], reg), float=True),
+            'sdc1': lambda a: Store(size=64, source=reg[a[0]], dest=deref(a[1], reg), float=True),
         }
         cases_source_first_register = {
             # Floating point moving instruction... the black sheep. >:(
@@ -579,6 +616,7 @@ def translate_to_ast(function: Function):
         }
         cases_branches = {  # TODO! These are wrong.
             # Branch instructions/pseudoinstructions
+            'b': lambda a: a[1],
             'beq': lambda a: c.BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
             'bne': lambda a: c.BinaryOp(left=reg[a[0]], op='!=', right=reg[a[1]]),
             'blez': lambda a: c.BinaryOp(left=reg[a[0]], op='<=', right=NumberLiteral(0)),
@@ -606,16 +644,15 @@ def translate_to_ast(function: Function):
             # Handle these specially to get better debug output.
             # These should be unspecial'd at some point by way of an initial
             # pass-through, similar to the stack-info acquisition step.
-            'lui': load_upper,
-            'lw': load_lower,
-            'ori': handle_ori,
+            'lui': lambda a: load_upper(a, reg),
+            'ori': lambda a: handle_ori(a, reg),
+            'addi': lambda a: handle_addi(a, reg),
         }
         cases_destination_first = {
             # Flag-setting instructions
             'slt': lambda a: c.BinaryOp(left=reg[a[1]], op='<', right=reg[a[2]]),
             'slti': lambda a: c.BinaryOp(left=reg[a[1]], op='<', right=a[2]),
             # LRU (non-floating)
-            'addi': lambda a: c.BinaryOp(left=reg[a[1]], op='+', right=a[2]),
             'addu': lambda a: c.BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
             'multu': lambda a: c.BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
             'subu': lambda a: c.BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
@@ -631,6 +668,8 @@ def translate_to_ast(function: Function):
             'cvt.d.s': lambda a: c.Cast(to_type='(f64)', expr=reg[a[1]]),
             'cvt.s.d': lambda a: c.Cast(to_type='(f32)', expr=reg[a[1]]),
             'cvt.w.d': lambda a: c.Cast(to_type='(s32)', expr=reg[a[1]]),
+            'trunc.w.s': lambda a: c.Cast(to_type='(s32)', expr=reg[a[1]]),
+            'trunc.w.d': lambda a: c.Cast(to_type='(s32)', expr=reg[a[1]]),
             # Bit arithmetic
             'andi': lambda a: c.BinaryOp(left=reg[a[1]], op='&', right=reg[a[2]]),
             'xori': lambda a: c.BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
@@ -642,14 +681,15 @@ def translate_to_ast(function: Function):
             'mfc1': lambda a: reg[a[1]],
             # Loading instructions
             'li': lambda a: a[1],
-            'lb': lambda a: TypeHint(type='s8', value=a[1]),
-            'lh': lambda a: TypeHint(type='s16', value=a[1]),
-            'lbu': lambda a: TypeHint(type='u8', value=a[1]),
-            'lhu': lambda a: TypeHint(type='u16', value=a[1]),
-            'lwu': lambda a: TypeHint(type='u32', value=a[1]),
+            'lb': lambda a: TypeHint(type='s8', value=deref(a[1], reg)),
+            'lh': lambda a: TypeHint(type='s16', value=deref(a[1], reg)),
+            'lw': lambda a: TypeHint(type='s32', value=deref(a[1], reg)),
+            'lbu': lambda a: TypeHint(type='u8', value=deref(a[1], reg)),
+            'lhu': lambda a: TypeHint(type='u16', value=deref(a[1], reg)),
+            'lwu': lambda a: TypeHint(type='u32', value=deref(a[1], reg)),
             # Floating point loading instructions
-            'lwc1': lambda a: TypeHint(type='f32', value=a[1]),
-            'ldc1': lambda a: TypeHint(type='f64', value=a[1]),
+            'lwc1': lambda a: TypeHint(type='f32', value=deref(a[1], reg)),
+            'ldc1': lambda a: TypeHint(type='f64', value=deref(a[1], reg)),
         }
         cases_uniques = {
             **cases_source_first_expression,
@@ -697,6 +737,16 @@ def translate_to_ast(function: Function):
                 # Determine "true" mnemonic.
                 mnemonic = cases_repeats[mnemonic]
 
+            if mnemonic == 'nop':
+                continue
+
+            # HACK: Preprocessing: remove any macros.
+            instr = Instruction(
+                mnemonic, list(map(
+                    lambda arg: arg.argument if isinstance(arg, Macro) else arg,
+                    instr.args
+            )))
+
             # Figure out what code to generate!
             # TODO: This is a side-note for when I inevitably forget to do it,
             # but $zero should not be overwritten by div or anything like that.
@@ -735,19 +785,38 @@ def translate_to_ast(function: Function):
                 # as I should be! Whoops. This would be fixable right here
                 # in this if-statement (and an extra local var and flag).
                 assert isinstance(instr.args[0], Register)
-                cases_special[mnemonic](instr.args)
-                pass
+                reg[instr.args[0]] = cases_special[mnemonic](instr.args)
             elif mnemonic in cases_destination_first:
                 # Hey, I can do this one! (Maybe.)
                 assert isinstance(instr.args[0], Register)
                 reg[instr.args[0]] = cases_destination_first[mnemonic](instr.args)
+            else:
+                assert False, f"I don't know how to handle {mnemonic}!"
         print(f"To store: {to_store}")
         print(f"Final register states: {reg}")
+
+
+    flow_analysis: FlowAnalysis = do_flow_analysis(function)
+    find_stack_info(flow_analysis)
+    print(f'Stack size: {allocated_stack_size}')
+    print(f'Leaf?: {is_leaf}')
+    print(f'Local vars region bottom: {local_vars_region_bottom}')
+    print(f'Return addr location: {return_addr_location}')
+    print(f'Callee save regs: {callee_save_reg_locations}')
+
+    print('\nNow, we attempt to translate:')
+    for i, node in enumerate(flow_analysis.nodes):
+        if i == 0:
+            continue
+        print(f'block in question: {node.block}')
+        translate_block_body(node.block, {})
+
 
 
 def main(filename: str) -> None:
     with open(filename, 'r') as f:
         program: Program = decompile(filename, f)
+        translate_to_ast(program.functions[1])
 
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] in ['-h, --help']:
