@@ -11,6 +11,7 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any
 
 from pycparser import c_ast as c
 
+import traceback
 
 @attr.s(frozen=True)
 class Register(object):
@@ -134,6 +135,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             # A macro may be the lhs of an AddressMode, so we don't return here.
             value = Macro(macro_name, m)
         elif tok == ')':
+            # Break out to the parent of this call, since we are in parens.
             break
         elif tok in ('-' + string.digits):
             # Try a number.
@@ -142,9 +144,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
         elif tok == '(':
             # Address mode.
             # There was possibly an offset, so value could be a NumberLiteral or Macro.
-            assert (value is None or
-                    isinstance(value, NumberLiteral) or
-                    isinstance(value, Macro))
+            assert value is None or isinstance(value, (NumberLiteral, Macro))
             expect('(')
             # Get what is being dereferenced.
             rhs = parse_arg_elems(arg_elems)
@@ -486,7 +486,7 @@ def load_upper(args, reg):
         return args[1].lhs
     elif isinstance(args[1], NumberLiteral):
         # Something like "lui 0x1", meaning 0x10000. Shift left and return.
-        return c.BinaryOp(left=args[1], op='<<', right=NumberLiteral(16))
+        return BinaryOp(left=args[1], op='<<', right=NumberLiteral(16))
     else:
         # Something like "lui REG %hi(arg)", but we got rid of the macro.
         return args[1]
@@ -500,7 +500,7 @@ def handle_ori(args, reg):
         return None
     else:
         # Regular bitwise OR.
-        return c.BinaryOp(left=reg[args[0]], op='<', right=reg[args[1]]),
+        return BinaryOp(left=reg[args[0]], op='<', right=args[1])
 
 @attr.s
 class LocalVar:
@@ -513,27 +513,46 @@ def handle_addi(args, reg):
         # Return the former argument of the macro.
         return args[1]
     elif args[1].register_name == 'sp':
+        # Adding to sp, i.e. passing an address.
         assert isinstance(args[2], NumberLiteral)
-        return c.UnaryOp(op='&', expr=LocalVar(args[2]))
+        #return UnaryOp(op='&', expr=LocalVar(args[2]))
+        return UnaryOp(op='&', expr=AddressMode(lhs=args[2], rhs=Register('sp')))
     else:
         # Regular binary addition.
-        return c.BinaryOp(left=reg[args[1]], op='+', right=args[2])
+        return BinaryOp(left=reg[args[1]], op='+', right=args[2])
 
 
 def deref(arg, reg):
     if isinstance(arg, AddressMode):
         assert isinstance(arg.rhs, Register)
         if arg.rhs.register_name == 'sp':
-            return LocalVar(location=arg.lhs)
+            #return LocalVar(location=arg.lhs)
+            return arg
         else:
             return AddressMode(lhs=arg.lhs, rhs=reg[arg.rhs])
     else:
         assert isinstance(arg, Register)
         return reg[arg]
 
-# BEWARE: This function (and its constituent inner functions) are currently
-# completely untested. I just pushed them to this branch because I am about
-# to go on vacation and figure someone might want to look at it.
+@attr.s
+class BinaryOp:
+    left = attr.ib()
+    op: str = attr.ib()
+    right = attr.ib()
+
+@attr.s
+class UnaryOp:
+    op: str = attr.ib()
+    expr = attr.ib()
+
+@attr.s
+class Cast:
+    to_type: str = attr.ib()
+    expr = attr.ib()
+
+class Return:
+    pass
+
 def translate_to_ast(function: Function):
     # Initialize info about the function.
     allocated_stack_size: int = 0
@@ -611,18 +630,20 @@ def translate_to_ast(function: Function):
             'sdc1': lambda a: Store(size=64, source=reg[a[0]], dest=deref(a[1], reg), float=True),
         }
         cases_source_first_register = {
-            # Floating point moving instruction... the black sheep. >:(
-            'mtc1': lambda a: c.Cast(to_type='f32', expr=reg[a[0]]),
+            # Floating point moving instruction
+            'mtc1': lambda a: Cast(to_type='f32', expr=reg[a[0]]),
         }
         cases_branches = {  # TODO! These are wrong.
             # Branch instructions/pseudoinstructions
             'b': lambda a: a[1],
-            'beq': lambda a: c.BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
-            'bne': lambda a: c.BinaryOp(left=reg[a[0]], op='!=', right=reg[a[1]]),
-            'blez': lambda a: c.BinaryOp(left=reg[a[0]], op='<=', right=NumberLiteral(0)),
-            'bgtz': lambda a: c.BinaryOp(left=reg[a[0]], op='>', right=NumberLiteral(0)),
-            'bltz': lambda a: c.BinaryOp(left=reg[a[0]], op='<', right=NumberLiteral(0)),
-            'bgez': lambda a: c.BinaryOp(left=reg[a[0]], op='>=', right=NumberLiteral(0)),
+            'beq': lambda a: BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
+            'bne': lambda a: BinaryOp(left=reg[a[0]], op='!=', right=reg[a[1]]),
+            'beqz': lambda a: BinaryOp(left=reg[a[0]], op='==', right=NumberLiteral(0)),
+            'bnez': lambda a: BinaryOp(left=reg[a[0]], op='!=', right=NumberLiteral(0)),
+            'blez': lambda a: BinaryOp(left=reg[a[0]], op='<=', right=NumberLiteral(0)),
+            'bgtz': lambda a: BinaryOp(left=reg[a[0]], op='>', right=NumberLiteral(0)),
+            'bltz': lambda a: BinaryOp(left=reg[a[0]], op='<', right=NumberLiteral(0)),
+            'bgez': lambda a: BinaryOp(left=reg[a[0]], op='>=', right=NumberLiteral(0)),
         }
         cases_float_branches = {  # TODO! Absolutely incomplete.
             # Floating-point branch instructions
@@ -632,13 +653,13 @@ def translate_to_ast(function: Function):
         cases_jumps = {
             # Unconditional jumps
             'jal': lambda a: a[0],  # not sure what arguments!
-            'jr': lambda a: c.Return()  # not sure what to return!
+            'jr': lambda a: Return()  # not sure what to return!
         }
         cases_float_comp = {
             # Floating point comparisons
-            'c.eq.s': lambda a: c.BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
-            'c.le.s': lambda a: c.BinaryOp(left=reg[a[0]], op='<=', right=reg[a[1]]),
-            'c.lt.s': lambda a: c.BinaryOp(left=reg[a[0]], op='<', right=reg[a[1]]),
+            'c.eq.s': lambda a: BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
+            'c.le.s': lambda a: BinaryOp(left=reg[a[0]], op='<=', right=reg[a[1]]),
+            'c.lt.s': lambda a: BinaryOp(left=reg[a[0]], op='<', right=reg[a[1]]),
         }
         cases_special = {
             # Handle these specially to get better debug output.
@@ -650,31 +671,35 @@ def translate_to_ast(function: Function):
         }
         cases_destination_first = {
             # Flag-setting instructions
-            'slt': lambda a: c.BinaryOp(left=reg[a[1]], op='<', right=reg[a[2]]),
-            'slti': lambda a: c.BinaryOp(left=reg[a[1]], op='<', right=a[2]),
+            'slt': lambda a: BinaryOp(left=reg[a[1]], op='<', right=reg[a[2]]),
+            'slti': lambda a: BinaryOp(left=reg[a[1]], op='<', right=a[2]),
             # LRU (non-floating)
-            'addu': lambda a: c.BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
-            'multu': lambda a: c.BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
-            'subu': lambda a: c.BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
-            'div': lambda a: (c.BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
-                              c.BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
-            'negu': lambda a: c.UnaryOp(op='-', expr=reg[a[1]]),
+            'addu': lambda a: BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
+            'multu': lambda a: BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
+            'subu': lambda a: BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
+            'div': lambda a: (BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
+                              BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
+            'negu': lambda a: UnaryOp(op='-', expr=reg[a[1]]),
             # Hi/lo register uses (used after division)
             'mfhi': lambda a: reg[Register("hi")],
             'mflo': lambda a: reg[Register("lo")],
             # Floating point arithmetic
-            'div.s': lambda a: c.BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),
+            'div.s': lambda a: BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),
             # Floating point conversions
-            'cvt.d.s': lambda a: c.Cast(to_type='(f64)', expr=reg[a[1]]),
-            'cvt.s.d': lambda a: c.Cast(to_type='(f32)', expr=reg[a[1]]),
-            'cvt.w.d': lambda a: c.Cast(to_type='(s32)', expr=reg[a[1]]),
-            'trunc.w.s': lambda a: c.Cast(to_type='(s32)', expr=reg[a[1]]),
-            'trunc.w.d': lambda a: c.Cast(to_type='(s32)', expr=reg[a[1]]),
+            'cvt.d.s': lambda a: Cast(to_type='(f64)', expr=reg[a[1]]),
+            'cvt.s.d': lambda a: Cast(to_type='(f32)', expr=reg[a[1]]),
+            'cvt.w.d': lambda a: Cast(to_type='(s32)', expr=reg[a[1]]),
+            'trunc.w.s': lambda a: Cast(to_type='(s32)', expr=reg[a[1]]),
+            'trunc.w.d': lambda a: Cast(to_type='(s32)', expr=reg[a[1]]),
             # Bit arithmetic
-            'andi': lambda a: c.BinaryOp(left=reg[a[1]], op='&', right=reg[a[2]]),
-            'xori': lambda a: c.BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
-            'sll': lambda a: c.BinaryOp(left=reg[a[1]], op='<<', right=reg[a[2]]),
-            'srl': lambda a: c.BinaryOp(left=reg[a[1]], op='>>', right=reg[a[2]]),
+            'and': lambda a: BinaryOp(left=reg[a[1]], op='&', right=reg[a[2]]),
+            'or': lambda a: BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
+            'xor': lambda a: BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
+
+            'andi': lambda a: BinaryOp(left=reg[a[1]], op='&', right=a[2]),
+            'xori': lambda a: BinaryOp(left=reg[a[1]], op='^', right=a[2]),
+            'sll': lambda a: BinaryOp(left=reg[a[1]], op='<<', right=a[2]),
+            'srl': lambda a: BinaryOp(left=reg[a[1]], op='>>', right=a[2]),
             # Move pseudoinstruction
             'move': lambda a: reg[a[1]],
             # Floating point moving instructions
@@ -691,7 +716,7 @@ def translate_to_ast(function: Function):
             'lwc1': lambda a: TypeHint(type='f32', value=deref(a[1], reg)),
             'ldc1': lambda a: TypeHint(type='f64', value=deref(a[1], reg)),
         }
-        cases_uniques = {
+        cases_uniques: Dict[str, Callable[[List[Argument]], Any]] = {
             **cases_source_first_expression,
             **cases_source_first_register,
             **cases_branches,
@@ -766,7 +791,7 @@ def translate_to_ast(function: Function):
                 pass
             elif mnemonic in cases_jumps:
                 result = cases_jumps[mnemonic](instr.args)
-                if isinstance(result, c.Return):
+                if isinstance(result, Return):
                     # Return from the function.
                     assert mnemonic == 'jr'
                     # TODO: Maybe assert ExitNode?
@@ -808,9 +833,11 @@ def translate_to_ast(function: Function):
     for i, node in enumerate(flow_analysis.nodes):
         if i == 0:
             continue
-        print(f'block in question: {node.block}')
-        translate_block_body(node.block, {})
-
+        print(f'\nblock in question: {node.block}')
+        try:
+            translate_block_body(node.block, {Register('zero'): NumberLiteral(0)})
+        except Exception as e:
+            traceback.print_exc()
 
 
 def main(filename: str) -> None:
