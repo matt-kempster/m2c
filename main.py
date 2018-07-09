@@ -188,7 +188,16 @@ class Instruction(object):
     args: List[Argument] = attr.ib()
 
     def is_branch_instruction(self):
-        return self.mnemonic in ['b', 'beq', 'bne', 'bgez', 'bgtz', 'blez', 'bltz']
+        return self.mnemonic in [
+            'b', 'beq', 'bne', 'beqz', 'bnez', 'bgez', 'bgtz', 'blez', 'bltz',
+            'bc1t', 'bc1f'
+        ]
+
+    def is_jump_instruction(self):
+        return self.mnemonic in ['jr', 'jal']
+
+    def is_delay_slot_instruction(self):
+        return self.is_branch_instruction() or self.is_jump_instruction()
 
     def __str__(self):
         return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
@@ -346,12 +355,17 @@ def do_flow_analysis(function: Function):
             new_block()
             curr_label = item
         elif isinstance(item, Instruction):
+            # TODO: For the sake of testing, unfortunately this behavior should
+            # be reverted to its original behavior - namely, leaving the
+            # delay slot AFTER the branch/jump. However, it is an easy hack
+            # to do it this way for now.
+            if item.is_delay_slot_instruction():
+                # Handle the delay slot by taking the next instruction first.
+                take_instruction(typing.cast(Instruction, next(body_iter)))
+                # Now we take the original instruction.
             take_instruction(item)
             if item.is_branch_instruction():
-                # Handle delay slot. Take the next instruction before splitting body.
-                # The cast is necessary because we know next() must be an Instruction,
-                # but mypy does not.
-                take_instruction(typing.cast(Instruction, next(body_iter)))
+                # Split the body.
                 new_block()
     new_block()
 
@@ -494,10 +508,10 @@ def load_upper(args, reg):
 def handle_ori(args, reg):
     if isinstance(args[1], BinOp):
         # Something like "ori REG (lhs & 0xFFFF)". We (hopefully) already
-        # handled this above, so return None.
+        # handled this above, but let's put lhs into this register too.
         assert args[1].op == '&'
         assert args[1].rhs == NumberLiteral(0xFFFF)
-        return None
+        return args[1].lhs
     else:
         # Regular bitwise OR.
         return BinaryOp(left=reg[args[0]], op='<', right=args[1])
@@ -550,8 +564,14 @@ class Cast:
     to_type: str = attr.ib()
     expr = attr.ib()
 
+@attr.s
 class Return:
     pass
+
+@attr.s
+class FuncCall:
+    func_name: str = attr.ib()
+    args: List[Any] = attr.ib()
 
 def translate_to_ast(function: Function):
     # Initialize info about the function.
@@ -631,85 +651,86 @@ def translate_to_ast(function: Function):
         }
         cases_source_first_register = {
             # Floating point moving instruction
-            'mtc1': lambda a: Cast(to_type='f32', expr=reg[a[0]]),
+            'mtc1': lambda a: TypeHint(type='f32', value=reg[a[0]]),
         }
         cases_branches = {  # TODO! These are wrong.
             # Branch instructions/pseudoinstructions
             'b': lambda a: a[1],
-            'beq': lambda a: BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
-            'bne': lambda a: BinaryOp(left=reg[a[0]], op='!=', right=reg[a[1]]),
+            'beq': lambda a:  BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
+            'bne': lambda a:  BinaryOp(left=reg[a[0]], op='!=', right=reg[a[1]]),
             'beqz': lambda a: BinaryOp(left=reg[a[0]], op='==', right=NumberLiteral(0)),
             'bnez': lambda a: BinaryOp(left=reg[a[0]], op='!=', right=NumberLiteral(0)),
             'blez': lambda a: BinaryOp(left=reg[a[0]], op='<=', right=NumberLiteral(0)),
-            'bgtz': lambda a: BinaryOp(left=reg[a[0]], op='>', right=NumberLiteral(0)),
-            'bltz': lambda a: BinaryOp(left=reg[a[0]], op='<', right=NumberLiteral(0)),
+            'bgtz': lambda a: BinaryOp(left=reg[a[0]], op='>',  right=NumberLiteral(0)),
+            'bltz': lambda a: BinaryOp(left=reg[a[0]], op='<',  right=NumberLiteral(0)),
             'bgez': lambda a: BinaryOp(left=reg[a[0]], op='>=', right=NumberLiteral(0)),
         }
-        cases_float_branches = {  # TODO! Absolutely incomplete.
+        cases_float_branches = {
             # Floating-point branch instructions
-            'bc1t': lambda a: a,
-            'bc1f': lambda a: a,
+            # We don't have to do any work here, since the condition bit was already set.
+            'bc1t': lambda a: None,
+            'bc1f': lambda a: None,
         }
         cases_jumps = {
             # Unconditional jumps
             'jal': lambda a: a[0],  # not sure what arguments!
-            'jr': lambda a: Return()  # not sure what to return!
+            'jr':  lambda a: Return()  # not sure what to return!
         }
         cases_float_comp = {
             # Floating point comparisons
             'c.eq.s': lambda a: BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
             'c.le.s': lambda a: BinaryOp(left=reg[a[0]], op='<=', right=reg[a[1]]),
-            'c.lt.s': lambda a: BinaryOp(left=reg[a[0]], op='<', right=reg[a[1]]),
+            'c.lt.s': lambda a: BinaryOp(left=reg[a[0]], op='<',  right=reg[a[1]]),
         }
         cases_special = {
             # Handle these specially to get better debug output.
             # These should be unspecial'd at some point by way of an initial
             # pass-through, similar to the stack-info acquisition step.
-            'lui': lambda a: load_upper(a, reg),
-            'ori': lambda a: handle_ori(a, reg),
+            'lui':  lambda a: load_upper(a, reg),
+            'ori':  lambda a: handle_ori(a, reg),
             'addi': lambda a: handle_addi(a, reg),
         }
         cases_destination_first = {
             # Flag-setting instructions
-            'slt': lambda a: BinaryOp(left=reg[a[1]], op='<', right=reg[a[2]]),
+            'slt': lambda a:  BinaryOp(left=reg[a[1]], op='<', right=reg[a[2]]),
             'slti': lambda a: BinaryOp(left=reg[a[1]], op='<', right=a[2]),
             # LRU (non-floating)
-            'addu': lambda a: BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
+            'addu': lambda a:  BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
             'multu': lambda a: BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
-            'subu': lambda a: BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
-            'div': lambda a: (BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
-                              BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
-            'negu': lambda a: UnaryOp(op='-', expr=reg[a[1]]),
+            'subu': lambda a:  BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
+            'div': lambda a:  (BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
+                               BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
+            'negu': lambda a:  UnaryOp(op='-', expr=reg[a[1]]),
             # Hi/lo register uses (used after division)
-            'mfhi': lambda a: reg[Register("hi")],
-            'mflo': lambda a: reg[Register("lo")],
+            'mfhi': lambda a: reg[Register('hi')],
+            'mflo': lambda a: reg[Register('lo')],
             # Floating point arithmetic
             'div.s': lambda a: BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),
             # Floating point conversions
-            'cvt.d.s': lambda a: Cast(to_type='(f64)', expr=reg[a[1]]),
-            'cvt.s.d': lambda a: Cast(to_type='(f32)', expr=reg[a[1]]),
-            'cvt.w.d': lambda a: Cast(to_type='(s32)', expr=reg[a[1]]),
-            'trunc.w.s': lambda a: Cast(to_type='(s32)', expr=reg[a[1]]),
-            'trunc.w.d': lambda a: Cast(to_type='(s32)', expr=reg[a[1]]),
+            'cvt.d.s': lambda a: Cast(to_type='f64', expr=reg[a[1]]),
+            'cvt.s.d': lambda a: Cast(to_type='f32', expr=reg[a[1]]),
+            'cvt.w.d': lambda a: Cast(to_type='s32', expr=reg[a[1]]),
+            'trunc.w.s': lambda a: Cast(to_type='s32', expr=reg[a[1]]),
+            'trunc.w.d': lambda a: Cast(to_type='s32', expr=reg[a[1]]),
             # Bit arithmetic
             'and': lambda a: BinaryOp(left=reg[a[1]], op='&', right=reg[a[2]]),
-            'or': lambda a: BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
+            'or': lambda a:  BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
             'xor': lambda a: BinaryOp(left=reg[a[1]], op='^', right=reg[a[2]]),
 
-            'andi': lambda a: BinaryOp(left=reg[a[1]], op='&', right=a[2]),
-            'xori': lambda a: BinaryOp(left=reg[a[1]], op='^', right=a[2]),
-            'sll': lambda a: BinaryOp(left=reg[a[1]], op='<<', right=a[2]),
-            'srl': lambda a: BinaryOp(left=reg[a[1]], op='>>', right=a[2]),
+            'andi': lambda a: BinaryOp(left=reg[a[1]], op='&',  right=a[2]),
+            'xori': lambda a: BinaryOp(left=reg[a[1]], op='^',  right=a[2]),
+            'sll': lambda a:  BinaryOp(left=reg[a[1]], op='<<', right=a[2]),
+            'srl': lambda a:  BinaryOp(left=reg[a[1]], op='>>', right=a[2]),
             # Move pseudoinstruction
             'move': lambda a: reg[a[1]],
             # Floating point moving instructions
             'mfc1': lambda a: reg[a[1]],
             # Loading instructions
             'li': lambda a: a[1],
-            'lb': lambda a: TypeHint(type='s8', value=deref(a[1], reg)),
-            'lh': lambda a: TypeHint(type='s16', value=deref(a[1], reg)),
-            'lw': lambda a: TypeHint(type='s32', value=deref(a[1], reg)),
-            'lbu': lambda a: TypeHint(type='u8', value=deref(a[1], reg)),
+            'lb': lambda a:  TypeHint(type='s8',  value=deref(a[1], reg)),
+            'lh': lambda a:  TypeHint(type='s16', value=deref(a[1], reg)),
+            'lw': lambda a:  TypeHint(type='s32', value=deref(a[1], reg)),
+            'lbu': lambda a: TypeHint(type='u8',  value=deref(a[1], reg)),
             'lhu': lambda a: TypeHint(type='u16', value=deref(a[1], reg)),
             'lwu': lambda a: TypeHint(type='u32', value=deref(a[1], reg)),
             # Floating point loading instructions
@@ -755,9 +776,11 @@ def translate_to_ast(function: Function):
             'sltu': 'slt',
         }
 
-        to_store: List[Store] = []
+        to_write: List[Union[Store, FuncCall]] = []
         for instr in block.instructions:
+
             mnemonic = instr.mnemonic
+
             if mnemonic in cases_repeats:
                 # Determine "true" mnemonic.
                 mnemonic = cases_repeats[mnemonic]
@@ -778,7 +801,7 @@ def translate_to_ast(function: Function):
 
             if mnemonic in cases_source_first_expression:
                 # Store a value in a permanent place.
-                to_store.append(cases_source_first_expression[mnemonic](instr.args))
+                to_write.append(cases_source_first_expression[mnemonic](instr.args))
             elif mnemonic in cases_source_first_register:
                 # Just 'mtc1'. It's reversed, so we have to specially handle it.
                 assert isinstance(instr.args[1], Register)  # could also assert float register
@@ -799,25 +822,34 @@ def translate_to_ast(function: Function):
                 else:
                     # Function call. Well, let's double-check:
                     assert mnemonic == 'jal'
-                    # TODO: Handle arguments... c.FuncCall(result, ???)
-                    pass
+                    assert isinstance(instr.args[0], GlobalSymbol)
+                    func_args = []
+                    for register in map(Register, ['a0', 'a1', 'a2', 'a3']):
+                        if register in reg:
+                            func_args.append(reg[register])
+                    # TODO: Add further func_args!
+
+                    call = FuncCall(instr.args[0].symbol_name, func_args)
+                    to_write.append(call)
+                    # We don't know what this function's return register is,
+                    # be it $v0, $f0, or something else, so this hack will have
+                    # to do. (TODO: handle it...)
+                    if Register('func_ret') in reg:
+                        reg[Register('func_ret')].append(call)
+                    else:
+                        reg[Register('func_ret')] = [call]
             elif mnemonic in cases_float_comp:
                 # TODO: Don't give up here. (Similar to branches.)
-                pass
+                reg[Register('condition_bit')] = cases_float_comp[mnemonic](instr.args)
             elif mnemonic in cases_special:
-                # TODO: One big problem here is that I'm storing the value
-                # into the FIRST (intermediate) register, not the final register
-                # as I should be! Whoops. This would be fixable right here
-                # in this if-statement (and an extra local var and flag).
                 assert isinstance(instr.args[0], Register)
                 reg[instr.args[0]] = cases_special[mnemonic](instr.args)
             elif mnemonic in cases_destination_first:
-                # Hey, I can do this one! (Maybe.)
                 assert isinstance(instr.args[0], Register)
                 reg[instr.args[0]] = cases_destination_first[mnemonic](instr.args)
             else:
                 assert False, f"I don't know how to handle {mnemonic}!"
-        print(f"To store: {to_store}")
+        print(f"To write: {to_write}")
         print(f"Final register states: {reg}")
 
 
