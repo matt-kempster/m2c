@@ -431,7 +431,7 @@ def do_flow_analysis(function: Function):
                 return ConditionalNode(block, branch_node, fallthrough_node)
         else:
             # Shouldn't be possible.
-            sys.exit(1)
+            assert False, "There were multiple branch instructions in one block"
 
     # Traverse through the block tree.
     entrance_block = blocks[0]
@@ -544,9 +544,20 @@ def deref(arg, reg):
             return arg
         else:
             return AddressMode(lhs=arg.lhs, rhs=reg[arg.rhs])
-    else:
-        assert isinstance(arg, Register)
+    elif isinstance(arg, Register):
         return reg[arg]
+    else:
+        assert isinstance(arg, GlobalSymbol)
+        return arg
+
+def strip_macros(arg):
+    if isinstance(arg, Macro):
+        return arg.argument
+    elif isinstance(arg, AddressMode) and isinstance(arg.lhs, Macro):
+        assert arg.lhs.macro_name == 'lo'
+        return arg.lhs.argument
+    else:
+        return arg
 
 @attr.s
 class BinaryOp:
@@ -655,7 +666,7 @@ def translate_to_ast(function: Function):
         }
         cases_branches = {  # TODO! These are wrong.
             # Branch instructions/pseudoinstructions
-            'b': lambda a: a[1],
+            'b': lambda a: None,
             'beq': lambda a:  BinaryOp(left=reg[a[0]], op='==', right=reg[a[1]]),
             'bne': lambda a:  BinaryOp(left=reg[a[0]], op='!=', right=reg[a[1]]),
             'beqz': lambda a: BinaryOp(left=reg[a[0]], op='==', right=NumberLiteral(0)),
@@ -777,6 +788,7 @@ def translate_to_ast(function: Function):
         }
 
         to_write: List[Union[Store, FuncCall]] = []
+        branch_condition: Optional[Any] = None
         for instr in block.instructions:
 
             mnemonic = instr.mnemonic
@@ -790,10 +802,8 @@ def translate_to_ast(function: Function):
 
             # HACK: Preprocessing: remove any macros.
             instr = Instruction(
-                mnemonic, list(map(
-                    lambda arg: arg.argument if isinstance(arg, Macro) else arg,
-                    instr.args
-            )))
+                mnemonic, list(map(strip_macros, instr.args))
+            )
 
             # Figure out what code to generate!
             # TODO: This is a side-note for when I inevitably forget to do it,
@@ -807,11 +817,15 @@ def translate_to_ast(function: Function):
                 assert isinstance(instr.args[1], Register)  # could also assert float register
                 reg[instr.args[1]] = cases_source_first_register[mnemonic](instr.args)
             elif mnemonic in cases_branches:
-                # TODO: Don't give up here.
-                pass
+                assert branch_condition is None
+                branch_condition = cases_branches[mnemonic](instr.args)
             elif mnemonic in cases_float_branches:
-                # TODO: Don't give up here.
-                pass
+                assert branch_condition is None
+                assert Register('condition_bit') in reg
+                if mnemonic == 'bc1t':
+                    branch_condition = reg[Register('condition_bit')]
+                elif mnemonic == 'bc1f':
+                    branch_condition = UnaryOp(op='!', expr=reg[Register('condition_bit')])
             elif mnemonic in cases_jumps:
                 result = cases_jumps[mnemonic](instr.args)
                 if isinstance(result, Return):
@@ -850,6 +864,7 @@ def translate_to_ast(function: Function):
             else:
                 assert False, f"I don't know how to handle {mnemonic}!"
         print(f"To write: {to_write}")
+        print(f'Branch condition: {branch_condition}')
         print(f"Final register states: {reg}")
 
 
@@ -870,7 +885,6 @@ def translate_to_ast(function: Function):
             translate_block_body(node.block, {Register('zero'): NumberLiteral(0)})
         except Exception as e:
             traceback.print_exc()
-
 
 def main(filename: str) -> None:
     with open(filename, 'r') as f:
