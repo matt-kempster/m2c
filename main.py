@@ -262,6 +262,11 @@ class Block(object):
     label: Optional[Label] = attr.ib()
     instructions: List[Instruction] = attr.ib(factory=list)
 
+    block_info: Optional['BlockInfo'] = None
+
+    def add_block_info(self, block_info: 'BlockInfo'):
+        self.block_info = block_info
+
     def __str__(self):
         if self.label:
             name = f'{self.index} ({self.label.name})'
@@ -486,11 +491,17 @@ class Store:
     float: bool = attr.ib(default=False)
     # TODO: Figure out
 
+    def __str__(self):
+        type = f'(f{self.size})' if self.float else f'(s{self.size})'
+        return f'{type} {self.dest} = {self.source}'
+
 @attr.s
 class TypeHint:
     type: str = attr.ib()
     value: Any = attr.ib()
-    # TODO: Figure out
+
+    def __str__(self):
+        return f'{self.type}({self.value})'
 
 def load_upper(args, reg):
     if isinstance(args[1], BinOp):
@@ -565,24 +576,50 @@ class BinaryOp:
     op: str = attr.ib()
     right = attr.ib()
 
+    def __str__(self):
+        return f'({self.left} {self.op} {self.right})'
+
 @attr.s
 class UnaryOp:
     op: str = attr.ib()
     expr = attr.ib()
 
+    def __str__(self):
+        return f'{self.op}{self.expr}'
+
 @attr.s
 class Cast:
     to_type: str = attr.ib()
     expr = attr.ib()
+    def __str__(self):
+        return f'({self.to_type}) {self.expr}'
 
 @attr.s
 class Return:
-    pass
+    def __str__(self):
+        return 'return'
 
 @attr.s
 class FuncCall:
     func_name: str = attr.ib()
     args: List[Any] = attr.ib()
+
+    def __str__(self):
+        return f'{self.func_name}({",".join(str(arg) for arg in self.args)})'
+
+@attr.s
+class BlockInfo:
+    to_write: List[Union[Store, FuncCall]] = attr.ib()
+    branch_condition: Optional[Any] = attr.ib()
+    final_register_states: Dict[Register, Any] = attr.ib()
+
+    def __str__(self):
+        newline = '\n\t'
+        return '\n'.join([
+            f'To write: {newline.join(str(write) for write in self.to_write)}',
+            f'Branch condition: {self.branch_condition}',
+            f'Final register states: ' +
+            f'{[f"{k}: {v}" for k,v in self.final_register_states.items()]}'])
 
 def translate_to_ast(function: Function):
     # Initialize info about the function.
@@ -650,7 +687,7 @@ def translate_to_ast(function: Function):
     def in_local_var_region(location: int) -> bool:
         return local_vars_region_bottom <= location < allocated_stack_size
 
-    def translate_block_body(block: Block, reg: Dict[Register, Any]):
+    def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
         cases_source_first_expression = {
             # Storage instructions
             'sb': lambda a: Store(size=8, source=reg[a[0]], dest=deref(a[1], reg)),
@@ -701,6 +738,11 @@ def translate_to_ast(function: Function):
             'ori':  lambda a: handle_ori(a, reg),
             'addi': lambda a: handle_addi(a, reg),
         }
+        cases_div = {
+            # Div is just weird.
+            'div': lambda a: (BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
+                              BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
+        }
         cases_destination_first = {
             # Flag-setting instructions
             'slt': lambda a:  BinaryOp(left=reg[a[1]], op='<', right=reg[a[2]]),
@@ -709,8 +751,6 @@ def translate_to_ast(function: Function):
             'addu': lambda a:  BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
             'multu': lambda a: BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
             'subu': lambda a:  BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
-            'div': lambda a:  (BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
-                               BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
             'negu': lambda a:  UnaryOp(op='-', expr=reg[a[1]]),
             # Hi/lo register uses (used after division)
             'mfhi': lambda a: reg[Register('hi')],
@@ -756,6 +796,7 @@ def translate_to_ast(function: Function):
             **cases_jumps,
             **cases_float_comp,
             **cases_special,
+            **cases_div,
             **cases_destination_first,
         }
         cases_repeats = {
@@ -844,6 +885,9 @@ def translate_to_ast(function: Function):
                     # TODO: Add further func_args!
 
                     call = FuncCall(instr.args[0].symbol_name, func_args)
+                    # TODO: It doesn't make sense to put this function call in
+                    # to_write in all cases, since sometimes it's just the
+                    # return value which matters.
                     to_write.append(call)
                     # We don't know what this function's return register is,
                     # be it $v0, $f0, or something else, so this hack will have
@@ -858,14 +902,15 @@ def translate_to_ast(function: Function):
             elif mnemonic in cases_special:
                 assert isinstance(instr.args[0], Register)
                 reg[instr.args[0]] = cases_special[mnemonic](instr.args)
+            elif mnemonic in cases_div:
+                reg[Register('hi')], reg[Register('lo')] = cases_div[mnemonic](instr.args)
             elif mnemonic in cases_destination_first:
                 assert isinstance(instr.args[0], Register)
                 reg[instr.args[0]] = cases_destination_first[mnemonic](instr.args)
             else:
                 assert False, f"I don't know how to handle {mnemonic}!"
-        print(f"To write: {to_write}")
-        print(f'Branch condition: {branch_condition}')
-        print(f"Final register states: {reg}")
+
+        return BlockInfo(to_write, branch_condition, reg)
 
 
     flow_analysis: FlowAnalysis = do_flow_analysis(function)
@@ -878,13 +923,27 @@ def translate_to_ast(function: Function):
 
     print('\nNow, we attempt to translate:')
     for i, node in enumerate(flow_analysis.nodes):
-        if i == 0:
-            continue
         print(f'\nblock in question: {node.block}')
         try:
-            translate_block_body(node.block, {Register('zero'): NumberLiteral(0)})
+            if i == 0:
+                # Handle the first block differently since it has to set up
+                # the stack.
+                print(translate_block_body(
+                    node.block,
+                    {Register('zero'): NumberLiteral(0),
+                     # Add dummy values for callee-save registers and args.
+                     **{Register(name): GlobalSymbol(name) for name in [
+                         'a0', 'a1', 'a2', 'a3',
+                         's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
+                         'ra']}}
+                ))
+            else:
+                print(translate_block_body(
+                    node.block, {Register('zero'): NumberLiteral(0)}
+                ))
         except Exception as e:
             traceback.print_exc()
+
 
 def main(filename: str) -> None:
     with open(filename, 'r') as f:
