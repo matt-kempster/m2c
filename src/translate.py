@@ -433,10 +433,8 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
                 # We don't know what this function's return register is,
                 # be it $v0, $f0, or something else, so this hack will have
                 # to do. (TODO: handle it...)
-                if Register('func_ret') in reg:
-                    reg[Register('func_ret')].append(call)
-                else:
-                    reg[Register('func_ret')] = [call]
+                reg[Register('f0')] = call
+                reg[Register('v0')] = call
         elif mnemonic in cases_float_comp:
             # TODO: Don't give up here. (Similar to branches.)
             reg[Register('condition_bit')] = cases_float_comp[mnemonic](instr.args)
@@ -454,31 +452,49 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
     return BlockInfo(to_write, branch_condition, reg)
 
 
+def translate_graph_from_block(node: Node, reg: Dict[Register, Any]):
+    if node.block.block_info is not None:
+        return
+
+    print(f'\nNode in question: {node.block}')
+
+    # Translate the given node and discover final register states.
+    try:
+        block_info = translate_block_body(node.block, reg)
+        print(block_info)
+    except Exception as _:
+        traceback.print_exc()
+        block_info = BlockInfo([], None, {})  # TODO: handle issues
+
+    node.block.add_block_info(block_info)
+
+    # Translate descendants recursively. Pass a copy of the dictionary since
+    # it will be modified.
+    if isinstance(node, BasicNode):
+        translate_graph_from_block(node.successor, reg.copy())
+    elif isinstance(node, ConditionalNode):
+        translate_graph_from_block(node.conditional_edge, reg.copy())
+        translate_graph_from_block(node.fallthrough_edge, reg.copy())
+    else:
+        assert isinstance(node, ReturnNode)
+
+
 def translate_to_ast(function: Function):
     # Initialize info about the function.
     flow_graph: FlowGraph = build_callgraph(function)
     stack_info = get_stack_info(function, flow_graph.nodes[0])
-    print(stack_info)
 
+    print(stack_info)
     print('\nNow, we attempt to translate:')
-    for i, node in enumerate(flow_graph.nodes):
-        print(f'\nblock in question: {node.block}')
-        try:
-            if i == 0:
-                # Handle the first block differently since it has to set up
-                # the stack.
-                print(translate_block_body(
-                    node.block,
-                    {Register('zero'): NumberLiteral(0),
-                     # Add dummy values for callee-save registers and args.
-                     **{Register(name): GlobalSymbol(name) for name in [
-                         'a0', 'a1', 'a2', 'a3',
-                         's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
-                         'ra']}}
-                ))
-            else:
-                print(translate_block_body(
-                    node.block, {Register('zero'): NumberLiteral(0)}
-                ))
-        except Exception as e:
-            traceback.print_exc()
+    start_node = flow_graph.nodes[0]
+    start_reg: Dict[Register, Any] = {
+        Register('zero'): NumberLiteral(0),
+        # Add dummy values for callee-save registers and args.
+        **{Register(name): GlobalSymbol(name) for name in [
+            'a0', 'a1', 'a2', 'a3',
+            's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
+            'ra']
+        }
+    }
+    translate_graph_from_block(start_node, start_reg)
+

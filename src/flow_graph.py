@@ -6,17 +6,17 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any
 from parse_instruction import *
 from parse_file import *
 
-
-@attr.s(frozen=True)
+@attr.s
 class Block:
     index: int = attr.ib()
     label: Optional[Label] = attr.ib()
     instructions: List[Instruction] = attr.ib(factory=list)
 
-    # block_info: Optional['BlockInfo'] = None
-    #
-    # def add_block_info(self, block_info: 'BlockInfo'):
-    #     self.block_info = block_info
+    # TODO: fix "Any" to be "BlockInfo" (currently annoying due to circular imports)
+    block_info: Optional[Any] = None
+
+    def add_block_info(self, block_info: Any):
+        self.block_info = block_info
 
     def __str__(self):
         if self.label:
