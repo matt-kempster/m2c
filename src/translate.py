@@ -452,7 +452,7 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
     return BlockInfo(to_write, branch_condition, reg)
 
 
-def translate_graph_from_block(node: Node, reg: Dict[Register, Any]):
+def translate_graph_from_block(node: Node, reg: Dict[Register, Any]) -> None:
     if node.block.block_info is not None:
         return
 
@@ -479,7 +479,7 @@ def translate_graph_from_block(node: Node, reg: Dict[Register, Any]):
         assert isinstance(node, ReturnNode)
 
 
-def translate_to_ast(function: Function):
+def translate_to_ast(function: Function) -> FlowGraph:
     # Initialize info about the function.
     flow_graph: FlowGraph = build_callgraph(function)
     stack_info = get_stack_info(function, flow_graph.nodes[0])
@@ -497,4 +497,5 @@ def translate_to_ast(function: Function):
         }
     }
     translate_graph_from_block(start_node, start_reg)
+    return flow_graph
 
