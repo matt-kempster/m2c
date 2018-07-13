@@ -152,7 +152,7 @@ def strip_macros(arg):
     if isinstance(arg, Macro):
         return arg.argument
     elif isinstance(arg, AddressMode) and isinstance(arg.lhs, Macro):
-        assert arg.lhs.macro_name == 'lo'
+        assert arg.lhs.macro_name == 'lo'  # %hi(...)(REG) doesn't make sense.
         return arg.lhs.argument
     else:
         return arg
@@ -162,13 +162,17 @@ def deref(arg, reg):
     if isinstance(arg, AddressMode):
         assert isinstance(arg.rhs, Register)
         if arg.rhs.register_name == 'sp':
-            #return LocalVar(location=arg.lhs)
+            # Typically this would be a local variable (or an argument on the
+            # stack), but for now we don't handle those.
             return arg
         else:
+            # Pointer is being dereferenced.
             return AddressMode(lhs=arg.lhs, rhs=reg[arg.rhs])
     elif isinstance(arg, Register):
+        # Look up the register's contents.
         return reg[arg]
     else:
+        # Keep GlobalSymbols as-is.
         assert isinstance(arg, GlobalSymbol)
         return arg
 
@@ -213,6 +217,10 @@ def handle_addi(args, reg):
 
 @attr.s
 class BlockInfo:
+    """
+    Contains translated assembly code (to_write), the block's branch condition,
+    and block's final register states.
+    """
     to_write: List[Union[Store, FuncCall]] = attr.ib()
     branch_condition: Optional[Any] = attr.ib()
     final_register_states: Dict[Register, Any] = attr.ib()
@@ -227,6 +235,10 @@ class BlockInfo:
 
 
 def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
+    """
+    Given a block and current register contents, return a BlockInfo containing
+    the translated AST for that block.
+    """
     cases_source_first_expression = {
         # Storage instructions
         'sb': lambda a: Store(size=8, source=reg[a[0]], dest=deref(a[1], reg)),
@@ -370,37 +382,39 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
     to_write: List[Union[Store, FuncCall]] = []
     branch_condition: Optional[Any] = None
     for instr in block.instructions:
+        assert reg[Register('zero')] == NumberLiteral(0)  # sanity check
 
+        # Save the current mnemonic.
         mnemonic = instr.mnemonic
-
+        if mnemonic == 'nop':
+            continue
         if mnemonic in cases_repeats:
             # Determine "true" mnemonic.
             mnemonic = cases_repeats[mnemonic]
 
-        if mnemonic == 'nop':
-            continue
-
-        # HACK: Preprocessing: remove any macros.
+        # HACK: Remove any %hi(...) or %lo(...) macros; we will just put the
+        # full value into each intermediate register, because this really
+        # doesn't affect program behavior almost ever.
         instr = Instruction(
             mnemonic, list(map(strip_macros, instr.args))
         )
 
         # Figure out what code to generate!
-        # TODO: This is a side-note for when I inevitably forget to do it,
-        # but $zero should not be overwritten by div or anything like that.
-
         # TODO: Should I intersperse the definitions of these cases with
         # this code?
         if mnemonic in cases_source_first_expression:
             # Store a value in a permanent place.
             to_write.append(cases_source_first_expression[mnemonic](instr.args))
+
         elif mnemonic in cases_source_first_register:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
             assert isinstance(instr.args[1], Register)  # could also assert float register
             reg[instr.args[1]] = cases_source_first_register[mnemonic](instr.args)
+
         elif mnemonic in cases_branches:
             assert branch_condition is None
             branch_condition = cases_branches[mnemonic](instr.args)
+
         elif mnemonic in cases_float_branches:
             assert branch_condition is None
             assert Register('condition_bit') in reg
@@ -408,6 +422,7 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
                 branch_condition = reg[Register('condition_bit')]
             elif mnemonic == 'bc1f':
                 branch_condition = UnaryOp(op='!', expr=reg[Register('condition_bit')])
+
         elif mnemonic in cases_jumps:
             result = cases_jumps[mnemonic](instr.args)
             if isinstance(result, Return):
@@ -435,17 +450,21 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
                 # to do. (TODO: handle it...)
                 reg[Register('f0')] = call
                 reg[Register('v0')] = call
+
         elif mnemonic in cases_float_comp:
-            # TODO: Don't give up here. (Similar to branches.)
             reg[Register('condition_bit')] = cases_float_comp[mnemonic](instr.args)
+
         elif mnemonic in cases_special:
             assert isinstance(instr.args[0], Register)
             reg[instr.args[0]] = cases_special[mnemonic](instr.args)
+
         elif mnemonic in cases_div:
             reg[Register('hi')], reg[Register('lo')] = cases_div[mnemonic](instr.args)
+
         elif mnemonic in cases_destination_first:
             assert isinstance(instr.args[0], Register)
             reg[instr.args[0]] = cases_destination_first[mnemonic](instr.args)
+
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
 
@@ -453,6 +472,11 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
 
 
 def translate_graph_from_block(node: Node, reg: Dict[Register, Any]) -> None:
+    """
+    Given a FlowGraph node and a dictionary of register contents, give that node
+    its appropriate BlockInfo (which contains the AST of its code).
+    """
+    # Do not recalculate block info.
     if node.block.block_info is not None:
         return
 
@@ -480,6 +504,11 @@ def translate_graph_from_block(node: Node, reg: Dict[Register, Any]) -> None:
 
 
 def translate_to_ast(function: Function) -> FlowGraph:
+    """
+    Given a function, produce a FlowGraph that both contains control-flow
+    information and has AST transformations for each block of code and
+    branch condition.
+    """
     # Initialize info about the function.
     flow_graph: FlowGraph = build_callgraph(function)
     stack_info = get_stack_info(function, flow_graph.nodes[0])
@@ -490,6 +519,8 @@ def translate_to_ast(function: Function) -> FlowGraph:
     start_reg: Dict[Register, Any] = {
         Register('zero'): NumberLiteral(0),
         # Add dummy values for callee-save registers and args.
+        # TODO: There's a better way to do this; this is screwing up the
+        # arguments to function calls.
         **{Register(name): GlobalSymbol(name) for name in [
             'a0', 'a1', 'a2', 'a3',
             's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
