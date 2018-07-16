@@ -221,3 +221,18 @@ def build_callgraph(function: Function):
     nodes = build_nodes(function, blocks)
 
     return FlowGraph(nodes)
+
+
+def visualize_callgraph(flow_graph: FlowGraph):
+    import graphviz as g
+    dot = g.Digraph()
+    for node in flow_graph.nodes:
+        dot.node(str(node.block.index))
+        if isinstance(node, BasicNode):
+            dot.edge(str(node.block.index), str(node.successor.block.index))
+        elif isinstance(node, ConditionalNode):
+            dot.edge(str(node.block.index), str(node.fallthrough_edge.block.index))
+            dot.edge(str(node.block.index), str(node.conditional_edge.block.index))
+        else:
+            pass
+    dot.render('graphviz_render.gv')

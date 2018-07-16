@@ -386,7 +386,7 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
 
         # Save the current mnemonic.
         mnemonic = instr.mnemonic
-        if mnemonic == 'nop':
+        if mnemonic in ['nop', 'break']:
             continue
         if mnemonic in cases_repeats:
             # Determine "true" mnemonic.

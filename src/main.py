@@ -12,7 +12,9 @@ from if_statements import write_flowgraph
 def main(filename: str) -> None:
     with open(filename, 'r') as f:
         mips_file: MIPSFile = parse_file(filename, f)
-        flow_graph: FlowGraph = translate_to_ast(mips_file.functions[1])
+        flow_graph: FlowGraph = translate_to_ast(mips_file.functions[234])
+        # Uncomment this to generate a graphviz rendering of the function.
+        # visualize_callgraph(flow_graph)
         write_flowgraph(flow_graph)
 
 

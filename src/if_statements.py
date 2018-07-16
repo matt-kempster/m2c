@@ -64,40 +64,50 @@ def write_conditional_subgraph(start: ConditionalNode, end: Node, indent: int) -
             with write_else(indent):
                 write_flowgraph_between(start.fallthrough_edge, end, indent + 4)
 
+reachable_without: Dict[typing.Tuple[int, int, int], bool] = {}
 
 def end_reachable_without(start, end, without):
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
+    trip = (start.block.index, end.block.index, without.block.index)
+    if trip in reachable_without:
+        return reachable_without[trip]
     if without == end:
         # Can't get to the end if it is removed.
-        return False
+        ret = False
     if start == end:
         # Already there! (Base case.)
-        return True
+        ret = True
     else:
         assert not isinstance(start, ReturnNode)  # because then, start == end
         if isinstance(start, BasicNode):
             # If the successor is removed, we can't make it. Otherwise, try
             # to reach the end.
-            return (start.successor != without and
+            ret = (start.successor != without and
                     end_reachable_without(start.successor, end, without))
         elif isinstance(start, ConditionalNode):
             # If one edge or the other is removed, you have to go the other route.
             if start.conditional_edge == without:
                 assert start.fallthrough_edge != without
-                return end_reachable_without(start.fallthrough_edge, end, without)
+                ret = end_reachable_without(start.fallthrough_edge, end, without)
             elif start.fallthrough_edge == without:
-                return end_reachable_without(start.conditional_edge, end, without)
+                ret = end_reachable_without(start.conditional_edge, end, without)
             else:
                 # Both routes are acceptable.
-                return (end_reachable_without(start.conditional_edge, end, without) or
+                ret = (end_reachable_without(start.conditional_edge, end, without) or
                         end_reachable_without(start.fallthrough_edge, end, without))
+    reachable_without[trip] = ret
+    return ret
+
+immpdom: Dict[int, Node] = {}
 
 def immediate_postdominator(start: Node, end: Node) -> Node:
     """
     Find the immediate postdominator of "start", where "end" is an exit node
     from the control flow graph.
     """
+    if start.block.index in immpdom:
+        return immpdom[start.block.index]
     stack: List[Node] = []
     postdominators: List[Node] = []
     stack.append(start)
@@ -120,6 +130,7 @@ def immediate_postdominator(start: Node, end: Node) -> Node:
     assert postdominators  # at least "end" should be a postdominator
     # Get the earliest postdominator
     postdominators.sort(key=lambda node: node.block.index)
+    immpdom[start.block.index] = postdominators[0]
     return postdominators[0]
 
 
