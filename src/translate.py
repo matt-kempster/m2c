@@ -291,8 +291,8 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
     }
     cases_div = {
         # Div is just weird.
-        'div': lambda a: (BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),  # hi
-                          BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]])), # lo
+        'div': lambda a: (BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]]),  # hi
+                          BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]])), # lo
     }
     cases_destination_first = {
         # Flag-setting instructions
@@ -362,7 +362,7 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
         # counterparts. However, it is hard to tell how to deal with doubles.
         'add.d': 'addu',
         'div.d': 'div.s',
-        'mul.d': 'mulu',
+        'mul.d': 'multu',
         'sub.d': 'subu',
         # Casting (the above applies here too)
         'cvt.d.w': 'cvt.d.s',

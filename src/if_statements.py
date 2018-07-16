@@ -28,11 +28,14 @@ def write_else(indent):
 
 def write_node(node: Node, indent: int):
     assert node.block.block_info is not None
+    print(f'{" " * indent}// Node {node.block.index}')
     for item in node.block.block_info.to_write:
         print(f'{" " * indent}{item};')
 
 
-def write_conditional_subgraph(start: ConditionalNode, end: Node, indent: int) -> None:
+def write_conditional_subgraph(
+    flow: FlowGraph, start: ConditionalNode, end: Node, indent: int
+) -> None:
     """
     Output the subgraph between "start" and "end" at indent level "indent",
     given that "start" is a ConditionalNode; this program will intelligently
@@ -50,23 +53,23 @@ def write_conditional_subgraph(start: ConditionalNode, end: Node, indent: int) -
         # actually within the inner if-statement. This means we have to negate
         # the fallthrough edge and go down that path.
         with write_if(if_condition, indent):
-            write_flowgraph_between(start.fallthrough_edge, end, indent + 4)
+            write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
     else:
         if_condition = if_block_info.branch_condition
         # We know for sure that the conditional_edge is written as an if-
         # statement.
         with write_if(if_condition, indent):
-            write_flowgraph_between(start.conditional_edge, end, indent + 4)
+            write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
         # If our fallthrough_edge is "real", then we have to write its contents
         # as an else statement.
         if start.fallthrough_edge != end:
             else_block = start.fallthrough_edge.block
             with write_else(indent):
-                write_flowgraph_between(start.fallthrough_edge, end, indent + 4)
+                write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
 
 reachable_without: Dict[typing.Tuple[int, int, int], bool] = {}
 
-def end_reachable_without(start, end, without):
+def end_reachable_without(flow: FlowGraph, start, end, without):
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
     trip = (start.block.index, end.block.index, without.block.index)
@@ -82,26 +85,34 @@ def end_reachable_without(start, end, without):
         assert not isinstance(start, ReturnNode)  # because then, start == end
         if isinstance(start, BasicNode):
             # If the successor is removed, we can't make it. Otherwise, try
-            # to reach the end.
+            # to reach the end. A small caveat is premature returns. We
+            # actually don't want to allow a premature return to occur in
+            # this case, because otherwise the immediate postdominator will
+            # always end up as the return node.
+            is_premature_return = (
+                start.successor == flow.nodes[-1] and
+                start.block.index != flow.nodes[-1].block.index - 1
+            )
             ret = (start.successor != without and
-                    end_reachable_without(start.successor, end, without))
+                    not is_premature_return and
+                    end_reachable_without(flow, start.successor, end, without))
         elif isinstance(start, ConditionalNode):
             # If one edge or the other is removed, you have to go the other route.
             if start.conditional_edge == without:
                 assert start.fallthrough_edge != without
-                ret = end_reachable_without(start.fallthrough_edge, end, without)
+                ret = end_reachable_without(flow, start.fallthrough_edge, end, without)
             elif start.fallthrough_edge == without:
-                ret = end_reachable_without(start.conditional_edge, end, without)
+                ret = end_reachable_without(flow, start.conditional_edge, end, without)
             else:
                 # Both routes are acceptable.
-                ret = (end_reachable_without(start.conditional_edge, end, without) or
-                        end_reachable_without(start.fallthrough_edge, end, without))
+                ret = (end_reachable_without(flow, start.conditional_edge, end, without) or
+                        end_reachable_without(flow, start.fallthrough_edge, end, without))
     reachable_without[trip] = ret
     return ret
 
 immpdom: Dict[int, Node] = {}
 
-def immediate_postdominator(start: Node, end: Node) -> Node:
+def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
     """
     Find the immediate postdominator of "start", where "end" is an exit node
     from the control flow graph.
@@ -125,7 +136,7 @@ def immediate_postdominator(start: Node, end: Node) -> Node:
             stack.append(node.fallthrough_edge)
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
-        if not end_reachable_without(start, end, node):
+        if not end_reachable_without(flow, start, end, node):
             postdominators.append(node)
     assert postdominators  # at least "end" should be a postdominator
     # Get the earliest postdominator
@@ -134,7 +145,9 @@ def immediate_postdominator(start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
-def write_flowgraph_between(start: Node, end: Node, indent: int) -> None:
+def write_flowgraph_between(
+    flow: FlowGraph, start: Node, end: Node, indent: int
+) -> None:
     """
     Output a section of a flow graph that has already been translated to our
     symbolic AST. All nodes between start and end, including start but NOT end,
@@ -156,18 +169,24 @@ def write_flowgraph_between(start: Node, end: Node, indent: int) -> None:
         write_node(curr_start, indent)
 
         if isinstance(curr_start, BasicNode):
-            # In a BasicNode, the successor is the next articulation node.
-            curr_start = curr_start.successor
+            # In a BasicNode, the successor is the next articulation node,
+            # unless the node is trying to prematurely return, in which case
+            # let it do that.
+            if isinstance(curr_start.successor, ReturnNode):
+                print(f'{" " * indent}return;')
+                return
+            else:
+                curr_start = curr_start.successor
         elif isinstance(curr_start, ConditionalNode):
             # A ConditionalNode means we need to find the next articulation
             # node. This means we need to find the "immediate postdominator"
             # of the current node, where "postdominator" means we have to go
             # through it, and "immediate" means we aren't skipping any.
-            curr_end = immediate_postdominator(curr_start, end)
+            curr_end = immediate_postdominator(flow, curr_start, end)
             # We also need to handle the if-else block here; this does the
             # outputting of the subgraph between curr_start and the next
             # articulation node.
-            write_conditional_subgraph(curr_start, curr_end, indent)
+            write_conditional_subgraph(flow, curr_start, curr_end, indent)
             # Move on.
             curr_start = curr_end
 
@@ -177,5 +196,5 @@ def write_flowgraph(flow_graph: FlowGraph) -> None:
     assert isinstance(return_node, ReturnNode)
 
     print("Here's the whole function!\n")
-    write_flowgraph_between(start_node, return_node, 0)
+    write_flowgraph_between(flow_graph, start_node, return_node, 0)
     write_node(return_node, 0)  # this node is not printed in the above routine
