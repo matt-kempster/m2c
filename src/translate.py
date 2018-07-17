@@ -8,6 +8,11 @@ from parse_instruction import *
 from flow_graph import *
 from parse_file import *
 
+SPECIAL_REGS = [
+    'a0', 'a1', 'a2', 'a3',
+    's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
+    'ra'
+]
 
 @attr.s
 class StackInfo:
@@ -18,8 +23,21 @@ class StackInfo:
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(default={})
 
+    def in_subroutine_arg_region(self, location: int) -> bool:
+        assert not self.is_leaf
+        if self.callee_save_reg_locations:
+            subroutine_arg_top = min(self.callee_save_reg_locations.values())
+            assert self.return_addr_location > subroutine_arg_top
+        else:
+            subroutine_arg_top = self.return_addr_location
+
+        return location < subroutine_arg_top
+
     def in_local_var_region(self, location: int) -> bool:
         return self.local_vars_region_bottom <= location < self.allocated_stack_size
+
+    def location_above_stack(self, location: int) -> bool:
+        return location >= self.allocated_stack_size
 
     def __str__(self):
         return '\n'.join([
@@ -157,17 +175,62 @@ def strip_macros(arg):
     else:
         return arg
 
+def format_hex(val: int):
+    return format(val, 'x').upper()
 
-def deref(arg, reg):
+@attr.s
+class LocalVar:
+    value: int = attr.ib()
+    # type?
+
+    def __str__(self):
+        return f'sp{format_hex(self.value)}'
+
+@attr.s
+class PassedInArg:
+    value: int = attr.ib()
+    # type?
+
+    def __str__(self):
+        return f'arg{format_hex(self.value)}'
+
+@attr.s
+class StructAccess:
+    struct_var = attr.ib()
+    offset: int = attr.ib()
+
+    def __str__(self):
+        return f'{self.struct_var}->unk{format_hex(self.offset)}'
+
+@attr.s
+class SubroutineArg:
+    value: int = attr.ib()
+    # type?
+
+    def __str__(self):
+        return f'subroutine_arg{format_hex(self.value)}'
+
+
+def deref(arg, reg, stack_info: StackInfo):
     if isinstance(arg, AddressMode):
         assert isinstance(arg.rhs, Register)
+        assert isinstance(arg.lhs, NumberLiteral)  # macros were removed
+        location = arg.lhs.value
         if arg.rhs.register_name == 'sp':
-            # Typically this would be a local variable (or an argument on the
-            # stack), but for now we don't handle those.
-            return arg
+            # This is either a local variable or an argument.
+            if stack_info.in_local_var_region(location):
+                return LocalVar(location)
+            elif stack_info.location_above_stack(location):
+                return PassedInArg(location)
+            elif stack_info.in_subroutine_arg_region(location):
+                return SubroutineArg(location)
+            else:
+                # Some annoying bookkeeping instruction. To avoid
+                # further special-casing, just return whatever - it won't matter.
+                return arg
         else:
-            # Pointer is being dereferenced.
-            return AddressMode(lhs=arg.lhs, rhs=reg[arg.rhs])
+            # Struct member is being dereferenced.
+            return StructAccess(struct_var=reg[arg.rhs], offset=location)
     elif isinstance(arg, Register):
         # Look up the register's contents.
         return reg[arg]
@@ -234,19 +297,30 @@ class BlockInfo:
             f'{[f"{k}: {v}" for k,v in self.final_register_states.items()]}'])
 
 
-def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
+def make_store(args, reg, stack_info: StackInfo, size: int, float=False):
+    assert isinstance(args[0], Register)
+    if args[0].register_name in SPECIAL_REGS:
+        return None
+    else:
+        return Store(
+            size, source=reg[args[0]], dest=deref(args[1], reg, stack_info), float=float
+        )
+
+def translate_block_body(
+    block: Block, reg: Dict[Register, Any], stack_info: StackInfo
+) -> BlockInfo:
     """
     Given a block and current register contents, return a BlockInfo containing
     the translated AST for that block.
     """
     cases_source_first_expression = {
         # Storage instructions
-        'sb': lambda a: Store(size=8, source=reg[a[0]], dest=deref(a[1], reg)),
-        'sh': lambda a: Store(size=16, source=reg[a[0]], dest=deref(a[1], reg)),
-        'sw': lambda a: Store(size=32, source=reg[a[0]], dest=deref(a[1], reg)),
+        'sb': lambda a: make_store(a, reg, stack_info, size=8),
+        'sh': lambda a: make_store(a, reg, stack_info, size=16),
+        'sw': lambda a: make_store(a, reg, stack_info, size=32),
         # Floating point storage/conversion
-        'swc1': lambda a: Store(size=32, source=reg[a[0]], dest=deref(a[1], reg), float=True),
-        'sdc1': lambda a: Store(size=64, source=reg[a[0]], dest=deref(a[1], reg), float=True),
+        'swc1': lambda a: make_store(a, reg, stack_info, size=32, float=True),
+        'sdc1': lambda a: make_store(a, reg, stack_info, size=64, float=True),
     }
     cases_source_first_register = {
         # Floating point moving instruction
@@ -329,15 +403,25 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
         'mfc1': lambda a: reg[a[1]],
         # Loading instructions
         'li': lambda a: a[1],
-        'lb': lambda a:  TypeHint(type='s8',  value=deref(a[1], reg)),
-        'lh': lambda a:  TypeHint(type='s16', value=deref(a[1], reg)),
-        'lw': lambda a:  TypeHint(type='s32', value=deref(a[1], reg)),
-        'lbu': lambda a: TypeHint(type='u8',  value=deref(a[1], reg)),
-        'lhu': lambda a: TypeHint(type='u16', value=deref(a[1], reg)),
-        'lwu': lambda a: TypeHint(type='u32', value=deref(a[1], reg)),
+        'lb': lambda a:  deref(a[1], reg, stack_info),
+        'lh': lambda a:  deref(a[1], reg, stack_info),
+        'lw': lambda a:  deref(a[1], reg, stack_info),
+        'lbu': lambda a: deref(a[1], reg, stack_info),
+        'lhu': lambda a: deref(a[1], reg, stack_info),
+        'lwu': lambda a: deref(a[1], reg, stack_info),
         # Floating point loading instructions
-        'lwc1': lambda a: TypeHint(type='f32', value=deref(a[1], reg)),
-        'ldc1': lambda a: TypeHint(type='f64', value=deref(a[1], reg)),
+        'lwc1': lambda a: deref(a[1], reg, stack_info),
+        'ldc1': lambda a: deref(a[1], reg, stack_info),
+
+        # 'lb': lambda a:  TypeHint(type='s8',  value=deref(a[1], reg, stack_info)),
+        # 'lh': lambda a:  TypeHint(type='s16', value=deref(a[1], reg, stack_info)),
+        # 'lw': lambda a:  TypeHint(type='s32', value=deref(a[1], reg, stack_info)),
+        # 'lbu': lambda a: TypeHint(type='u8',  value=deref(a[1], reg, stack_info)),
+        # 'lhu': lambda a: TypeHint(type='u16', value=deref(a[1], reg, stack_info)),
+        # 'lwu': lambda a: TypeHint(type='u32', value=deref(a[1], reg, stack_info)),
+        # # Floating point loading instructions
+        # 'lwc1': lambda a: TypeHint(type='f32', value=deref(a[1], reg, stack_info)),
+        # 'ldc1': lambda a: TypeHint(type='f64', value=deref(a[1], reg, stack_info)),
     }
     cases_uniques: Dict[str, Callable[[List[Argument]], Any]] = {
         **cases_source_first_expression,
@@ -358,8 +442,7 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
         'add.s': 'addu',
         'mul.s': 'multu',
         'sub.s': 'subu',
-        # TODO: These are absolutely not the same as their below-listed
-        # counterparts. However, it is hard to tell how to deal with doubles.
+        # TODO: Deal with doubles differently.
         'add.d': 'addu',
         'div.d': 'div.s',
         'mul.d': 'multu',
@@ -400,11 +483,11 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
         )
 
         # Figure out what code to generate!
-        # TODO: Should I intersperse the definitions of these cases with
-        # this code?
         if mnemonic in cases_source_first_expression:
             # Store a value in a permanent place.
-            to_write.append(cases_source_first_expression[mnemonic](instr.args))
+            to_store = cases_source_first_expression[mnemonic](instr.args)
+            if to_store is not None:
+                to_write.append(to_store)
 
         elif mnemonic in cases_source_first_register:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
@@ -471,7 +554,9 @@ def translate_block_body(block: Block, reg: Dict[Register, Any]) -> BlockInfo:
     return BlockInfo(to_write, branch_condition, reg)
 
 
-def translate_graph_from_block(node: Node, reg: Dict[Register, Any]) -> None:
+def translate_graph_from_block(
+    node: Node, reg: Dict[Register, Any], stack_info: StackInfo
+) -> None:
     """
     Given a FlowGraph node and a dictionary of register contents, give that node
     its appropriate BlockInfo (which contains the AST of its code).
@@ -484,7 +569,7 @@ def translate_graph_from_block(node: Node, reg: Dict[Register, Any]) -> None:
 
     # Translate the given node and discover final register states.
     try:
-        block_info = translate_block_body(node.block, reg)
+        block_info = translate_block_body(node.block, reg, stack_info)
         print(block_info)
     except Exception as _:
         traceback.print_exc()
@@ -495,10 +580,10 @@ def translate_graph_from_block(node: Node, reg: Dict[Register, Any]) -> None:
     # Translate descendants recursively. Pass a copy of the dictionary since
     # it will be modified.
     if isinstance(node, BasicNode):
-        translate_graph_from_block(node.successor, reg.copy())
+        translate_graph_from_block(node.successor, reg.copy(), stack_info)
     elif isinstance(node, ConditionalNode):
-        translate_graph_from_block(node.conditional_edge, reg.copy())
-        translate_graph_from_block(node.fallthrough_edge, reg.copy())
+        translate_graph_from_block(node.conditional_edge, reg.copy(), stack_info)
+        translate_graph_from_block(node.fallthrough_edge, reg.copy(), stack_info)
     else:
         assert isinstance(node, ReturnNode)
 
@@ -521,12 +606,8 @@ def translate_to_ast(function: Function) -> FlowGraph:
         # Add dummy values for callee-save registers and args.
         # TODO: There's a better way to do this; this is screwing up the
         # arguments to function calls.
-        **{Register(name): GlobalSymbol(name) for name in [
-            'a0', 'a1', 'a2', 'a3',
-            's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
-            'ra']
-        }
+        **{Register(name): GlobalSymbol(name) for name in SPECIAL_REGS}
     }
-    translate_graph_from_block(start_node, start_reg)
+    translate_graph_from_block(start_node, start_reg, stack_info)
     return flow_graph
 

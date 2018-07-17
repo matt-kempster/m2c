@@ -55,17 +55,25 @@ def write_conditional_subgraph(
         with write_if(if_condition, indent):
             write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
     else:
-        if_condition = if_block_info.branch_condition
-        # We know for sure that the conditional_edge is written as an if-
-        # statement.
-        with write_if(if_condition, indent):
-            write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
-        # If our fallthrough_edge is "real", then we have to write its contents
-        # as an else statement.
         if start.fallthrough_edge != end:
-            else_block = start.fallthrough_edge.block
-            with write_else(indent):
-                write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+            # Both an if and an else block are present. We should write them in
+            # chronological order (based on the original MIPS file).
+            if_condition = if_block_info.branch_condition
+            if start.conditional_edge.block.index < start.fallthrough_edge.block.index:
+                with write_if(if_condition, indent):
+                    write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+                with write_else(indent):
+                    write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+            else:
+                with write_if(UnaryOp(op='!', expr=if_condition), indent):
+                    write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+                with write_else(indent):
+                    write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+        else:
+            # Only an if block, so this is easy.
+            if_condition = if_block_info.branch_condition
+            with write_if(if_condition, indent):
+                write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
 
 reachable_without: Dict[typing.Tuple[int, int, int], bool] = {}
 
