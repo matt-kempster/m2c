@@ -133,6 +133,32 @@ class BinaryOp:
     op: str = attr.ib()
     right = attr.ib()
 
+    def is_boolean(self):
+        return self.op in ['==', '!=', '>', '<', '>=', '<=']
+
+    def negated(self) -> 'BinaryOp':
+        assert self.is_boolean()
+        return BinaryOp(
+            left=self.left,
+            op={
+                '==': '!=',
+                '!=': '==',
+                '>' : '<=',
+                '<' : '>=',
+                '>=':  '<',
+                '<=':  '>',
+            }[self.op],
+            right=self.right
+        )
+
+    def simplify(self) -> 'BinaryOp':
+        if isinstance(self.left, BinaryOp) and self.right == NumberLiteral(0):
+            if self.op == '==':
+                return self.left.negated().simplify()
+            elif self.op == '!=':
+                return self.left.simplify()
+        return self
+
     def __str__(self):
         return f'({self.left} {self.op} {self.right})'
 
@@ -214,8 +240,11 @@ class SubroutineArg:
 def deref(arg, reg, stack_info: StackInfo):
     if isinstance(arg, AddressMode):
         assert isinstance(arg.rhs, Register)
-        assert isinstance(arg.lhs, NumberLiteral)  # macros were removed
-        location = arg.lhs.value
+        if arg.lhs is None:
+            location = 0
+        else:
+            assert isinstance(arg.lhs, NumberLiteral)  # macros were removed
+            location = arg.lhs.value
         if arg.rhs.register_name == 'sp':
             # This is either a local variable or an argument.
             if stack_info.in_local_var_region(location):
@@ -504,7 +533,7 @@ def translate_block_body(
             if mnemonic == 'bc1t':
                 branch_condition = reg[Register('condition_bit')]
             elif mnemonic == 'bc1f':
-                branch_condition = UnaryOp(op='!', expr=reg[Register('condition_bit')])
+                branch_condition = reg[Register('condition_bit')].negated()
 
         elif mnemonic in cases_jumps:
             result = cases_jumps[mnemonic](instr.args)

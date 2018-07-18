@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+# from contextlib import contextmanager
 import queue
 
 import typing
@@ -9,33 +9,66 @@ from flow_graph import *
 from parse_file import *
 from translate import *
 
-@contextmanager
-def write_if(condition, indent):
-    space = ' ' * indent
-    print(f'{space}if ({str(condition)})')  # TODO: need str() call?
-    print(f'{space}{{')
-    yield
-    print(f'{space}}}')
+@attr.s
+class IfElseStatement:
+    condition = attr.ib()
+    indent: int = attr.ib()
+    if_body = attr.ib()
+    else_body = attr.ib(default=None)
 
-@contextmanager
-def write_else(indent):
-    space = ' ' * indent
-    print(f'{space}else')
-    print(f'{space}{{')
-    yield
-    print(f'{space}}}')
+    def __str__(self):
+        space = ' ' * self.indent
+        if_str = '\n'.join([
+            f'{space}if ({(self.condition.simplify())})',
+            f'{space}{{',
+            str(self.if_body),  # has its own indentation
+            f'{space}}}',
+        ])
+        if self.else_body is not None:
+            else_str = '\n'.join([
+                f'{space}else',
+                f'{space}{{',
+                str(self.else_body),
+                f'{space}}}',
+            ])
+            if_str = if_str + '\n' + else_str
+        return if_str
+
+@attr.s
+class Statement:
+    indent: int = attr.ib()
+    contents = attr.ib()
+    is_comment: bool = attr.ib(default=False)
+
+    def __str__(self):
+        return f'{" " * self.indent}{self.contents}{"" if self.is_comment else ";"}'
+
+@attr.s
+class Body:
+    statements: List[Union[Statement, IfElseStatement]] = attr.ib(factory=list)
+
+    def add_node(self, node: Node, indent: int):
+        # Add node header comment
+        self.statements.append(
+            Statement(indent, f'// Node {node.block.index}', is_comment=True))
+        # Add node contents
+        assert node.block.block_info is not None
+        for item in node.block.block_info.to_write:
+            self.statements.append(Statement(indent, str(item)))
+
+    def add_statement(self, statement: Statement):
+        self.statements.append(statement)
+
+    def add_if_else(self, if_else: IfElseStatement):
+        self.statements.append(if_else)
+
+    def __str__(self):
+        return '\n'.join([str(statement) for statement in self.statements])
 
 
-def write_node(node: Node, indent: int):
-    assert node.block.block_info is not None
-    print(f'{" " * indent}// Node {node.block.index}')
-    for item in node.block.block_info.to_write:
-        print(f'{" " * indent}{item};')
-
-
-def write_conditional_subgraph(
+def build_conditional_subgraph(
     flow: FlowGraph, start: ConditionalNode, end: Node, indent: int
-) -> None:
+) -> IfElseStatement:
     """
     Output the subgraph between "start" and "end" at indent level "indent",
     given that "start" is a ConditionalNode; this program will intelligently
@@ -46,35 +79,32 @@ def write_conditional_subgraph(
 
     # If one of the output edges is the end, it's a "fake" if-statement. That
     # is, it actually just resides one indentation level above the start node.
+    else_body = None
     if start.conditional_edge == end:
         assert start.fallthrough_edge != end  # otherwise two edges point to one node
-        if_condition = UnaryOp(op='!', expr=if_block_info.branch_condition)
         # If the conditional edge isn't real, then the "fallthrough_edge" is
         # actually within the inner if-statement. This means we have to negate
         # the fallthrough edge and go down that path.
-        with write_if(if_condition, indent):
-            write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+        if_condition = if_block_info.branch_condition.negated()
+        if_body = build_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+    elif start.fallthrough_edge == end:
+        # Only an if block, so this is easy.
+        # I think this can only happen in the case where the other branch has
+        # an early return.
+        if_condition = if_block_info.branch_condition
+        if_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
     else:
-        if start.fallthrough_edge != end:
-            # Both an if and an else block are present. We should write them in
-            # chronological order (based on the original MIPS file).
-            if_condition = if_block_info.branch_condition
-            if start.conditional_edge.block.index < start.fallthrough_edge.block.index:
-                with write_if(if_condition, indent):
-                    write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
-                with write_else(indent):
-                    write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
-            else:
-                with write_if(UnaryOp(op='!', expr=if_condition), indent):
-                    write_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
-                with write_else(indent):
-                    write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
-        else:
-            # Only an if block, so this is easy.
-            if_condition = if_block_info.branch_condition
-            with write_if(if_condition, indent):
-                write_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+        # Both an if and an else block are present. We should write them in
+        # chronological order (based on the original MIPS file). The
+        # fallthrough edge will always be first, so write it that way.
+        if_condition = if_block_info.branch_condition.negated()
+        if_body = build_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+        else_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
 
+    return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body)
+
+# TODO: Make sure this memoizing dictionary is not used incorrectly, i.e.
+# between analyzing different functions. It should likely be scoped differently.
 reachable_without: Dict[typing.Tuple[int, int, int], bool] = {}
 
 def end_reachable_without(flow: FlowGraph, start, end, without):
@@ -118,15 +148,11 @@ def end_reachable_without(flow: FlowGraph, start, end, without):
     reachable_without[trip] = ret
     return ret
 
-immpdom: Dict[int, Node] = {}
-
 def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
     """
     Find the immediate postdominator of "start", where "end" is an exit node
     from the control flow graph.
     """
-    if start.block.index in immpdom:
-        return immpdom[start.block.index]
     stack: List[Node] = []
     postdominators: List[Node] = []
     stack.append(start)
@@ -149,13 +175,12 @@ def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
     assert postdominators  # at least "end" should be a postdominator
     # Get the earliest postdominator
     postdominators.sort(key=lambda node: node.block.index)
-    immpdom[start.block.index] = postdominators[0]
     return postdominators[0]
 
 
-def write_flowgraph_between(
+def build_flowgraph_between(
     flow: FlowGraph, start: Node, end: Node, indent: int
-) -> None:
+) -> Body:
     """
     Output a section of a flow graph that has already been translated to our
     symbolic AST. All nodes between start and end, including start but NOT end,
@@ -163,6 +188,7 @@ def write_flowgraph_between(
     level of indentation.
     """
     curr_start = start
+    body = Body()
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
@@ -174,15 +200,15 @@ def write_flowgraph_between(
         assert not isinstance(curr_start, ReturnNode)
 
         # Write the current node.
-        write_node(curr_start, indent)
+        body.add_node(curr_start, indent)
 
         if isinstance(curr_start, BasicNode):
             # In a BasicNode, the successor is the next articulation node,
             # unless the node is trying to prematurely return, in which case
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
-                print(f'{" " * indent}return;')
-                return
+                body.add_statement(Statement(indent, 'return'))
+                break
             else:
                 curr_start = curr_start.successor
         elif isinstance(curr_start, ConditionalNode):
@@ -194,15 +220,22 @@ def write_flowgraph_between(
             # We also need to handle the if-else block here; this does the
             # outputting of the subgraph between curr_start and the next
             # articulation node.
-            write_conditional_subgraph(flow, curr_start, curr_end, indent)
+            body.add_if_else(
+                build_conditional_subgraph(flow, curr_start, curr_end, indent))
             # Move on.
             curr_start = curr_end
+    return body
 
 def write_flowgraph(flow_graph: FlowGraph) -> None:
+    global reachable_without  # TODO: global variables are bad, this is temporary
+
+    reachable_without = {}
     start_node: Node = flow_graph.nodes[0]
     return_node: Node = flow_graph.nodes[-1]
     assert isinstance(return_node, ReturnNode)
 
     print("Here's the whole function!\n")
-    write_flowgraph_between(flow_graph, start_node, return_node, 0)
-    write_node(return_node, 0)  # this node is not printed in the above routine
+    body: Body = build_flowgraph_between(flow_graph, start_node, return_node, 0)
+    body.add_node(return_node, 0)  # this node is not created in the above routine
+
+    print(body)
