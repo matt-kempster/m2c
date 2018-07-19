@@ -152,7 +152,9 @@ class BinaryOp:
         )
 
     def simplify(self) -> 'BinaryOp':
-        if isinstance(self.left, BinaryOp) and self.right == NumberLiteral(0):
+        if (isinstance(self.left, BinaryOp) and
+            self.left.is_boolean()          and
+            self.right == NumberLiteral(0)):
             if self.op == '==':
                 return self.left.negated().simplify()
             elif self.op == '!=':
@@ -189,7 +191,7 @@ class FuncCall:
     args: List[Any] = attr.ib()
 
     def __str__(self):
-        return f'{self.func_name}({",".join(str(arg) for arg in self.args)})'
+        return f'{self.func_name}({", ".join(str(arg) for arg in self.args)})'
 
 
 def strip_macros(arg):
@@ -291,7 +293,7 @@ def handle_ori(args, reg):
         return args[1].lhs
     else:
         # Regular bitwise OR.
-        return BinaryOp(left=reg[args[0]], op='<', right=args[1])
+        return BinaryOp(left=reg[args[0]], op='|', right=args[1])
 
 def handle_addi(args, reg):
     if len(args) == 2:
