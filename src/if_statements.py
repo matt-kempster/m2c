@@ -234,16 +234,21 @@ def build_flowgraph_between(
             curr_start = curr_end
     return body
 
-def write_flowgraph(flow_graph: FlowGraph) -> None:
+def write_function(function_info: FunctionInfo) -> None:
     global reachable_without  # TODO: global variables are bad, this is temporary
 
     reachable_without = {}
+    flow_graph = function_info.flow_graph
     start_node: Node = flow_graph.nodes[0]
     return_node: Node = flow_graph.nodes[-1]
     assert isinstance(return_node, ReturnNode)
 
     print("Here's the whole function!\n")
-    body: Body = build_flowgraph_between(flow_graph, start_node, return_node, 0)
-    body.add_node(return_node, 0)  # this node is not created in the above routine
+    body: Body = build_flowgraph_between(flow_graph, start_node, return_node, 4)
+    body.add_node(return_node, 4)  # this node is not created in the above routine
 
+    print(f'{function_info.stack_info.function.name}(...) {{')
+    for local_var in function_info.stack_info.local_vars:
+        print(f'    (???) {local_var};')
     print(body)
+    print('}')

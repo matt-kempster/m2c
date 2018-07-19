@@ -22,6 +22,7 @@ class StackInfo:
     local_vars_region_bottom: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(default={})
+    local_vars: List['LocalVar'] = attr.ib(default=[])
 
     def in_subroutine_arg_region(self, location: int) -> bool:
         assert not self.is_leaf
@@ -38,6 +39,9 @@ class StackInfo:
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
+
+    def add_local_var(self, var: 'LocalVar'):
+        self.local_vars.append(var)
 
     def __str__(self):
         return '\n'.join([
@@ -209,7 +213,7 @@ def format_hex(val: int):
 @attr.s
 class LocalVar:
     value: int = attr.ib()
-    # type?
+    # TODO: Definitely need type
 
     def __str__(self):
         return f'sp{format_hex(self.value)}'
@@ -494,6 +498,7 @@ def translate_block_body(
     }
 
     to_write: List[Union[Store, FuncCall]] = []
+    subroutine_args: List[Store] = []
     branch_condition: Optional[Any] = None
     for instr in block.instructions:
         assert reg[Register('zero')] == NumberLiteral(0)  # sanity check
@@ -509,15 +514,21 @@ def translate_block_body(
         # HACK: Remove any %hi(...) or %lo(...) macros; we will just put the
         # full value into each intermediate register, because this really
         # doesn't affect program behavior almost ever.
-        instr = Instruction(
-            mnemonic, list(map(strip_macros, instr.args))
-        )
+        instr = Instruction(mnemonic, list(map(strip_macros, instr.args)))
 
         # Figure out what code to generate!
         if mnemonic in cases_source_first_expression:
             # Store a value in a permanent place.
             to_store = cases_source_first_expression[mnemonic](instr.args)
-            if to_store is not None:
+            if to_store is not None and isinstance(to_store.dest, SubroutineArg):
+                # About to call a subroutine with this argument.
+                subroutine_args.append(to_store)
+            elif to_store is not None:
+                if (isinstance(to_store.dest, LocalVar) and
+                    to_store.dest not in stack_info.local_vars):
+                    # Keep track of all local variables.
+                    stack_info.add_local_var(to_store.dest)
+                # This needs to be written out.
                 to_write.append(to_store)
 
         elif mnemonic in cases_source_first_register:
@@ -550,9 +561,16 @@ def translate_block_body(
                 assert isinstance(instr.args[0], GlobalSymbol)
                 func_args = []
                 for register in map(Register, ['a0', 'a1', 'a2', 'a3']):
-                    if register in reg:
+                    # The latter check verifies that the register is not a
+                    # placeholder.
+                    if register in reg and reg[register] != GlobalSymbol(register.register_name):
                         func_args.append(reg[register])
-                # TODO: Add further func_args!
+                # Add the arguments after a3.
+                subroutine_args.sort(key=lambda a: a.dest.value)
+                for arg in subroutine_args:
+                    func_args.append(arg.source)
+                # Reset subroutine_args, for the next potential function call.
+                subroutine_args = []
 
                 call = FuncCall(instr.args[0].symbol_name, func_args)
                 # TODO: It doesn't make sense to put this function call in
@@ -618,8 +636,12 @@ def translate_graph_from_block(
     else:
         assert isinstance(node, ReturnNode)
 
+@attr.s
+class FunctionInfo:
+    stack_info: StackInfo = attr.ib()
+    flow_graph: FlowGraph = attr.ib()
 
-def translate_to_ast(function: Function) -> FlowGraph:
+def translate_to_ast(function: Function) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
     information and has AST transformations for each block of code and
@@ -640,5 +662,5 @@ def translate_to_ast(function: Function) -> FlowGraph:
         **{Register(name): GlobalSymbol(name) for name in SPECIAL_REGS}
     }
     translate_graph_from_block(start_node, start_reg, stack_info)
-    return flow_graph
+    return FunctionInfo(stack_info, flow_graph)
 
