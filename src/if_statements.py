@@ -129,7 +129,15 @@ def end_reachable_without(flow: FlowGraph, start, end, without):
             # always end up as the return node.
             is_premature_return = (
                 start.successor == flow.nodes[-1] and
-                start.block.index != flow.nodes[-1].block.index - 1
+                # You'd think a premature return would actually be the block
+                # with index = (end_index - 1). That is:
+                #       start.block.index != flow.nodes[-1].block.index - 1
+                # However, this is not so; some functions have a dead
+                # penultimate block with a superfluous unreachable return. The
+                # way around this is to just check whether this is the
+                # penultimate block, not by index, but by position in the flow
+                # graph list:
+                start != flow.nodes[-2]
             )
             ret = (start.successor != without and
                     not is_premature_return and
