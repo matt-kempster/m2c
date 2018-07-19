@@ -137,7 +137,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             assert value is None
             value = NumberLiteral(parse_number(arg_elems))
         elif tok == '(':
-            # Address mode.
+            # Address mode or binary operation.
             # There was possibly an offset, so value could be a NumberLiteral or Macro.
             assert value is None or isinstance(value, (NumberLiteral, Macro))
             expect('(')
@@ -145,7 +145,12 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             rhs = parse_arg_elems(arg_elems)
             assert rhs is not None
             expect(')')
-            value = AddressMode(value, rhs)
+            if isinstance(rhs, BinOp):
+                # Binary operation.
+                return rhs
+            else:
+                # Address mode.
+                value = AddressMode(value, rhs)
         elif tok in valid_word:
             # Global symbol.
             assert value is None
