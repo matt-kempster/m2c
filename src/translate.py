@@ -10,6 +10,7 @@ from parse_file import *
 
 SPECIAL_REGS = [
     'a0', 'a1', 'a2', 'a3',
+    'f12', 'f14',
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
     'ra'
 ]
@@ -560,7 +561,7 @@ def translate_block_body(
                 assert mnemonic == 'jal'
                 assert isinstance(instr.args[0], GlobalSymbol)
                 func_args = []
-                for register in map(Register, ['a0', 'a1', 'a2', 'a3']):
+                for register in map(Register, ['f12', 'f14', 'a0', 'a1', 'a2', 'a3']):
                     # The latter check verifies that the register is not a
                     # placeholder.
                     if register in reg and reg[register] != GlobalSymbol(register.register_name):
