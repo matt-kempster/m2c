@@ -608,6 +608,11 @@ def translate_block_body(
                 # to do. (TODO: handle it...)
                 reg[Register('f0')] = call
                 reg[Register('v0')] = call
+                # Clear out the argument registers so they don't get passed
+                # into the next function.
+                for register in map(Register, ['f12', 'f14', 'a0', 'a1', 'a2', 'a3']):
+                    if register in reg:
+                        del reg[register]
 
         elif mnemonic in cases_float_comp:
             reg[Register('condition_bit')] = cases_float_comp[mnemonic](instr.args)
