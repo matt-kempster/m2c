@@ -216,6 +216,16 @@ def build_flowgraph_between(
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
                 body.add_statement(Statement(indent, 'return'))
+                ret_info = curr_start.successor.block.block_info
+                if ret_info and Register('v0') in ret_info.final_register_states:
+                    ret = ret_info.final_register_states[Register('v0')]
+                    body.add_statement(
+                        Statement(indent, f'// (possible return value: {ret})',
+                                  is_comment=True))
+                else:
+                    body.add_statement(
+                        Statement(indent, '// (function likely void)',
+                                  is_comment=True))
                 break
             else:
                 curr_start = curr_start.successor
