@@ -344,6 +344,28 @@ def make_store(args, reg, stack_info: StackInfo, size: int, float=False):
             size, source=reg[args[0]], dest=deref(args[1], reg, stack_info), float=float
         )
 
+def convert_to_float(num: int):
+    rep =  f'{num:032b}'  # zero-padded binary representation of num
+    dec = lambda x: int(x, 2)  # integer value for num
+    sign = dec(rep[0])
+    expo = dec(rep[1:9])
+    frac = dec(rep[9:])
+    return ((-1) ** sign) * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1)
+
+@attr.s
+class FloatLiteral:
+    val: float = attr.ib()
+
+    def __str__(self):
+        return str(self.val)
+
+def handle_mtc1(source):
+    if isinstance(source, NumberLiteral):
+        return FloatLiteral(convert_to_float(source.value))
+    else:
+        return source
+
+
 def translate_block_body(
     block: Block, reg: Dict[Register, Any], stack_info: StackInfo
 ) -> BlockInfo:
@@ -362,7 +384,8 @@ def translate_block_body(
     }
     cases_source_first_register = {
         # Floating point moving instruction
-        'mtc1': lambda a: TypeHint(type='f32', value=reg[a[0]]),
+        #'mtc1': lambda a: TypeHint(type='f32', value=reg[a[0]]),
+        'mtc1': lambda a: handle_mtc1(reg[a[0]]),
     }
     cases_branches = {  # TODO! These are wrong.
         # Branch instructions/pseudoinstructions
