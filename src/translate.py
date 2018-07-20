@@ -43,6 +43,8 @@ class StackInfo:
 
     def add_local_var(self, var: 'LocalVar'):
         self.local_vars.append(var)
+        # Make sure the local vars stay sorted in order on the stack.
+        self.local_vars.sort(key=lambda v: v.value)
 
     def __str__(self):
         return '\n'.join([
@@ -308,8 +310,8 @@ def handle_addi(args, reg):
     elif args[1].register_name == 'sp':
         # Adding to sp, i.e. passing an address.
         assert isinstance(args[2], NumberLiteral)
-        #return UnaryOp(op='&', expr=LocalVar(args[2]))
-        return UnaryOp(op='&', expr=AddressMode(lhs=args[2], rhs=Register('sp')))
+        return UnaryOp(op='&', expr=LocalVar(args[2].value))
+        #return UnaryOp(op='&', expr=AddressMode(lhs=args[2], rhs=Register('sp')))
     else:
         # Regular binary addition.
         return BinaryOp(left=reg[args[1]], op='+', right=args[2])
@@ -589,7 +591,15 @@ def translate_block_body(
 
         elif mnemonic in cases_special:
             assert isinstance(instr.args[0], Register)
-            reg[instr.args[0]] = cases_special[mnemonic](instr.args)
+            res = cases_special[mnemonic](instr.args)
+            if (instr.args[0].register_name != 'sp' and
+                isinstance(res, UnaryOp) and
+                isinstance(res.expr, LocalVar) and
+                res.expr not in stack_info.local_vars):
+                # Keep track of all local variables.
+                stack_info.add_local_var(res.expr)
+
+            reg[instr.args[0]] = res
 
         elif mnemonic in cases_div:
             reg[Register('hi')], reg[Register('lo')] = cases_div[mnemonic](instr.args)
