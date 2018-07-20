@@ -345,6 +345,8 @@ def make_store(args, reg, stack_info: StackInfo, size: int, float=False):
         )
 
 def convert_to_float(num: int):
+    if num == 0:
+        return 0.0
     rep =  f'{num:032b}'  # zero-padded binary representation of num
     dec = lambda x: int(x, 2)  # integer value for num
     sign = dec(rep[0])
