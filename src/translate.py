@@ -12,7 +12,8 @@ SPECIAL_REGS = [
     'a0', 'a1', 'a2', 'a3',
     'f12', 'f14',
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
-    'ra'
+    'ra',
+    '31'
 ]
 
 @attr.s
@@ -523,6 +524,9 @@ def translate_block_body(
         # Flag setting.
         'sltiu': 'slti',
         'sltu': 'slt',
+        # FCSR-using instructions
+        'ctc1': 'mtc1',
+        'cfc1': 'mfc1',
     }
 
     to_write: List[Union[Store, FuncCall]] = []
@@ -704,4 +708,3 @@ def translate_to_ast(function: Function) -> FunctionInfo:
     }
     translate_graph_from_block(start_node, start_reg, stack_info)
     return FunctionInfo(stack_info, flow_graph)
-
