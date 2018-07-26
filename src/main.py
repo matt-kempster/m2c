@@ -3,7 +3,7 @@ import sys
 import typing
 from typing import List, Union, Iterator, Optional, Dict, Callable, Any
 
-from flow_graph import *
+from flow_graph import build_callgraph, visualize_callgraph
 from parse_file import parse_file
 from translate import translate_to_ast
 from if_statements import write_function

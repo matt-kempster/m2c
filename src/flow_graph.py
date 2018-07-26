@@ -229,10 +229,10 @@ def visualize_callgraph(flow_graph: FlowGraph):
     for node in flow_graph.nodes:
         dot.node(str(node.block.index))
         if isinstance(node, BasicNode):
-            dot.edge(str(node.block.index), str(node.successor.block.index))
+            dot.edge(str(node.block.index), str(node.successor.block.index), color='green')
         elif isinstance(node, ConditionalNode):
-            dot.edge(str(node.block.index), str(node.fallthrough_edge.block.index))
-            dot.edge(str(node.block.index), str(node.conditional_edge.block.index))
+            dot.edge(str(node.block.index), str(node.fallthrough_edge.block.index), color='blue')
+            dot.edge(str(node.block.index), str(node.conditional_edge.block.index), color='red')
         else:
             pass
     dot.render('graphviz_render.gv')
