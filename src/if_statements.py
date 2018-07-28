@@ -94,12 +94,18 @@ def build_conditional_subgraph(
         if_condition = if_block_info.branch_condition
         if_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
     else:
-        # Both an if and an else block are present. We should write them in
-        # chronological order (based on the original MIPS file). The
-        # fallthrough edge will always be first, so write it that way.
-        if_condition = if_block_info.branch_condition.negated()
-        if_body = build_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
-        else_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+        # We need to see if this is a compound if-statement, i.e. containing
+        # && or ||.
+        conds = get_number_of_if_conditions(flow, start, end)
+        if conds < 2:  # normal if-statement
+            # Both an if and an else block are present. We should write them in
+            # chronological order (based on the original MIPS file). The
+            # fallthrough edge will always be first, so write it that way.
+            if_condition = if_block_info.branch_condition.negated()
+            if_body = build_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+            else_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+        else:  # multiple conditions in if-statement
+            return get_full_if_condition(flow, conds, start, end, indent)
 
     return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body)
 
@@ -185,6 +191,97 @@ def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
     postdominators.sort(key=lambda node: node.block.index)
     return postdominators[0]
 
+
+def count_non_postdominated_parents(flow, child, curr_end):
+    """
+    Return the number of parents of "child" for whom "child" is NOT their
+    immediate postdominator. This is useful for finding nodes that would be
+    printed more than once under naive assumptions, i.e. if-conditions that
+    contain multiple predicates in the form of && or ||.
+    """
+    count = 0
+    for parent in child.parents:
+        if immediate_postdominator(flow, parent, curr_end) != child:
+            count += 1
+    # Either all this node's parents are immediately postdominated by it,
+    # or none of them are. To be honest, I don't have much evidence for
+    # this assertion, but if it fails, then the output of && and || will
+    # likely be incorrect. (A suitable TODO, perhaps, is to prove this
+    # mathematically.)
+    assert count in [0, len(child.parents)]
+    return count
+
+
+def get_number_of_if_conditions(flow, node, curr_end):
+    """
+    For a given ConditionalNode, this function will return k when the if-
+    statement of the correspondant C code is "if (1 && 2 && ... && k)" or
+    "if (1 || 2 || ... || k)", where the numbers are labels for clauses.
+    (It remains unclear how a predicate that mixes && and || would behave.)
+    """
+    count1, count2 = map(
+        lambda child: count_non_postdominated_parents(flow, child, curr_end),
+        [node.conditional_edge, node.fallthrough_edge]
+    )
+    # Return the nonzero count; the predicates will go through that path.
+    # (TODO: I have a theory that we can just return count2 here.)
+    if count1 != 0:
+        return count1
+    else:
+        return count2
+
+def join_conditions(conditions, op: str, only_negate_last: bool):
+    assert op in ['&&', '||']
+    final_cond = None
+    for cond in conditions:
+        if not only_negate_last:
+            cond = cond.negated()
+        if final_cond is None:
+            final_cond = cond
+        else:
+            final_cond = BinaryOp(final_cond, op, cond)
+    if only_negate_last and final_cond is not None:
+        final_cond.right = final_cond.right.negated()
+    return final_cond
+
+def get_full_if_condition(flow, count, start, curr_end, indent):
+    curr_node = start
+    prev_node = None
+    conditions = []
+    # Get every condition.
+    while count > 0:
+        conditions.append(curr_node.block.block_info.branch_condition)
+        prev_node = curr_node
+        curr_node = curr_node.fallthrough_edge
+        count -= 1
+    # At the end, if we end up at the conditional-edge after the very start,
+    # then we know this was an || statement - if the start condition were true,
+    # we would have skipped ahead to the body.
+    if curr_node == start.conditional_edge:
+        return IfElseStatement(
+            # Negate the last condition, for it must fall-through to the
+            # body instead of jumping to it, hence it must jump OVER the body.
+            join_conditions(conditions, '||', only_negate_last=True),
+            indent,
+            if_body=build_flowgraph_between(
+                flow, start.conditional_edge, curr_end, indent + 4),
+            # The else-body is wherever the code jumps to instead of the
+            # fallthrough (i.e. if-body).
+            else_body=build_flowgraph_between(
+                flow, prev_node.conditional_edge, curr_end, indent + 4)
+        )
+    # Otherwise, we have an && statement.
+    else:
+        return IfElseStatement(
+            # We negate everything, because the conditional edges will jump
+            # OVER the if body.
+            join_conditions(conditions, '&&', only_negate_last=False),
+            indent,
+            if_body=build_flowgraph_between(
+                flow, curr_node, curr_end, indent + 4),
+            else_body=build_flowgraph_between(
+                flow, start.conditional_edge, curr_end, indent + 4)
+        )
 
 def build_flowgraph_between(
     flow: FlowGraph, start: Node, end: Node, indent: int
