@@ -92,6 +92,10 @@ def is_loop_edge(node: 'Node', edge: 'Node'):
 class BasicNode:
     block: Block = attr.ib()
     successor: 'Node' = attr.ib()
+    parents: List['Node'] = attr.ib(factory=list)
+
+    def add_parent(self, parent: 'Node'):
+        self.parents.append(parent)
 
     def is_loop(self):
         return is_loop_edge(self, self.successor)
@@ -108,6 +112,10 @@ class ConditionalNode:
     block: Block = attr.ib()
     conditional_edge: 'Node' = attr.ib()  # forward-declare types
     fallthrough_edge: 'Node' = attr.ib()
+    parents: List['Node'] = attr.ib(factory=list)
+
+    def add_parent(self, parent: 'Node'):
+        self.parents.append(parent)
 
     def is_loop(self):
         return is_loop_edge(self, self.conditional_edge)
@@ -125,6 +133,10 @@ class ConditionalNode:
 @attr.s(frozen=True)
 class ReturnNode:
     block: Block = attr.ib()
+    parents: List['Node'] = attr.ib(factory=list)
+
+    def add_parent(self, parent: 'Node'):
+        self.parents.append(parent)
 
     def __str__(self):
         return f'{self.block}\n# {self.block.index} -> ret'
@@ -162,6 +174,8 @@ def build_graph_from_block(
         # Recursively analyze.
         successor = build_graph_from_block(successor_block, blocks, nodes)
         new_node = BasicNode(block, successor)
+        # Keep track of parents.
+        successor.add_parent(new_node)
     elif len(branches) == 1:
         # There is a branch, so emit a ConditionalNode.
         branch = branches[0]
@@ -180,6 +194,8 @@ def build_graph_from_block(
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, branch_node)
+            # Keep track of parents.
+            branch_node.add_parent(new_node)
         else:
             # A conditional branch means the fallthrough block is the next block.
             assert len(blocks) > block.index + 1
@@ -187,6 +203,9 @@ def build_graph_from_block(
             # Recursively analyze this too.
             fallthrough_node = build_graph_from_block(fallthrough_block, blocks, nodes)
             new_node = ConditionalNode(block, branch_node, fallthrough_node)
+            branch_node.add_parent(new_node)
+            # Keep track of parents.
+            fallthrough_node.add_parent(new_node)
 
     assert new_node is not None
 
