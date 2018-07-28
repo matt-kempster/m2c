@@ -7,7 +7,7 @@ Progress is still forthcoming. Here is a list of things that need to be done:
 - [x] Fix subroutine argument passing
 - [x] Improve output for struct member access
 - [ ] Improve type-hint collection and output
-- [ ] Support float literals
+- [x] Support float literals
 - [ ] Support double operations
 - [ ] Support loops (currently the program will crash)
 - [ ] Support ternary operators/weird casts that cause blocks to conditionally modify registers
