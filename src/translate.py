@@ -519,11 +519,13 @@ def translate_block_body(
         # Single-precision float addition is the same as regular addition.
         'add.s': 'addu',
         'sub.s': 'subu',
+        'neg.s': 'negu',
         # TODO: Deal with doubles differently.
         'add.d': 'addu',
+        'sub.d': 'subu',
+        'neg.d': 'negu',
         'div.d': 'div.s',
         'mul.d': 'mul.s',
-        'sub.d': 'subu',
         # Casting (the above applies here too)
         'cvt.d.w': 'cvt.d.s',
         'cvt.s.w': 'cvt.s.d',
