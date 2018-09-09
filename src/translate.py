@@ -75,7 +75,6 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
         elif inst.mnemonic == 'sw' and destination.register_name == 'ra':
             # Saving the return address on the stack.
             assert isinstance(inst.args[1], AddressMode)
-            assert isinstance(inst.args[1].rhs, Register)
             assert inst.args[1].rhs.register_name == 'sp'
             info.is_leaf = False
             if inst.args[1].lhs:
@@ -88,7 +87,6 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
         elif (inst.mnemonic == 'sw' and
               destination.is_callee_save() and
               isinstance(inst.args[1], AddressMode) and
-              isinstance(inst.args[1].rhs, Register) and
               inst.args[1].rhs.register_name == 'sp'):
             # Initial saving of callee-save register onto the stack.
             assert isinstance(inst.args[1].rhs, Register)
@@ -249,7 +247,6 @@ class SubroutineArg:
 
 def deref(arg, reg, stack_info: StackInfo):
     if isinstance(arg, AddressMode):
-        assert isinstance(arg.rhs, Register)
         if arg.lhs is None:
             location = 0
         else:
