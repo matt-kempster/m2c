@@ -333,7 +333,7 @@ class BlockInfo:
             f'To write: {newline.join(str(write) for write in self.to_write)}',
             f'Branch condition: {self.branch_condition}',
             f'Final register states: ' +
-            f'{[f"{k}: {v}" for k,v in self.final_register_states.items()]}'])
+            f'{[f"{k}: {v}" for k,v in sorted(self.final_register_states.items())]}'])
 
 
 def make_store(args, reg, stack_info: StackInfo, size: int, float=False):
