@@ -338,12 +338,14 @@ class BlockInfo:
 
 def make_store(args, reg, stack_info: StackInfo, size: int, float=False):
     assert isinstance(args[0], Register)
-    if args[0].register_name in SPECIAL_REGS:
+    if (args[0].register_name in SPECIAL_REGS and
+            isinstance(args[1], AddressMode) and
+            args[1].rhs.register_name == 'sp'):
+        # TODO: This isn't really right, but it helps get rid of some pointless stores.
         return None
-    else:
-        return Store(
-            size, source=reg[args[0]], dest=deref(args[1], reg, stack_info), float=float
-        )
+    return Store(
+        size, source=reg[args[0]], dest=deref(args[1], reg, stack_info), float=float
+    )
 
 def convert_to_float(num: int):
     if num == 0:
