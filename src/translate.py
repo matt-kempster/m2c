@@ -483,7 +483,9 @@ def translate_block_body(
         'andi': lambda a: BinaryOp(left=reg[a[1]], op='&',  right=a[2]),
         'xori': lambda a: BinaryOp(left=reg[a[1]], op='^',  right=a[2]),
         'sll': lambda a:  BinaryOp(left=reg[a[1]], op='<<', right=a[2]),
+        'sllv': lambda a:  BinaryOp(left=reg[a[1]], op='<<', right=reg[a[2]]),
         'srl': lambda a:  BinaryOp(left=reg[a[1]], op='>>', right=a[2]),
+        'srlv': lambda a:  BinaryOp(left=reg[a[1]], op='>>', right=reg[a[2]]),
         # Move pseudoinstruction
         'move': lambda a: reg[a[1]],
         # Floating point moving instructions
@@ -530,8 +532,9 @@ def translate_block_body(
         'c.lt.d': 'c.lt.s',
         'c.eq.d': 'c.eq.s',
         'c.le.d': 'c.le.s',
-        # Right-shifting.
+        # Arithmetic right-shifting (TODO: type cast correctly)
         'sra': 'srl',
+        'srav': 'srlv',
         # Flag setting.
         'sltiu': 'slti',
         'sltu': 'slt',
