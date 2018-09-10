@@ -26,8 +26,8 @@ class StackInfo:
     is_leaf: bool = attr.ib(default=True)
     local_vars_region_bottom: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
-    callee_save_reg_locations: Dict[Register, int] = attr.ib(default={})
-    local_vars: List['LocalVar'] = attr.ib(default=[])
+    callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
+    local_vars: List['LocalVar'] = attr.ib(factory=list)
 
     def in_subroutine_arg_region(self, location: int) -> bool:
         assert not self.is_leaf
