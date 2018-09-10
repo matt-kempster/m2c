@@ -16,6 +16,9 @@ SPECIAL_REGS = [
     '31'
 ]
 
+DEBUG = True
+IGNORE_ERRORS = False
+
 @attr.s
 class StackInfo:
     function: Function = attr.ib()
@@ -661,15 +664,20 @@ def translate_graph_from_block(
     if node.block.block_info is not None:
         return
 
-    print(f'\nNode in question: {node.block}')
+    if DEBUG:
+        print(f'\nNode in question: {node.block}')
 
     # Translate the given node and discover final register states.
     try:
         block_info = translate_block_body(node.block, reg, stack_info)
-        print(block_info)
-    except Exception as _:
-        traceback.print_exc()
-        block_info = BlockInfo([], None, {})  # TODO: handle issues
+        if DEBUG:
+            print(block_info)
+    except Exception as e:
+        if IGNORE_ERRORS:
+            traceback.print_exc()
+            block_info = BlockInfo([], None, {})  # TODO: handle issues
+        else:
+            raise e
 
     node.block.add_block_info(block_info)
 
