@@ -2,7 +2,7 @@ import attr
 import traceback
 
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Any
+from typing import List, Union, Iterator, Optional, Dict, Callable, Tuple, Any
 
 from parse_instruction import *
 from flow_graph import *
@@ -117,8 +117,8 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
 @attr.s
 class Store:
     size: int = attr.ib()
-    source: Any = attr.ib()
-    dest: Any = attr.ib()
+    source: 'Expression' = attr.ib()
+    dest: 'Expression' = attr.ib()
     float: bool = attr.ib(default=False)
 
     def __str__(self):
@@ -128,7 +128,7 @@ class Store:
 @attr.s
 class TypeHint:
     type: str = attr.ib()
-    value: Any = attr.ib()
+    value: 'Expression' = attr.ib()
 
     def __str__(self):
         return f'{self.type}({self.value})'
@@ -194,13 +194,13 @@ class Return:
 @attr.s
 class FuncCall:
     func_name: str = attr.ib()
-    args: List[Any] = attr.ib()
+    args: List['Expression'] = attr.ib()
 
     def __str__(self):
         return f'{self.func_name}({", ".join(str(arg) for arg in self.args)})'
 
 
-def strip_macros(arg):
+def strip_macros(arg: Argument) -> Argument:
     if isinstance(arg, Macro):
         return arg.argument
     elif isinstance(arg, AddressMode) and isinstance(arg.lhs, Macro):
@@ -244,8 +244,22 @@ class SubroutineArg:
     def __str__(self):
         return f'subroutine_arg{format_hex(self.value)}'
 
+Expression = Union[
+    BinaryOp,
+    UnaryOp,
+    Cast,
+    FuncCall,
+    Register,
+    GlobalSymbol,
+    NumberLiteral,
+    LocalVar,
+    PassedInArg,
+    StructAccess,
+    SubroutineArg,
+]
 
-def deref(arg, reg, stack_info: StackInfo):
+
+def deref(arg: Argument, reg, stack_info: StackInfo) -> Expression:
     if isinstance(arg, AddressMode):
         if arg.lhs is None:
             location = 0
@@ -263,7 +277,7 @@ def deref(arg, reg, stack_info: StackInfo):
             else:
                 # Some annoying bookkeeping instruction. To avoid
                 # further special-casing, just return whatever - it won't matter.
-                return arg
+                return LocalVar(location)
         else:
             # Struct member is being dereferenced.
             return StructAccess(struct_var=reg[arg.rhs], offset=location)
@@ -275,44 +289,54 @@ def deref(arg, reg, stack_info: StackInfo):
         assert isinstance(arg, GlobalSymbol)
         return arg
 
+def literal_expr(arg: Argument) -> Expression:
+    if isinstance(arg, GlobalSymbol) or isinstance(arg, NumberLiteral):
+        return arg
+    assert isinstance(arg, BinOp)
+    return BinaryOp(left=literal_expr(arg.lhs), op=arg.op,
+            right=literal_expr(arg.rhs))
 
-def load_upper(args, reg):
+def load_upper(args: List[Argument], reg) -> Expression:
     if isinstance(args[1], BinOp):
         # Something like "lui REG (lhs >> 16)". Just take "lhs".
         assert args[1].op == '>>'
         assert args[1].rhs == NumberLiteral(16)
-        return args[1].lhs
+        return literal_expr(args[1].lhs)
     elif isinstance(args[1], NumberLiteral):
         # Something like "lui 0x1", meaning 0x10000. Shift left and return.
         return BinaryOp(left=args[1], op='<<', right=NumberLiteral(16))
     else:
         # Something like "lui REG %hi(arg)", but we got rid of the macro.
-        return args[1]
+        return literal_expr(args[1])
 
-def handle_ori(args, reg):
+def handle_ori(args: List[Argument], reg) -> Expression:
     if isinstance(args[1], BinOp):
         # Something like "ori REG (lhs & 0xFFFF)". We (hopefully) already
         # handled this above, but let's put lhs into this register too.
         assert args[1].op == '&'
         assert args[1].rhs == NumberLiteral(0xFFFF)
-        return args[1].lhs
+        return literal_expr(args[1].lhs)
     else:
         # Regular bitwise OR.
-        return BinaryOp(left=reg[args[0]], op='|', right=args[1])
+        assert isinstance(args[0], Register)
+        return BinaryOp(left=reg[args[0]], op='|', right=literal_expr(args[1]))
 
-def handle_addi(args, reg):
+def handle_addi(args: List[Argument], reg) -> Expression:
     if len(args) == 2:
         # Used to be "addi REG %lo(...)", but we got rid of the macro.
         # Return the former argument of the macro.
-        return args[1]
-    elif args[1].register_name == 'sp':
-        # Adding to sp, i.e. passing an address.
-        assert isinstance(args[2], NumberLiteral)
-        return UnaryOp(op='&', expr=LocalVar(args[2].value))
-        #return UnaryOp(op='&', expr=AddressMode(lhs=args[2], rhs=Register('sp')))
+        return literal_expr(args[1])
     else:
-        # Regular binary addition.
-        return BinaryOp(left=reg[args[1]], op='+', right=args[2])
+        assert len(args) == 3
+        assert isinstance(args[1], Register)
+        if args[1].register_name == 'sp':
+            # Adding to sp, i.e. passing an address.
+            assert isinstance(args[2], NumberLiteral)
+            return UnaryOp(op='&', expr=LocalVar(args[2].value))
+            #return UnaryOp(op='&', expr=AddressMode(lhs=args[2], rhs=Register('sp')))
+        else:
+            # Regular binary addition.
+            return BinaryOp(left=reg[args[1]], op='+', right=args[2])
 
 @attr.s
 class BlockInfo:
@@ -321,8 +345,8 @@ class BlockInfo:
     and block's final register states.
     """
     to_write: List[Union[Store, FuncCall]] = attr.ib()
-    branch_condition: Optional[Any] = attr.ib()
-    final_register_states: Dict[Register, Any] = attr.ib()
+    branch_condition: Optional[Expression] = attr.ib()
+    final_register_states: Dict[Register, Expression] = attr.ib()
 
     def __str__(self):
         newline = '\n\t'
@@ -333,7 +357,7 @@ class BlockInfo:
             f'{[f"{k}: {v}" for k,v in self.final_register_states.items()]}'])
 
 
-def make_store(args, reg, stack_info: StackInfo, size: int, float=False):
+def make_store(args: List[Argument], reg, stack_info: StackInfo, size: int, float=False):
     assert isinstance(args[0], Register)
     if args[0].register_name in SPECIAL_REGS:
         return None
@@ -367,7 +391,7 @@ def handle_mtc1(source):
 
 
 def translate_block_body(
-    block: Block, reg: Dict[Register, Any], stack_info: StackInfo
+    block: Block, reg: Dict[Register, Expression], stack_info: StackInfo
 ) -> BlockInfo:
     """
     Given a block and current register contents, return a BlockInfo containing
@@ -486,17 +510,6 @@ def translate_block_body(
         # 'lwc1': lambda a: TypeHint(type='f32', value=deref(a[1], reg, stack_info)),
         # 'ldc1': lambda a: TypeHint(type='f64', value=deref(a[1], reg, stack_info)),
     }
-    cases_uniques: Dict[str, Callable[[List[Argument]], Any]] = {
-        **cases_source_first_expression,
-        **cases_source_first_register,
-        **cases_branches,
-        **cases_float_branches,
-        **cases_jumps,
-        **cases_float_comp,
-        **cases_special,
-        **cases_hi_lo,
-        **cases_destination_first,
-    }
     cases_repeats = {
         # Addition and division, unsigned vs. signed, doesn't matter (?)
         'addiu': 'addi',
@@ -528,8 +541,8 @@ def translate_block_body(
     }
 
     to_write: List[Union[Store, FuncCall]] = []
-    subroutine_args: List[Store] = []
-    branch_condition: Optional[Any] = None
+    subroutine_args: List[Tuple[Expression, int]] = []
+    branch_condition: Optional[Expression] = None
     for instr in block.instructions:
         assert reg[Register('zero')] == NumberLiteral(0)  # sanity check
 
@@ -544,15 +557,15 @@ def translate_block_body(
         # HACK: Remove any %hi(...) or %lo(...) macros; we will just put the
         # full value into each intermediate register, because this really
         # doesn't affect program behavior almost ever.
-        instr = Instruction(mnemonic, list(map(strip_macros, instr.args)))
+        args = list(map(strip_macros, instr.args))
 
         # Figure out what code to generate!
         if mnemonic in cases_source_first_expression:
             # Store a value in a permanent place.
-            to_store = cases_source_first_expression[mnemonic](instr.args)
+            to_store = cases_source_first_expression[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
                 # About to call a subroutine with this argument.
-                subroutine_args.append(to_store)
+                subroutine_args.append((to_store.source, to_store.dest.value))
             elif to_store is not None:
                 if (isinstance(to_store.dest, LocalVar) and
                     to_store.dest not in stack_info.local_vars):
@@ -563,23 +576,25 @@ def translate_block_body(
 
         elif mnemonic in cases_source_first_register:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
-            assert isinstance(instr.args[1], Register)  # could also assert float register
-            reg[instr.args[1]] = cases_source_first_register[mnemonic](instr.args)
+            assert isinstance(args[1], Register)  # could also assert float register
+            reg[args[1]] = cases_source_first_register[mnemonic](args)
 
         elif mnemonic in cases_branches:
             assert branch_condition is None
-            branch_condition = cases_branches[mnemonic](instr.args)
+            branch_condition = cases_branches[mnemonic](args)
 
         elif mnemonic in cases_float_branches:
             assert branch_condition is None
             assert Register('condition_bit') in reg
+            cond_bit = reg[Register('condition_bit')]
             if mnemonic == 'bc1t':
-                branch_condition = reg[Register('condition_bit')]
+                branch_condition = cond_bit
             elif mnemonic == 'bc1f':
-                branch_condition = reg[Register('condition_bit')].negated()
+                assert isinstance(cond_bit, BinaryOp)
+                branch_condition = cond_bit.negated()
 
         elif mnemonic in cases_jumps:
-            result = cases_jumps[mnemonic](instr.args)
+            result = cases_jumps[mnemonic](args)
             if isinstance(result, Return):
                 # Return from the function.
                 assert mnemonic == 'jr'
@@ -588,7 +603,7 @@ def translate_block_body(
             else:
                 # Function call. Well, let's double-check:
                 assert mnemonic == 'jal'
-                assert isinstance(instr.args[0], GlobalSymbol)
+                assert isinstance(args[0], GlobalSymbol)
                 func_args = []
                 for register in map(Register, ['f12', 'f14', 'a0', 'a1', 'a2', 'a3']):
                     # The latter check verifies that the register is not a
@@ -596,13 +611,13 @@ def translate_block_body(
                     if register in reg and reg[register] != GlobalSymbol(register.register_name):
                         func_args.append(reg[register])
                 # Add the arguments after a3.
-                subroutine_args.sort(key=lambda a: a.dest.value)
+                subroutine_args.sort(key=lambda a: a[1])
                 for arg in subroutine_args:
-                    func_args.append(arg.source)
+                    func_args.append(arg[0])
                 # Reset subroutine_args, for the next potential function call.
                 subroutine_args = []
 
-                call = FuncCall(instr.args[0].symbol_name, func_args)
+                call = FuncCall(args[0].symbol_name, func_args)
                 # TODO: It doesn't make sense to put this function call in
                 # to_write in all cases, since sometimes it's just the
                 # return value which matters.
@@ -619,26 +634,31 @@ def translate_block_body(
                         del reg[register]
 
         elif mnemonic in cases_float_comp:
-            reg[Register('condition_bit')] = cases_float_comp[mnemonic](instr.args)
+            reg[Register('condition_bit')] = cases_float_comp[mnemonic](args)
 
         elif mnemonic in cases_special:
-            assert isinstance(instr.args[0], Register)
-            res = cases_special[mnemonic](instr.args)
-            if (instr.args[0].register_name != 'sp' and
+            assert isinstance(args[0], Register)
+            res = cases_special[mnemonic](args)
+            if (args[0].register_name != 'sp' and
                 isinstance(res, UnaryOp) and
                 isinstance(res.expr, LocalVar) and
                 res.expr not in stack_info.local_vars):
                 # Keep track of all local variables.
                 stack_info.add_local_var(res.expr)
 
-            reg[instr.args[0]] = res
+            reg[args[0]] = res
 
         elif mnemonic in cases_hi_lo:
-            reg[Register('hi')], reg[Register('lo')] = cases_hi_lo[mnemonic](instr.args)
+            hi, lo = cases_hi_lo[mnemonic](args)
+            if hi is not None:
+                reg[Register('hi')] = hi
+            elif Register('hi') in reg:
+                del reg[Register('hi')]
+            reg[Register('lo')] = lo
 
         elif mnemonic in cases_destination_first:
-            assert isinstance(instr.args[0], Register)
-            reg[instr.args[0]] = cases_destination_first[mnemonic](instr.args)
+            assert isinstance(args[0], Register)
+            reg[args[0]] = cases_destination_first[mnemonic](args)
 
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
@@ -647,7 +667,7 @@ def translate_block_body(
 
 
 def translate_graph_from_block(
-    node: Node, reg: Dict[Register, Any], stack_info: StackInfo
+    node: Node, reg: Dict[Register, Expression], stack_info: StackInfo
 ) -> None:
     """
     Given a FlowGraph node and a dictionary of register contents, give that node
@@ -697,7 +717,7 @@ def translate_to_ast(function: Function) -> FunctionInfo:
     print(stack_info)
     print('\nNow, we attempt to translate:')
     start_node = flow_graph.nodes[0]
-    start_reg: Dict[Register, Any] = {
+    start_reg: Dict[Register, Expression] = {
         Register('zero'): NumberLiteral(0),
         # Add dummy values for callee-save registers and args.
         # TODO: There's a better way to do this; this is screwing up the
