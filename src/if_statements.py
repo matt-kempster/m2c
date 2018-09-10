@@ -10,6 +10,12 @@ from parse_file import *
 from translate import *
 
 @attr.s
+class Context:
+    flow_graph: FlowGraph = attr.ib()
+    reachable_without: Dict[typing.Tuple[int, int, int], bool] = attr.ib(factory=dict)
+    can_reach_return = attr.ib(default=False)
+
+@attr.s
 class IfElseStatement:
     condition = attr.ib()
     indent: int = attr.ib()
@@ -66,7 +72,7 @@ class Body:
 
 
 def build_conditional_subgraph(
-    flow: FlowGraph, start: ConditionalNode, end: Node, indent: int
+    context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
     """
     Output the subgraph between "start" and "end" at indent level "indent",
@@ -85,39 +91,35 @@ def build_conditional_subgraph(
         # actually within the inner if-statement. This means we have to negate
         # the fallthrough edge and go down that path.
         if_condition = if_block_info.branch_condition.negated()
-        if_body = build_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
+        if_body = build_flowgraph_between(context, start.fallthrough_edge, end, indent + 4)
     elif start.fallthrough_edge == end:
         # Only an if block, so this is easy.
         # I think this can only happen in the case where the other branch has
         # an early return.
         if_condition = if_block_info.branch_condition
-        if_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+        if_body = build_flowgraph_between(context, start.conditional_edge, end, indent + 4)
     else:
         # We need to see if this is a compound if-statement, i.e. containing
         # && or ||.
-        conds = get_number_of_if_conditions(flow, start, end)
+        conds = get_number_of_if_conditions(context, start, end)
         if conds < 2:  # normal if-statement
             # Both an if and an else block are present. We should write them in
             # chronological order (based on the original MIPS file). The
             # fallthrough edge will always be first, so write it that way.
             if_condition = if_block_info.branch_condition.negated()
-            if_body = build_flowgraph_between(flow, start.fallthrough_edge, end, indent + 4)
-            else_body = build_flowgraph_between(flow, start.conditional_edge, end, indent + 4)
+            if_body = build_flowgraph_between(context, start.fallthrough_edge, end, indent + 4)
+            else_body = build_flowgraph_between(context, start.conditional_edge, end, indent + 4)
         else:  # multiple conditions in if-statement
-            return get_full_if_condition(flow, conds, start, end, indent)
+            return get_full_if_condition(context, conds, start, end, indent)
 
     return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body)
 
-# TODO: Make sure this memoizing dictionary is not used incorrectly, i.e.
-# between analyzing different functions. It should likely be scoped differently.
-reachable_without: Dict[typing.Tuple[int, int, int], bool] = {}
-
-def end_reachable_without(flow: FlowGraph, start, end, without):
+def end_reachable_without(context: Context, start, end, without):
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
     trip = (start.block.index, end.block.index, without.block.index)
-    if trip in reachable_without:
-        return reachable_without[trip]
+    if trip in context.reachable_without:
+        return context.reachable_without[trip]
     if without == end:
         # Can't get to the end if it is removed.
         ret = False
@@ -133,35 +135,35 @@ def end_reachable_without(flow: FlowGraph, start, end, without):
             # this case, because otherwise the immediate postdominator will
             # always end up as the return node.
             is_premature_return = (
-                start.successor == flow.nodes[-1] and
+                start.successor == context.flow_graph.nodes[-1] and
                 # You'd think a premature return would actually be the block
                 # with index = (end_index - 1). That is:
-                #       start.block.index != flow.nodes[-1].block.index - 1
+                #   start.block.index != flow_graph.nodes[-1].block.index - 1
                 # However, this is not so; some functions have a dead
                 # penultimate block with a superfluous unreachable return. The
                 # way around this is to just check whether this is the
                 # penultimate block, not by index, but by position in the flow
                 # graph list:
-                start != flow.nodes[-2]
+                start != context.flow_graph.nodes[-2]
             )
             ret = (start.successor != without and
                     not is_premature_return and
-                    end_reachable_without(flow, start.successor, end, without))
+                    end_reachable_without(context, start.successor, end, without))
         elif isinstance(start, ConditionalNode):
             # If one edge or the other is removed, you have to go the other route.
             if start.conditional_edge == without:
                 assert start.fallthrough_edge != without
-                ret = end_reachable_without(flow, start.fallthrough_edge, end, without)
+                ret = end_reachable_without(context, start.fallthrough_edge, end, without)
             elif start.fallthrough_edge == without:
-                ret = end_reachable_without(flow, start.conditional_edge, end, without)
+                ret = end_reachable_without(context, start.conditional_edge, end, without)
             else:
                 # Both routes are acceptable.
-                ret = (end_reachable_without(flow, start.conditional_edge, end, without) or
-                        end_reachable_without(flow, start.fallthrough_edge, end, without))
-    reachable_without[trip] = ret
+                ret = (end_reachable_without(context, start.conditional_edge, end, without) or
+                        end_reachable_without(context, start.fallthrough_edge, end, without))
+    context.reachable_without[trip] = ret
     return ret
 
-def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
+def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     """
     Find the immediate postdominator of "start", where "end" is an exit node
     from the control flow graph.
@@ -183,7 +185,7 @@ def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
             stack.append(node.fallthrough_edge)
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
-        if not end_reachable_without(flow, start, end, node):
+        if not end_reachable_without(context, start, end, node):
             postdominators.append(node)
     assert postdominators  # at least "end" should be a postdominator
     # Get the earliest postdominator
@@ -191,7 +193,7 @@ def immediate_postdominator(flow: FlowGraph, start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
-def count_non_postdominated_parents(flow, child, curr_end):
+def count_non_postdominated_parents(context, child, curr_end):
     """
     Return the number of parents of "child" for whom "child" is NOT their
     immediate postdominator. This is useful for finding nodes that would be
@@ -200,7 +202,7 @@ def count_non_postdominated_parents(flow, child, curr_end):
     """
     count = 0
     for parent in child.parents:
-        if immediate_postdominator(flow, parent, curr_end) != child:
+        if immediate_postdominator(context, parent, curr_end) != child:
             count += 1
     # Either all this node's parents are immediately postdominated by it,
     # or none of them are. To be honest, I don't have much evidence for
@@ -211,7 +213,7 @@ def count_non_postdominated_parents(flow, child, curr_end):
     return count
 
 
-def get_number_of_if_conditions(flow, node, curr_end):
+def get_number_of_if_conditions(context, node, curr_end):
     """
     For a given ConditionalNode, this function will return k when the if-
     statement of the correspondant C code is "if (1 && 2 && ... && k)" or
@@ -219,7 +221,7 @@ def get_number_of_if_conditions(flow, node, curr_end):
     (It remains unclear how a predicate that mixes && and || would behave.)
     """
     count1, count2 = map(
-        lambda child: count_non_postdominated_parents(flow, child, curr_end),
+        lambda child: count_non_postdominated_parents(context, child, curr_end),
         [node.conditional_edge, node.fallthrough_edge]
     )
     # Return the nonzero count; the predicates will go through that path.
@@ -243,7 +245,7 @@ def join_conditions(conditions, op: str, only_negate_last: bool):
         final_cond.right = final_cond.right.negated()
     return final_cond
 
-def get_full_if_condition(flow, count, start, curr_end, indent):
+def get_full_if_condition(context, count, start, curr_end, indent):
     curr_node = start
     prev_node = None
     conditions = []
@@ -264,11 +266,11 @@ def get_full_if_condition(flow, count, start, curr_end, indent):
             join_conditions(conditions, '||', only_negate_last=True),
             indent,
             if_body=build_flowgraph_between(
-                flow, start.conditional_edge, curr_end, indent + 4),
+                context, start.conditional_edge, curr_end, indent + 4),
             # The else-body is wherever the code jumps to instead of the
             # fallthrough (i.e. if-body).
             else_body=build_flowgraph_between(
-                flow, prev_node.conditional_edge, curr_end, indent + 4)
+                context, prev_node.conditional_edge, curr_end, indent + 4)
         )
     # Otherwise, we have an && statement.
     else:
@@ -278,13 +280,24 @@ def get_full_if_condition(flow, count, start, curr_end, indent):
             join_conditions(conditions, '&&', only_negate_last=False),
             indent,
             if_body=build_flowgraph_between(
-                flow, curr_node, curr_end, indent + 4),
+                context, curr_node, curr_end, indent + 4),
             else_body=build_flowgraph_between(
-                flow, start.conditional_edge, curr_end, indent + 4)
+                context, start.conditional_edge, curr_end, indent + 4)
         )
 
+def handle_return(
+    context: Context, body: Body, return_node: Node, indent: int
+):
+    ret_info = return_node.block.block_info
+    if ret_info and Register('v0') in ret_info.final_register_states:
+        ret = ret_info.final_register_states[Register('v0')]
+        stmt = Statement(indent, f'// (possible return value: {ret})')
+        body.add_statement(stmt)
+    else:
+        body.add_statement(Statement(indent, '// (function likely void)'))
+
 def build_flowgraph_between(
-    flow: FlowGraph, start: Node, end: Node, indent: int
+    context: Context, start: Node, end: Node, indent: int
 ) -> Body:
     """
     Output a section of a flow graph that has already been translated to our
@@ -313,14 +326,7 @@ def build_flowgraph_between(
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
                 body.add_statement(Statement(indent, 'return;'))
-                ret_info = curr_start.successor.block.block_info
-                if ret_info and Register('v0') in ret_info.final_register_states:
-                    ret = ret_info.final_register_states[Register('v0')]
-                    body.add_statement(
-                        Statement(indent, f'// (possible return value: {ret})'))
-                else:
-                    body.add_statement(
-                        Statement(indent, '// (function likely void)'))
+                handle_return(context, body, curr_start.successor, indent)
                 break
             else:
                 curr_start = curr_start.successor
@@ -329,28 +335,31 @@ def build_flowgraph_between(
             # node. This means we need to find the "immediate postdominator"
             # of the current node, where "postdominator" means we have to go
             # through it, and "immediate" means we aren't skipping any.
-            curr_end = immediate_postdominator(flow, curr_start, end)
+            curr_end = immediate_postdominator(context, curr_start, end)
             # We also need to handle the if-else block here; this does the
             # outputting of the subgraph between curr_start and the next
             # articulation node.
             body.add_if_else(
-                build_conditional_subgraph(flow, curr_start, curr_end, indent))
+                build_conditional_subgraph(context, curr_start, curr_end, indent))
             # Move on.
             curr_start = curr_end
+
+    if isinstance(curr_start, ReturnNode):
+        context.can_reach_return = True
+
     return body
 
 def write_function(function_info: FunctionInfo) -> None:
-    global reachable_without  # TODO: global variables are bad, this is temporary
-
-    reachable_without = {}
-    flow_graph = function_info.flow_graph
-    start_node: Node = flow_graph.nodes[0]
-    return_node: Node = flow_graph.nodes[-1]
+    context = Context(flow_graph=function_info.flow_graph)
+    start_node: Node = context.flow_graph.nodes[0]
+    return_node: Node = context.flow_graph.nodes[-1]
     assert isinstance(return_node, ReturnNode)
 
     print("Here's the whole function!\n")
-    body: Body = build_flowgraph_between(flow_graph, start_node, return_node, 4)
+    body: Body = build_flowgraph_between(context, start_node, return_node, 4)
     body.add_node(return_node, 4)  # this node is not created in the above routine
+    if context.can_reach_return:
+        handle_return(context, body, return_node, 4)
 
     print(f'{function_info.stack_info.function.name}(...) {{')
     for local_var in function_info.stack_info.local_vars:
