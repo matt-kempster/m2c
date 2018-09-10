@@ -258,6 +258,7 @@ def get_full_if_condition(flow, count, start, curr_end, indent):
     # then we know this was an || statement - if the start condition were true,
     # we would have skipped ahead to the body.
     if curr_node == start.conditional_edge:
+        assert isinstance(prev_node, ConditionalNode)
         return IfElseStatement(
             # Negate the last condition, for it must fall-through to the
             # body instead of jumping to it, hence it must jump OVER the body.

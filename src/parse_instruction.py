@@ -181,7 +181,7 @@ def parse_arg(arg: str) -> Optional[Argument]:
     return parse_arg_elems(arg_elems)
 
 
-@attr.s  # TODO: Make frozen again, if appropriate.
+@attr.s(frozen=True)
 class Instruction:
     mnemonic: str = attr.ib()
     args: List[Argument] = attr.ib()
