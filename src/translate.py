@@ -273,9 +273,6 @@ def deref(arg, reg, stack_info: StackInfo):
         else:
             # Struct member is being dereferenced.
             return StructAccess(struct_var=reg[arg.rhs], offset=location)
-    elif isinstance(arg, Register):
-        # Look up the register's contents.
-        return reg[arg]
     else:
         # Keep GlobalSymbols as-is.
         assert isinstance(arg, GlobalSymbol)
