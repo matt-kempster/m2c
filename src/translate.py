@@ -490,6 +490,8 @@ def translate_block_body(
         'move': lambda a: reg[a[1]],
         # Floating point moving instructions
         'mfc1': lambda a: reg[a[1]],
+        'mov.s': lambda a: reg[a[1]],
+        'mov.d': lambda a: reg[a[1]],
         # Loading instructions
         'li': lambda a: a[1],
         'lb': lambda a:  deref(a[1], reg, stack_info),
