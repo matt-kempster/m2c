@@ -594,6 +594,10 @@ def translate_block_body(
                 assert mnemonic == 'jal'
                 assert isinstance(instr.args[0], GlobalSymbol)
                 func_args = []
+                # At most one of $f12 and $a0 may be passed, and at most one of
+                # $f14 and $a1. We could try to figure out which ones, and cap
+                # the function call at the point where a register is empty, but
+                # for now we'll leave that for manual fixup.
                 for register in map(Register, ['f12', 'f14', 'a0', 'a1', 'a2', 'a3']):
                     # The latter check verifies that the register is not a
                     # placeholder.
