@@ -638,6 +638,9 @@ def translate_block_body(
         # HACK: Remove any %hi(...) or %lo(...) macros; we will just put the
         # full value into each intermediate register, because this really
         # doesn't affect program behavior almost ever.
+        if (mnemonic in ['addi', 'addiu'] and len(raw_args) == 3 and
+                isinstance(raw_args[2], Macro)):
+            del raw_args[1]
         raw_args = list(map(strip_macros, raw_args))
 
         args = InstrArgs(raw_args, regs)
