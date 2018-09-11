@@ -247,14 +247,14 @@ class StoreStmt:
 
     def __str__(self):
         type = f'(f{self.size})' if self.float else f'(s{self.size})'
-        return f'{type} {self.dest} = {self.source}'
+        return f'{type} {self.dest} = {self.source};'
 
 @attr.s
 class FuncCallStmt:
     expr: FuncCall = attr.ib()
 
     def __str__(self: 'FuncCallStmt'):
-        return f'{self.expr}'
+        return f'{self.expr};'
 
 
 Expression = Union[

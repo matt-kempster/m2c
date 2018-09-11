@@ -38,10 +38,9 @@ class IfElseStatement:
 class Statement:
     indent: int = attr.ib()
     contents = attr.ib()
-    is_comment: bool = attr.ib(default=False)
 
     def __str__(self):
-        return f'{" " * self.indent}{self.contents}{"" if self.is_comment else ";"}'
+        return f'{" " * self.indent}{self.contents}'
 
 @attr.s
 class Body:
@@ -50,7 +49,7 @@ class Body:
     def add_node(self, node: Node, indent: int):
         # Add node header comment
         self.statements.append(
-            Statement(indent, f'// Node {node.block.index}', is_comment=True))
+            Statement(indent, f'// Node {node.block.index}'))
         # Add node contents
         assert node.block.block_info is not None
         for item in node.block.block_info.to_write:
@@ -313,17 +312,15 @@ def build_flowgraph_between(
             # unless the node is trying to prematurely return, in which case
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
-                body.add_statement(Statement(indent, 'return'))
+                body.add_statement(Statement(indent, 'return;'))
                 ret_info = curr_start.successor.block.block_info
                 if ret_info and Register('v0') in ret_info.final_register_states:
                     ret = ret_info.final_register_states[Register('v0')]
                     body.add_statement(
-                        Statement(indent, f'// (possible return value: {ret})',
-                                  is_comment=True))
+                        Statement(indent, f'// (possible return value: {ret})'))
                 else:
                     body.add_statement(
-                        Statement(indent, '// (function likely void)',
-                                  is_comment=True))
+                        Statement(indent, '// (function likely void)'))
                 break
             else:
                 curr_start = curr_start.successor
