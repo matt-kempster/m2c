@@ -483,11 +483,15 @@ def translate_block_body(
         'andi': lambda a: BinaryOp(left=reg[a[1]], op='&',  right=a[2]),
         'xori': lambda a: BinaryOp(left=reg[a[1]], op='^',  right=a[2]),
         'sll': lambda a:  BinaryOp(left=reg[a[1]], op='<<', right=a[2]),
+        'sllv': lambda a:  BinaryOp(left=reg[a[1]], op='<<', right=reg[a[2]]),
         'srl': lambda a:  BinaryOp(left=reg[a[1]], op='>>', right=a[2]),
+        'srlv': lambda a:  BinaryOp(left=reg[a[1]], op='>>', right=reg[a[2]]),
         # Move pseudoinstruction
         'move': lambda a: reg[a[1]],
         # Floating point moving instructions
         'mfc1': lambda a: reg[a[1]],
+        'mov.s': lambda a: reg[a[1]],
+        'mov.d': lambda a: reg[a[1]],
         # Loading instructions
         'li': lambda a: a[1],
         'lb': lambda a:  deref(a[1], reg, stack_info),
@@ -517,11 +521,13 @@ def translate_block_body(
         # Single-precision float addition is the same as regular addition.
         'add.s': 'addu',
         'sub.s': 'subu',
+        'neg.s': 'negu',
         # TODO: Deal with doubles differently.
         'add.d': 'addu',
+        'sub.d': 'subu',
+        'neg.d': 'negu',
         'div.d': 'div.s',
         'mul.d': 'mul.s',
-        'sub.d': 'subu',
         # Casting (the above applies here too)
         'cvt.d.w': 'cvt.d.s',
         'cvt.s.w': 'cvt.s.d',
@@ -530,8 +536,9 @@ def translate_block_body(
         'c.lt.d': 'c.lt.s',
         'c.eq.d': 'c.eq.s',
         'c.le.d': 'c.le.s',
-        # Right-shifting.
+        # Arithmetic right-shifting (TODO: type cast correctly)
         'sra': 'srl',
+        'srav': 'srlv',
         # Flag setting.
         'sltiu': 'slti',
         'sltu': 'slt',
