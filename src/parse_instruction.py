@@ -190,13 +190,25 @@ class Instruction:
         return self.mnemonic in [
             'b', 'beq', 'bne', 'beqz', 'bnez', 'bgez', 'bgtz', 'blez', 'bltz',
             'bc1t', 'bc1f'
+        ] or self.is_branch_likely_instruction()
+
+    def is_branch_likely_instruction(self):
+        return self.mnemonic in [
+            'beql', 'bnel', 'neqzl', 'bnezl', 'bgezl', 'bgtzl', 'blezl', 'bltzl',
+            'bc1tl', 'bc1fl'
         ]
+
+    def get_branch_target(self) -> JumpTarget:
+        label = self.args[-1]
+        assert isinstance(label, JumpTarget)
+        return label
 
     def is_jump_instruction(self):
         return self.mnemonic in ['jr', 'jal']
 
     def is_delay_slot_instruction(self):
-        return self.is_branch_instruction() or self.is_jump_instruction()
+        return (self.is_branch_instruction() or self.is_branch_likely_instruction() or
+            self.is_jump_instruction())
 
     def __str__(self):
         return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'

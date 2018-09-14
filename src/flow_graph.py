@@ -1,7 +1,7 @@
 import attr
 
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Any
+from typing import List, Union, Iterator, Optional, Dict, Set, Tuple, Callable, Any
 
 from parse_instruction import *
 from parse_file import *
@@ -56,7 +56,85 @@ class BlockBuilder:
         return self.blocks
 
 
+temp_label_counter = 0
+def generate_temp_label():
+    global temp_label_counter
+    temp_label_counter += 1
+    return 'Ltemp' + str(temp_label_counter)
+
+
+# Branch-likely instructions only evaluate their delay slots when they are
+# taken, making control flow more complex. However, on the IRIX compiler they
+# only occur in a very specific pattern:
+#
+# ...
+# <branch likely instr> .label
+#  X
+# ...
+# X
+# .label:
+# ...
+#
+# which this function transforms back into a regular branch pattern by moving
+# the label one step back and replacing the delay slot by a nop.
+#
+# Branch-likely instructions that do not appear in this pattern are kept.
+def normalize_likely_branches(function: Function) -> Function:
+    label_prev_instr : Dict[str, Instruction] = {}
+    for item in function.body:
+        if isinstance(item, Instruction):
+            prev_instr = item
+        elif isinstance(item, Label):
+            label_prev_instr[item.name] = prev_instr
+
+    insert_label_before : Dict[int, str] = {}
+    new_body : List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
+
+    body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
+    for item in body_iter:
+        orig_item = item
+        if isinstance(item, Instruction) and item.is_branch_likely_instruction():
+            before_target = label_prev_instr[item.get_branch_target().target]
+            next_item = next(body_iter)
+            orig_next_item = next_item
+            if isinstance(next_item, Instruction) and str(before_target) == str(next_item):
+                if id(before_target) not in insert_label_before:
+                    insert_label_before[id(before_target)] = generate_temp_label()
+                new_target = JumpTarget(insert_label_before[id(before_target)])
+                item = Instruction(item.mnemonic[:-1], item.args[:-1] + [new_target])
+                next_item = Instruction('nop', [])
+            new_body.append((orig_item, item))
+            new_body.append((orig_next_item, next_item))
+        else:
+            new_body.append((orig_item, item))
+
+    new_function = Function(name=function.name)
+    for (orig_item, new_item) in new_body:
+        if id(orig_item) in insert_label_before:
+            new_function.new_label(insert_label_before[id(orig_item)])
+        new_function.body.append(new_item)
+
+    return new_function
+
+
+def prune_unreferenced_labels(function: Function) -> Function:
+    labels_used : Set[str] = set()
+    for item in function.body:
+        if isinstance(item, Instruction) and item.is_branch_instruction():
+            labels_used.add(item.get_branch_target().target)
+
+    new_function = Function(name=function.name)
+    for item in function.body:
+        if not (isinstance(item, Label) and item.name not in labels_used):
+            new_function.body.append(item)
+
+    return new_function
+
+
 def build_blocks(function: Function) -> List[Block]:
+    function = normalize_likely_branches(function)
+    function = prune_unreferenced_labels(function)
+
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
@@ -71,9 +149,15 @@ def build_blocks(function: Function) -> List[Block]:
             # harder to test and produce hidden bugs.
             if item.is_delay_slot_instruction():
                 # Handle the delay slot by taking the next instruction first.
-                block_builder.add_instruction(typing.cast(Instruction, next(body_iter)))
+                # TODO: On -O2-compiled code, the delay slot instruction is
+                # sometimes a jump target, which makes things difficult.
+                next_item = next(body_iter)
+                assert isinstance(next_item, Instruction), "Delay slot instruction must not be a jump target"
+                block_builder.add_instruction(next_item)
                 # Now we take the original instruction.
             block_builder.add_instruction(item)
+
+            assert not item.is_branch_likely_instruction(), "Not yet able to handle general branch-likely instructions"
 
             if item.is_branch_instruction():
                 # Split blocks at branches.
@@ -180,11 +264,8 @@ def build_graph_from_block(
         # There is a branch, so emit a ConditionalNode.
         branch = branches[0]
 
-        # Get the jump target.
-        branch_label = branch.args[-1]
-        assert isinstance(branch_label, JumpTarget)
-
         # Get the block associated with the jump target.
+        branch_label = branch.get_branch_target()
         branch_block = find_block_by_label(branch_label)
         assert branch_block is not None
 

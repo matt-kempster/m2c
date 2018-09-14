@@ -43,6 +43,7 @@ class MIPSFile:
         self.current_function.new_instruction(instruction)
 
     def new_label(self, label_name):
+        assert self.current_function is not None
         self.current_function.new_label(label_name)
 
     def __str__(self):
