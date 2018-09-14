@@ -44,8 +44,8 @@ class NumberLiteral:
 
 @attr.s(frozen=True)
 class AddressMode:
-    lhs: Optional[Union[NumberLiteral, Macro]] = attr.ib()
-    rhs: 'Argument' = attr.ib()
+    lhs: Union[NumberLiteral, Macro, None] = attr.ib()
+    rhs: Register = attr.ib()
 
     def __str__(self):
         if self.lhs is not None:
@@ -150,6 +150,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                 return rhs
             else:
                 # Address mode.
+                assert isinstance(rhs, Register)
                 value = AddressMode(value, rhs)
         elif tok in valid_word:
             # Global symbol.
