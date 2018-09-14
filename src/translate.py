@@ -131,17 +131,6 @@ def format_hex(val: int) -> str:
 
 
 @attr.s
-class Store:
-    size: int = attr.ib()
-    source: 'Expression' = attr.ib()
-    dest: 'Expression' = attr.ib()
-    float: bool = attr.ib(default=False)
-
-    def __str__(self):
-        type = f'(f{self.size})' if self.float else f'(s{self.size})'
-        return f'{type} {self.dest} = {self.source}'
-
-@attr.s
 class TypeHint:
     type: str = attr.ib()
     value: 'Expression' = attr.ib()
@@ -249,6 +238,25 @@ class FloatLiteral:
     def __str__(self) -> str:
         return str(self.val)
 
+@attr.s
+class StoreStmt:
+    size: int = attr.ib()
+    source: 'Expression' = attr.ib()
+    dest: 'Expression' = attr.ib()
+    float: bool = attr.ib(default=False)
+
+    def __str__(self):
+        type = f'(f{self.size})' if self.float else f'(s{self.size})'
+        return f'{type} {self.dest} = {self.source}'
+
+@attr.s
+class FuncCallStmt:
+    expr: FuncCall = attr.ib()
+
+    def __str__(self: 'FuncCallStmt'):
+        return f'{self.expr}'
+
+
 Expression = Union[
     BinaryOp,
     UnaryOp,
@@ -265,8 +273,8 @@ Expression = Union[
 ]
 
 Statement = Union[
-    Store,
-    FuncCall,
+    StoreStmt,
+    FuncCallStmt,
 ]
 
 @attr.s
@@ -437,7 +445,7 @@ def make_store(args: InstrArgs, stack_info: StackInfo, size: int, float=False):
             target.rhs.register_name == 'sp'):
         # TODO: This isn't really right, but it helps get rid of some pointless stores.
         return None
-    return Store(
+    return StoreStmt(
         size, source=source_val, dest=deref(target, args.regs, stack_info), float=float
     )
 
@@ -476,7 +484,7 @@ def translate_block_body(
     """
 
     InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
-    StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[Store]]]
+    StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
     MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
     PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]]
 
@@ -623,7 +631,7 @@ def translate_block_body(
         'cfc1': 'mfc1',
     }
 
-    to_write: List[Union[Store, FuncCall]] = []
+    to_write: List[Union[Statement]] = []
     subroutine_args: List[Tuple[Expression, int]] = []
     branch_condition: Optional[Expression] = None
     for instr in block.instructions:
@@ -712,7 +720,7 @@ def translate_block_body(
                 # TODO: It doesn't make sense to put this function call in
                 # to_write in all cases, since sometimes it's just the
                 # return value which matters.
-                to_write.append(call)
+                to_write.append(FuncCallStmt(call))
                 # Clear out caller-save registers, for clarity and to ensure
                 # that argument regs don't get passed into the next function.
                 regs.clear_caller_save_regs()
