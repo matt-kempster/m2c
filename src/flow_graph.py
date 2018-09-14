@@ -131,8 +131,87 @@ def prune_unreferenced_labels(function: Function) -> Function:
     return new_function
 
 
+# Detect and simplify various standard patterns emitted by the IRIX compiler.
+# Currently handled:
+# - checks for x/0 and INT_MIN/-1 after division (removed)
+def simplify_standard_patterns(function: Function) -> Function:
+    div_pattern: List[str] = [
+        "bnez",
+        "nop",
+        "break 7",
+        "",
+        "li $at, -1",
+        "bne",
+        "li $at, 0x80000000",
+        "bne",
+        "nop",
+        "break 6",
+        "",
+    ]
+
+    def get_li_imm(ins) -> Optional[int]:
+        if ins.mnemonic == 'lui' and isinstance(ins.args[1], NumberLiteral):
+            return (ins.args[1].value & 0xffff) << 16
+        if (ins.mnemonic in ['addi', 'addiu'] and
+                ins.args[1] == Register('zero') and
+                isinstance(ins.args[2], NumberLiteral)):
+            val = ins.args[2].value & 0xffff
+            if val >= 0x8000:
+                val -= 0x10000
+            return val & 0xffffffff
+        if (ins.mnemonic == 'ori' and ins.args[1] == Register('zero') and
+                isinstance(ins.args[2], NumberLiteral)):
+            return ins.args[2].value & 0xffff
+        return None
+
+    def matches_pattern(actual, pattern):
+        def match_one(actual, expected) -> bool:
+            if not isinstance(actual, Instruction):
+                return expected == ""
+            ins = actual
+            exp = parse_instruction(expected)
+            if not exp.args:
+                return ins.mnemonic == exp.mnemonic
+            if str(ins) == str(exp):
+                return True
+            # A bit of an ugly hack, but since 'li' can be spelled many ways...
+            return (exp.mnemonic == 'li' and exp.args[0] == ins.args[0] and
+                    isinstance(exp.args[1], NumberLiteral) and
+                    (exp.args[1].value & 0xffffffff) == get_li_imm(ins))
+
+        return (len(actual) == len(pattern) and
+            all(match_one(a, e) for (a, e) in zip(actual, pattern)))
+
+    def try_replace_div(i) -> Optional[Tuple[List[Instruction], int]]:
+        actual = function.body[i:i + len(div_pattern)]
+        if not matches_pattern(actual, div_pattern):
+            return None
+        label1 = typing.cast(Label, actual[3])
+        label2 = typing.cast(Label, actual[10])
+        bnez = typing.cast(Instruction, actual[0])
+        bne1 = typing.cast(Instruction, actual[5])
+        bne2 = typing.cast(Instruction, actual[7])
+        if (bnez.get_branch_target().target != label1.name or
+                bne1.get_branch_target().target != label2.name and
+                bne2.get_branch_target().target != label2.name):
+            return None
+        return ([], i + len(div_pattern) - 1)
+
+    def no_replacement(i) -> Tuple[List[Instruction], int]:
+        return ([function.body[i]], i + 1)
+
+    new_function = Function(name=function.name)
+    i = 0
+    while i < len(function.body):
+        repl, i = try_replace_div(i) or no_replacement(i)
+        new_function.body.extend(repl)
+    return new_function
+
+
 def build_blocks(function: Function) -> List[Block]:
     function = normalize_likely_branches(function)
+    function = prune_unreferenced_labels(function)
+    function = simplify_standard_patterns(function)
     function = prune_unreferenced_labels(function)
 
     block_builder = BlockBuilder()
