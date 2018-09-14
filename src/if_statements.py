@@ -17,7 +17,7 @@ class Context:
 
 @attr.s
 class IfElseStatement:
-    condition = attr.ib()
+    condition: BinaryOp = attr.ib()
     indent: int = attr.ib()
     if_body = attr.ib()
     else_body = attr.ib(default=None)
@@ -41,33 +41,35 @@ class IfElseStatement:
         return if_str
 
 @attr.s
-class Statement:
+class SimpleStatement:
     indent: int = attr.ib()
-    contents = attr.ib()
+    contents: str = attr.ib()
 
     def __str__(self):
         return f'{" " * self.indent}{self.contents}'
 
 @attr.s
 class Body:
-    statements: List[Union[Statement, IfElseStatement]] = attr.ib(factory=list)
+    statements: List[Union[SimpleStatement, IfElseStatement]] = attr.ib(factory=list)
 
-    def add_node(self, node: Node, indent: int):
+    def add_node(self, node: Node, indent: int) -> None:
         # Add node header comment
-        self.statements.append(
-            Statement(indent, f'// Node {node.block.index}'))
+        self.add_comment(indent, f'// Node {node.block.index}')
         # Add node contents
         assert node.block.block_info is not None
         for item in node.block.block_info.to_write:
-            self.statements.append(Statement(indent, str(item)))
+            self.statements.append(SimpleStatement(indent, str(item)))
 
-    def add_statement(self, statement: Statement):
+    def add_statement(self, statement: SimpleStatement) -> None:
         self.statements.append(statement)
 
-    def add_if_else(self, if_else: IfElseStatement):
+    def add_comment(self, indent: int, contents: str) -> None:
+        self.add_statement(SimpleStatement(indent, f'// {contents}'))
+
+    def add_if_else(self, if_else: IfElseStatement) -> None:
         self.statements.append(if_else)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return '\n'.join([str(statement) for statement in self.statements])
 
 
@@ -231,27 +233,35 @@ def get_number_of_if_conditions(context, node, curr_end):
     else:
         return count2
 
-def join_conditions(conditions, op: str, only_negate_last: bool):
+def join_conditions(conditions: List[BinaryOp], op: str, only_negate_last: bool):
     assert op in ['&&', '||']
-    final_cond = None
-    for cond in conditions:
-        if not only_negate_last:
+    final_cond: Optional[BinaryOp] = None
+    for i, cond in enumerate(conditions):
+        if not only_negate_last or i == len(conditions) - 1:
             cond = cond.negated()
         if final_cond is None:
             final_cond = cond
         else:
             final_cond = BinaryOp(final_cond, op, cond)
-    if only_negate_last and final_cond is not None:
-        final_cond.right = final_cond.right.negated()
     return final_cond
 
-def get_full_if_condition(context, count, start, curr_end, indent):
-    curr_node = start
-    prev_node = None
-    conditions = []
+def get_full_if_condition(
+    context: Context,
+    count: int,
+    start: ConditionalNode,
+    curr_end,
+    indent
+) -> IfElseStatement:
+    curr_node: Node = start
+    prev_node: Optional[ConditionalNode] = None
+    conditions: List[BinaryOp] = []
     # Get every condition.
     while count > 0:
-        conditions.append(curr_node.block.block_info.branch_condition)
+        block_info = curr_node.block.block_info
+        assert isinstance(block_info, BlockInfo)
+        assert block_info.branch_condition is not None
+        conditions.append(block_info.branch_condition)
+        assert isinstance(curr_node, ConditionalNode)
         prev_node = curr_node
         curr_node = curr_node.fallthrough_edge
         count -= 1
@@ -259,7 +269,7 @@ def get_full_if_condition(context, count, start, curr_end, indent):
     # then we know this was an || statement - if the start condition were true,
     # we would have skipped ahead to the body.
     if curr_node == start.conditional_edge:
-        assert isinstance(prev_node, ConditionalNode)
+        assert prev_node is not None
         return IfElseStatement(
             # Negate the last condition, for it must fall-through to the
             # body instead of jumping to it, hence it must jump OVER the body.
@@ -291,10 +301,9 @@ def handle_return(
     ret_info = return_node.block.block_info
     if ret_info and Register('v0') in ret_info.final_register_states:
         ret = ret_info.final_register_states[Register('v0')]
-        stmt = Statement(indent, f'// (possible return value: {ret})')
-        body.add_statement(stmt)
+        body.add_comment(indent, f'// (possible return value: {ret})')
     else:
-        body.add_statement(Statement(indent, '// (function likely void)'))
+        body.add_comment(indent, '// (function likely void)')
 
 def build_flowgraph_between(
     context: Context, start: Node, end: Node, indent: int
@@ -325,7 +334,7 @@ def build_flowgraph_between(
             # unless the node is trying to prematurely return, in which case
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
-                body.add_statement(Statement(indent, 'return;'))
+                body.add_statement(SimpleStatement(indent, 'return;'))
                 handle_return(context, body, curr_start.successor, indent)
                 break
             else:

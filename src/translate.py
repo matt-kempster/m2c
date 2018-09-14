@@ -140,9 +140,9 @@ class TypeHint:
 
 @attr.s
 class BinaryOp:
-    left = attr.ib()
+    left: 'Expression' = attr.ib()
     op: str = attr.ib()
-    right = attr.ib()
+    right: 'Expression' = attr.ib()
 
     def is_boolean(self) -> bool:
         return self.op in ['==', '!=', '>', '<', '>=', '<=']
@@ -325,7 +325,7 @@ class BlockInfo:
     and block's final register states.
     """
     to_write: List[Statement] = attr.ib()
-    branch_condition: Optional[Expression] = attr.ib()
+    branch_condition: Optional[BinaryOp] = attr.ib()
     final_register_states: RegInfo = attr.ib()
 
     def __str__(self) -> str:
@@ -491,6 +491,7 @@ def translate_block_body(
     """
 
     InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
+    CmpInstrMap = Dict[str, Callable[[InstrArgs], Optional[BinaryOp]]]
     StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
     MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
     PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]]
@@ -509,7 +510,7 @@ def translate_block_body(
         #'mtc1': lambda a: TypeHint(type='f32', value=a.reg(0)),
         'mtc1': lambda a: handle_mtc1(a.reg(0)),
     }
-    cases_branches: MaybeInstrMap = {
+    cases_branches: CmpInstrMap = {
         # Branch instructions/pseudoinstructions
         # TODO! These are wrong. (Are they??)
         'b': lambda a: None,
@@ -522,7 +523,7 @@ def translate_block_body(
         'bltz': lambda a: BinaryOp(left=a.reg(0), op='<',  right=NumberLiteral(0)),
         'bgez': lambda a: BinaryOp(left=a.reg(0), op='>=', right=NumberLiteral(0)),
     }
-    cases_float_branches: MaybeInstrMap = {
+    cases_float_branches: CmpInstrMap = {
         # Floating-point branch instructions
         # We don't have to do any work here, since the condition bit was already set.
         'bc1t': lambda a: None,
@@ -533,7 +534,7 @@ def translate_block_body(
         'jal': lambda a: a.imm(0),  # not sure what arguments!
         'jr':  lambda a: None       # not sure what to return!
     }
-    cases_float_comp: InstrMap = {
+    cases_float_comp: CmpInstrMap = {
         # Floating point comparisons
         'c.eq.s': lambda a: BinaryOp(left=a.reg(0), op='==', right=a.reg(1)),
         'c.le.s': lambda a: BinaryOp(left=a.reg(0), op='<=', right=a.reg(1)),
@@ -640,7 +641,7 @@ def translate_block_body(
 
     to_write: List[Union[Statement]] = []
     subroutine_args: List[Tuple[Expression, int]] = []
-    branch_condition: Optional[Expression] = None
+    branch_condition: Optional[BinaryOp] = None
     for instr in block.instructions:
         # Save the current mnemonic.
         mnemonic = instr.mnemonic
@@ -688,10 +689,10 @@ def translate_block_body(
         elif mnemonic in cases_float_branches:
             assert branch_condition is None
             cond_bit = regs[Register('condition_bit')]
+            assert isinstance(cond_bit, BinaryOp)
             if mnemonic == 'bc1t':
                 branch_condition = cond_bit
             elif mnemonic == 'bc1f':
-                assert isinstance(cond_bit, BinaryOp)
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in cases_jumps:
