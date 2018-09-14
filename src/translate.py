@@ -427,10 +427,12 @@ def translate_block_body(
         'ori':  lambda a: handle_ori(a, reg),
         'addi': lambda a: handle_addi(a, reg),
     }
-    cases_div = {
-        # Div is just weird.
+    cases_hi_lo = {
+        # Div and mul output results to LO/HI registers.
         'div': lambda a: (BinaryOp(left=reg[a[1]], op='%', right=reg[a[2]]),  # hi
                           BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]])), # lo
+        'multu': lambda a: (None,                                               # hi
+                            BinaryOp(left=reg[a[0]], op='*', right=reg[a[1]])), # lo
     }
     cases_destination_first = {
         # Flag-setting instructions
@@ -438,7 +440,6 @@ def translate_block_body(
         'slti': lambda a: BinaryOp(left=reg[a[1]], op='<', right=a[2]),
         # LRU (non-floating)
         'addu': lambda a:  BinaryOp(left=reg[a[1]], op='+', right=reg[a[2]]),
-        'multu': lambda a: BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
         'subu': lambda a:  BinaryOp(left=reg[a[1]], op='-', right=reg[a[2]]),
         'negu': lambda a:  UnaryOp(op='-', expr=reg[a[1]]),
         # Hi/lo register uses (used after division)
@@ -446,6 +447,7 @@ def translate_block_body(
         'mflo': lambda a: reg[Register('lo')],
         # Floating point arithmetic
         'div.s': lambda a: BinaryOp(left=reg[a[1]], op='/', right=reg[a[2]]),
+        'mul.s': lambda a: BinaryOp(left=reg[a[1]], op='*', right=reg[a[2]]),
         # Floating point conversions
         'cvt.d.s': lambda a: Cast(to_type='f64', expr=reg[a[1]]),
         'cvt.s.d': lambda a: Cast(to_type='f32', expr=reg[a[1]]),
@@ -495,7 +497,7 @@ def translate_block_body(
         **cases_jumps,
         **cases_float_comp,
         **cases_special,
-        **cases_div,
+        **cases_hi_lo,
         **cases_destination_first,
     }
     cases_repeats = {
@@ -504,12 +506,11 @@ def translate_block_body(
         'divu': 'div',
         # Single-precision float addition is the same as regular addition.
         'add.s': 'addu',
-        'mul.s': 'multu',
         'sub.s': 'subu',
         # TODO: Deal with doubles differently.
         'add.d': 'addu',
         'div.d': 'div.s',
-        'mul.d': 'multu',
+        'mul.d': 'mul.s',
         'sub.d': 'subu',
         # Casting (the above applies here too)
         'cvt.d.w': 'cvt.d.s',
@@ -635,8 +636,8 @@ def translate_block_body(
 
             reg[instr.args[0]] = res
 
-        elif mnemonic in cases_div:
-            reg[Register('hi')], reg[Register('lo')] = cases_div[mnemonic](instr.args)
+        elif mnemonic in cases_hi_lo:
+            reg[Register('hi')], reg[Register('lo')] = cases_hi_lo[mnemonic](instr.args)
 
         elif mnemonic in cases_destination_first:
             assert isinstance(instr.args[0], Register)
