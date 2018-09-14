@@ -16,6 +16,9 @@ SPECIAL_REGS = [
     '31'
 ]
 
+DEBUG = True
+IGNORE_ERRORS = False
+
 @attr.s
 class StackInfo:
     function: Function = attr.ib()
@@ -23,8 +26,8 @@ class StackInfo:
     is_leaf: bool = attr.ib(default=True)
     local_vars_region_bottom: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
-    callee_save_reg_locations: Dict[Register, int] = attr.ib(default={})
-    local_vars: List['LocalVar'] = attr.ib(default=[])
+    callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
+    local_vars: List['LocalVar'] = attr.ib(factory=list)
 
     def in_subroutine_arg_region(self, location: int) -> bool:
         assert not self.is_leaf
@@ -281,9 +284,6 @@ def deref(arg: Argument, reg, stack_info: StackInfo) -> Expression:
         else:
             # Struct member is being dereferenced.
             return StructAccess(struct_var=reg[arg.rhs], offset=location)
-    elif isinstance(arg, Register):
-        # Look up the register's contents.
-        return reg[arg]
     else:
         # Keep GlobalSymbols as-is.
         assert isinstance(arg, GlobalSymbol)
@@ -354,17 +354,19 @@ class BlockInfo:
             f'To write: {newline.join(str(write) for write in self.to_write)}',
             f'Branch condition: {self.branch_condition}',
             f'Final register states: ' +
-            f'{[f"{k}: {v}" for k,v in self.final_register_states.items()]}'])
+            f'{[f"{k}: {v}" for k,v in sorted(self.final_register_states.items())]}'])
 
 
 def make_store(args: List[Argument], reg, stack_info: StackInfo, size: int, float=False):
     assert isinstance(args[0], Register)
-    if args[0].register_name in SPECIAL_REGS:
+    if (args[0].register_name in SPECIAL_REGS and
+            isinstance(args[1], AddressMode) and
+            args[1].rhs.register_name == 'sp'):
+        # TODO: This isn't really right, but it helps get rid of some pointless stores.
         return None
-    else:
-        return Store(
-            size, source=reg[args[0]], dest=deref(args[1], reg, stack_info), float=float
-        )
+    return Store(
+        size, source=reg[args[0]], dest=deref(args[1], reg, stack_info), float=float
+    )
 
 def convert_to_float(num: int):
     if num == 0:
@@ -612,6 +614,10 @@ def translate_block_body(
                 assert mnemonic == 'jal'
                 assert isinstance(args[0], GlobalSymbol)
                 func_args = []
+                # At most one of $f12 and $a0 may be passed, and at most one of
+                # $f14 and $a1. We could try to figure out which ones, and cap
+                # the function call at the point where a register is empty, but
+                # for now we'll leave that for manual fixup.
                 for register in map(Register, ['f12', 'f14', 'a0', 'a1', 'a2', 'a3']):
                     # The latter check verifies that the register is not a
                     # placeholder.
@@ -684,15 +690,20 @@ def translate_graph_from_block(
     if node.block.block_info is not None:
         return
 
-    print(f'\nNode in question: {node.block}')
+    if DEBUG:
+        print(f'\nNode in question: {node.block}')
 
     # Translate the given node and discover final register states.
     try:
         block_info = translate_block_body(node.block, reg, stack_info)
-        print(block_info)
-    except Exception as _:
-        traceback.print_exc()
-        block_info = BlockInfo([], None, {})  # TODO: handle issues
+        if DEBUG:
+            print(block_info)
+    except Exception as e:
+        if IGNORE_ERRORS:
+            traceback.print_exc()
+            block_info = BlockInfo([], None, {})  # TODO: handle issues
+        else:
+            raise e
 
     node.block.add_block_info(block_info)
 
