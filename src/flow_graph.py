@@ -134,6 +134,7 @@ def prune_unreferenced_labels(function: Function) -> Function:
 # Detect and simplify various standard patterns emitted by the IRIX compiler.
 # Currently handled:
 # - checks for x/0 and INT_MIN/-1 after division (removed)
+# - unsigned to float conversion (converted to a made-up instruction)
 def simplify_standard_patterns(function: Function) -> Function:
     div_pattern: List[str] = [
         "bnez",
@@ -146,6 +147,16 @@ def simplify_standard_patterns(function: Function) -> Function:
         "bne",
         "nop",
         "break 6",
+        "",
+    ]
+
+    utf_pattern: List[str] = [
+        "bgez",
+        "cvt.s.w",
+        "li $at, 0x4f800000",
+        "mtc1",
+        "nop",
+        "add.s",
         "",
     ]
 
@@ -197,13 +208,25 @@ def simplify_standard_patterns(function: Function) -> Function:
             return None
         return ([], i + len(div_pattern) - 1)
 
+    def try_replace_utf_conv(i) -> Optional[Tuple[List[Instruction], int]]:
+        actual = function.body[i:i + len(utf_pattern)]
+        if not matches_pattern(actual, utf_pattern):
+            return None
+        label = typing.cast(Label, actual[6])
+        bgez = typing.cast(Instruction, actual[0])
+        if bgez.get_branch_target().target != label.name:
+            return None
+        cvt_instr = typing.cast(Instruction, actual[1])
+        new_instr = Instruction(mnemonic="cvt.s.u", args=cvt_instr.args)
+        return ([new_instr], i + len(utf_pattern) - 1)
+
     def no_replacement(i) -> Tuple[List[Instruction], int]:
         return ([function.body[i]], i + 1)
 
     new_function = Function(name=function.name)
     i = 0
     while i < len(function.body):
-        repl, i = try_replace_div(i) or no_replacement(i)
+        repl, i = try_replace_div(i) or try_replace_utf_conv(i) or no_replacement(i)
         new_function.body.extend(repl)
     return new_function
 
