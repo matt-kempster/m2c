@@ -56,7 +56,7 @@ class Body:
         # Add node header comment
         self.add_comment(indent, f'Node {node.block.index}')
         # Add node contents
-        assert node.block.block_info is not None
+        assert isinstance(node.block.block_info, BlockInfo)
         for item in node.block.block_info.to_write:
             self.statements.append(SimpleStatement(indent, str(item)))
 
@@ -82,7 +82,8 @@ def build_conditional_subgraph(
     output if/else relationships.
     """
     if_block_info = start.block.block_info
-    assert if_block_info is not None
+    assert isinstance(if_block_info, BlockInfo)
+    assert if_block_info.branch_condition is not None
 
     # If one of the output edges is the end, it's a "fake" if-statement. That
     # is, it actually just resides one indentation level above the start node.
@@ -299,6 +300,11 @@ def handle_return(
     context: Context, body: Body, return_node: Node, indent: int
 ):
     ret_info = return_node.block.block_info
+    assert isinstance(ret_info, BlockInfo)
+
+    if ret_info.to_write:
+        body.add_node(return_node, indent)
+
     if ret_info and Register('return_reg') in ret_info.final_register_states:
         ret = ret_info.final_register_states[Register('return_reg')]
         body.add_comment(indent, f'(possible return value: {ret})')
