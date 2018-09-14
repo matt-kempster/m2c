@@ -253,13 +253,14 @@ class StoreStmt:
 class FuncCallStmt:
     expr: FuncCall = attr.ib()
 
-    def __str__(self: 'FuncCallStmt'):
+    def __str__(self) -> str:
         return f'{self.expr};'
 
+@attr.s
 class CommentStmt:
     contents: str = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'// {self.contents}'
 
 Expression = Union[
