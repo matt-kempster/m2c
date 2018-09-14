@@ -54,7 +54,7 @@ class Body:
 
     def add_node(self, node: Node, indent: int) -> None:
         # Add node header comment
-        self.add_comment(indent, f'// Node {node.block.index}')
+        self.add_comment(indent, f'Node {node.block.index}')
         # Add node contents
         assert node.block.block_info is not None
         for item in node.block.block_info.to_write:
@@ -301,9 +301,9 @@ def handle_return(
     ret_info = return_node.block.block_info
     if ret_info and Register('v0') in ret_info.final_register_states:
         ret = ret_info.final_register_states[Register('v0')]
-        body.add_comment(indent, f'// (possible return value: {ret})')
+        body.add_comment(indent, f'(possible return value: {ret})')
     else:
-        body.add_comment(indent, '// (function likely void)')
+        body.add_comment(indent, '(function likely void)')
 
 def build_flowgraph_between(
     context: Context, start: Node, end: Node, indent: int
