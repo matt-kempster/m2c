@@ -14,7 +14,7 @@ CALLER_SAVE_REGS = [
     'f12', 'f14',
     'at',
     't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9',
-    'hi', 'lo', 'condition_bit'
+    'hi', 'lo', 'condition_bit', 'return_reg'
 ]
 
 SPECIAL_REGS = [
@@ -300,6 +300,8 @@ class RegInfo:
             self.contents[key] = value
         elif key in self.contents:
             del self.contents[key]
+        if key.register_name in ['f0', 'v0']:
+            self[Register('return_reg')] = value
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')
@@ -737,6 +739,7 @@ def translate_block_body(
                 # to do. (TODO: handle it...)
                 regs[Register('f0')] = call
                 regs[Register('v0')] = call
+                regs[Register('return_reg')] = call
 
         elif mnemonic in cases_float_comp:
             regs[Register('condition_bit')] = cases_float_comp[mnemonic](args)
