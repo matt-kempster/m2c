@@ -236,7 +236,7 @@ class FloatLiteral:
     val: float = attr.ib()
 
     def __str__(self) -> str:
-        return str(self.val)
+        return f'{self.val}f'
 
 @attr.s
 class StoreStmt:
