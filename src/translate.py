@@ -287,6 +287,7 @@ Statement = Union[
 @attr.s
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib(factory=dict)
+    wrote_return_register = attr.ib(default=False)
 
     def __getitem__(self, key: Register) -> Expression:
         return self.contents[key]
@@ -302,6 +303,7 @@ class RegInfo:
             del self.contents[key]
         if key.register_name in ['f0', 'v0']:
             self[Register('return_reg')] = value
+            self.wrote_return_register = True
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')

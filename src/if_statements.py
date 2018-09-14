@@ -297,7 +297,7 @@ def get_full_if_condition(
         )
 
 def handle_return(
-    context: Context, body: Body, return_node: Node, indent: int
+    context: Context, body: Body, node: Node, return_node: Node, indent: int
 ):
     ret_info = return_node.block.block_info
     assert isinstance(ret_info, BlockInfo)
@@ -305,8 +305,14 @@ def handle_return(
     if ret_info.to_write:
         body.add_node(return_node, indent)
 
-    if ret_info and Register('return_reg') in ret_info.final_register_states:
-        ret = ret_info.final_register_states[Register('return_reg')]
+    if ret_info.final_register_states.wrote_return_register:
+        regs = ret_info.final_register_states
+    else:
+        assert isinstance(node.block.block_info, BlockInfo)
+        regs = node.block.block_info.final_register_states
+
+    if Register('return_reg') in regs:
+        ret = regs[Register('return_reg')]
         body.add_comment(indent, f'(possible return value: {ret})')
     else:
         body.add_comment(indent, '(function likely void)')
@@ -341,7 +347,8 @@ def build_flowgraph_between(
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
                 body.add_statement(SimpleStatement(indent, 'return;'))
-                handle_return(context, body, curr_start.successor, indent)
+                handle_return(context, body, curr_start,
+                        curr_start.successor, indent)
                 break
             else:
                 curr_start = curr_start.successor
@@ -374,7 +381,7 @@ def write_function(function_info: FunctionInfo) -> None:
     body: Body = build_flowgraph_between(context, start_node, return_node, 4)
     body.add_node(return_node, 4)  # this node is not created in the above routine
     if context.can_reach_return:
-        handle_return(context, body, return_node, 4)
+        handle_return(context, body, return_node, return_node, 4)
 
     print(f'{function_info.stack_info.function.name}(...) {{')
     for local_var in function_info.stack_info.local_vars:
