@@ -35,6 +35,15 @@ class StackInfo:
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
     local_vars: List['LocalVar'] = attr.ib(factory=list)
+    temp_vars: List['EvalOnceStmt'] = attr.ib(factory=list)
+    temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
+
+    def temp_var_generator(self, prefix: str) -> Callable[[], str]:
+        def gen() -> str:
+            counter = self.temp_name_counter.get(prefix, 0) + 1
+            self.temp_name_counter[prefix] = counter
+            return f'temp_{prefix}' + (f'_{counter}' if counter > 1 else '')
+        return gen
 
     def in_subroutine_arg_region(self, location: int) -> bool:
         assert not self.is_leaf
@@ -159,15 +168,8 @@ class BinaryOp:
             right=self.right
         )
 
-    def simplify(self) -> 'BinaryOp':
-        if (isinstance(self.left, BinaryOp) and
-            self.left.is_boolean()          and
-            self.right == IntLiteral(0)):
-            if self.op == '==':
-                return self.left.negated().simplify()
-            elif self.op == '!=':
-                return self.left.simplify()
-        return self
+    def dependencies(self) -> List['Expression']:
+        return [self.left, self.right]
 
     def __str__(self) -> str:
         return f'({self.left} {self.op} {self.right})'
@@ -177,6 +179,9 @@ class UnaryOp:
     op: str = attr.ib()
     expr = attr.ib()
 
+    def dependencies(self) -> List['Expression']:
+        return [self.expr]
+
     def __str__(self) -> str:
         return f'{self.op}{self.expr}'
 
@@ -184,6 +189,9 @@ class UnaryOp:
 class Cast:
     to_type: str = attr.ib()
     expr = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return [self.expr]
 
     def __str__(self) -> str:
         return f'({self.to_type}) {self.expr}'
@@ -193,6 +201,9 @@ class FuncCall:
     func_name: str = attr.ib()
     args: List['Expression'] = attr.ib()
 
+    def dependencies(self) -> List['Expression']:
+        return self.args
+
     def __str__(self) -> str:
         return f'{self.func_name}({", ".join(str(arg) for arg in self.args)})'
 
@@ -200,6 +211,9 @@ class FuncCall:
 class LocalVar:
     value: int = attr.ib()
     # TODO: Definitely need type
+
+    def dependencies(self) -> List['Expression']:
+        return []
 
     def __str__(self) -> str:
         return f'sp{format_hex(self.value)}'
@@ -209,6 +223,9 @@ class PassedInArg:
     value: int = attr.ib()
     # type?
 
+    def dependencies(self) -> List['Expression']:
+        return []
+
     def __str__(self) -> str:
         return f'arg{format_hex(self.value)}'
 
@@ -216,6 +233,9 @@ class PassedInArg:
 class StructAccess:
     struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return [self.struct_var]
 
     def __str__(self) -> str:
         # TODO: don't treat offset == 0 specially if there have been other
@@ -236,12 +256,18 @@ class SubroutineArg:
     value: int = attr.ib()
     # type?
 
+    def dependencies(self) -> List['Expression']:
+        return []
+
     def __str__(self) -> str:
         return f'subroutine_arg{format_hex(self.value)}'
 
 @attr.s(frozen=True)
 class GlobalSymbol:
     symbol_name: str = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return []
 
     def __str__(self):
         return self.symbol_name
@@ -250,12 +276,18 @@ class GlobalSymbol:
 class FloatLiteral:
     value: float = attr.ib()
 
+    def dependencies(self) -> List['Expression']:
+        return []
+
     def __str__(self) -> str:
         return f'{self.value}f'
 
 @attr.s(frozen=True)
 class IntLiteral:
     value: int = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return []
 
     def __str__(self) -> str:
         if abs(self.value) < 10:
@@ -265,6 +297,9 @@ class IntLiteral:
 @attr.s(frozen=True)
 class AddressOf:
     expr: 'Expression' = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return [self.expr]
 
     def __str__(self):
         return f'&{self.expr}'
@@ -280,6 +315,45 @@ class AddressMode:
         else:
             return f'({self.rhs})'
 
+@attr.s(cmp=False)
+class EvalOnceExpr:
+    wrapped_expr: 'Expression' = attr.ib()
+    var: Union[str, Callable[[], str]] = attr.ib()
+    always_emit: bool = attr.ib()
+    num_usages: int = attr.ib(default=0)
+
+    def dependencies(self) -> List['Expression']:
+        return [self.wrapped_expr]
+
+    def get_var_name(self) -> str:
+        if not isinstance(self.var, str):
+            self.var = self.var()
+        return self.var
+
+    def __str__(self) -> str:
+        if self.num_usages <= 1:
+            return str(self.wrapped_expr)
+        else:
+            return self.get_var_name()
+
+@attr.s
+class EvalOnceStmt:
+    expr: EvalOnceExpr = attr.ib()
+
+    def need_decl(self) -> bool:
+        return self.expr.num_usages > 1
+
+    def should_write(self) -> bool:
+        if self.expr.always_emit:
+            return self.expr.num_usages != 1
+        else:
+            return self.expr.num_usages > 1
+
+    def __str__(self) -> str:
+        if self.expr.always_emit and self.expr.num_usages == 0:
+            return f'{self.expr.wrapped_expr};'
+        return f'{self.expr.get_var_name()} = {self.expr.wrapped_expr};'
+
 @attr.s
 class StoreStmt:
     size: int = attr.ib()
@@ -287,20 +361,19 @@ class StoreStmt:
     dest: 'Expression' = attr.ib()
     float: bool = attr.ib(default=False)
 
-    def __str__(self):
+    def should_write(self) -> bool:
+        return True
+
+    def __str__(self) -> str:
         type = f'(f{self.size})' if self.float else f'(s{self.size})'
         return f'{type} {self.dest} = {self.source};'
 
 @attr.s
-class FuncCallStmt:
-    expr: FuncCall = attr.ib()
-
-    def __str__(self) -> str:
-        return f'{self.expr};'
-
-@attr.s
 class CommentStmt:
     contents: str = attr.ib()
+
+    def should_write(self) -> bool:
+        return True
 
     def __str__(self) -> str:
         return f'// {self.contents}'
@@ -318,11 +391,12 @@ Expression = Union[
     PassedInArg,
     StructAccess,
     SubroutineArg,
+    EvalOnceExpr,
 ]
 
 Statement = Union[
     StoreStmt,
-    FuncCallStmt,
+    EvalOnceStmt,
     CommentStmt,
 ]
 
@@ -377,7 +451,7 @@ class BlockInfo:
     def __str__(self) -> str:
         newline = '\n\t'
         return '\n'.join([
-            f'To write: {newline.join(str(write) for write in self.to_write)}',
+            f'Statements: {newline.join(str(w) for w in self.to_write if w.should_write())}',
             f'Branch condition: {self.branch_condition}',
             f'Final register states: {self.final_register_states}'])
 
@@ -438,9 +512,55 @@ def deref(
             # Struct member is being dereferenced.
             return StructAccess(struct_var=regs[arg.rhs], offset=location)
     else:
-        # Keep GlobalSymbols as-is.
+        # Keep GlobalSymbol's as-is.
         assert isinstance(arg, GlobalSymbol)
         return arg
+
+def is_repeatable_expression(expr: Expression) -> bool:
+    # Determine whether an expression should be evaluated only once or not.
+    # TODO: Some of this logic is sketchy, saying that it's fine to repeat e.g.
+    # reads even though there might have been e.g. sets or function calls in
+    # between. It should really take into account what has changed since the
+    # expression was created and when it's used. For now, though, we make this
+    # naive guess at the creation. (Another signal we could potentially use is
+    # whether the expression is stored in a callee-save register.)
+    if expr is None or isinstance(expr, (EvalOnceExpr, IntLiteral,
+            FloatLiteral, GlobalSymbol, LocalVar, PassedInArg, SubroutineArg)):
+        return True
+    if isinstance(expr, AddressOf):
+        return is_repeatable_expression(expr.expr)
+    if isinstance(expr, StructAccess):
+        return is_repeatable_expression(expr.struct_var)
+    return False
+
+def simplify_condition(expr: Expression) -> Expression:
+    """
+    Simplify a boolean expression.
+    This function must not be called while code is being generated, since at
+    that point we don't know the final status of EvalOnceExpr's.
+    """
+    if isinstance(expr, EvalOnceExpr) and expr.num_usages <= 1:
+        return simplify_condition(expr.wrapped_expr)
+    if isinstance(expr, BinaryOp):
+        left = simplify_condition(expr.left)
+        right = simplify_condition(expr.right)
+        if (isinstance(left, BinaryOp) and left.is_boolean() and
+                right == IntLiteral(0)):
+            if expr.op == '==':
+                return simplify_condition(left.negated())
+            if expr.op == '!=':
+                return left
+        return BinaryOp(left=left, op=expr.op, right=right)
+    return expr
+
+def mark_used(expr: Expression) -> None:
+    if isinstance(expr, EvalOnceExpr):
+        expr.num_usages += 1
+        if expr.num_usages == 1 and not expr.always_emit:
+            mark_used(expr.wrapped_expr)
+    else:
+        for sub_expr in expr.dependencies():
+            mark_used(sub_expr)
 
 def literal_expr(arg: Argument) -> Expression:
     if isinstance(arg, AsmGlobalSymbol):
@@ -697,6 +817,22 @@ def translate_block_body(
     }
 
     to_write: List[Union[Statement]] = []
+    def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
+        if always_emit:
+            # (otherwise this will be marked used once num_usages reaches 1)
+            mark_used(expr)
+        expr = EvalOnceExpr(expr, always_emit=always_emit,
+                var=stack_info.temp_var_generator(prefix))
+        stmt = EvalOnceStmt(expr)
+        to_write.append(stmt)
+        stack_info.temp_vars.append(stmt)
+        return expr
+
+    def set_reg(reg: Register, expr: Optional[Expression]) -> None:
+        if expr is not None and not is_repeatable_expression(expr):
+            expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
+        regs[reg] = expr
+
     subroutine_args: List[Tuple[Expression, int]] = []
     branch_condition: Optional[BinaryOp] = None
     for instr in block.instructions:
@@ -734,10 +870,12 @@ def translate_block_body(
                     stack_info.add_local_var(to_store.dest)
                 # This needs to be written out.
                 to_write.append(to_store)
+                mark_used(to_store.source)
+                mark_used(to_store.dest)
 
         elif mnemonic in cases_source_first_register:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
-            regs[args.reg_ref(1)] = cases_source_first_register[mnemonic](args)
+            set_reg(args.reg_ref(1), cases_source_first_register[mnemonic](args))
 
         elif mnemonic in cases_branches:
             assert branch_condition is None
@@ -783,11 +921,8 @@ def translate_block_body(
                 # Reset subroutine_args, for the next potential function call.
                 subroutine_args = []
 
-                call = FuncCall(target.symbol_name, func_args)
-                # TODO: It doesn't make sense to put this function call in
-                # to_write in all cases, since sometimes it's just the
-                # return value which matters.
-                to_write.append(FuncCallStmt(call))
+                call: Expression = FuncCall(target.symbol_name, func_args)
+                call = eval_once(call, always_emit=True, prefix='ret')
                 # Clear out caller-save registers, for clarity and to ensure
                 # that argument regs don't get passed into the next function.
                 regs.clear_caller_save_regs()
@@ -812,17 +947,21 @@ def translate_block_body(
                     res.expr not in stack_info.local_vars):
                 stack_info.add_local_var(res.expr)
 
-            regs[output] = res
+            set_reg(output, res)
 
         elif mnemonic in cases_hi_lo:
-            regs[Register('hi')], regs[Register('lo')] = cases_hi_lo[mnemonic](args)
+            hi, lo = cases_hi_lo[mnemonic](args)
+            set_reg(Register('hi'), hi)
+            set_reg(Register('lo'), lo)
 
         elif mnemonic in cases_destination_first:
-            regs[args.reg_ref(0)] = cases_destination_first[mnemonic](args)
+            set_reg(args.reg_ref(0), cases_destination_first[mnemonic](args))
 
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
 
+    if branch_condition is not None:
+        mark_used(branch_condition)
     return BlockInfo(to_write, branch_condition, regs)
 
 

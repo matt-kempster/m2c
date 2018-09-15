@@ -6,7 +6,7 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
 
 from options import Options
 from flow_graph import *
-from translate import FunctionInfo, BlockInfo, BinaryOp
+from translate import FunctionInfo, BlockInfo, BinaryOp, simplify_condition
 
 @attr.s
 class Context:
@@ -25,7 +25,7 @@ class IfElseStatement:
     def __str__(self):
         space = ' ' * self.indent
         if_str = '\n'.join([
-            f'{space}if ({(self.condition.simplify())})',
+            f'{space}if ({simplify_condition(self.condition)})',
             f'{space}{{',
             str(self.if_body),  # has its own indentation
             f'{space}}}',
@@ -60,7 +60,8 @@ class Body:
         # Add node contents
         assert isinstance(node.block.block_info, BlockInfo)
         for item in node.block.block_info.to_write:
-            self.statements.append(SimpleStatement(indent, str(item)))
+            if item.should_write():
+                self.statements.append(SimpleStatement(indent, str(item)))
 
     def add_statement(self, statement: SimpleStatement) -> None:
         self.statements.append(statement)
@@ -386,7 +387,15 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         handle_return(context, body, return_node, return_node, 4)
 
     print(f'{function_info.stack_info.function.name}(...) {{')
+    any_decl = False
     for local_var in function_info.stack_info.local_vars:
-        print(f'    (???) {local_var};')
+        print(SimpleStatement(4, f'(???) {local_var};'))
+        any_decl = True
+    for temp_var in function_info.stack_info.temp_vars:
+        if temp_var.need_decl():
+            print(SimpleStatement(4, f'(???) {temp_var.expr.get_var_name()};'))
+            any_decl = True
+    if any_decl:
+        print()
     print(body)
     print('}')
