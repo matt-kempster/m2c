@@ -2,8 +2,26 @@
 set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
+if [[ "$#" -eq 0 ]]; then
+    ANY=0
+    for T in $DIR/orig/*.c; do
+        if [[ ! -e $DIR/irix-g/$(basename "$T" .c).s ]]; then
+            echo Adding $(basename "$T")
+            $DIR/add-test.sh "$T"
+            ANY=1
+        fi
+    done
+    if [[ $ANY = 0 ]]; then
+        echo "No new tests in tests/orig/."
+        echo "Use '$0 tests/orig/<name>.c' to update an existing test." >&2
+    else
+        echo "Remember to ./run-tests.sh!"
+    fi
+    exit 0
+fi
+
 if [[ "$#" -ne 1 ]] || [[ "$1" != *.c ]]; then
-    echo "Usage: ./tests/add-test.sh tests/orig/<name>.c" >&2
+    echo "Usage: $0 [tests/orig/<name>.c]" >&2
     exit 1
 fi
 
