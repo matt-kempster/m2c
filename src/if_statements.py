@@ -382,7 +382,6 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if options.debug:
         print("Here's the whole function!\n")
     body: Body = build_flowgraph_between(context, start_node, return_node, 4)
-    body.add_node(return_node, 4)  # this node is not created in the above routine
     if context.can_reach_return:
         handle_return(context, body, return_node, return_node, 4)
 
