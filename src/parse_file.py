@@ -4,6 +4,7 @@ import re
 import typing
 from typing import List, Union, Iterator, Optional, Dict, Callable, Any
 
+from options import Options
 from parse_instruction import *
 
 @attr.s(frozen=True)
@@ -60,8 +61,8 @@ class MIPSFile:
         return f'# {self.filename}\n{functions_str}'
 
 
-def parse_file(filename: str, f: typing.TextIO) -> MIPSFile:
-    mips_file: MIPSFile = MIPSFile(filename)
+def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
+    mips_file: MIPSFile = MIPSFile(options.filename)
 
     for line in f:
         # Strip comments and whitespace

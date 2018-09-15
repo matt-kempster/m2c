@@ -4,6 +4,7 @@ import traceback
 import typing
 from typing import List, Union, Iterator, Optional, Dict, Callable, Tuple, Any
 
+from options import Options
 from parse_instruction import *
 from flow_graph import *
 
@@ -23,9 +24,6 @@ SPECIAL_REGS = [
     'ra',
     '31'
 ]
-
-DEBUG = True
-IGNORE_ERRORS = False
 
 
 @attr.s
@@ -826,7 +824,7 @@ def translate_block_body(
 
 
 def translate_graph_from_block(
-    node: Node, regs: RegInfo, stack_info: StackInfo
+    node: Node, regs: RegInfo, stack_info: StackInfo, options: Options
 ) -> None:
     """
     Given a FlowGraph node and a dictionary of register contents, give that node
@@ -836,31 +834,33 @@ def translate_graph_from_block(
     if node.block.block_info is not None:
         return
 
-    if DEBUG:
+    if options.debug:
         print(f'\nNode in question: {node.block}')
 
     # Translate the given node and discover final register states.
     try:
         block_info = translate_block_body(node.block, regs, stack_info)
-        if DEBUG:
+        if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
-        if IGNORE_ERRORS:
-            traceback.print_exc()
-            error_stmt = CommentStmt('Error: ' + str(e).replace('\n', ''))
-            block_info = BlockInfo([error_stmt], None, RegInfo(contents={}))
-        else:
+        if options.stop_on_error:
             raise e
+        traceback.print_exc()
+        error_stmt = CommentStmt('Error: ' + str(e).replace('\n', ''))
+        block_info = BlockInfo([error_stmt], None, RegInfo(contents={}))
 
     node.block.add_block_info(block_info)
 
     # Translate descendants recursively. Pass a copy of the dictionary since
     # it will be modified.
     if isinstance(node, BasicNode):
-        translate_graph_from_block(node.successor, regs.copy(), stack_info)
+        translate_graph_from_block(node.successor, regs.copy(),
+                stack_info, options)
     elif isinstance(node, ConditionalNode):
-        translate_graph_from_block(node.conditional_edge, regs.copy(), stack_info)
-        translate_graph_from_block(node.fallthrough_edge, regs.copy(), stack_info)
+        translate_graph_from_block(node.conditional_edge, regs.copy(),
+                stack_info, options)
+        translate_graph_from_block(node.fallthrough_edge, regs.copy(),
+                stack_info, options)
     else:
         assert isinstance(node, ReturnNode)
 
@@ -869,7 +869,7 @@ class FunctionInfo:
     stack_info: StackInfo = attr.ib()
     flow_graph: FlowGraph = attr.ib()
 
-def translate_to_ast(function: Function) -> FunctionInfo:
+def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
     information and has AST transformations for each block of code and
@@ -879,8 +879,10 @@ def translate_to_ast(function: Function) -> FunctionInfo:
     flow_graph: FlowGraph = build_callgraph(function)
     stack_info = get_stack_info(function, flow_graph.nodes[0])
 
-    print(stack_info)
-    print('\nNow, we attempt to translate:')
+    if options.debug:
+        print(stack_info)
+        print('\nNow, we attempt to translate:')
+
     start_node = flow_graph.nodes[0]
     start_reg: RegInfo = RegInfo(contents={
         Register('zero'): IntLiteral(0),
@@ -889,5 +891,5 @@ def translate_to_ast(function: Function) -> FunctionInfo:
         # arguments to function calls.
         **{Register(name): GlobalSymbol(name) for name in SPECIAL_REGS}
     })
-    translate_graph_from_block(start_node, start_reg, stack_info)
+    translate_graph_from_block(start_node, start_reg, stack_info, options)
     return FunctionInfo(stack_info, flow_graph)

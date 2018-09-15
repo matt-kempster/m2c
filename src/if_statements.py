@@ -4,12 +4,14 @@ import queue
 import typing
 from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
 
+from options import Options
 from flow_graph import *
 from translate import FunctionInfo, BlockInfo, BinaryOp
 
 @attr.s
 class Context:
     flow_graph: FlowGraph = attr.ib()
+    options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[int, int, int], bool] = attr.ib(factory=dict)
     can_reach_return = attr.ib(default=False)
 
@@ -48,11 +50,13 @@ class SimpleStatement:
 
 @attr.s
 class Body:
+    print_node_comment = attr.ib()
     statements: List[Union[SimpleStatement, IfElseStatement]] = attr.ib(factory=list)
 
     def add_node(self, node: Node, indent: int) -> None:
         # Add node header comment
-        self.add_comment(indent, f'Node {node.block.index}')
+        if self.print_node_comment:
+            self.add_comment(indent, f'Node {node.block.index}')
         # Add node contents
         assert isinstance(node.block.block_info, BlockInfo)
         for item in node.block.block_info.to_write:
@@ -325,7 +329,7 @@ def build_flowgraph_between(
     level of indentation.
     """
     curr_start = start
-    body = Body()
+    body = Body(print_node_comment=context.options.node_comments)
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
@@ -369,13 +373,14 @@ def build_flowgraph_between(
 
     return body
 
-def write_function(function_info: FunctionInfo) -> None:
-    context = Context(flow_graph=function_info.flow_graph)
+def write_function(function_info: FunctionInfo, options: Options) -> None:
+    context = Context(flow_graph=function_info.flow_graph, options=options)
     start_node: Node = context.flow_graph.nodes[0]
     return_node: Node = context.flow_graph.nodes[-1]
     assert isinstance(return_node, ReturnNode)
 
-    print("Here's the whole function!\n")
+    if options.debug:
+        print("Here's the whole function!\n")
     body: Body = build_flowgraph_between(context, start_node, return_node, 4)
     body.add_node(return_node, 4)  # this node is not created in the above routine
     if context.can_reach_return:
