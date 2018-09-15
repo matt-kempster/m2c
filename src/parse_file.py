@@ -17,9 +17,14 @@ class Label:
 class Function:
     name: str = attr.ib()
     body: List[Union[Instruction, Label]] = attr.ib(factory=list)
+    jumptable_labels: List[Label] = attr.ib(factory=list)
 
     def new_label(self, name: str):
         self.body.append(Label(name))
+
+    def new_jumptable_label(self, name: str):
+        self.body.append(Label(name))
+        self.jumptable_labels.append(Label(name))
 
     def new_instruction(self, instruction):
         self.body.append(instruction)
@@ -45,6 +50,10 @@ class MIPSFile:
     def new_label(self, label_name):
         assert self.current_function is not None
         self.current_function.new_label(label_name)
+
+    def new_jumptable_label(self, label_name):
+        assert self.current_function is not None
+        self.current_function.new_jumptable_label(label_name)
 
     def __str__(self):
         functions_str = '\n\n'.join(str(function) for function in self.functions)
@@ -72,7 +81,10 @@ def parse_file(filename: str, f: typing.TextIO) -> MIPSFile:
         elif line.startswith('glabel'):
             # Function label.
             function_name: str = line.split(' ')[1]
-            mips_file.new_function(function_name)
+            if re.match('L[0-9A-F]{8}', function_name):
+                mips_file.new_jumptable_label(function_name)
+            else:
+                mips_file.new_function(function_name)
         else:
             # Instruction.
             instruction: Instruction = parse_instruction(line)

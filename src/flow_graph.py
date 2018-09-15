@@ -118,7 +118,7 @@ def normalize_likely_branches(function: Function) -> Function:
 
 
 def prune_unreferenced_labels(function: Function) -> Function:
-    labels_used : Set[str] = set()
+    labels_used : Set[str] = set(l.name for l in function.jumptable_labels)
     for item in function.body:
         if isinstance(item, Instruction) and item.is_branch_instruction():
             labels_used.add(item.get_branch_target().target)
