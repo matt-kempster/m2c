@@ -459,8 +459,8 @@ def load_upper(args: InstrArgs, regs: RegInfo) -> Expression:
         assert expr.right == IntLiteral(16)
         return expr.left
     elif isinstance(expr, IntLiteral):
-        # Something like "lui 0x1", meaning 0x10000. Shift left and return.
-        return BinaryOp(left=expr, op='<<', right=IntLiteral(16))
+        # Something like "lui 0x1", meaning 0x10000.
+        return IntLiteral(expr.value << 16)
     else:
         # Something like "lui REG %hi(arg)", but we got rid of the macro.
         return expr

@@ -4,7 +4,7 @@ test(...) {
     if (((a3 + 3) < 0))
     {
         return;
-        // (possible return value: ((f32) (a3 + 3) + (a2 + (0x40a0 << 0x10))))
+        // (possible return value: ((f32) (a3 + 3) + (a2 + 5.0f)))
     }
-    // (possible return value: ((f32) (a3 + 3) + (a2 + (0x40a0 << 0x10))))
+    // (possible return value: ((f32) (a3 + 3) + (a2 + 5.0f)))
 }
