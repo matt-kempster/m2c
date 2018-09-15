@@ -492,7 +492,7 @@ def handle_addi(args: InstrArgs, regs: RegInfo) -> Expression:
         # Adding to sp, i.e. passing an address.
         lit = args.imm(2)
         assert isinstance(lit, IntLiteral)
-        return UnaryOp(op='&', expr=LocalVar(lit.value))
+        return AddressOf(LocalVar(lit.value))
     else:
         # Regular binary addition.
         return BinaryOp(left=args.reg(1), op='+', right=args.imm(2))
@@ -804,8 +804,7 @@ def translate_block_body(
 
             # Keep track of all local variables that we take addresses of.
             if (output.register_name != 'sp' and
-                    isinstance(res, UnaryOp) and
-                    res.op == '&' and
+                    isinstance(res, AddressOf) and
                     isinstance(res.expr, LocalVar) and
                     res.expr not in stack_info.local_vars):
                 stack_info.add_local_var(res.expr)
