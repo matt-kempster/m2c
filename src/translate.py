@@ -486,6 +486,9 @@ def handle_addi(args: InstrArgs, regs: RegInfo) -> Expression:
         # Used to be "addi reg1 reg2 %lo(...)", but we got rid of the macro.
         # Return the former argument of the macro.
         return args.imm(1)
+    elif args.reg_ref(1).register_name == 'zero':
+        # addiu $reg $zero <imm> is one way of writing 'li'
+        return args.imm(2)
     elif args.reg_ref(1).register_name == 'sp':
         # Adding to sp, i.e. passing an address.
         lit = args.imm(2)
