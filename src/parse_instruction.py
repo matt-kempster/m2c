@@ -90,7 +90,9 @@ def parse_word(elems: List[str], valid: str=valid_word) -> str:
 
 def parse_number(elems: List[str]) -> int:
     number_str = parse_word(elems, valid_number)
-    return ast.literal_eval(number_str)
+    ret = ast.literal_eval(number_str)
+    assert isinstance(ret, int)
+    return ret
 
 # Main parser.
 def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:

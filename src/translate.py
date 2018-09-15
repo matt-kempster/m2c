@@ -497,7 +497,9 @@ def handle_addi(args: InstrArgs, regs: RegInfo) -> Expression:
         # Regular binary addition.
         return BinaryOp(left=args.reg(1), op='+', right=args.imm(2))
 
-def make_store(args: InstrArgs, stack_info: StackInfo, size: int, float=False):
+def make_store(
+    args: InstrArgs, stack_info: StackInfo, size: int, float=False
+) -> Optional[StoreStmt]:
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
     target = args.memory_ref(1)

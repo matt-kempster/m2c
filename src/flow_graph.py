@@ -175,10 +175,10 @@ def simplify_standard_patterns(function: Function) -> Function:
             return ins.args[2].value & 0xffff
         return None
 
-    def matches_pattern(actual, pattern):
-        def match_one(actual, expected) -> bool:
+    def matches_pattern(actual, pattern) -> bool:
+        def match_one(actual, expected: str) -> bool:
             if not isinstance(actual, Instruction):
-                return expected == ""
+                return (expected == "")
             ins = actual
             exp = parse_instruction(expected)
             if not exp.args:

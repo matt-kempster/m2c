@@ -194,7 +194,7 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
-def count_non_postdominated_parents(context, child, curr_end):
+def count_non_postdominated_parents(context, child, curr_end) -> int:
     """
     Return the number of parents of "child" for whom "child" is NOT their
     immediate postdominator. This is useful for finding nodes that would be
