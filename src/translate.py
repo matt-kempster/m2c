@@ -6,7 +6,6 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Tuple, Any
 
 from parse_instruction import *
 from flow_graph import *
-from parse_file import *
 
 # TODO: include temporary floating-point registers
 CALLER_SAVE_REGS = [

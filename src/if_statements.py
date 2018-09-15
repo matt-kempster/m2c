@@ -4,10 +4,8 @@ import queue
 import typing
 from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
 
-from parse_instruction import *
 from flow_graph import *
-from parse_file import *
-from translate import *
+from translate import FunctionInfo, BlockInfo, BinaryOp
 
 @attr.s
 class Context:

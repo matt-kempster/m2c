@@ -4,7 +4,7 @@ import typing
 from typing import List, Union, Iterator, Optional, Dict, Set, Tuple, Callable, Any
 
 from parse_instruction import *
-from parse_file import *
+from parse_file import Function, Label
 
 @attr.s(cmp=False)
 class Block:
