@@ -250,6 +250,8 @@ class IntLiteral:
     value: int = attr.ib()
 
     def __str__(self) -> str:
+        if abs(self.value) < 10:
+            return str(self.value)
         return hex(self.value)
 
 @attr.s(frozen=True)
