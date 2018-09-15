@@ -295,7 +295,6 @@ Expression = Union[
     UnaryOp,
     Cast,
     FuncCall,
-    Register,
     GlobalSymbol,
     IntLiteral,
     FloatLiteral,
