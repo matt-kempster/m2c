@@ -649,6 +649,35 @@ def handle_mtc1(source: Expression) -> Expression:
     else:
         return source
 
+def fold_mul_chains(expr: Expression) -> Expression:
+    def fold(expr: Expression, toplevel: bool) -> Tuple[Expression, int]:
+        if isinstance(expr, BinaryOp):
+            lbase, lnum = fold(expr.left, False)
+            rbase, rnum = fold(expr.right, False)
+            if expr.op == '<<' and isinstance(expr.right, IntLiteral):
+                if toplevel and lnum == 1:
+                    return (expr, 1)
+                return (lbase, lnum << expr.right.value)
+            if expr.op == '*' and isinstance(expr.right, IntLiteral):
+                return (lbase, lnum * expr.right.value)
+            if expr.op == '+' and lbase is rbase:
+                return (lbase, lnum + rnum)
+            if expr.op == '-' and lbase is rbase:
+                return (lbase, lnum - rnum)
+        if isinstance(expr, UnaryOp) and not toplevel:
+            base, num = fold(expr.expr, False)
+            return (base, -num)
+        if isinstance(expr, EvalOnceExpr):
+            base, num = fold(expr.wrapped_expr, False)
+            if num != 1:
+                return (base, num)
+        return (expr, 1)
+
+    base, num = fold(expr, True)
+    if num == 1:
+        return expr
+    return BinaryOp(left=base, op='*', right=IntLiteral(num))
+
 def strip_macros(arg: Argument) -> Argument:
     if isinstance(arg, Macro):
         return arg.argument
@@ -736,14 +765,20 @@ def translate_block_body(
         # Flag-setting instructions
         'slt': lambda a:  BinaryOp(left=a.reg(1), op='<', right=a.reg(2)),
         'slti': lambda a: BinaryOp(left=a.reg(1), op='<', right=a.imm(2)),
-        # LRU (non-floating)
-        'addu': lambda a: BinaryOp(left=a.reg(1), op='+', right=a.reg(2)),
-        'subu': lambda a: BinaryOp(left=a.reg(1), op='-', right=a.reg(2)),
-        'negu': lambda a: UnaryOp(op='-', expr=a.reg(1)),
+        # Integer arithmetic
+        'addu': lambda a: fold_mul_chains(
+                            BinaryOp(left=a.reg(1), op='+', right=a.reg(2))),
+        'subu': lambda a: fold_mul_chains(
+                            BinaryOp(left=a.reg(1), op='-', right=a.reg(2))),
+        'negu': lambda a: fold_mul_chains(
+                            UnaryOp(op='-', expr=a.reg(1))),
         # Hi/lo register uses (used after division/multiplication)
         'mfhi': lambda a: regs[Register('hi')],
         'mflo': lambda a: regs[Register('lo')],
         # Floating point arithmetic
+        'add.s': lambda a: BinaryOp(left=a.reg(1), op='+', right=a.reg(2)),
+        'sub.s': lambda a: BinaryOp(left=a.reg(1), op='-', right=a.reg(2)),
+        'neg.s': lambda a: UnaryOp(op='-', expr=a.reg(1)),
         'div.s': lambda a: BinaryOp(left=a.reg(1), op='/', right=a.reg(2)),
         'mul.s': lambda a: BinaryOp(left=a.reg(1), op='*', right=a.reg(2)),
         # Floating point conversions
@@ -761,10 +796,11 @@ def translate_block_body(
 
         'andi': lambda a: BinaryOp(left=a.reg(1), op='&',  right=a.imm(2)),
         'xori': lambda a: BinaryOp(left=a.reg(1), op='^',  right=a.imm(2)),
-        'sll': lambda a:  BinaryOp(left=a.reg(1), op='<<', right=a.imm(2)),
+        'sll': lambda a: fold_mul_chains(
+                          BinaryOp(left=a.reg(1), op='<<', right=a.imm(2))),
         'sllv': lambda a: BinaryOp(left=a.reg(1), op='<<', right=a.reg(2)),
         'srl': lambda a:  BinaryOp(left=a.reg(1), op='>>', right=a.imm(2)),
-        'srlv': lambda a:  BinaryOp(left=a.reg(1), op='>>', right=a.reg(2)),
+        'srlv': lambda a: BinaryOp(left=a.reg(1), op='>>', right=a.reg(2)),
         # Move pseudoinstruction
         'move': lambda a: a.reg(1),
         # Floating point moving instructions
@@ -787,14 +823,10 @@ def translate_block_body(
         # Addition and division, unsigned vs. signed, doesn't matter (?)
         'addiu': 'addi',
         'divu': 'div',
-        # Single-precision float addition is the same as regular addition.
-        'add.s': 'addu',
-        'sub.s': 'subu',
-        'neg.s': 'negu',
-        # TODO: Deal with doubles differently.
-        'add.d': 'addu',
-        'sub.d': 'subu',
-        'neg.d': 'negu',
+        # Double-precision arithmetic (TODO: deal with this differently)
+        'add.d': 'add.s',
+        'sub.d': 'sub.s',
+        'neg.d': 'neg.s',
         'div.d': 'div.s',
         'mul.d': 'mul.s',
         # Casting (the above applies here too)
