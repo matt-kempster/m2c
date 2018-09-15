@@ -83,15 +83,15 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
 
         if inst.mnemonic == 'addiu' and destination.register_name == 'sp':
             # Moving the stack pointer.
-            assert isinstance(inst.args[2], NumberLiteral)
+            assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = -inst.args[2].value
         elif inst.mnemonic == 'sw' and destination.register_name == 'ra':
             # Saving the return address on the stack.
-            assert isinstance(inst.args[1], AddressMode)
+            assert isinstance(inst.args[1], AsmAddressMode)
             assert inst.args[1].rhs.register_name == 'sp'
             info.is_leaf = False
             if inst.args[1].lhs:
-                assert isinstance(inst.args[1].lhs, NumberLiteral)
+                assert isinstance(inst.args[1].lhs, AsmLiteral)
                 info.return_addr_location = inst.args[1].lhs.value
             else:
                 # Note that this should only happen in the rare case that
@@ -99,12 +99,12 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
                 info.return_addr_location = 0
         elif (inst.mnemonic == 'sw' and
               destination.is_callee_save() and
-              isinstance(inst.args[1], AddressMode) and
+              isinstance(inst.args[1], AsmAddressMode) and
               inst.args[1].rhs.register_name == 'sp'):
             # Initial saving of callee-save register onto the stack.
             assert isinstance(inst.args[1].rhs, Register)
             if inst.args[1].lhs:
-                assert isinstance(inst.args[1].lhs, NumberLiteral)
+                assert isinstance(inst.args[1].lhs, AsmLiteral)
                 info.callee_save_reg_locations[destination] = inst.args[1].lhs.value
             else:
                 info.callee_save_reg_locations[destination] = 0
@@ -165,7 +165,7 @@ class BinaryOp:
     def simplify(self) -> 'BinaryOp':
         if (isinstance(self.left, BinaryOp) and
             self.left.is_boolean()          and
-            self.right == NumberLiteral(0)):
+            self.right == IntLiteral(0)):
             if self.op == '==':
                 return self.left.negated().simplify()
             elif self.op == '!=':
@@ -232,11 +232,36 @@ class SubroutineArg:
         return f'subroutine_arg{format_hex(self.value)}'
 
 @attr.s(frozen=True)
+class GlobalSymbol:
+    symbol_name: str = attr.ib()
+
+    def __str__(self):
+        return self.symbol_name
+
+@attr.s(frozen=True)
 class FloatLiteral:
-    val: float = attr.ib()
+    value: float = attr.ib()
 
     def __str__(self) -> str:
-        return f'{self.val}f'
+        return f'{self.value}f'
+
+@attr.s(frozen=True)
+class IntLiteral:
+    value: int = attr.ib()
+
+    def __str__(self) -> str:
+        return hex(self.value)
+
+@attr.s(frozen=True)
+class AddressMode:
+    offset: int = attr.ib()
+    rhs: Register = attr.ib()
+
+    def __str__(self):
+        if self.offset:
+            return f'{self.offset}({self.rhs})'
+        else:
+            return f'({self.rhs})'
 
 @attr.s
 class StoreStmt:
@@ -270,7 +295,7 @@ Expression = Union[
     FuncCall,
     Register,
     GlobalSymbol,
-    NumberLiteral,
+    IntLiteral,
     FloatLiteral,
     LocalVar,
     PassedInArg,
@@ -358,8 +383,13 @@ class InstrArgs:
 
     def memory_ref(self, index: int) -> Union[AddressMode, GlobalSymbol]:
         ret = self.raw_args[index]
-        assert isinstance(ret, AddressMode) or isinstance(ret, GlobalSymbol)
-        return ret
+        if isinstance(ret, AsmAddressMode):
+            if ret.lhs is None:
+                return AddressMode(offset=0, rhs=ret.rhs)
+            assert isinstance(ret.lhs, AsmLiteral)  # macros were removed
+            return AddressMode(offset=ret.lhs.value, rhs=ret.rhs)
+        assert isinstance(ret, AsmGlobalSymbol)
+        return GlobalSymbol(symbol_name=ret.symbol_name)
 
     def count(self) -> int:
         return len(self.raw_args)
@@ -371,11 +401,7 @@ def deref(
     stack_info: StackInfo
 ) -> Expression:
     if isinstance(arg, AddressMode):
-        if arg.lhs is None:
-            location = 0
-        else:
-            assert isinstance(arg.lhs, NumberLiteral)  # macros were removed
-            location = arg.lhs.value
+        location=arg.offset
         if arg.rhs.register_name == 'sp':
             # This is either a local variable or an argument.
             if stack_info.in_local_var_region(location):
@@ -397,8 +423,10 @@ def deref(
         return arg
 
 def literal_expr(arg: Argument) -> Expression:
-    if isinstance(arg, GlobalSymbol) or isinstance(arg, NumberLiteral):
-        return arg
+    if isinstance(arg, AsmGlobalSymbol):
+        return GlobalSymbol(symbol_name=arg.symbol_name)
+    if isinstance(arg, AsmLiteral):
+        return IntLiteral(arg.value)
     assert isinstance(arg, BinOp), f'argument {arg} must be a literal'
     return BinaryOp(left=literal_expr(arg.lhs), op=arg.op,
             right=literal_expr(arg.rhs))
@@ -408,11 +436,11 @@ def load_upper(args: InstrArgs, regs: RegInfo) -> Expression:
     expr = args.imm(1)
     if isinstance(expr, BinaryOp) and expr.op == '>>':
         # Something like "lui REG (lhs >> 16)". Just take "lhs".
-        assert expr.right == NumberLiteral(16)
+        assert expr.right == IntLiteral(16)
         return expr.left
-    elif isinstance(expr, NumberLiteral):
+    elif isinstance(expr, IntLiteral):
         # Something like "lui 0x1", meaning 0x10000. Shift left and return.
-        return BinaryOp(left=expr, op='<<', right=NumberLiteral(16))
+        return BinaryOp(left=expr, op='<<', right=IntLiteral(16))
     else:
         # Something like "lui REG %hi(arg)", but we got rid of the macro.
         return expr
@@ -427,7 +455,7 @@ def handle_ori(args: InstrArgs, regs: RegInfo) -> Expression:
         # Something like "ori REG (lhs & 0xFFFF)". We (hopefully) already
         # handled this above, but let's put lhs into this register too.
         assert expr.op == '&'
-        assert expr.right == NumberLiteral(0xFFFF)
+        assert expr.right == IntLiteral(0xFFFF)
         return expr.left
     else:
         # Regular bitwise OR.
@@ -441,7 +469,7 @@ def handle_addi(args: InstrArgs, regs: RegInfo) -> Expression:
     elif args.reg_ref(1).register_name == 'sp':
         # Adding to sp, i.e. passing an address.
         lit = args.imm(2)
-        assert isinstance(lit, NumberLiteral)
+        assert isinstance(lit, IntLiteral)
         return UnaryOp(op='&', expr=LocalVar(lit.value))
     else:
         # Regular binary addition.
@@ -471,7 +499,7 @@ def convert_to_float(num: int):
     return ((-1) ** sign) * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1)
 
 def handle_mtc1(source: Expression) -> Expression:
-    if isinstance(source, NumberLiteral):
+    if isinstance(source, IntLiteral):
         return FloatLiteral(convert_to_float(source.value))
     else:
         return source
@@ -479,7 +507,7 @@ def handle_mtc1(source: Expression) -> Expression:
 def strip_macros(arg: Argument) -> Argument:
     if isinstance(arg, Macro):
         return arg.argument
-    elif isinstance(arg, AddressMode) and isinstance(arg.lhs, Macro):
+    elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
         assert arg.lhs.macro_name == 'lo'  # %hi(...)(REG) doesn't make sense.
         return arg.lhs.argument
     else:
@@ -520,12 +548,12 @@ def translate_block_body(
         'b': lambda a: None,
         'beq': lambda a:  BinaryOp(left=a.reg(0), op='==', right=a.reg(1)),
         'bne': lambda a:  BinaryOp(left=a.reg(0), op='!=', right=a.reg(1)),
-        'beqz': lambda a: BinaryOp(left=a.reg(0), op='==', right=NumberLiteral(0)),
-        'bnez': lambda a: BinaryOp(left=a.reg(0), op='!=', right=NumberLiteral(0)),
-        'blez': lambda a: BinaryOp(left=a.reg(0), op='<=', right=NumberLiteral(0)),
-        'bgtz': lambda a: BinaryOp(left=a.reg(0), op='>',  right=NumberLiteral(0)),
-        'bltz': lambda a: BinaryOp(left=a.reg(0), op='<',  right=NumberLiteral(0)),
-        'bgez': lambda a: BinaryOp(left=a.reg(0), op='>=', right=NumberLiteral(0)),
+        'beqz': lambda a: BinaryOp(left=a.reg(0), op='==', right=IntLiteral(0)),
+        'bnez': lambda a: BinaryOp(left=a.reg(0), op='!=', right=IntLiteral(0)),
+        'blez': lambda a: BinaryOp(left=a.reg(0), op='<=', right=IntLiteral(0)),
+        'bgtz': lambda a: BinaryOp(left=a.reg(0), op='>',  right=IntLiteral(0)),
+        'bltz': lambda a: BinaryOp(left=a.reg(0), op='<',  right=IntLiteral(0)),
+        'bgez': lambda a: BinaryOp(left=a.reg(0), op='>=', right=IntLiteral(0)),
     }
     cases_float_branches: CmpInstrMap = {
         # Floating-point branch instructions
@@ -830,7 +858,7 @@ def translate_to_ast(function: Function) -> FunctionInfo:
     print('\nNow, we attempt to translate:')
     start_node = flow_graph.nodes[0]
     start_reg: RegInfo = RegInfo(contents={
-        Register('zero'): NumberLiteral(0),
+        Register('zero'): IntLiteral(0),
         # Add dummy values for callee-save registers and args.
         # TODO: There's a better way to do this; this is screwing up the
         # arguments to function calls.

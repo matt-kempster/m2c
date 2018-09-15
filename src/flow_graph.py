@@ -161,17 +161,17 @@ def simplify_standard_patterns(function: Function) -> Function:
     ]
 
     def get_li_imm(ins) -> Optional[int]:
-        if ins.mnemonic == 'lui' and isinstance(ins.args[1], NumberLiteral):
+        if ins.mnemonic == 'lui' and isinstance(ins.args[1], AsmLiteral):
             return (ins.args[1].value & 0xffff) << 16
         if (ins.mnemonic in ['addi', 'addiu'] and
                 ins.args[1] == Register('zero') and
-                isinstance(ins.args[2], NumberLiteral)):
+                isinstance(ins.args[2], AsmLiteral)):
             val = ins.args[2].value & 0xffff
             if val >= 0x8000:
                 val -= 0x10000
             return val & 0xffffffff
         if (ins.mnemonic == 'ori' and ins.args[1] == Register('zero') and
-                isinstance(ins.args[2], NumberLiteral)):
+                isinstance(ins.args[2], AsmLiteral)):
             return ins.args[2].value & 0xffff
         return None
 
@@ -187,7 +187,7 @@ def simplify_standard_patterns(function: Function) -> Function:
                 return True
             # A bit of an ugly hack, but since 'li' can be spelled many ways...
             return (exp.mnemonic == 'li' and exp.args[0] == ins.args[0] and
-                    isinstance(exp.args[1], NumberLiteral) and
+                    isinstance(exp.args[1], AsmLiteral) and
                     (exp.args[1].value & 0xffffffff) == get_li_imm(ins))
 
         return (len(actual) == len(pattern) and
