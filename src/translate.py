@@ -655,7 +655,9 @@ def fold_mul_chains(expr: Expression) -> Expression:
             lbase, lnum = fold(expr.left, False)
             rbase, rnum = fold(expr.right, False)
             if expr.op == '<<' and isinstance(expr.right, IntLiteral):
-                if toplevel and lnum == 1:
+                # Left-shifts by small numbers are easier to understand if
+                # written as multiplications (they compile to the same thing).
+                if toplevel and lnum == 1 and not (1 <= expr.right.value <= 4):
                     return (expr, 1)
                 return (lbase, lnum << expr.right.value)
             if expr.op == '*' and isinstance(expr.right, IntLiteral):
