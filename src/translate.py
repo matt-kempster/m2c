@@ -216,11 +216,22 @@ class PassedInArg:
 
 @attr.s
 class StructAccess:
-    struct_var = attr.ib()
+    struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
 
     def __str__(self) -> str:
-        return f'{self.struct_var}->unk{format_hex(self.offset)}'
+        # TODO: don't treat offset == 0 specially if there have been other
+        # non-zero-offset accesses for the same struct_var
+        if isinstance(self.struct_var, AddressOf):
+            if self.offset == 0:
+                return f'{self.struct_var.expr}'
+            else:
+                return f'{self.struct_var.expr}.unk{format_hex(self.offset)}'
+        else:
+            if self.offset == 0:
+                return f'*{self.struct_var}'
+            else:
+                return f'{self.struct_var}->unk{format_hex(self.offset)}'
 
 @attr.s
 class SubroutineArg:
@@ -252,6 +263,13 @@ class IntLiteral:
         if abs(self.value) < 10:
             return str(self.value)
         return hex(self.value)
+
+@attr.s(frozen=True)
+class AddressOf:
+    expr: 'Expression' = attr.ib()
+
+    def __str__(self):
+        return f'&{self.expr}'
 
 @attr.s(frozen=True)
 class AddressMode:
@@ -296,6 +314,7 @@ Expression = Union[
     FuncCall,
     GlobalSymbol,
     IntLiteral,
+    AddressOf,
     FloatLiteral,
     LocalVar,
     PassedInArg,
@@ -379,7 +398,10 @@ class InstrArgs:
         return self.regs[self.reg_ref(index)]
 
     def imm(self, index: int) -> Expression:
-        return literal_expr(self.raw_args[index])
+        ret = literal_expr(self.raw_args[index])
+        if isinstance(ret, GlobalSymbol):
+            return AddressOf(ret)
+        return ret
 
     def memory_ref(self, index: int) -> Union[AddressMode, GlobalSymbol]:
         ret = self.raw_args[index]
@@ -738,6 +760,8 @@ def translate_block_body(
                 # Function call. Well, let's double-check:
                 assert mnemonic == 'jal'
                 target = args.imm(0)
+                assert isinstance(target, AddressOf)
+                target = target.expr
                 assert isinstance(target, GlobalSymbol)
                 # At most one of $f12 and $a0 may be passed, and at most one of
                 # $f14 and $a1. We could try to figure out which ones, and cap
