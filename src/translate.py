@@ -166,7 +166,7 @@ class TypeHint:
     def __str__(self) -> str:
         return f'{self.type}({self.value})'
 
-@attr.s
+@attr.s(frozen=True, cmp=False)
 class BinaryOp:
     left: 'Expression' = attr.ib()
     op: str = attr.ib()
@@ -196,7 +196,7 @@ class BinaryOp:
     def __str__(self) -> str:
         return f'({self.left} {self.op} {self.right})'
 
-@attr.s
+@attr.s(frozen=True, cmp=False)
 class UnaryOp:
     op: str = attr.ib()
     expr = attr.ib()
@@ -207,7 +207,7 @@ class UnaryOp:
     def __str__(self) -> str:
         return f'{self.op}{self.expr}'
 
-@attr.s
+@attr.s(frozen=True, cmp=False)
 class Cast:
     to_type: str = attr.ib()
     expr = attr.ib()
@@ -218,7 +218,7 @@ class Cast:
     def __str__(self) -> str:
         return f'({self.to_type}) {self.expr}'
 
-@attr.s
+@attr.s(frozen=True, cmp=False)
 class FuncCall:
     func_name: str = attr.ib()
     args: List['Expression'] = attr.ib()
@@ -229,7 +229,7 @@ class FuncCall:
     def __str__(self) -> str:
         return f'{self.func_name}({", ".join(str(arg) for arg in self.args)})'
 
-@attr.s
+@attr.s(frozen=True, cmp=True)
 class LocalVar:
     value: int = attr.ib()
     # TODO: Definitely need type
@@ -240,12 +240,12 @@ class LocalVar:
     def __str__(self) -> str:
         return f'sp{format_hex(self.value)}'
 
-@attr.s
+@attr.s(frozen=True, cmp=True)
 class PassedInArg:
     value: int = attr.ib()
     name: Optional[str] = attr.ib()
-    copied: bool = attr.ib()
-    stack_info: StackInfo = attr.ib()
+    copied: bool = attr.ib(cmp=False)
+    stack_info: StackInfo = attr.ib(cmp=False)
 
     def dependencies(self) -> List['Expression']:
         return []
@@ -265,7 +265,7 @@ class PassedInArg:
             return self.name
         return f'arg{format_hex(self.value)}'
 
-@attr.s
+@attr.s(frozen=True, cmp=True)
 class SubroutineArg:
     value: int = attr.ib()
     # type?
@@ -276,7 +276,7 @@ class SubroutineArg:
     def __str__(self) -> str:
         return f'subroutine_arg{format_hex(self.value)}'
 
-@attr.s
+@attr.s(frozen=True, cmp=False)
 class StructAccess:
     struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
@@ -298,7 +298,7 @@ class StructAccess:
             else:
                 return f'{self.struct_var}->unk{format_hex(self.offset)}'
 
-@attr.s(frozen=True)
+@attr.s(frozen=True, cmp=True)
 class GlobalSymbol:
     symbol_name: str = attr.ib()
 
@@ -308,7 +308,7 @@ class GlobalSymbol:
     def __str__(self):
         return self.symbol_name
 
-@attr.s(frozen=True)
+@attr.s(frozen=True, cmp=True)
 class FloatLiteral:
     value: float = attr.ib()
 
@@ -318,7 +318,7 @@ class FloatLiteral:
     def __str__(self) -> str:
         return f'{self.value}f'
 
-@attr.s(frozen=True)
+@attr.s(frozen=True, cmp=True)
 class IntLiteral:
     value: int = attr.ib()
 
@@ -330,7 +330,7 @@ class IntLiteral:
             return str(self.value)
         return hex(self.value)
 
-@attr.s(frozen=True)
+@attr.s(frozen=True, cmp=True)
 class AddressOf:
     expr: 'Expression' = attr.ib()
 
@@ -340,7 +340,7 @@ class AddressOf:
     def __str__(self):
         return f'&{self.expr}'
 
-@attr.s(frozen=True)
+@attr.s(frozen=True, cmp=True)
 class AddressMode:
     offset: int = attr.ib()
     rhs: Register = attr.ib()
@@ -351,7 +351,7 @@ class AddressMode:
         else:
             return f'({self.rhs})'
 
-@attr.s(cmp=False)
+@attr.s(frozen=False, cmp=False)
 class EvalOnceExpr:
     wrapped_expr: 'Expression' = attr.ib()
     var: Union[str, Callable[[], str]] = attr.ib()
@@ -690,9 +690,9 @@ def fold_mul_chains(expr: Expression) -> Expression:
                 return (lbase, lnum << expr.right.value)
             if expr.op == '*' and isinstance(expr.right, IntLiteral):
                 return (lbase, lnum * expr.right.value)
-            if expr.op == '+' and lbase is rbase:
+            if expr.op == '+' and lbase == rbase:
                 return (lbase, lnum + rnum)
-            if expr.op == '-' and lbase is rbase:
+            if expr.op == '-' and lbase == rbase:
                 return (lbase, lnum - rnum)
         if isinstance(expr, UnaryOp) and not toplevel:
             base, num = fold(expr.expr, False)
