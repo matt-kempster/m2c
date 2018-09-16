@@ -98,6 +98,9 @@ class Type:
     def is_unsigned(self) -> bool:
         return self.get_representative().sign == Type.UNSIGNED
 
+    def is_any(self) -> bool:
+        return str(self) == '?'
+
     def get_size(self) -> int:
         return self.get_representative().size or 32
 

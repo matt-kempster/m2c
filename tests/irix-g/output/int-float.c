@@ -1,4 +1,4 @@
-test(f32 f12, s32 a1, f32 arg8) {
+f32 test(f32 f12, s32 a1, f32 arg8) {
     D_410130 = (s32) f12;
     D_410134 = (f32) a1;
     arg8 = (f32) (arg8 + 5.0f);

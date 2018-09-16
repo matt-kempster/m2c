@@ -14,6 +14,7 @@ class Context:
     options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[int, int, int], bool] = attr.ib(factory=dict)
     can_reach_return = attr.ib(default=False)
+    return_type = attr.ib(factory=Type.any)
 
 @attr.s
 class IfElseStatement:
@@ -316,6 +317,7 @@ def handle_return(
 
     if Register('return_reg') in regs:
         ret = regs[Register('return_reg')]
+        context.return_type.unify(ret.type)
         body.add_comment(indent, f'(possible return value: {ret})')
     else:
         body.add_comment(indent, '(function likely void)')
@@ -386,12 +388,16 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if context.can_reach_return:
         handle_return(context, body, return_node, return_node, 4)
 
+    ret_type = 'void '
+    if not context.return_type.is_any():
+        ret_type = context.return_type.to_decl()
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
         arg_strs.append(f'{arg.type.to_decl()}{arg}')
     arg_str = ', '.join(arg_strs) or 'void'
-    print(f'{fn_name}({arg_str}) {{')
+    print(f'{ret_type}{fn_name}({arg_str}) {{')
+
     any_decl = False
     for local_var in function_info.stack_info.local_vars:
         type_decl = local_var.type.to_decl()
@@ -405,5 +411,6 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
             any_decl = True
     if any_decl:
         print()
+
     print(body)
     print('}')

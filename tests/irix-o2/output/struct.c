@@ -1,4 +1,4 @@
-test(void *a0) {
+void *test(void *a0) {
     a0->unk4 = (s32) (*a0 + a0->unk4);
     // (possible return value: a0)
 }

@@ -1,4 +1,4 @@
-test(void *a0) {
+void *test(void *a0) {
     s32 sp4;
 
     sp4 = (s32) (*a0 + a0->unk4);
