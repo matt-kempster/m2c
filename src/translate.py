@@ -1114,7 +1114,7 @@ def translate_block_body(
         'trunc.w.d': lambda a: Cast(expr=as_f64(a.reg(1)), type=Type.s32()),
         # Bit arithmetic
         'and': lambda a: BinaryOp.int(left=a.reg(1), op='&', right=a.reg(2)),
-        'or': lambda a:  BinaryOp.int(left=a.reg(1), op='^', right=a.reg(2)),
+        'or': lambda a:  BinaryOp.int(left=a.reg(1), op='|', right=a.reg(2)),
         'xor': lambda a: BinaryOp.int(left=a.reg(1), op='^', right=a.reg(2)),
         'andi': lambda a: BinaryOp.int(left=a.reg(1), op='&',  right=a.imm(2)),
         'xori': lambda a: BinaryOp.int(left=a.reg(1), op='^',  right=a.imm(2)),
