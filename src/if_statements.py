@@ -6,7 +6,7 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
 
 from options import Options
 from flow_graph import *
-from translate import FunctionInfo, BlockInfo, BinaryOp, simplify_condition
+from translate import FunctionInfo, BlockInfo, BinaryOp, Type, simplify_condition
 
 @attr.s
 class Context:
@@ -246,7 +246,7 @@ def join_conditions(conditions: List[BinaryOp], op: str, only_negate_last: bool)
         if final_cond is None:
             final_cond = cond
         else:
-            final_cond = BinaryOp(final_cond, op, cond)
+            final_cond = BinaryOp(final_cond, op, cond, type=Type.bool())
     return final_cond
 
 def get_full_if_condition(
@@ -387,16 +387,21 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         handle_return(context, body, return_node, return_node, 4)
 
     fn_name = function_info.stack_info.function.name
-    arguments = function_info.stack_info.arguments
-    arg_str = ', '.join(a.declaration_str() for a in arguments) or 'void'
+    arg_strs = []
+    for arg in function_info.stack_info.arguments:
+        arg_strs.append(f'{arg.type.to_decl()}{arg}')
+    arg_str = ', '.join(arg_strs) or 'void'
     print(f'{fn_name}({arg_str}) {{')
     any_decl = False
     for local_var in function_info.stack_info.local_vars:
-        print(SimpleStatement(4, f'(???) {local_var};'))
+        type_decl = local_var.type.to_decl()
+        print(SimpleStatement(4, f'{type_decl}{local_var};'))
         any_decl = True
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
-            print(SimpleStatement(4, f'(???) {temp_var.expr.get_var_name()};'))
+            expr = temp_var.expr
+            type_decl = expr.type.to_decl()
+            print(SimpleStatement(4, f'{type_decl}{expr.get_var_name()};'))
             any_decl = True
     if any_decl:
         print()

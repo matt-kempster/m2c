@@ -6,7 +6,7 @@ for D in tests/{irix-g,irix-o2}; do
     for T in $D/*.s; do
         C_FILE=$D/output/$(basename $T .s).c
         FN_NAME=test
-        python3 src/main.py --no-debug --no-node-comments $T $FN_NAME >.stdout 2>.stderr
+        python3 src/main.py --no-debug --no-node-comments --stop-on-error $T $FN_NAME >.stdout 2>.stderr
         if [[ $? != 0 ]]; then
             EXPECTED=$(cat $C_FILE 2>/dev/null)
             echo CRASHED > $C_FILE
