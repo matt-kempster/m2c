@@ -74,13 +74,13 @@ class StackInfo:
         if any(a.value == arg.value for a in self.arguments):
             return
         self.arguments.append(arg)
-        self.arguments.sort(key=lambda a: a.value)
+        self.arguments.sort(key=lambda a: a.position())
 
     def get_stack_var(self, location: int) -> 'Expression':
         if self.in_local_var_region(location):
             return LocalVar(location)
         elif self.location_above_stack(location):
-            return PassedInArg(location, name=None, copied=True, stack_info=self)
+            return PassedInArg(location, copied=True)
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location)
         else:
@@ -242,27 +242,37 @@ class LocalVar:
 
 @attr.s(frozen=True, cmp=True)
 class PassedInArg:
-    value: int = attr.ib()
-    name: Optional[str] = attr.ib()
+    value: Union[str, int] = attr.ib()
     copied: bool = attr.ib(cmp=False)
-    stack_info: StackInfo = attr.ib(cmp=False)
+    # TODO: type
 
     def dependencies(self) -> List['Expression']:
         return []
 
+    def position(self) -> int:
+        if isinstance(self.value, int):
+            return self.value
+        mapping = {
+            'a0': 0,
+            'a1': 4,
+            'a2': 8,
+            'a3': 12,
+            'f12': 1,
+            'f14': 5,
+        }
+        return mapping[self.value]
+
     def declaration_str(self) -> str:
-        # TODO: get type properly (from self.stack_info, since there can be
-        # many instances of PassedInArg for a single argument)
         type_str = '?'
-        if self.name is not None:
-            type_str = 'f32' if self.name[0] == 'f' else 's32'
+        if isinstance(self.value, str):
+            type_str = 'f32' if self.value[0] == 'f' else 's32'
         elif 8 <= self.value < 16:
             type_str = 'f32'
         return f'{type_str} {self}'
 
     def __str__(self) -> str:
-        if self.name is not None:
-            return self.name
+        if isinstance(self.value, str):
+            return self.value
         return f'arg{format_hex(self.value)}'
 
 @attr.s(frozen=True, cmp=True)
@@ -442,7 +452,12 @@ class RegInfo:
     wrote_return_register = attr.ib(default=False)
 
     def __getitem__(self, key: Register) -> Expression:
-        return self.contents[key]
+        ret = self.contents[key]
+        if isinstance(ret, PassedInArg) and not ret.copied:
+            # Create a new argument object to better distinguish arguments we
+            # are called with from arguments passed to subroutines.
+            return PassedInArg(ret.value, copied=True)
+        return ret
 
     def __contains__(self, key: Register) -> bool:
         return key in self.contents
@@ -460,6 +475,9 @@ class RegInfo:
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')
         del self.contents[key]
+
+    def get_raw_arg(self, key: Register) -> Expression:
+        return self.contents[key]
 
     def clear_caller_save_regs(self) -> None:
         for reg in map(Register, CALLER_SAVE_REGS):
@@ -579,16 +597,16 @@ def simplify_condition(expr: Expression) -> Expression:
         return BinaryOp(left=left, op=expr.op, right=right)
     return expr
 
-def mark_used(expr: Expression) -> None:
+def mark_used(expr: Expression, stack_info: StackInfo) -> None:
     if isinstance(expr, PassedInArg):
-        expr.stack_info.add_argument(expr)
+        stack_info.add_argument(expr)
     if isinstance(expr, EvalOnceExpr):
         expr.num_usages += 1
         if expr.num_usages == 1 and not expr.always_emit:
-            mark_used(expr.wrapped_expr)
+            mark_used(expr.wrapped_expr, stack_info)
     else:
         for sub_expr in expr.dependencies():
-            mark_used(sub_expr)
+            mark_used(sub_expr, stack_info)
 
 def literal_expr(arg: Argument) -> Expression:
     if isinstance(arg, AsmGlobalSymbol):
@@ -882,7 +900,7 @@ def translate_block_body(
     def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
         if always_emit:
             # (otherwise this will be marked used once num_usages reaches 1)
-            mark_used(expr)
+            mark_used(expr, stack_info)
         expr = EvalOnceExpr(expr, always_emit=always_emit,
                 var=stack_info.temp_var_generator(prefix))
         stmt = EvalOnceStmt(expr)
@@ -893,14 +911,9 @@ def translate_block_body(
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is not None and not is_repeatable_expression(expr):
             expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
-        if isinstance(expr, PassedInArg) and not expr.copied:
-            # Create a new argument object to better distinguish arguments we
-            # are called with from arguments passed to subroutines.
-            expr = PassedInArg(value=expr.value, name=expr.name, copied=True,
-                    stack_info=stack_info)
         regs[reg] = expr
 
-    subroutine_args: List[Tuple[Expression, int]] = []
+    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
     branch_condition: Optional[BinaryOp] = None
     for instr in block.instructions:
         # Save the current mnemonic.
@@ -929,14 +942,14 @@ def translate_block_body(
             to_store = cases_source_first_expression[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
                 # About to call a subroutine with this argument.
-                subroutine_args.append((to_store.source, to_store.dest.value))
+                subroutine_args.append((to_store.source, to_store.dest))
             elif to_store is not None:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
                 # This needs to be written out.
                 to_write.append(to_store)
-                mark_used(to_store.source)
-                mark_used(to_store.dest)
+                mark_used(to_store.source, stack_info)
+                mark_used(to_store.dest, stack_info)
 
         elif mnemonic in cases_source_first_register:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
@@ -981,11 +994,11 @@ def translate_block_body(
                     # position as we received it, but that's impossible to do
                     # anything about without access to function signatures.
                     if register in regs:
-                        expr = regs[register]
+                        expr = regs.get_raw_arg(register)
                         if not isinstance(expr, PassedInArg) or expr.copied:
                             func_args.append(expr)
                 # Add the arguments after a3.
-                subroutine_args.sort(key=lambda a: a[1])
+                subroutine_args.sort(key=lambda a: a[1].value)
                 for arg in subroutine_args:
                     func_args.append(arg[0])
                 # Reset subroutine_args, for the next potential function call.
@@ -1030,7 +1043,7 @@ def translate_block_body(
             assert False, f"I don't know how to handle {mnemonic}!"
 
     if branch_condition is not None:
-        mark_used(branch_condition)
+        mark_used(branch_condition, stack_info)
     return BlockInfo(to_write, branch_condition, regs)
 
 
@@ -1092,12 +1105,12 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
 
     initial_regs: Dict[Register, Expression] = {
         Register('zero'): IntLiteral(0),
-        Register('a0'): PassedInArg(0, 'a0', False, stack_info),
-        Register('a1'): PassedInArg(4, 'a1', False, stack_info),
-        Register('a2'): PassedInArg(8, 'a2', False, stack_info),
-        Register('a3'): PassedInArg(12, 'a3', False, stack_info),
-        Register('f12'): PassedInArg(0, 'f12', False, stack_info),
-        Register('f14'): PassedInArg(4, 'f14', False, stack_info),
+        Register('a0'): PassedInArg('a0', copied=False),
+        Register('a1'): PassedInArg('a1', copied=False),
+        Register('a2'): PassedInArg('a2', copied=False),
+        Register('a3'): PassedInArg('a3', copied=False),
+        Register('f12'): PassedInArg('f12', copied=False),
+        Register('f14'): PassedInArg('f14', copied=False),
         **{Register(name): GlobalSymbol(name) for name in SPECIAL_REGS}
     }
 
