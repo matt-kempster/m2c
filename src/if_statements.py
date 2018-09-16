@@ -386,7 +386,10 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if context.can_reach_return:
         handle_return(context, body, return_node, return_node, 4)
 
-    print(f'{function_info.stack_info.function.name}(...) {{')
+    fn_name = function_info.stack_info.function.name
+    arguments = function_info.stack_info.arguments
+    arg_str = ', '.join(a.declaration_str() for a in arguments) or 'void'
+    print(f'{fn_name}({arg_str}) {{')
     any_decl = False
     for local_var in function_info.stack_info.local_vars:
         print(SimpleStatement(4, f'(???) {local_var};'))

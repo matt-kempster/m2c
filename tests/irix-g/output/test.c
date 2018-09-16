@@ -1,4 +1,4 @@
-test(...) {
+test(void) {
     (s32) D_410100 = 4;
     func_004000B0();
     return;

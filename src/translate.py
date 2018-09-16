@@ -8,18 +8,19 @@ from options import Options
 from parse_instruction import *
 from flow_graph import *
 
-# TODO: include temporary floating-point registers
-CALLER_SAVE_REGS = [
+ARGUMENT_REGS = [
     'a0', 'a1', 'a2', 'a3',
-    'f12', 'f14',
+    'f12', 'f14'
+]
+
+# TODO: include temporary floating-point registers
+CALLER_SAVE_REGS = ARGUMENT_REGS + [
     'at',
     't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9',
     'hi', 'lo', 'condition_bit', 'return_reg'
 ]
 
 SPECIAL_REGS = [
-    'a0', 'a1', 'a2', 'a3',
-    'f12', 'f14',
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
     'ra',
     '31'
@@ -36,6 +37,7 @@ class StackInfo:
     callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
     local_vars: List['LocalVar'] = attr.ib(factory=list)
     temp_vars: List['EvalOnceStmt'] = attr.ib(factory=list)
+    arguments: List['PassedInArg'] = attr.ib(factory=list)
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
 
     def temp_var_generator(self, prefix: str) -> Callable[[], str]:
@@ -62,15 +64,23 @@ class StackInfo:
         return location >= self.allocated_stack_size
 
     def add_local_var(self, var: 'LocalVar') -> None:
+        if any(v.value == var.value for v in self.local_vars):
+            return
         self.local_vars.append(var)
         # Make sure the local vars stay sorted in order on the stack.
         self.local_vars.sort(key=lambda v: v.value)
+
+    def add_argument(self, arg: 'PassedInArg') -> None:
+        if any(a.value == arg.value for a in self.arguments):
+            return
+        self.arguments.append(arg)
+        self.arguments.sort(key=lambda a: a.value)
 
     def get_stack_var(self, location: int) -> 'Expression':
         if self.in_local_var_region(location):
             return LocalVar(location)
         elif self.location_above_stack(location):
-            return PassedInArg(location)
+            return PassedInArg(location, name=None, copied=True, stack_info=self)
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location)
         else:
@@ -233,12 +243,26 @@ class LocalVar:
 @attr.s
 class PassedInArg:
     value: int = attr.ib()
-    # type?
+    name: Optional[str] = attr.ib()
+    copied: bool = attr.ib()
+    stack_info: StackInfo = attr.ib()
 
     def dependencies(self) -> List['Expression']:
         return []
 
+    def declaration_str(self) -> str:
+        # TODO: get type properly (from self.stack_info, since there can be
+        # many instances of PassedInArg for a single argument)
+        type_str = '?'
+        if self.name is not None:
+            type_str = 'f32' if self.name[0] == 'f' else 's32'
+        elif 8 <= self.value < 16:
+            type_str = 'f32'
+        return f'{type_str} {self}'
+
     def __str__(self) -> str:
+        if self.name is not None:
+            return self.name
         return f'arg{format_hex(self.value)}'
 
 @attr.s
@@ -414,7 +438,7 @@ Statement = Union[
 
 @attr.s
 class RegInfo:
-    contents: Dict[Register, Expression] = attr.ib(factory=dict)
+    contents: Dict[Register, Expression] = attr.ib()
     wrote_return_register = attr.ib(default=False)
 
     def __getitem__(self, key: Register) -> Expression:
@@ -556,6 +580,8 @@ def simplify_condition(expr: Expression) -> Expression:
     return expr
 
 def mark_used(expr: Expression) -> None:
+    if isinstance(expr, PassedInArg):
+        expr.stack_info.add_argument(expr)
     if isinstance(expr, EvalOnceExpr):
         expr.num_usages += 1
         if expr.num_usages == 1 and not expr.always_emit:
@@ -626,7 +652,7 @@ def make_store(
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
     target = args.memory_ref(1)
-    if (source_reg.register_name in SPECIAL_REGS and
+    if (source_reg.register_name in (SPECIAL_REGS + ARGUMENT_REGS) and
             isinstance(target, AddressMode) and
             target.rhs.register_name == 'sp'):
         # TODO: This isn't really right, but it helps get rid of some pointless stores.
@@ -867,6 +893,11 @@ def translate_block_body(
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is not None and not is_repeatable_expression(expr):
             expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
+        if isinstance(expr, PassedInArg) and not expr.copied:
+            # Create a new argument object to better distinguish arguments we
+            # are called with from arguments passed to subroutines.
+            expr = PassedInArg(value=expr.value, name=expr.name, copied=True,
+                    stack_info=stack_info)
         regs[reg] = expr
 
     subroutine_args: List[Tuple[Expression, int]] = []
@@ -900,9 +931,7 @@ def translate_block_body(
                 # About to call a subroutine with this argument.
                 subroutine_args.append((to_store.source, to_store.dest.value))
             elif to_store is not None:
-                if (isinstance(to_store.dest, LocalVar) and
-                    to_store.dest not in stack_info.local_vars):
-                    # Keep track of all local variables.
+                if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
                 # This needs to be written out.
                 to_write.append(to_store)
@@ -946,10 +975,15 @@ def translate_block_body(
                 # for now we'll leave that for manual fixup.
                 func_args: List[Expression] = []
                 for register in map(Register, ['f12', 'f14', 'a0', 'a1', 'a2', 'a3']):
-                    # The latter check verifies that the register is not a
-                    # placeholder.
-                    if register in regs and regs[register] != GlobalSymbol(register.register_name):
-                        func_args.append(regs[register])
+                    # The latter check verifies that the register is not just
+                    # meant for us. This might give false positives for the
+                    # first function call if an argument passed in the same
+                    # position as we received it, but that's impossible to do
+                    # anything about without access to function signatures.
+                    if register in regs:
+                        expr = regs[register]
+                        if not isinstance(expr, PassedInArg) or expr.copied:
+                            func_args.append(expr)
                 # Add the arguments after a3.
                 subroutine_args.sort(key=lambda a: a[1])
                 for arg in subroutine_args:
@@ -979,8 +1013,7 @@ def translate_block_body(
             # Keep track of all local variables that we take addresses of.
             if (output.register_name != 'sp' and
                     isinstance(res, AddressOf) and
-                    isinstance(res.expr, LocalVar) and
-                    res.expr not in stack_info.local_vars):
+                    isinstance(res.expr, LocalVar)):
                 stack_info.add_local_var(res.expr)
 
             set_reg(output, res)
@@ -1057,17 +1090,22 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
     flow_graph: FlowGraph = build_callgraph(function)
     stack_info = get_stack_info(function, flow_graph.nodes[0])
 
+    initial_regs: Dict[Register, Expression] = {
+        Register('zero'): IntLiteral(0),
+        Register('a0'): PassedInArg(0, 'a0', False, stack_info),
+        Register('a1'): PassedInArg(4, 'a1', False, stack_info),
+        Register('a2'): PassedInArg(8, 'a2', False, stack_info),
+        Register('a3'): PassedInArg(12, 'a3', False, stack_info),
+        Register('f12'): PassedInArg(0, 'f12', False, stack_info),
+        Register('f14'): PassedInArg(4, 'f14', False, stack_info),
+        **{Register(name): GlobalSymbol(name) for name in SPECIAL_REGS}
+    }
+
     if options.debug:
         print(stack_info)
         print('\nNow, we attempt to translate:')
 
     start_node = flow_graph.nodes[0]
-    start_reg: RegInfo = RegInfo(contents={
-        Register('zero'): IntLiteral(0),
-        # Add dummy values for callee-save registers and args.
-        # TODO: There's a better way to do this; this is screwing up the
-        # arguments to function calls.
-        **{Register(name): GlobalSymbol(name) for name in SPECIAL_REGS}
-    })
+    start_reg: RegInfo = RegInfo(contents=initial_regs)
     translate_graph_from_block(start_node, start_reg, stack_info, options)
     return FunctionInfo(stack_info, flow_graph)
