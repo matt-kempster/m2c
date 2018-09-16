@@ -73,7 +73,7 @@ class Body:
         self.statements.append(if_else)
 
     def __str__(self) -> str:
-        return '\n'.join([str(statement) for statement in self.statements])
+        return '\n'.join(str(statement) for statement in self.statements)
 
 
 def build_conditional_subgraph(

@@ -66,6 +66,18 @@ class StackInfo:
         # Make sure the local vars stay sorted in order on the stack.
         self.local_vars.sort(key=lambda v: v.value)
 
+    def get_stack_var(self, location: int) -> 'Expression':
+        if self.in_local_var_region(location):
+            return LocalVar(location)
+        elif self.location_above_stack(location):
+            return PassedInArg(location)
+        elif self.in_subroutine_arg_region(location):
+            return SubroutineArg(location)
+        else:
+            # Some annoying bookkeeping instruction. To avoid
+            # further special-casing, just return whatever - it won't matter.
+            return LocalVar(location)
+
     def __str__(self) -> str:
         return '\n'.join([
             f'Stack info for function {self.function.name}:',
@@ -230,6 +242,17 @@ class PassedInArg:
         return f'arg{format_hex(self.value)}'
 
 @attr.s
+class SubroutineArg:
+    value: int = attr.ib()
+    # type?
+
+    def dependencies(self) -> List['Expression']:
+        return []
+
+    def __str__(self) -> str:
+        return f'subroutine_arg{format_hex(self.value)}'
+
+@attr.s
 class StructAccess:
     struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
@@ -250,17 +273,6 @@ class StructAccess:
                 return f'*{self.struct_var}'
             else:
                 return f'{self.struct_var}->unk{format_hex(self.offset)}'
-
-@attr.s
-class SubroutineArg:
-    value: int = attr.ib()
-    # type?
-
-    def dependencies(self) -> List['Expression']:
-        return []
-
-    def __str__(self) -> str:
-        return f'subroutine_arg{format_hex(self.value)}'
 
 @attr.s(frozen=True)
 class GlobalSymbol:
@@ -497,17 +509,7 @@ def deref(
     if isinstance(arg, AddressMode):
         location=arg.offset
         if arg.rhs.register_name == 'sp':
-            # This is either a local variable or an argument.
-            if stack_info.in_local_var_region(location):
-                return LocalVar(location)
-            elif stack_info.location_above_stack(location):
-                return PassedInArg(location)
-            elif stack_info.in_subroutine_arg_region(location):
-                return SubroutineArg(location)
-            else:
-                # Some annoying bookkeeping instruction. To avoid
-                # further special-casing, just return whatever - it won't matter.
-                return LocalVar(location)
+            return stack_info.get_stack_var(location)
         else:
             # Struct member is being dereferenced.
             return StructAccess(struct_var=regs[arg.rhs], offset=location)
