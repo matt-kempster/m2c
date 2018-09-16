@@ -25,8 +25,14 @@ class IfElseStatement:
 
     def __str__(self):
         space = ' ' * self.indent
+        # Avoid duplicate parentheses. TODO: make this cleaner and do it more
+        # uniformly, not just here.
+        condition = simplify_condition(self.condition)
+        cond_str = str(condition)
+        if not isinstance(condition, BinaryOp):
+            cond_str = f'({cond_str})'
         if_str = '\n'.join([
-            f'{space}if ({simplify_condition(self.condition)})',
+            f'{space}if {cond_str}',
             f'{space}{{',
             str(self.if_body),  # has its own indentation
             f'{space}}}',
