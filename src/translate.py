@@ -699,7 +699,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             return (base, -num)
         if isinstance(expr, EvalOnceExpr):
             base, num = fold(expr.wrapped_expr, False)
-            if num != 1:
+            if num != 1 and is_repeatable_expression(base):
                 return (base, num)
         return (expr, 1)
 
