@@ -1,7 +1,7 @@
-f32 test(f32 f12, s32 a1, f32 arg8) {
-    D_410130 = (s32) f12;
-    D_410134 = (f32) a1;
-    arg8 = (f32) (arg8 + 5.0f);
+f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3) {
+    D_410130 = (s32) arg0;
+    D_410134 = (f32) arg1;
+    arg2 = (f32) (arg2 + 5.0f);
     return;
-    // (possible return value: ((f32) (u32) (a3 + 3) + arg8))
+    // (possible return value: ((f32) (u32) (arg3 + 3) + arg2))
 }

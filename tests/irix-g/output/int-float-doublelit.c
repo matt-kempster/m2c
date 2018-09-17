@@ -1,10 +1,10 @@
-f32 test(f32 f12, s32 a1, f32 arg8) {
-    D_410190 = (s32) f12;
-    D_410194 = (f32) a1;
-    arg8 = (f32) ((f64) arg8 + 5.0);
-    arg8 = (f32) ((f64) arg8 + 0.0);
-    arg8 = (f32) (arg8 + 0.0f);
-    arg8 = (f32) ((f64) arg8 + D_400180);
+f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3) {
+    D_410190 = (s32) arg0;
+    D_410194 = (f32) arg1;
+    arg2 = (f32) ((f64) arg2 + 5.0);
+    arg2 = (f32) ((f64) arg2 + 0.0);
+    arg2 = (f32) (arg2 + 0.0f);
+    arg2 = (f32) ((f64) arg2 + D_400180);
     return;
-    // (possible return value: ((f32) (u32) (a3 + 3) + arg8))
+    // (possible return value: ((f32) (u32) (arg3 + 3) + arg2))
 }

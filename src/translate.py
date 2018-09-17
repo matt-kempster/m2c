@@ -246,7 +246,11 @@ class StackInfo:
         if any(a.value == arg.value for a in self.arguments):
             return
         self.arguments.append(arg)
-        self.arguments.sort(key=lambda a: a.position())
+        self.arguments.sort(key=lambda a: a.value)
+
+    def get_argument(self, location: int) -> 'PassedInArg':
+        return PassedInArg(location, copied=True,
+                type=self.unique_type_for('stack', location))
 
     def unique_type_for(self, category: str, key: Any) -> 'Type':
         key = (category, key)
@@ -258,13 +262,15 @@ class StackInfo:
         return GlobalSymbol(symbol_name=sym.symbol_name,
                 type=self.unique_type_for('symbol', sym.symbol_name))
 
-    def get_stack_var(self, location: int) -> 'Expression':
+    def get_stack_var(self, location: int, store: bool) -> 'Expression':
         if self.in_local_var_region(location):
             return LocalVar(location,
                     type=self.unique_type_for('stack', location))
         elif self.location_above_stack(location):
-            return PassedInArg(location, copied=True,
-                    type=self.unique_type_for('stack', location))
+            ret = self.get_argument(location)
+            if not store:
+                self.add_argument(ret)
+            return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any())
         else:
@@ -481,30 +487,15 @@ class LocalVar:
 
 @attr.s(frozen=True, cmp=True)
 class PassedInArg:
-    value: Union[str, int] = attr.ib()
+    value: int = attr.ib()
     copied: bool = attr.ib(cmp=False)
     type: Type = attr.ib(cmp=False)
 
     def dependencies(self) -> List['Expression']:
         return []
 
-    def position(self) -> int:
-        if isinstance(self.value, int):
-            return self.value
-        mapping = {
-            'a0': 0,
-            'a1': 4,
-            'a2': 8,
-            'a3': 12,
-            'f12': 1,
-            'f14': 5,
-        }
-        return mapping[self.value]
-
     def __str__(self) -> str:
-        if isinstance(self.value, str):
-            return self.value
-        return f'arg{format_hex(self.value)}'
+        return f'arg{format_hex(self.value // 4)}'
 
 @attr.s(frozen=True, cmp=True)
 class SubroutineArg:
@@ -515,7 +506,7 @@ class SubroutineArg:
         return []
 
     def __str__(self) -> str:
-        return f'subroutine_arg{format_hex(self.value)}'
+        return f'subroutine_arg{format_hex(self.value // 4)}'
 
 @attr.s(frozen=True, cmp=False)
 class StructAccess:
@@ -686,7 +677,8 @@ Statement = Union[
 @attr.s
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib()
-    wrote_return_register = attr.ib(default=False)
+    stack_info: StackInfo = attr.ib(repr=False)
+    wrote_return_register: bool = attr.ib(default=False)
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register('zero'):
@@ -694,8 +686,12 @@ class RegInfo:
         ret = self.contents[key]
         if isinstance(ret, PassedInArg) and not ret.copied:
             # Create a new argument object to better distinguish arguments we
-            # are called with from arguments passed to subroutines.
-            return PassedInArg(ret.value, copied=True, type=ret.type)
+            # are called with from arguments passed to subroutines. Also, unify
+            # the argument's type with what we can guess from the register used.
+            arg = self.stack_info.get_argument(ret.value)
+            self.stack_info.add_argument(arg)
+            arg.type.unify(ret.type)
+            return arg
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -725,7 +721,7 @@ class RegInfo:
                 del self.contents[reg]
 
     def copy(self) -> 'RegInfo':
-        return RegInfo(contents=self.contents.copy())
+        return RegInfo(contents=self.contents.copy(), stack_info=self.stack_info)
 
     def __str__(self) -> str:
         return ', '.join(f"{k}: {v}" for k,v in sorted(self.contents.items()))
@@ -801,12 +797,13 @@ class InstrArgs:
 def deref(
     arg: Union[AddressMode, GlobalSymbol],
     regs: RegInfo,
-    stack_info: StackInfo
+    stack_info: StackInfo,
+    store: bool=False
 ) -> Expression:
     if isinstance(arg, AddressMode):
         location=arg.offset
         if arg.rhs.register_name == 'sp':
-            return stack_info.get_stack_var(location)
+            return stack_info.get_stack_var(location, store=store)
         else:
             # Struct member is being dereferenced.
             var = regs[arg.rhs]
@@ -874,8 +871,6 @@ def simplify_condition(expr: Expression) -> Expression:
     return expr
 
 def mark_used(expr: Expression, stack_info: StackInfo) -> None:
-    if isinstance(expr, PassedInArg):
-        stack_info.add_argument(expr)
     if isinstance(expr, EvalOnceExpr):
         expr.num_usages += 1
         if expr.num_usages == 1 and not expr.always_emit:
@@ -954,7 +949,7 @@ def make_store(
             target.rhs.register_name == 'sp'):
         # TODO: This isn't really right, but it helps get rid of some pointless stores.
         return None
-    dest = deref(target, args.regs, stack_info)
+    dest = deref(target, args.regs, stack_info, store=True)
     dest.type.unify(type)
     return StoreStmt(source=as_type(source_val, type, silent=False), dest=dest)
 
@@ -1343,7 +1338,8 @@ def translate_graph_from_block(
             raise e
         traceback.print_exc()
         error_stmt = CommentStmt('Error: ' + str(e).replace('\n', ''))
-        block_info = BlockInfo([error_stmt], None, RegInfo(contents={}))
+        block_info = BlockInfo([error_stmt], None,
+                RegInfo(contents={}, stack_info=stack_info))
 
     node.block.add_block_info(block_info)
 
@@ -1376,12 +1372,12 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
     stack_info = get_stack_info(function, flow_graph.nodes[0])
 
     initial_regs: Dict[Register, Expression] = {
-        Register('a0'): PassedInArg('a0', copied=False, type=Type.intptr()),
-        Register('a1'): PassedInArg('a1', copied=False, type=Type.intptr()),
-        Register('a2'): PassedInArg('a2', copied=False, type=Type.any()),
-        Register('a3'): PassedInArg('a3', copied=False, type=Type.any()),
-        Register('f12'): PassedInArg('f12', copied=False, type=Type.f32()),
-        Register('f14'): PassedInArg('f14', copied=False, type=Type.f32()),
+        Register('a0'): PassedInArg(0, copied=False, type=Type.intptr()),
+        Register('a1'): PassedInArg(4, copied=False, type=Type.intptr()),
+        Register('a2'): PassedInArg(8, copied=False, type=Type.any()),
+        Register('a3'): PassedInArg(12, copied=False, type=Type.any()),
+        Register('f12'): PassedInArg(0, copied=False, type=Type.f32()),
+        Register('f14'): PassedInArg(4, copied=False, type=Type.f32()),
         **{Register(name): stack_info.global_symbol(AsmGlobalSymbol(name))
             for name in SPECIAL_REGS}
     }
@@ -1391,6 +1387,6 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         print('\nNow, we attempt to translate:')
 
     start_node = flow_graph.nodes[0]
-    start_reg: RegInfo = RegInfo(contents=initial_regs)
+    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
     translate_graph_from_block(start_node, start_reg, stack_info, options)
     return FunctionInfo(stack_info, flow_graph)
