@@ -297,7 +297,7 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
         if inst.mnemonic == 'addiu' and destination.register_name == 'sp':
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
-            info.allocated_stack_size = -inst.args[2].value
+            info.allocated_stack_size = abs(inst.args[2].value)
         elif inst.mnemonic == 'sw' and destination.register_name == 'ra':
             # Saving the return address on the stack.
             assert isinstance(inst.args[1], AsmAddressMode)
