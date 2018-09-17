@@ -312,7 +312,7 @@ def handle_return(
     ret_info = return_node.block.block_info
     assert isinstance(ret_info, BlockInfo)
 
-    if ret_info.to_write:
+    if any(w.should_write() for w in ret_info.to_write):
         body.add_node(return_node, indent)
 
     if ret_info.final_register_states.wrote_return_register:
