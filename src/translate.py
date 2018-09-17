@@ -562,10 +562,9 @@ class Literal:
     def __str__(self) -> str:
         if self.type.is_float():
             if self.type.get_size() == 32:
-                return f'{convert_to_float(self.value)}f'
+                return f'{parse_f32_imm(self.value)}f'
             else:
-                # TODO: not sure what should happen here
-                return f'{convert_to_float(self.value)}'
+                return f'{parse_f64_imm(self.value)}'
         prefix = ''
         if self.type.is_pointer():
             if self.value == 0:
@@ -764,6 +763,21 @@ class InstrArgs:
     def reg(self, index: int) -> Expression:
         return self.regs[self.reg_ref(index)]
 
+    def dreg(self, index: int) -> Expression:
+        """Extract a double from a register. This may involve reading both the
+        mentioned register and the next."""
+        reg = self.reg_ref(index)
+        assert reg.is_float()
+        ret = self.regs[reg]
+        if not isinstance(ret, Literal) or ret.type.get_size() == 64:
+            return ret
+        reg_num = int(reg.register_name[1:])
+        assert reg_num % 2 == 0
+        other = self.regs[Register(f'f{reg_num+1}')]
+        assert isinstance(other, Literal) and other.type.get_size() != 64
+        value = ret.value | (other.value << 32)
+        return Literal(value, type=Type.f64())
+
     def imm(self, index: int) -> Expression:
         ret = literal_expr(self.raw_args[index], self.stack_info)
         if isinstance(ret, GlobalSymbol):
@@ -944,15 +958,23 @@ def make_store(
     dest.type.unify(type)
     return StoreStmt(source=as_type(source_val, type, silent=False), dest=dest)
 
-def convert_to_float(num: int):
-    if num == 0:
-        return 0.0
+def parse_f32_imm(num: int):
     rep =  f'{num:032b}'  # zero-padded binary representation of num
-    dec = lambda x: int(x, 2)  # integer value for num
-    sign = dec(rep[0])
-    expo = dec(rep[1:9])
-    frac = dec(rep[9:])
-    return ((-1) ** sign) * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1)
+    sign = [1, -1][int(rep[0], 2)]
+    expo = int(rep[1:9], 2)
+    frac = int(rep[9:], 2)
+    if expo == 0:
+        return sign * (2 ** (1 - 127)) * (frac / (2 ** 23))
+    return sign * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1)
+
+def parse_f64_imm(num: int):
+    rep =  f'{num:064b}'  # zero-padded binary representation of num
+    sign = [1, -1][int(rep[0], 2)]
+    expo = int(rep[1:12], 2)
+    frac = int(rep[12:], 2)
+    if expo == 0:
+        return sign * (2 ** (1 - 1023)) * (frac / (2 ** 52))
+    return sign * (2 ** (expo - 1023)) * (frac / (2 ** 52) + 1)
 
 def fold_mul_chains(expr: Expression) -> Expression:
     def fold(expr: Expression, toplevel: bool) -> Tuple[Expression, int]:
@@ -1096,22 +1118,21 @@ def translate_block_body(
         'div.s': lambda a: BinaryOp.f32(a.reg(1), '/', a.reg(2)),
         'mul.s': lambda a: BinaryOp.f32(a.reg(1), '*', a.reg(2)),
         # Double-precision arithmetic
-        # TODO: deal with this differently (?)
-        'add.d': lambda a: BinaryOp.f64(a.reg(1), '+', a.reg(2)),
-        'sub.d': lambda a: BinaryOp.f64(a.reg(1), '-', a.reg(2)),
-        'neg.d': lambda a: UnaryOp('-', as_f64(a.reg(1)), type=Type.f64()),
-        'div.d': lambda a: BinaryOp.f64(a.reg(1), '/', a.reg(2)),
-        'mul.d': lambda a: BinaryOp.f64(a.reg(1), '*', a.reg(2)),
+        'add.d': lambda a: BinaryOp.f64(a.dreg(1), '+', a.dreg(2)),
+        'sub.d': lambda a: BinaryOp.f64(a.dreg(1), '-', a.dreg(2)),
+        'neg.d': lambda a: UnaryOp('-', as_f64(a.dreg(1)), type=Type.f64()),
+        'div.d': lambda a: BinaryOp.f64(a.dreg(1), '/', a.dreg(2)),
+        'mul.d': lambda a: BinaryOp.f64(a.dreg(1), '*', a.dreg(2)),
         # Floating point conversions
         'cvt.d.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.f64()),
         'cvt.d.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f64()),
-        'cvt.s.d': lambda a: Cast(expr=as_f64(a.reg(1)), type=Type.f32()),
+        'cvt.s.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.f32()),
         'cvt.s.u': lambda a: Cast(expr=as_u32(a.reg(1)), type=Type.f32()),
         'cvt.s.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f32()),
-        'cvt.w.d': lambda a: Cast(expr=as_f64(a.reg(1)), type=Type.s32()),
+        'cvt.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
         'cvt.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
         'trunc.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
-        'trunc.w.d': lambda a: Cast(expr=as_f64(a.reg(1)), type=Type.s32()),
+        'trunc.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
         # Bit arithmetic
         'and': lambda a: BinaryOp.int(left=a.reg(1), op='&', right=a.reg(2)),
         'or': lambda a:  BinaryOp.int(left=a.reg(1), op='|', right=a.reg(2)),
@@ -1136,7 +1157,7 @@ def translate_block_body(
         'cfc1': lambda a: a.reg(1),
         'mov.s': lambda a: a.reg(1),
         # (I don't know why this typing.cast is needed... mypy bug?)
-        'mov.d': lambda a: typing.cast(Expression, as_f64(a.reg(1))),
+        'mov.d': lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
         # Loading instructions
         'li': lambda a: a.imm(1),
         'lb': lambda a: deref(a.memory_ref(1), regs, stack_info),

@@ -17,6 +17,9 @@ class Register:
     def is_callee_save(self):
         return re.match('s[0-7]', self.register_name)
 
+    def is_float(self):
+        return self.register_name[0] == 'f' and self.register_name != 'fp'
+
     def __str__(self):
         return f'${self.register_name}'
 

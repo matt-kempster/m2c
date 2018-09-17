@@ -4,7 +4,7 @@ f32 test(f32 f12, s32 a1, s32 a3) {
     if ((a3 + 3) < 0)
     {
         return;
-        // (possible return value: ((f32) (a3 + 3) + (f32) ((f64) a2 + 0.0)))
+        // (possible return value: ((f32) (a3 + 3) + (f32) ((f64) a2 + 5.0)))
     }
-    // (possible return value: ((f32) (a3 + 3) + (f32) ((f64) a2 + 0.0)))
+    // (possible return value: ((f32) (a3 + 3) + (f32) ((f64) a2 + 5.0)))
 }
