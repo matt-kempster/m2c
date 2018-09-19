@@ -20,10 +20,12 @@ CALLER_SAVE_REGS = ARGUMENT_REGS + [
     'hi', 'lo', 'condition_bit', 'return_reg'
 ]
 
-SPECIAL_REGS = [
+CALLEE_SAVE_REGS = [
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
-    'ra',
-    '31'
+]
+
+SPECIAL_REGS = [
+    'ra', '31'
 ]
 
 
@@ -930,10 +932,10 @@ def handle_addi(args: InstrArgs, stack_info: StackInfo) -> Expression:
         # Adding to sp, i.e. passing an address.
         lit = args.imm(2)
         assert isinstance(lit, Literal)
-        # TODO: use get_stack_var (but it crashes on tests/irix-g/struct.s with
-        # an error "assert not self.is_leaf" -- is in_subroutine_arg_region wrong?)
-        type = stack_info.unique_type_for('stack', lit.value)
-        return AddressOf(LocalVar(lit.value, type=type))
+        if args.reg_ref(0).register_name == 'sp':
+            # Changing sp. Just ignore that.
+            return args.reg(0)
+        return AddressOf(stack_info.get_stack_var(lit.value, False))
     else:
         # Regular binary addition.
         return BinaryOp.intptr(left=args.reg(1), op='+', right=args.imm(2))
@@ -944,10 +946,12 @@ def make_store(
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
     target = args.memory_ref(1)
-    if (source_reg.register_name in (SPECIAL_REGS + ARGUMENT_REGS) and
+    preserve_regs = CALLEE_SAVE_REGS + ARGUMENT_REGS + SPECIAL_REGS
+    if (source_reg.register_name in preserve_regs and
             isinstance(target, AddressMode) and
             target.rhs.register_name == 'sp'):
-        # TODO: This isn't really right, but it helps get rid of some pointless stores.
+        # Elide register preserval. TODO: This isn't really right, what if
+        # we're actually using the registers...
         return None
     dest = deref(target, args.regs, stack_info, store=True)
     dest.type.unify(type)
@@ -1379,7 +1383,7 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         Register('f12'): PassedInArg(0, copied=False, type=Type.f32()),
         Register('f14'): PassedInArg(4, copied=False, type=Type.f32()),
         **{Register(name): stack_info.global_symbol(AsmGlobalSymbol(name))
-            for name in SPECIAL_REGS}
+            for name in CALLEE_SAVE_REGS + SPECIAL_REGS + ['sp']}
     }
 
     if options.debug:
