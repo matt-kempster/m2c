@@ -23,7 +23,7 @@ with open(filename) as fin:
                 waiting_hi[reg[:-1]] = (index, imm, imm_hex)
         else:
             lo_regs = [reg for reg in waiting_hi.keys() if reg in line]
-            if lo_regs:
+            if lo_regs and '0x' in line:
                 lo_reg = lo_regs[0]
                 hi_ind, hi_imm, hi_imm_hex = waiting_hi[lo_reg]
                 lo_imm_hex = line.split(' ')[-1].split('(')[0]
