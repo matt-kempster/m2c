@@ -931,11 +931,12 @@ def handle_ori(args: InstrArgs) -> Expression:
         # Regular bitwise OR.
         return BinaryOp.int(left=args.reg(1), op='|', right=imm)
 
-def handle_addi(args: InstrArgs, stack_info: StackInfo) -> Expression:
+def handle_addi(args: InstrArgs) -> Expression:
     # Two-argument form, mostly used for "addiu $reg, %lo(...)"
     if args.count() == 2:
         args.duplicate_dest_reg()
 
+    stack_info = args.stack_info
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
@@ -960,9 +961,11 @@ def handle_addi(args: InstrArgs, stack_info: StackInfo) -> Expression:
         # Regular binary addition.
         return BinaryOp.intptr(left=source, op='+', right=imm)
 
-def make_store(
-    args: InstrArgs, stack_info: StackInfo, type: Type
-) -> Optional[StoreStmt]:
+def handle_load(args: InstrArgs) -> Expression:
+    return deref(args.memory_ref(1), args.regs, args.stack_info)
+
+def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
+    stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
     target = args.memory_ref(1)
@@ -1041,6 +1044,147 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
+InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
+CmpInstrMap = Dict[str, Callable[[InstrArgs], Optional[BinaryOp]]]
+StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
+MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
+PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]]
+
+CASES_SOURCE_FIRST_EXPRESSION: StoreInstrMap = {
+    # Storage instructions
+    'sb': lambda a: make_store(a, type=Type.of_size(8)),
+    'sh': lambda a: make_store(a, type=Type.of_size(16)),
+    'sw': lambda a: make_store(a, type=Type.of_size(32)),
+    # Floating point storage/conversion
+    'swc1': lambda a: make_store(a, type=Type.f32()),
+    'sdc1': lambda a: make_store(a, type=Type.f64()),
+}
+CASES_SOURCE_FIRST_REGISTER: InstrMap = {
+    # Floating point moving instruction
+    'mtc1': lambda a: a.reg(0),
+    'ctc1': lambda a: a.reg(0),
+}
+CASES_BRANCHES: CmpInstrMap = {
+    # Branch instructions/pseudoinstructions
+    # TODO! These are wrong. (Are they??)
+    'b': lambda a: None,
+    'beq': lambda a:  BinaryOp.icmp(a.reg(0), '==', a.reg(1)),
+    'bne': lambda a:  BinaryOp.icmp(a.reg(0), '!=', a.reg(1)),
+    'beqz': lambda a: BinaryOp.icmp(a.reg(0), '==', Literal(0)),
+    'bnez': lambda a: BinaryOp.icmp(a.reg(0), '!=', Literal(0)),
+    'blez': lambda a: BinaryOp.icmp(a.reg(0), '<=', Literal(0)),
+    'bgtz': lambda a: BinaryOp.icmp(a.reg(0), '>',  Literal(0)),
+    'bltz': lambda a: BinaryOp.icmp(a.reg(0), '<',  Literal(0)),
+    'bgez': lambda a: BinaryOp.icmp(a.reg(0), '>=', Literal(0)),
+}
+CASES_FLOAT_BRANCHES: CmpInstrMap = {
+    # Floating-point branch instructions
+    # We don't have to do any work here, since the condition bit was already set.
+    'bc1t': lambda a: None,
+    'bc1f': lambda a: None,
+}
+CASES_JUMPS: MaybeInstrMap = {
+    # Unconditional jumps
+    'jal': lambda a: a.imm(0),  # not sure what arguments!
+    'jr':  lambda a: None       # not sure what to return!
+}
+CASES_FLOAT_COMP: CmpInstrMap = {
+    # Floating point comparisons
+    'c.eq.s': lambda a: BinaryOp.fcmp(a.reg(0), '==', a.reg(1)),
+    'c.le.s': lambda a: BinaryOp.fcmp(a.reg(0), '<=', a.reg(1)),
+    'c.lt.s': lambda a: BinaryOp.fcmp(a.reg(0), '<',  a.reg(1)),
+    'c.eq.d': lambda a: BinaryOp.dcmp(a.reg(0), '==', a.reg(1)),
+    'c.le.d': lambda a: BinaryOp.dcmp(a.reg(0), '<=', a.reg(1)),
+    'c.lt.d': lambda a: BinaryOp.dcmp(a.reg(0), '<',  a.reg(1)),
+}
+CASES_HI_LO: PairInstrMap = {
+    # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
+    'div': lambda a: (BinaryOp.s32(a.reg(1), '%', a.reg(2)),
+                      BinaryOp.s32(a.reg(1), '/', a.reg(2))),
+    'divu': lambda a: (BinaryOp.u32(a.reg(1), '%', a.reg(2)),
+                       BinaryOp.u32(a.reg(1), '/', a.reg(2))),
+    # The high part of multiplication cannot be directly represented in C
+    'multu': lambda a: (None,
+                        BinaryOp.int(a.reg(0), '*', a.reg(1))),
+}
+CASES_DESTINATION_FIRST: InstrMap = {
+    # Flag-setting instructions
+    'slt': lambda a:  BinaryOp.icmp(a.reg(1), '<', a.reg(2)),
+    'slti': lambda a: BinaryOp.icmp(a.reg(1), '<', a.imm(2)),
+    'sltu': lambda a:  BinaryOp.ucmp(a.reg(1), '<', a.reg(2)),
+    'sltiu': lambda a: BinaryOp.ucmp(a.reg(1), '<', a.imm(2)),
+    # Integer arithmetic
+    'addi': lambda a: handle_addi(a),
+    'addiu': lambda a: handle_addi(a),
+    'addu': lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), '+', a.reg(2))),
+    'subu': lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), '-', a.reg(2))),
+    'negu': lambda a: fold_mul_chains(UnaryOp(op='-',
+                                expr=as_s32(a.reg(1)), type=Type.s32())),
+    # Hi/lo register uses (used after division/multiplication)
+    'mfhi': lambda a: a.regs[Register('hi')],
+    'mflo': lambda a: a.regs[Register('lo')],
+    # Floating point arithmetic
+    'add.s': lambda a: BinaryOp.f32(a.reg(1), '+', a.reg(2)),
+    'sub.s': lambda a: BinaryOp.f32(a.reg(1), '-', a.reg(2)),
+    'neg.s': lambda a: UnaryOp('-', as_f32(a.reg(1)), type=Type.f32()),
+    'div.s': lambda a: BinaryOp.f32(a.reg(1), '/', a.reg(2)),
+    'mul.s': lambda a: BinaryOp.f32(a.reg(1), '*', a.reg(2)),
+    # Double-precision arithmetic
+    'add.d': lambda a: BinaryOp.f64(a.dreg(1), '+', a.dreg(2)),
+    'sub.d': lambda a: BinaryOp.f64(a.dreg(1), '-', a.dreg(2)),
+    'neg.d': lambda a: UnaryOp('-', as_f64(a.dreg(1)), type=Type.f64()),
+    'div.d': lambda a: BinaryOp.f64(a.dreg(1), '/', a.dreg(2)),
+    'mul.d': lambda a: BinaryOp.f64(a.dreg(1), '*', a.dreg(2)),
+    # Floating point conversions
+    'cvt.d.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.f64()),
+    'cvt.d.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f64()),
+    'cvt.s.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.f32()),
+    'cvt.s.u': lambda a: Cast(expr=as_u32(a.reg(1)), type=Type.f32()),
+    'cvt.s.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f32()),
+    'cvt.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
+    'cvt.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
+    'trunc.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
+    'trunc.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
+    # Bit arithmetic
+    'ori':  lambda a: handle_ori(a),
+    'and': lambda a: BinaryOp.int(left=a.reg(1), op='&', right=a.reg(2)),
+    'or': lambda a:  BinaryOp.int(left=a.reg(1), op='|', right=a.reg(2)),
+    'xor': lambda a: BinaryOp.int(left=a.reg(1), op='^', right=a.reg(2)),
+    'andi': lambda a: BinaryOp.int(left=a.reg(1), op='&',  right=a.imm(2)),
+    'xori': lambda a: BinaryOp.int(left=a.reg(1), op='^',  right=a.imm(2)),
+    'sll': lambda a: fold_mul_chains(
+                      BinaryOp.int(left=a.reg(1), op='<<', right=a.imm(2))),
+    'sllv': lambda a: BinaryOp.int(left=a.reg(1), op='<<', right=a.reg(2)),
+    'srl': lambda a:  BinaryOp(left=as_u32(a.reg(1)), op='>>',
+                            right=as_intish(a.imm(2)), type=Type.u32()),
+    'srlv': lambda a: BinaryOp(left=as_u32(a.reg(1)), op='>>',
+                            right=as_intish(a.reg(2)), type=Type.u32()),
+    'sra': lambda a:  BinaryOp(left=as_s32(a.reg(1)), op='>>',
+                            right=as_intish(a.imm(2)), type=Type.s32()),
+    'srav': lambda a: BinaryOp(left=as_s32(a.reg(1)), op='>>',
+                            right=as_intish(a.reg(2)), type=Type.s32()),
+    # Move pseudoinstruction
+    'move': lambda a: a.reg(1),
+    # Floating point moving instructions
+    'mfc1': lambda a: a.reg(1),
+    'cfc1': lambda a: a.reg(1),
+    'mov.s': lambda a: a.reg(1),
+    # (I don't know why this typing.cast is needed... mypy bug?)
+    'mov.d': lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
+    # Loading instructions (TODO: type annotations)
+    'li': lambda a: a.imm(1),
+    'lui': lambda a: load_upper(a),
+    'lb': lambda a: handle_load(a),
+    'lh': lambda a: handle_load(a),
+    'lw': lambda a: handle_load(a),
+    'lbu': lambda a: handle_load(a),
+    'lhu': lambda a: handle_load(a),
+    'lwu': lambda a: handle_load(a),
+    # Floating point loading instructions
+    'lwc1': lambda a: handle_load(a),
+    'ldc1': lambda a: handle_load(a),
+}
+
 def translate_block_body(
     block: Block, regs: RegInfo, stack_info: StackInfo
 ) -> BlockInfo:
@@ -1048,147 +1192,6 @@ def translate_block_body(
     Given a block and current register contents, return a BlockInfo containing
     the translated AST for that block.
     """
-
-    InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
-    CmpInstrMap = Dict[str, Callable[[InstrArgs], Optional[BinaryOp]]]
-    StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
-    MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
-    PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]]
-
-    cases_source_first_expression: StoreInstrMap = {
-        # Storage instructions
-        'sb': lambda a: make_store(a, stack_info, type=Type.of_size(8)),
-        'sh': lambda a: make_store(a, stack_info, type=Type.of_size(16)),
-        'sw': lambda a: make_store(a, stack_info, type=Type.of_size(32)),
-        # Floating point storage/conversion
-        'swc1': lambda a: make_store(a, stack_info, type=Type.f32()),
-        'sdc1': lambda a: make_store(a, stack_info, type=Type.f64()),
-    }
-    cases_source_first_register: InstrMap = {
-        # Floating point moving instruction
-        'mtc1': lambda a: a.reg(0),
-        'ctc1': lambda a: a.reg(0),
-    }
-    cases_branches: CmpInstrMap = {
-        # Branch instructions/pseudoinstructions
-        # TODO! These are wrong. (Are they??)
-        'b': lambda a: None,
-        'beq': lambda a:  BinaryOp.icmp(a.reg(0), '==', a.reg(1)),
-        'bne': lambda a:  BinaryOp.icmp(a.reg(0), '!=', a.reg(1)),
-        'beqz': lambda a: BinaryOp.icmp(a.reg(0), '==', Literal(0)),
-        'bnez': lambda a: BinaryOp.icmp(a.reg(0), '!=', Literal(0)),
-        'blez': lambda a: BinaryOp.icmp(a.reg(0), '<=', Literal(0)),
-        'bgtz': lambda a: BinaryOp.icmp(a.reg(0), '>',  Literal(0)),
-        'bltz': lambda a: BinaryOp.icmp(a.reg(0), '<',  Literal(0)),
-        'bgez': lambda a: BinaryOp.icmp(a.reg(0), '>=', Literal(0)),
-    }
-    cases_float_branches: CmpInstrMap = {
-        # Floating-point branch instructions
-        # We don't have to do any work here, since the condition bit was already set.
-        'bc1t': lambda a: None,
-        'bc1f': lambda a: None,
-    }
-    cases_jumps: MaybeInstrMap = {
-        # Unconditional jumps
-        'jal': lambda a: a.imm(0),  # not sure what arguments!
-        'jr':  lambda a: None       # not sure what to return!
-    }
-    cases_float_comp: CmpInstrMap = {
-        # Floating point comparisons
-        'c.eq.s': lambda a: BinaryOp.fcmp(a.reg(0), '==', a.reg(1)),
-        'c.le.s': lambda a: BinaryOp.fcmp(a.reg(0), '<=', a.reg(1)),
-        'c.lt.s': lambda a: BinaryOp.fcmp(a.reg(0), '<',  a.reg(1)),
-        'c.eq.d': lambda a: BinaryOp.dcmp(a.reg(0), '==', a.reg(1)),
-        'c.le.d': lambda a: BinaryOp.dcmp(a.reg(0), '<=', a.reg(1)),
-        'c.lt.d': lambda a: BinaryOp.dcmp(a.reg(0), '<',  a.reg(1)),
-    }
-    cases_hi_lo: PairInstrMap = {
-        # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
-        'div': lambda a: (BinaryOp.s32(a.reg(1), '%', a.reg(2)),
-                          BinaryOp.s32(a.reg(1), '/', a.reg(2))),
-        'divu': lambda a: (BinaryOp.u32(a.reg(1), '%', a.reg(2)),
-                           BinaryOp.u32(a.reg(1), '/', a.reg(2))),
-        # The high part of multiplication cannot be directly represented in C
-        'multu': lambda a: (None,
-                            BinaryOp.int(a.reg(0), '*', a.reg(1))),
-    }
-    cases_destination_first: InstrMap = {
-        # Flag-setting instructions
-        'slt': lambda a:  BinaryOp.icmp(a.reg(1), '<', a.reg(2)),
-        'slti': lambda a: BinaryOp.icmp(a.reg(1), '<', a.imm(2)),
-        'sltu': lambda a:  BinaryOp.ucmp(a.reg(1), '<', a.reg(2)),
-        'sltiu': lambda a: BinaryOp.ucmp(a.reg(1), '<', a.imm(2)),
-        # Integer arithmetic
-        'addi': lambda a: handle_addi(a, stack_info),
-        'addiu': lambda a: handle_addi(a, stack_info),
-        'addu': lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), '+', a.reg(2))),
-        'subu': lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), '-', a.reg(2))),
-        'negu': lambda a: fold_mul_chains(UnaryOp(op='-',
-                                    expr=as_s32(a.reg(1)), type=Type.s32())),
-        # Hi/lo register uses (used after division/multiplication)
-        'mfhi': lambda a: regs[Register('hi')],
-        'mflo': lambda a: regs[Register('lo')],
-        # Floating point arithmetic
-        'add.s': lambda a: BinaryOp.f32(a.reg(1), '+', a.reg(2)),
-        'sub.s': lambda a: BinaryOp.f32(a.reg(1), '-', a.reg(2)),
-        'neg.s': lambda a: UnaryOp('-', as_f32(a.reg(1)), type=Type.f32()),
-        'div.s': lambda a: BinaryOp.f32(a.reg(1), '/', a.reg(2)),
-        'mul.s': lambda a: BinaryOp.f32(a.reg(1), '*', a.reg(2)),
-        # Double-precision arithmetic
-        'add.d': lambda a: BinaryOp.f64(a.dreg(1), '+', a.dreg(2)),
-        'sub.d': lambda a: BinaryOp.f64(a.dreg(1), '-', a.dreg(2)),
-        'neg.d': lambda a: UnaryOp('-', as_f64(a.dreg(1)), type=Type.f64()),
-        'div.d': lambda a: BinaryOp.f64(a.dreg(1), '/', a.dreg(2)),
-        'mul.d': lambda a: BinaryOp.f64(a.dreg(1), '*', a.dreg(2)),
-        # Floating point conversions
-        'cvt.d.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.f64()),
-        'cvt.d.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f64()),
-        'cvt.s.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.f32()),
-        'cvt.s.u': lambda a: Cast(expr=as_u32(a.reg(1)), type=Type.f32()),
-        'cvt.s.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f32()),
-        'cvt.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
-        'cvt.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
-        'trunc.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
-        'trunc.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
-        # Bit arithmetic
-        'ori':  lambda a: handle_ori(a),
-        'and': lambda a: BinaryOp.int(left=a.reg(1), op='&', right=a.reg(2)),
-        'or': lambda a:  BinaryOp.int(left=a.reg(1), op='|', right=a.reg(2)),
-        'xor': lambda a: BinaryOp.int(left=a.reg(1), op='^', right=a.reg(2)),
-        'andi': lambda a: BinaryOp.int(left=a.reg(1), op='&',  right=a.imm(2)),
-        'xori': lambda a: BinaryOp.int(left=a.reg(1), op='^',  right=a.imm(2)),
-        'sll': lambda a: fold_mul_chains(
-                          BinaryOp.int(left=a.reg(1), op='<<', right=a.imm(2))),
-        'sllv': lambda a: BinaryOp.int(left=a.reg(1), op='<<', right=a.reg(2)),
-        'srl': lambda a:  BinaryOp(left=as_u32(a.reg(1)), op='>>',
-                                right=as_intish(a.imm(2)), type=Type.u32()),
-        'srlv': lambda a: BinaryOp(left=as_u32(a.reg(1)), op='>>',
-                                right=as_intish(a.reg(2)), type=Type.u32()),
-        'sra': lambda a:  BinaryOp(left=as_s32(a.reg(1)), op='>>',
-                                right=as_intish(a.imm(2)), type=Type.s32()),
-        'srav': lambda a: BinaryOp(left=as_s32(a.reg(1)), op='>>',
-                                right=as_intish(a.reg(2)), type=Type.s32()),
-        # Move pseudoinstruction
-        'move': lambda a: a.reg(1),
-        # Floating point moving instructions
-        'mfc1': lambda a: a.reg(1),
-        'cfc1': lambda a: a.reg(1),
-        'mov.s': lambda a: a.reg(1),
-        # (I don't know why this typing.cast is needed... mypy bug?)
-        'mov.d': lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
-        # Loading instructions
-        'li': lambda a: a.imm(1),
-        'lui': lambda a: load_upper(a),
-        'lb': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        'lh': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        'lw': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        'lbu': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        'lhu': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        'lwu': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        # Floating point loading instructions
-        'lwc1': lambda a: deref(a.memory_ref(1), regs, stack_info),
-        'ldc1': lambda a: deref(a.memory_ref(1), regs, stack_info),
-    }
 
     to_write: List[Union[Statement]] = []
     def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
@@ -1218,9 +1221,9 @@ def translate_block_body(
         args = InstrArgs(instr.args, regs, stack_info)
 
         # Figure out what code to generate!
-        if mnemonic in cases_source_first_expression:
+        if mnemonic in CASES_SOURCE_FIRST_EXPRESSION:
             # Store a value in a permanent place.
-            to_store = cases_source_first_expression[mnemonic](args)
+            to_store = CASES_SOURCE_FIRST_EXPRESSION[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
                 # About to call a subroutine with this argument.
                 subroutine_args.append((to_store.source, to_store.dest))
@@ -1232,15 +1235,15 @@ def translate_block_body(
                 mark_used(to_store.source, stack_info)
                 mark_used(to_store.dest, stack_info)
 
-        elif mnemonic in cases_source_first_register:
+        elif mnemonic in CASES_SOURCE_FIRST_REGISTER:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
-            set_reg(args.reg_ref(1), cases_source_first_register[mnemonic](args))
+            set_reg(args.reg_ref(1), CASES_SOURCE_FIRST_REGISTER[mnemonic](args))
 
-        elif mnemonic in cases_branches:
+        elif mnemonic in CASES_BRANCHES:
             assert branch_condition is None
-            branch_condition = cases_branches[mnemonic](args)
+            branch_condition = CASES_BRANCHES[mnemonic](args)
 
-        elif mnemonic in cases_float_branches:
+        elif mnemonic in CASES_FLOAT_BRANCHES:
             assert branch_condition is None
             cond_bit = regs[Register('condition_bit')]
             assert isinstance(cond_bit, BinaryOp)
@@ -1249,8 +1252,8 @@ def translate_block_body(
             elif mnemonic == 'bc1f':
                 branch_condition = cond_bit.negated()
 
-        elif mnemonic in cases_jumps:
-            result = cases_jumps[mnemonic](args)
+        elif mnemonic in CASES_JUMPS:
+            result = CASES_JUMPS[mnemonic](args)
             if result is None:
                 # Return from the function.
                 assert mnemonic == 'jr'
@@ -1297,16 +1300,16 @@ def translate_block_body(
                 regs[Register('v0')] = call
                 regs[Register('return_reg')] = call
 
-        elif mnemonic in cases_float_comp:
-            regs[Register('condition_bit')] = cases_float_comp[mnemonic](args)
+        elif mnemonic in CASES_FLOAT_COMP:
+            regs[Register('condition_bit')] = CASES_FLOAT_COMP[mnemonic](args)
 
-        elif mnemonic in cases_hi_lo:
-            hi, lo = cases_hi_lo[mnemonic](args)
+        elif mnemonic in CASES_HI_LO:
+            hi, lo = CASES_HI_LO[mnemonic](args)
             set_reg(Register('hi'), hi)
             set_reg(Register('lo'), lo)
 
-        elif mnemonic in cases_destination_first:
-            set_reg(args.reg_ref(0), cases_destination_first[mnemonic](args))
+        elif mnemonic in CASES_DESTINATION_FIRST:
+            set_reg(args.reg_ref(0), CASES_DESTINATION_FIRST[mnemonic](args))
 
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
