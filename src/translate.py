@@ -935,7 +935,11 @@ def handle_addi(args: InstrArgs, stack_info: StackInfo) -> Expression:
         if args.reg_ref(0).register_name == 'sp':
             # Changing sp. Just ignore that.
             return args.reg(0)
-        return AddressOf(stack_info.get_stack_var(lit.value, store=False))
+        # Keep track of all local variables that we take addresses of.
+        var = stack_info.get_stack_var(lit.value, store=False)
+        if isinstance(var, LocalVar):
+            stack_info.add_local_var(var)
+        return AddressOf(var)
     else:
         # Regular binary addition.
         return BinaryOp.intptr(left=args.reg(1), op='+', right=args.imm(2))
@@ -1077,15 +1081,6 @@ def translate_block_body(
         'c.le.d': lambda a: BinaryOp.dcmp(a.reg(0), '<=', a.reg(1)),
         'c.lt.d': lambda a: BinaryOp.dcmp(a.reg(0), '<',  a.reg(1)),
     }
-    cases_special: InstrMap = {
-        # Handle these specially to get better debug output.
-        # These should be unspecial'd at some point by way of an initial
-        # pass-through, similar to the stack-info acquisition step.
-        'lui':  lambda a: load_upper(a),
-        'ori':  lambda a: handle_ori(a),
-        'addi': lambda a: handle_addi(a, stack_info),
-        'addiu': lambda a: handle_addi(a, stack_info),
-    }
     cases_hi_lo: PairInstrMap = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
         'div': lambda a: (BinaryOp.s32(a.reg(1), '%', a.reg(2)),
@@ -1103,6 +1098,8 @@ def translate_block_body(
         'sltu': lambda a:  BinaryOp.ucmp(a.reg(1), '<', a.reg(2)),
         'sltiu': lambda a: BinaryOp.ucmp(a.reg(1), '<', a.imm(2)),
         # Integer arithmetic
+        'addi': lambda a: handle_addi(a, stack_info),
+        'addiu': lambda a: handle_addi(a, stack_info),
         'addu': lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), '+', a.reg(2))),
         'subu': lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), '-', a.reg(2))),
         'negu': lambda a: fold_mul_chains(UnaryOp(op='-',
@@ -1133,6 +1130,7 @@ def translate_block_body(
         'trunc.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
         'trunc.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
         # Bit arithmetic
+        'ori':  lambda a: handle_ori(a),
         'and': lambda a: BinaryOp.int(left=a.reg(1), op='&', right=a.reg(2)),
         'or': lambda a:  BinaryOp.int(left=a.reg(1), op='|', right=a.reg(2)),
         'xor': lambda a: BinaryOp.int(left=a.reg(1), op='^', right=a.reg(2)),
@@ -1159,6 +1157,7 @@ def translate_block_body(
         'mov.d': lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
         # Loading instructions
         'li': lambda a: a.imm(1),
+        'lui': lambda a: load_upper(a),
         'lb': lambda a: deref(a.memory_ref(1), regs, stack_info),
         'lh': lambda a: deref(a.memory_ref(1), regs, stack_info),
         'lw': lambda a: deref(a.memory_ref(1), regs, stack_info),
@@ -1289,18 +1288,6 @@ def translate_block_body(
 
         elif mnemonic in cases_float_comp:
             regs[Register('condition_bit')] = cases_float_comp[mnemonic](args)
-
-        elif mnemonic in cases_special:
-            output = args.reg_ref(0)
-            res = cases_special[mnemonic](args)
-
-            # Keep track of all local variables that we take addresses of.
-            if (output.register_name != 'sp' and
-                    isinstance(res, AddressOf) and
-                    isinstance(res.expr, LocalVar)):
-                stack_info.add_local_var(res.expr)
-
-            set_reg(output, res)
 
         elif mnemonic in cases_hi_lo:
             hi, lo = cases_hi_lo[mnemonic](args)
