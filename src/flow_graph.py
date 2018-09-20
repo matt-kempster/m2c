@@ -274,7 +274,7 @@ def is_loop_edge(node: 'Node', edge: 'Node'):
     # Loops are represented by backwards jumps.
     return edge.block.index < node.block.index
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(cmp=False)
 class BasicNode:
     block: Block = attr.ib()
     successor: 'Node' = attr.ib()
@@ -293,7 +293,7 @@ class BasicNode:
             " (loop)" if self.is_loop() else ""])
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(cmp=False)
 class ConditionalNode:
     block: Block = attr.ib()
     conditional_edge: 'Node' = attr.ib()  # forward-declare types
@@ -316,7 +316,7 @@ class ConditionalNode:
             f'def: {self.fallthrough_edge.block.index}'])
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(cmp=False)
 class ReturnNode:
     block: Block = attr.ib()
     parents: List['Node'] = attr.ib(factory=list)
@@ -340,7 +340,9 @@ def build_graph_from_block(
     for node in nodes:
         if node.block == block:
             return node
-    new_node: Optional[Node] = None
+
+    new_node: Node
+    dummy_node: Any = None
 
     def find_block_by_label(label: JumpTarget):
         for block in blocks:
@@ -353,17 +355,24 @@ def build_graph_from_block(
     ]
     assert len(branches) in [0, 1], "too many branch instructions in one block"
 
+    # Since we've special-cased the return node, we know that there exists
+    # a fallthrough block.
+    assert block.index + 1 < len(blocks)
+    next_block = blocks[block.index + 1]
+
     if len(branches) == 0:
         # No branches, i.e. the next block is this node's successor block.
-        successor_block = blocks[block.index + 1]
+        new_node = BasicNode(block, dummy_node)
+        nodes.append(new_node)
 
         # Recursively analyze.
-        successor = build_graph_from_block(successor_block, blocks, nodes)
-        new_node = BasicNode(block, successor)
+        new_node.successor = build_graph_from_block(next_block, blocks, nodes)
+
         # Keep track of parents.
-        successor.add_parent(new_node)
+        new_node.successor.add_parent(new_node)
     elif len(branches) == 1:
-        # There is a branch, so emit a ConditionalNode.
+        # There is a branch. This is either a BasicNode if the branch is
+        # unconditional, or a ConditionalNode.
         branch = branches[0]
 
         # Get the block associated with the jump target.
@@ -371,28 +380,30 @@ def build_graph_from_block(
         branch_block = find_block_by_label(branch_label)
         assert branch_block is not None
 
-        # Recursively analyze.
-        branch_node = build_graph_from_block(branch_block, blocks, nodes)
         is_constant_branch = branch.mnemonic == 'b'
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
-            new_node = BasicNode(block, branch_node)
+            new_node = BasicNode(block, dummy_node)
+            nodes.append(new_node)
+            # Recursively analyze.
+            new_node.successor = build_graph_from_block(branch_block, blocks,
+                    nodes)
             # Keep track of parents.
-            branch_node.add_parent(new_node)
+            new_node.successor.add_parent(new_node)
         else:
-            # A conditional branch means the fallthrough block is the next block.
-            assert len(blocks) > block.index + 1
-            fallthrough_block = blocks[block.index + 1]
+            # A conditional branch means the fallthrough block is the next
+            # block if the branch isn't.
+            new_node = ConditionalNode(block, dummy_node, dummy_node)
+            nodes.append(new_node)
             # Recursively analyze this too.
-            fallthrough_node = build_graph_from_block(fallthrough_block, blocks, nodes)
-            new_node = ConditionalNode(block, branch_node, fallthrough_node)
-            branch_node.add_parent(new_node)
+            new_node.conditional_edge = build_graph_from_block(branch_block,
+                    blocks, nodes)
+            new_node.fallthrough_edge = build_graph_from_block(next_block,
+                    blocks, nodes)
             # Keep track of parents.
-            fallthrough_node.add_parent(new_node)
+            new_node.conditional_edge.add_parent(new_node)
+            new_node.fallthrough_edge.add_parent(new_node)
 
-    assert new_node is not None
-
-    nodes.append(new_node)
     return new_node
 
 
@@ -403,8 +414,8 @@ def build_nodes(function: Function, blocks: List[Block]):
     graph: List[Node] = [return_node]
 
     # Traverse through the block tree.
-    entrance_block = blocks[0]
-    build_graph_from_block(entrance_block, blocks, graph)
+    entry_block = blocks[0]
+    build_graph_from_block(entry_block, blocks, graph)
 
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
