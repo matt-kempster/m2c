@@ -541,7 +541,7 @@ class GlobalSymbol:
     def dependencies(self) -> List['Expression']:
         return []
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.symbol_name
 
 @attr.s(frozen=True, cmp=True)
@@ -580,7 +580,7 @@ class AddressOf:
     def dependencies(self) -> List['Expression']:
         return [self.expr]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'&{self.expr}'
 
 @attr.s(frozen=True)
@@ -588,7 +588,7 @@ class AddressMode:
     offset: int = attr.ib()
     rhs: Register = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.offset:
             return f'{self.offset}({self.rhs})'
         else:
@@ -977,23 +977,23 @@ def make_store(
     dest.type.unify(type)
     return StoreStmt(source=as_type(source_val, type, silent=False), dest=dest)
 
-def parse_f32_imm(num: int):
+def parse_f32_imm(num: int) -> float:
     rep =  f'{num:032b}'  # zero-padded binary representation of num
     sign = [1, -1][int(rep[0], 2)]
     expo = int(rep[1:9], 2)
     frac = int(rep[9:], 2)
     if expo == 0:
-        return sign * (2 ** (1 - 127)) * (frac / (2 ** 23))
-    return sign * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1)
+        return float(sign * (2 ** (1 - 127)) * (frac / (2 ** 23)))
+    return float(sign * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1))
 
-def parse_f64_imm(num: int):
+def parse_f64_imm(num: int) -> float:
     rep =  f'{num:064b}'  # zero-padded binary representation of num
     sign = [1, -1][int(rep[0], 2)]
     expo = int(rep[1:12], 2)
     frac = int(rep[12:], 2)
     if expo == 0:
-        return sign * (2 ** (1 - 1023)) * (frac / (2 ** 52))
-    return sign * (2 ** (expo - 1023)) * (frac / (2 ** 52) + 1)
+        return float(sign * (2 ** (1 - 1023)) * (frac / (2 ** 52)))
+    return float(sign * (2 ** (expo - 1023)) * (frac / (2 ** 52) + 1))
 
 def fold_mul_chains(expr: Expression) -> Expression:
     def fold(expr: Expression, toplevel: bool) -> Tuple[Expression, int]:

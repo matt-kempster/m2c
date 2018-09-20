@@ -15,23 +15,23 @@ class Block:
     # TODO: fix "Any" to be "BlockInfo" (currently annoying due to circular imports)
     block_info: Optional[Any] = None
 
-    def add_block_info(self, block_info: Any):
+    def add_block_info(self, block_info: Any) -> None:
         self.block_info = block_info
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.label:
             name = f'{self.index} ({self.label.name})'
         else:
-            name = self.index
+            name = f'{self.index}'
         inst_str = '\n'.join(str(instruction) for instruction in self.instructions)
         return f'# {name}\n{inst_str}\n'
 
+@attr.s(cmp=False)
 class BlockBuilder:
-    def __init__(self):
-        self.curr_index: int = 0
-        self.curr_label: Optional[Label] = None
-        self.curr_instructions: List[Instruction] = []
-        self.blocks: List[Block] = []
+    curr_index: int = attr.ib(default=0)
+    curr_label: Optional[Label] = attr.ib(default=None)
+    curr_instructions: List[Instruction] = attr.ib(factory=list)
+    blocks: List[Block] = attr.ib(factory=list)
 
     def new_block(self) -> Optional[Block]:
         if len(self.curr_instructions) == 0:
@@ -49,15 +49,15 @@ class BlockBuilder:
     def add_instruction(self, instruction: Instruction) -> None:
         self.curr_instructions.append(instruction)
 
-    def set_label(self, label) -> None:
+    def set_label(self, label: Label) -> None:
         self.curr_label = label
 
     def get_blocks(self) -> List[Block]:
         return self.blocks
 
 
-temp_label_counter = 0
-def generate_temp_label():
+temp_label_counter: int = 0
+def generate_temp_label() -> str:
     global temp_label_counter
     temp_label_counter += 1
     return 'Ltemp' + str(temp_label_counter)
@@ -136,6 +136,8 @@ def prune_unreferenced_labels(function: Function) -> Function:
 # - checks for x/0 and INT_MIN/-1 after division (removed)
 # - unsigned to float conversion (converted to a made-up instruction)
 def simplify_standard_patterns(function: Function) -> Function:
+    BodyPart = Union[Instruction, Label]
+
     div_pattern: List[str] = [
         "bnez",
         "nop",
@@ -160,7 +162,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
     ]
 
-    def get_li_imm(ins) -> Optional[int]:
+    def get_li_imm(ins: Instruction) -> Optional[int]:
         if ins.mnemonic == 'lui' and isinstance(ins.args[1], AsmLiteral):
             return (ins.args[1].value & 0xffff) << 16
         if (ins.mnemonic in ['addi', 'addiu'] and
@@ -175,8 +177,8 @@ def simplify_standard_patterns(function: Function) -> Function:
             return ins.args[2].value & 0xffff
         return None
 
-    def matches_pattern(actual, pattern) -> bool:
-        def match_one(actual, expected: str) -> bool:
+    def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> bool:
+        def match_one(actual: BodyPart, expected: str) -> bool:
             if not isinstance(actual, Instruction):
                 return (expected == "")
             ins = actual
@@ -193,7 +195,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         return (len(actual) == len(pattern) and
             all(match_one(a, e) for (a, e) in zip(actual, pattern)))
 
-    def try_replace_div(i) -> Optional[Tuple[List[Instruction], int]]:
+    def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i:i + len(div_pattern)]
         if not matches_pattern(actual, div_pattern):
             return None
@@ -208,7 +210,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             return None
         return ([], i + len(div_pattern) - 1)
 
-    def try_replace_utf_conv(i) -> Optional[Tuple[List[Instruction], int]]:
+    def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i:i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
             return None
@@ -220,13 +222,14 @@ def simplify_standard_patterns(function: Function) -> Function:
         new_instr = Instruction(mnemonic="cvt.s.u", args=cvt_instr.args)
         return ([new_instr], i + len(utf_pattern) - 1)
 
-    def no_replacement(i) -> Tuple[List[Instruction], int]:
+    def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
 
     new_function = Function(name=function.name)
     i = 0
     while i < len(function.body):
-        repl, i = try_replace_div(i) or try_replace_utf_conv(i) or no_replacement(i)
+        repl, i = (try_replace_div(i) or try_replace_utf_conv(i) or
+                no_replacement(i))
         new_function.body.extend(repl)
     return new_function
 
@@ -270,9 +273,9 @@ def build_blocks(function: Function) -> List[Block]:
     return block_builder.get_blocks()
 
 
-def is_loop_edge(node: 'Node', edge: 'Node'):
+def is_loop_edge(node: 'Node', edge: 'Node') -> bool:
     # Loops are represented by backwards jumps.
-    return edge.block.index < node.block.index
+    return typing.cast(bool, (edge.block.index < node.block.index))
 
 @attr.s(cmp=False)
 class BasicNode:
@@ -280,13 +283,13 @@ class BasicNode:
     successor: 'Node' = attr.ib()
     parents: List['Node'] = attr.ib(factory=list)
 
-    def add_parent(self, parent: 'Node'):
+    def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
 
-    def is_loop(self):
+    def is_loop(self) -> bool:
         return is_loop_edge(self, self.successor)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return ''.join([
             f'{self.block}\n',
             f'# {self.block.index} -> {self.successor.block.index}',
@@ -300,13 +303,13 @@ class ConditionalNode:
     fallthrough_edge: 'Node' = attr.ib()
     parents: List['Node'] = attr.ib(factory=list)
 
-    def add_parent(self, parent: 'Node'):
+    def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
 
-    def is_loop(self):
+    def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return ''.join([
             f'{self.block}\n',
             f'# {self.block.index} -> ',
@@ -321,10 +324,10 @@ class ReturnNode:
     block: Block = attr.ib()
     parents: List['Node'] = attr.ib(factory=list)
 
-    def add_parent(self, parent: 'Node'):
+    def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'{self.block}\n# {self.block.index} -> ret'
 
 Node = Union[
@@ -344,10 +347,11 @@ def build_graph_from_block(
     new_node: Node
     dummy_node: Any = None
 
-    def find_block_by_label(label: JumpTarget):
+    def find_block_by_label(label: JumpTarget) -> Optional[Block]:
         for block in blocks:
             if block.label and block.label.name == label.target:
                 return block
+        return None
 
     # Extract branching instructions from this block.
     branches: List[Instruction] = [
@@ -407,7 +411,7 @@ def build_graph_from_block(
     return new_node
 
 
-def build_nodes(function: Function, blocks: List[Block]):
+def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
     # Base case: build the ReturnNode first (to avoid a special case later).
     return_block: Block = blocks[-1]
     return_node: ReturnNode = ReturnNode(return_block)
@@ -427,7 +431,7 @@ class FlowGraph:
     nodes: List[Node] = attr.ib()
 
 
-def build_callgraph(function: Function):
+def build_callgraph(function: Function) -> FlowGraph:
     # First build blocks...
     blocks = build_blocks(function)
     # Now build edges.
@@ -436,7 +440,7 @@ def build_callgraph(function: Function):
     return FlowGraph(nodes)
 
 
-def visualize_callgraph(flow_graph: FlowGraph):
+def visualize_callgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
     dot = g.Digraph()
     for node in flow_graph.nodes:

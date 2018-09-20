@@ -14,20 +14,20 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any
 class Register:
     register_name: str = attr.ib()
 
-    def is_callee_save(self):
-        return re.match('s[0-7]', self.register_name)
+    def is_callee_save(self) -> bool:
+        return bool(re.match('s[0-7]', self.register_name))
 
-    def is_float(self):
+    def is_float(self) -> bool:
         return self.register_name[0] == 'f' and self.register_name != 'fp'
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'${self.register_name}'
 
 @attr.s(frozen=True)
 class AsmGlobalSymbol:
     symbol_name: str = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.symbol_name
 
 @attr.s(frozen=True)
@@ -35,14 +35,14 @@ class Macro:
     macro_name: str = attr.ib()
     argument: 'Argument' = attr.ib()  # forward-declare
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'%{self.macro_name}({self.argument})'
 
 @attr.s(frozen=True)
 class AsmLiteral:
     value: int = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return hex(self.value)
 
 @attr.s(frozen=True)
@@ -50,7 +50,7 @@ class AsmAddressMode:
     lhs: Union[AsmLiteral, Macro, None] = attr.ib()
     rhs: Register = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.lhs is not None:
             return f'{self.lhs}({self.rhs})'
         else:
@@ -62,14 +62,14 @@ class BinOp:
     lhs: 'Argument' = attr.ib()
     rhs: 'Argument' = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'{self.lhs} {self.op} {self.rhs}'
 
 @attr.s(frozen=True)
 class JumpTarget:
     target: str = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'.{self.target}'
 
 Argument = Union[
@@ -101,7 +101,7 @@ def parse_number(elems: List[str]) -> int:
 def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
     value: Optional[Argument] = None
 
-    def expect(n):
+    def expect(n: str) -> str:
         g = arg_elems.pop(0)
         assert g in n, f'Expected one of {list(n)}, got {g} (rest: {arg_elems})'
         return g
@@ -191,13 +191,13 @@ class Instruction:
     mnemonic: str = attr.ib()
     args: List[Argument] = attr.ib()
 
-    def is_branch_instruction(self):
+    def is_branch_instruction(self) -> bool:
         return self.mnemonic in [
             'b', 'beq', 'bne', 'beqz', 'bnez', 'bgez', 'bgtz', 'blez', 'bltz',
             'bc1t', 'bc1f'
         ] or self.is_branch_likely_instruction()
 
-    def is_branch_likely_instruction(self):
+    def is_branch_likely_instruction(self) -> bool:
         return self.mnemonic in [
             'beql', 'bnel', 'neqzl', 'bnezl', 'bgezl', 'bgtzl', 'blezl', 'bltzl',
             'bc1tl', 'bc1fl'
@@ -208,14 +208,14 @@ class Instruction:
         assert isinstance(label, JumpTarget)
         return label
 
-    def is_jump_instruction(self):
+    def is_jump_instruction(self) -> bool:
         return self.mnemonic in ['jr', 'jal']
 
-    def is_delay_slot_instruction(self):
+    def is_delay_slot_instruction(self) -> bool:
         return (self.is_branch_instruction() or self.is_branch_likely_instruction() or
             self.is_jump_instruction())
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
 
 def parse_instruction(line: str) -> Instruction:

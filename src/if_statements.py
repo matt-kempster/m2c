@@ -13,17 +13,17 @@ class Context:
     flow_graph: FlowGraph = attr.ib()
     options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[int, int, int], bool] = attr.ib(factory=dict)
-    can_reach_return = attr.ib(default=False)
-    return_type = attr.ib(factory=Type.any)
+    can_reach_return: bool = attr.ib(default=False)
+    return_type: Type = attr.ib(factory=Type.any)
 
 @attr.s
 class IfElseStatement:
     condition: BinaryOp = attr.ib()
     indent: int = attr.ib()
-    if_body = attr.ib()
-    else_body = attr.ib(default=None)
+    if_body: 'Body' = attr.ib()
+    else_body: Optional['Body'] = attr.ib(default=None)
 
-    def __str__(self):
+    def __str__(self) -> str:
         space = ' ' * self.indent
         # Avoid duplicate parentheses. TODO: make this cleaner and do it more
         # uniformly, not just here.
@@ -52,12 +52,12 @@ class SimpleStatement:
     indent: int = attr.ib()
     contents: str = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'{" " * self.indent}{self.contents}'
 
 @attr.s
 class Body:
-    print_node_comment = attr.ib()
+    print_node_comment: bool = attr.ib()
     statements: List[Union[SimpleStatement, IfElseStatement]] = attr.ib(factory=list)
 
     def add_node(self, node: Node, indent: int) -> None:
@@ -127,7 +127,9 @@ def build_conditional_subgraph(
 
     return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body)
 
-def end_reachable_without(context: Context, start, end, without):
+def end_reachable_without(
+    context: Context, start: Node, end: Node, without: Node
+) -> bool:
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
     trip = (start.block.index, end.block.index, without.block.index)
@@ -206,7 +208,9 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
-def count_non_postdominated_parents(context, child, curr_end) -> int:
+def count_non_postdominated_parents(
+    context: Context, child: Node, curr_end: Node
+) -> int:
     """
     Return the number of parents of "child" for whom "child" is NOT their
     immediate postdominator. This is useful for finding nodes that would be
@@ -226,17 +230,20 @@ def count_non_postdominated_parents(context, child, curr_end) -> int:
     return count
 
 
-def get_number_of_if_conditions(context, node, curr_end):
+def get_number_of_if_conditions(
+    context: Context, node: ConditionalNode, curr_end: Node
+) -> int:
     """
     For a given ConditionalNode, this function will return k when the if-
     statement of the correspondant C code is "if (1 && 2 && ... && k)" or
     "if (1 || 2 || ... || k)", where the numbers are labels for clauses.
     (It remains unclear how a predicate that mixes && and || would behave.)
     """
-    count1, count2 = map(
-        lambda child: count_non_postdominated_parents(context, child, curr_end),
-        [node.conditional_edge, node.fallthrough_edge]
-    )
+    count1 = count_non_postdominated_parents(context, node.conditional_edge,
+                                             curr_end)
+    count2 = count_non_postdominated_parents(context, node.fallthrough_edge,
+                                             curr_end)
+
     # Return the nonzero count; the predicates will go through that path.
     # (TODO: I have a theory that we can just return count2 here.)
     if count1 != 0:
@@ -244,8 +251,11 @@ def get_number_of_if_conditions(context, node, curr_end):
     else:
         return count2
 
-def join_conditions(conditions: List[BinaryOp], op: str, only_negate_last: bool):
+def join_conditions(
+    conditions: List[BinaryOp], op: str, only_negate_last: bool
+) -> BinaryOp:
     assert op in ['&&', '||']
+    assert conditions
     final_cond: Optional[BinaryOp] = None
     for i, cond in enumerate(conditions):
         if not only_negate_last or i == len(conditions) - 1:
@@ -254,14 +264,15 @@ def join_conditions(conditions: List[BinaryOp], op: str, only_negate_last: bool)
             final_cond = cond
         else:
             final_cond = BinaryOp(final_cond, op, cond, type=Type.bool())
+    assert final_cond is not None
     return final_cond
 
 def get_full_if_condition(
     context: Context,
     count: int,
     start: ConditionalNode,
-    curr_end,
-    indent
+    curr_end: Node,
+    indent: int
 ) -> IfElseStatement:
     curr_node: Node = start
     prev_node: Optional[ConditionalNode] = None
@@ -308,7 +319,7 @@ def get_full_if_condition(
 
 def handle_return(
     context: Context, body: Body, node: Node, return_node: Node, indent: int
-):
+) -> None:
     ret_info = return_node.block.block_info
     assert isinstance(ret_info, BlockInfo)
 

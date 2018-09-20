@@ -11,7 +11,7 @@ from parse_instruction import *
 class Label:
     name: str = attr.ib()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'  .{self.name}:'
 
 @attr.s
@@ -20,17 +20,17 @@ class Function:
     body: List[Union[Instruction, Label]] = attr.ib(factory=list)
     jumptable_labels: List[Label] = attr.ib(factory=list)
 
-    def new_label(self, name: str):
+    def new_label(self, name: str) -> None:
         self.body.append(Label(name))
 
-    def new_jumptable_label(self, name: str):
+    def new_jumptable_label(self, name: str) -> None:
         self.body.append(Label(name))
         self.jumptable_labels.append(Label(name))
 
-    def new_instruction(self, instruction):
+    def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
 
-    def __str__(self):
+    def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
         return f'glabel {self.name}\n{body}'
 
@@ -40,23 +40,23 @@ class MIPSFile:
     functions: List[Function] = attr.ib(factory=list)
     current_function: Optional[Function] = attr.ib(default=None, repr=False)
 
-    def new_function(self, name: str):
+    def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
         self.functions.append(self.current_function)
 
-    def new_instruction(self, instruction: Instruction):
+    def new_instruction(self, instruction: Instruction) -> None:
         assert self.current_function is not None
         self.current_function.new_instruction(instruction)
 
-    def new_label(self, label_name):
+    def new_label(self, label_name: str) -> None:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_jumptable_label(self, label_name):
+    def new_jumptable_label(self, label_name: str) -> None:
         assert self.current_function is not None
         self.current_function.new_jumptable_label(label_name)
 
-    def __str__(self):
+    def __str__(self) -> str:
         functions_str = '\n\n'.join(str(function) for function in self.functions)
         return f'# {self.filename}\n{functions_str}'
 
