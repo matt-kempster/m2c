@@ -753,6 +753,9 @@ class InstrArgs:
     regs: RegInfo = attr.ib(repr=False)
     stack_info: StackInfo = attr.ib(repr=False)
 
+    def duplicate_dest_reg(self) -> None:
+        self.raw_args.insert(1, self.raw_args[0])
+
     def reg_ref(self, index: int) -> Register:
         ret = self.raw_args[index]
         assert isinstance(ret, Register)
@@ -777,13 +780,22 @@ class InstrArgs:
         return Literal(value, type=Type.f64())
 
     def imm(self, index: int) -> Expression:
-        ret = literal_expr(self.raw_args[index], self.stack_info)
+        arg = strip_macros(self.raw_args[index])
+        ret = literal_expr(arg, self.stack_info)
+        if isinstance(ret, GlobalSymbol):
+            return AddressOf(ret)
+        return ret
+
+    def hi_imm(self, index: int) -> Expression:
+        arg = self.raw_args[index]
+        assert isinstance(arg, Macro) and arg.macro_name == 'hi'
+        ret = literal_expr(arg.argument, self.stack_info)
         if isinstance(ret, GlobalSymbol):
             return AddressOf(ret)
         return ret
 
     def memory_ref(self, index: int) -> Union[AddressMode, GlobalSymbol]:
-        ret = self.raw_args[index]
+        ret = strip_macros(self.raw_args[index])
         if isinstance(ret, AsmAddressMode):
             if ret.lhs is None:
                 return AddressMode(offset=0, rhs=ret.rhs)
@@ -892,57 +904,61 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
 
 
 def load_upper(args: InstrArgs) -> Expression:
+    if isinstance(args.raw_args[1], Macro):
+        return args.hi_imm(1)
     expr = args.imm(1)
     if isinstance(expr, BinaryOp) and expr.op == '>>':
         # Something like "lui REG (lhs >> 16)". Just take "lhs".
         assert expr.right == Literal(16)
         return expr.left
-    elif isinstance(expr, Literal):
+    else:
+        assert isinstance(expr, Literal)
         # Something like "lui 0x1", meaning 0x10000.
         return Literal(expr.value << 16)
-    else:
-        # Something like "lui REG %hi(arg)", but we got rid of the macro.
-        return expr
 
 def handle_ori(args: InstrArgs) -> Expression:
-    if args.count() == 3:
-        return BinaryOp.int(left=args.reg(1), op='|', right=args.imm(2))
+    # Two-argument form, mostly used for "ori $reg, (x & 0xffff)"
+    if args.count() == 2:
+        args.duplicate_dest_reg()
 
-    # Special 2-argument form.
-    expr = args.imm(1)
-    if isinstance(expr, BinaryOp):
+    imm = args.imm(2)
+    if isinstance(imm, BinaryOp) and imm.op == '&':
         # Something like "ori REG (lhs & 0xFFFF)". We (hopefully) already
-        # handled this above, but let's put lhs into this register too.
-        assert expr.op == '&'
-        assert expr.right == Literal(0xFFFF)
-        return expr.left
+        # handled this in the lui, but let's put lhs into this register too.
+        assert imm.right == Literal(0xFFFF)
+        return imm.left
     else:
         # Regular bitwise OR.
-        return BinaryOp.int(left=args.reg(0), op='|', right=expr)
+        return BinaryOp.int(left=args.reg(1), op='|', right=imm)
 
 def handle_addi(args: InstrArgs, stack_info: StackInfo) -> Expression:
+    # Two-argument form, mostly used for "addiu $reg, %lo(...)"
     if args.count() == 2:
-        # Used to be "addi reg1 reg2 %lo(...)", but we got rid of the macro.
-        # Return the former argument of the macro.
-        return args.imm(1)
-    elif args.reg_ref(1).register_name == 'zero':
-        # addiu $reg $zero <imm> is one way of writing 'li'
-        return args.imm(2)
-    elif args.reg_ref(1).register_name == 'sp':
+        args.duplicate_dest_reg()
+
+    source_reg = args.reg_ref(1)
+    source = args.reg(1)
+    imm = args.imm(2)
+    if source_reg.register_name == 'zero':
+        # addiu $reg, $zero, <imm> is one way of writing 'li'
+        return imm
+    elif imm == Literal(0):
+        # addiu $reg1, $reg2, 0 is a move
+        return source
+    elif source_reg.register_name == 'sp':
         # Adding to sp, i.e. passing an address.
-        lit = args.imm(2)
-        assert isinstance(lit, Literal)
+        assert isinstance(imm, Literal)
         if args.reg_ref(0).register_name == 'sp':
             # Changing sp. Just ignore that.
-            return args.reg(0)
+            return source
         # Keep track of all local variables that we take addresses of.
-        var = stack_info.get_stack_var(lit.value, store=False)
+        var = stack_info.get_stack_var(imm.value, store=False)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
         return AddressOf(var)
     else:
         # Regular binary addition.
-        return BinaryOp.intptr(left=args.reg(1), op='+', right=args.imm(2))
+        return BinaryOp.intptr(left=source, op='+', right=imm)
 
 def make_store(
     args: InstrArgs, stack_info: StackInfo, type: Type
@@ -1011,11 +1027,16 @@ def fold_mul_chains(expr: Expression) -> Expression:
     return BinaryOp.int(left=base, op='*', right=Literal(num))
 
 def strip_macros(arg: Argument) -> Argument:
+    """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume
+    that %hi's only ever occur in lui, where we expand them to an entire value,
+    and not just the upper part. This ought to preserve semantics in all
+    reasonable cases."""
     if isinstance(arg, Macro):
-        return arg.argument
+        assert arg.macro_name == 'lo'
+        return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
-        assert arg.lhs.macro_name == 'lo'  # %hi(...)(REG) doesn't make sense.
-        return arg.lhs.argument
+        assert arg.lhs.macro_name == 'lo'
+        return AsmAddressMode(lhs=None, rhs=arg.rhs)
     else:
         return arg
 
@@ -1194,17 +1215,7 @@ def translate_block_body(
         if mnemonic == 'nop':
             continue
 
-        raw_args = instr.args
-
-        # HACK: Remove any %hi(...) or %lo(...) macros; we will just put the
-        # full value into each intermediate register, because this really
-        # doesn't affect program behavior almost ever.
-        if (mnemonic in ['addi', 'addiu'] and len(raw_args) == 3 and
-                isinstance(raw_args[2], Macro)):
-            del raw_args[1]
-        raw_args = list(map(strip_macros, raw_args))
-
-        args = InstrArgs(raw_args, regs, stack_info)
+        args = InstrArgs(instr.args, regs, stack_info)
 
         # Figure out what code to generate!
         if mnemonic in cases_source_first_expression:
