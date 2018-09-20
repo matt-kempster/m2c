@@ -288,10 +288,16 @@ def is_loop_edge(node: 'Node', edge: 'Node') -> bool:
     return typing.cast(bool, (edge.block.index < node.block.index))
 
 @attr.s(cmp=False)
-class BasicNode:
+class BaseNode:
     block: Block = attr.ib()
+    parents: List['Node'] = attr.ib(init=False, factory=list)
+    dominators: Set['Node'] = attr.ib(init=False, factory=set)
+    immediate_dominator: Optional['Node'] = attr.ib(init=False, default=None)
+    immediately_dominates: List['Node'] = attr.ib(init=False, factory=list)
+
+@attr.s(cmp=False)
+class BasicNode(BaseNode):
     successor: 'Node' = attr.ib()
-    parents: List['Node'] = attr.ib(factory=list)
 
     def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
@@ -307,11 +313,9 @@ class BasicNode:
 
 
 @attr.s(cmp=False)
-class ConditionalNode:
-    block: Block = attr.ib()
-    conditional_edge: 'Node' = attr.ib()  # forward-declare types
+class ConditionalNode(BaseNode):
+    conditional_edge: 'Node' = attr.ib()
     fallthrough_edge: 'Node' = attr.ib()
-    parents: List['Node'] = attr.ib(factory=list)
 
     def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
@@ -330,10 +334,7 @@ class ConditionalNode:
 
 
 @attr.s(cmp=False)
-class ReturnNode:
-    block: Block = attr.ib()
-    parents: List['Node'] = attr.ib(factory=list)
-
+class ReturnNode(BaseNode):
     def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
 
@@ -460,17 +461,41 @@ def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
     return graph
 
 
+def compute_dominators(nodes: List[Node]) -> None:
+    entry = nodes[0]
+    entry.dominators = {entry}
+    for n in nodes[1:]:
+        n.dominators = set(nodes)
+
+    changes = True
+    while changes:
+        changes = False
+        for n in nodes[1:]:
+            assert n.parents
+            nset = n.dominators
+            for p in n.parents:
+                nset = nset.intersection(p.dominators)
+            nset = {n}.union(nset)
+            if len(nset) < len(n.dominators):
+                n.dominators = nset
+                changes = True
+
+    for n in nodes[1:]:
+        doms = n.dominators.difference({n})
+        n.immediate_dominator = max(doms, key=lambda d: len(d.dominators))
+        n.immediate_dominator.immediately_dominates.append(n)
+    for n in nodes:
+        n.immediately_dominates.sort(key=lambda x: x.block.index)
+
 @attr.s(frozen=True)
 class FlowGraph:
     nodes: List[Node] = attr.ib()
 
 
 def build_callgraph(function: Function) -> FlowGraph:
-    # First build blocks...
     blocks = build_blocks(function)
-    # Now build edges.
     nodes = build_nodes(function, blocks)
-
+    compute_dominators(nodes)
     return FlowGraph(nodes)
 
 
