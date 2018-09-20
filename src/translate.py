@@ -1341,7 +1341,9 @@ def translate_graph_from_block(
         if options.stop_on_error:
             raise e
         traceback.print_exc()
-        error_stmt = CommentStmt('Error: ' + str(e).replace('\n', ''))
+        emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
+        emsg = emsg.strip().split('\n')[-1].strip()
+        error_stmt = CommentStmt('Error: ' + emsg)
         block_info = BlockInfo([error_stmt], None,
                 RegInfo(contents={}, stack_info=stack_info))
 
