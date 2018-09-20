@@ -713,8 +713,8 @@ class RegInfo:
         assert key != Register('zero')
         del self.contents[key]
 
-    def get_raw_arg(self, key: Register) -> Expression:
-        return self.contents[key]
+    def get_raw_arg(self, key: Register) -> Optional[Expression]:
+        return self.contents.get(key, None)
 
     def clear_caller_save_regs(self) -> None:
         for reg in map(Register, CALLER_SAVE_REGS):
@@ -935,7 +935,7 @@ def handle_addi(args: InstrArgs, stack_info: StackInfo) -> Expression:
         if args.reg_ref(0).register_name == 'sp':
             # Changing sp. Just ignore that.
             return args.reg(0)
-        return AddressOf(stack_info.get_stack_var(lit.value, False))
+        return AddressOf(stack_info.get_stack_var(lit.value, store=False))
     else:
         # Regular binary addition.
         return BinaryOp.intptr(left=args.reg(1), op='+', right=args.imm(2))
@@ -1264,10 +1264,10 @@ def translate_block_body(
                     # first function call if an argument passed in the same
                     # position as we received it, but that's impossible to do
                     # anything about without access to function signatures.
-                    if register in regs:
-                        expr = regs.get_raw_arg(register)
-                        if not isinstance(expr, PassedInArg) or expr.copied:
-                            func_args.append(expr)
+                    expr = regs.get_raw_arg(register)
+                    if expr is not None and (not isinstance(expr, PassedInArg)
+                            or expr.copied):
+                        func_args.append(expr)
                 # Add the arguments after a3.
                 subroutine_args.sort(key=lambda a: a[1].value)
                 for arg in subroutine_args:
