@@ -326,14 +326,14 @@ def handle_return(
     if any(w.should_write() for w in ret_info.to_write):
         body.add_node(return_node, indent)
 
-    if ret_info.final_register_states.wrote_return_register:
+    if Register('return_reg') in ret_info.final_register_states.written_in_block:
         regs = ret_info.final_register_states
     else:
         assert isinstance(node.block.block_info, BlockInfo)
         regs = node.block.block_info.final_register_states
 
-    if Register('return_reg') in regs:
-        ret = regs[Register('return_reg')]
+    ret = regs.get_raw(Register('return_reg'))
+    if ret is not None:
         context.return_type.unify(ret.type)
         body.add_comment(indent, f'(possible return value: {ret})')
     else:
@@ -426,6 +426,10 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
             type_decl = expr.type.to_decl()
             print(SimpleStatement(4, f'{type_decl}{expr.get_var_name()};'))
             any_decl = True
+    for phi_var in function_info.stack_info.phi_vars:
+        type_decl = phi_var.type.to_decl()
+        print(SimpleStatement(4, f'{type_decl}{phi_var.get_var_name()};'))
+        any_decl = True
     if any_decl:
         print()
 
