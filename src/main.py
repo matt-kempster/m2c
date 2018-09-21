@@ -19,7 +19,7 @@ def main(options: Options, function_index_or_name: str) -> None:
             try:
                 function = next(f for f in mips_file.functions if f.name == name)
             except StopIteration:
-                print("Function {name} not found.", file=sys.stderr)
+                print(f"Function {name} not found.", file=sys.stderr)
                 return
         except IndexError:
             count = len(mips_file.functions)
