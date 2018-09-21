@@ -634,6 +634,7 @@ class PhiExpr:
     used_phis: List['PhiExpr'] = attr.ib()
     name: Optional[str] = attr.ib(default=None)
     num_usages: int = attr.ib(default=0)
+    replacement_expr: Optional['Expression'] = attr.ib(default=None)
     used_by: Optional['PhiExpr'] = attr.ib(default=None)
 
     def dependencies(self) -> List['Expression']:
@@ -654,6 +655,8 @@ class PhiExpr:
         return self.used_by.propagates_to()
 
     def __str__(self) -> str:
+        if self.replacement_expr:
+            return str(self.replacement_expr)
         return self.get_var_name()
 
 @attr.s
@@ -1311,22 +1314,37 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
     while i < len(used_phis):
         phi = used_phis[i]
         assert phi.num_usages > 0
+        assert phi.node.parents
+        exprs = []
         for node in phi.node.parents:
             block_info = node.block.block_info
             assert isinstance(block_info, BlockInfo)
-            expr = block_info.final_register_states[phi.reg]
-            if isinstance(expr, PhiExpr):
-                # Explicitly mark how the expression is used if it's a phi,
-                # so we can propagate phi sets (to get rid of temporaries).
-                expr.use(from_phi=phi)
-            else:
-                mark_used(expr)
-            block_info.to_write.append(SetPhiStmt(phi, expr))
+            exprs.append(block_info.final_register_states[phi.reg])
+
+        if all(e == exprs[0] for e in exprs[1:]):
+            # All the phis have the same value (e.g. because we recomputed an
+            # expression after a store, or restored a register after a function
+            # call). Just use that value instead of introducing a phi node.
+            phi.replacement_expr = exprs[0]
+            for _ in range(phi.num_usages):
+                mark_used(exprs[0])
+        else:
+            for node in phi.node.parents:
+                block_info = node.block.block_info
+                assert isinstance(block_info, BlockInfo)
+                expr = block_info.final_register_states[phi.reg]
+                if isinstance(expr, PhiExpr):
+                    # Explicitly mark how the expression is used if it's a phi,
+                    # so we can propagate phi sets (to get rid of temporaries).
+                    expr.use(from_phi=phi)
+                else:
+                    mark_used(expr)
+                block_info.to_write.append(SetPhiStmt(phi, expr))
         i += 1
 
     name_counter: Dict[Register, int] = {}
     for phi in used_phis:
-        if phi.propagates_to() == phi:
+        if not phi.replacement_expr and phi.propagates_to() == phi:
             counter = name_counter.get(phi.reg, 0) + 1
             name_counter[phi.reg] = counter
             prefix = f'phi_{phi.reg.register_name}'
