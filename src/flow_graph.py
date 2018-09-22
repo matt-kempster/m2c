@@ -422,9 +422,32 @@ def build_graph_from_block(
     return new_node
 
 
+def is_nontrivial_return_block(block: Block) -> bool:
+    # A heuristic for when a block is not a simple "early-return" block.
+    # This could certainly be improved.
+    stores = ['sb', 'sh', 'sw', 'swc1', 'sdc1', 'swr', 'swl', 'jal']
+    for instr in block.instructions:
+        if instr.mnemonic in stores:
+            return True
+    return False
+
+
 def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
     # Base case: build the ReturnNode first (to avoid a special case later).
     return_block: Block = blocks[-1]
+    if is_nontrivial_return_block(return_block):
+        # If the return block is non-trivial, then it can't (hopefully) be an
+        # early-return block, but is rather a block that execution reaches by
+        # normal means and just happens to return. Hence, generate an
+        # artificial early-return block and make this one jump to it, so it
+        # becomes a normal BasicNode.
+        new_label = generate_temp_label()
+        new_target = JumpTarget(new_label)
+        new_block = Block(return_block.index + 1, Label(new_label), [])
+        return_block.instructions.append(Instruction('b', [new_target]))
+        blocks.append(new_block)
+        return_block = new_block
+
     return_node: ReturnNode = ReturnNode(return_block)
     graph: List[Node] = [return_node]
 
