@@ -515,11 +515,14 @@ class SubroutineArg:
     def __str__(self) -> str:
         return f'subroutine_arg{format_hex(self.value // 4)}'
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, cmp=True)
 class StructAccess:
+    # This has cmp=True since it represents a live expression and not an access
+    # at a certain point in time -- this sometimes helps get rid of phi nodes.
+    # Really it should represent the latter, but making that so is hard.
     struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
-    type: Type = attr.ib()
+    type: Type = attr.ib(cmp=False)
 
     def dependencies(self) -> List['Expression']:
         return [self.struct_var]
