@@ -167,6 +167,10 @@ class Type:
         return Type(kind=Type.K_INT, size=32, sign=Type.UNSIGNED)
 
     @staticmethod
+    def u64() -> 'Type':
+        return Type(kind=Type.K_INT, size=64, sign=Type.UNSIGNED)
+
+    @staticmethod
     def of_size(size: int) -> 'Type':
         return Type(kind=Type.K_ANY, size=size, sign=Type.ANY_SIGN)
 
@@ -179,7 +183,7 @@ def as_type(expr: 'Expression', type: Type, silent: bool) -> 'Expression':
         if not silent:
             return Cast(expr=expr, reinterpret=True, silent=False, type=type)
         return expr
-    return Cast(expr=expr, reinterpret=True, type=type)
+    return Cast(expr=expr, reinterpret=True, silent=False, type=type)
 
 def as_f32(expr: 'Expression') -> 'Expression':
     return as_type(expr, Type.f32(), True)
@@ -1296,8 +1300,12 @@ def translate_block_body(
                 # We don't know what this function's return register is,
                 # be it $v0, $f0, or something else, so this hack will have
                 # to do. (TODO: handle it...)
-                regs[Register('f0')] = call
-                regs[Register('v0')] = call
+                regs[Register('f0')] = Cast(expr=call, reinterpret=True,
+                        silent=True, type=Type.f32())
+                regs[Register('v0')] = Cast(expr=call, reinterpret=True,
+                        silent=True, type=Type.intish())
+                regs[Register('v1')] = as_u32(Cast(expr=call, reinterpret=True,
+                        silent=False, type=Type.u64()))
                 regs[Register('return_reg')] = call
 
         elif mnemonic in CASES_FLOAT_COMP:
