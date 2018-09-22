@@ -1438,6 +1438,7 @@ def translate_block_body(
             if result is None:
                 # Return from the function.
                 assert mnemonic == 'jr'
+                assert args.reg_ref(0) == Register('ra'), "Jump tables are not supported yet."
                 # TODO: Maybe assert ReturnNode?
                 # TODO: Figure out what to return. (Look through $v0 and $f0)
             else:

@@ -50,6 +50,13 @@ class BlockBuilder:
         self.curr_instructions.append(instruction)
 
     def set_label(self, label: Label) -> None:
+        if label == self.curr_label:
+            # It's okay to repeat a label (e.g. once with glabel, once as a
+            # standard label -- this often occurs for switches).
+            return
+        # We could support multiple labels at the same position, and output
+        # empty blocks. For now we don't, however.
+        assert not self.curr_label, "A block can not have more than one label"
         self.curr_label = label
 
     def get_blocks(self) -> List[Block]:
@@ -262,6 +269,8 @@ def build_blocks(function: Function) -> List[Block]:
             # TODO: Should this behavior be reverted to its original behavior
             # (leaving the delay slot after the branch/jump)? This way may be
             # harder to test and produce hidden bugs.
+            # TODO: Assert that the output register of the following instruction
+            # isn't read by this one.
             if item.is_delay_slot_instruction():
                 # Handle the delay slot by taking the next instruction first.
                 # TODO: On -O2-compiled code, the delay slot instruction is
