@@ -1363,6 +1363,10 @@ def translate_block_body(
     """
 
     to_write: List[Union[Statement]] = []
+    local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
+    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
+    branch_condition: Optional[BinaryOp] = None
+
     def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
         if always_emit:
             # (otherwise this will be marked used once num_usages reaches 1)
@@ -1375,12 +1379,16 @@ def translate_block_body(
         return expr
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
+        if isinstance(expr, LocalVar) and expr in local_var_writes:
+            # Elide register restores (only for the same register for now, to
+            # be conversative).
+            orig_reg, orig_expr = local_var_writes[expr]
+            if orig_reg == reg:
+                expr = orig_expr
         if expr is not None and not is_repeatable_expression(expr):
             expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
         regs[reg] = expr
 
-    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
-    branch_condition: Optional[BinaryOp] = None
     for instr in block.instructions:
         # Save the current mnemonic.
         mnemonic = instr.mnemonic
@@ -1399,6 +1407,10 @@ def translate_block_body(
             elif to_store is not None:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
+                    assert isinstance(to_store.source, Cast)
+                    assert to_store.source.reinterpret
+                    local_var_writes[to_store.dest] = (args.reg_ref(0),
+                            to_store.source.expr)
                 # This needs to be written out.
                 to_write.append(to_store)
                 mark_used(to_store.source)
