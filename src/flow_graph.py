@@ -80,15 +80,23 @@ def generate_temp_label() -> str:
 #
 # Branch-likely instructions that do not appear in this pattern are kept.
 def normalize_likely_branches(function: Function) -> Function:
-    label_prev_instr : Dict[str, Instruction] = {}
+    label_prev_instr: Dict[str, Instruction] = {}
+    label_before_instr: Dict[int, str] = {}
+    prev_instr: Optional[Instruction] = None
+    prev_label: Optional[Label] = None
     for item in function.body:
         if isinstance(item, Instruction):
+            if prev_label is not None:
+                label_before_instr[id(item)] = prev_label.name
+                prev_label = None
             prev_instr = item
         elif isinstance(item, Label):
+            assert prev_instr is not None
             label_prev_instr[item.name] = prev_instr
+            prev_label = item
 
-    insert_label_before : Dict[int, str] = {}
-    new_body : List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
+    insert_label_before: Dict[int, str] = {}
+    new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
     for item in body_iter:
@@ -98,9 +106,11 @@ def normalize_likely_branches(function: Function) -> Function:
             next_item = next(body_iter)
             orig_next_item = next_item
             if isinstance(next_item, Instruction) and str(before_target) == str(next_item):
-                if id(before_target) not in insert_label_before:
-                    insert_label_before[id(before_target)] = generate_temp_label()
-                new_target = JumpTarget(insert_label_before[id(before_target)])
+                if id(before_target) not in label_before_instr:
+                    new_label = generate_temp_label()
+                    label_before_instr[id(before_target)] = new_label
+                    insert_label_before[id(before_target)] = new_label
+                new_target = JumpTarget(label_before_instr[id(before_target)])
                 item = Instruction(item.mnemonic[:-1], item.args[:-1] + [new_target])
                 next_item = Instruction('nop', [])
             new_body.append((orig_item, item))
@@ -382,7 +392,8 @@ def build_graph_from_block(
         # Get the block associated with the jump target.
         branch_label = branch.get_branch_target()
         branch_block = find_block_by_label(branch_label)
-        assert branch_block is not None
+        assert branch_block is not None, \
+                f"Cannot find branch target {branch_label.target}"
 
         is_constant_branch = branch.mnemonic == 'b'
         if is_constant_branch:
