@@ -115,7 +115,7 @@ def build_conditional_subgraph(
         else:
             # Don't want to follow the loop, otherwise we'd be trapped here.
             # Instead, write a goto for the beginning of the loop.
-            label = f'loop_{start.block.index}'
+            label = f'loop_{start.conditional_edge.block.index}'
             if_body = Body(False, [SimpleStatement(indent + 4, f'goto {label};')])
     else:
         # We need to see if this is a compound if-statement, i.e. containing

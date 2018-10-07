@@ -22,7 +22,7 @@ s32 test(s32 arg0) {
         spC = (s32) (spC + 1);
         if (spC < arg0)
         {
-            goto loop_3;
+            goto loop_1;
         }
     }
     return;

@@ -15,7 +15,7 @@ s32 test(s32 arg0) {
         }
         if (sp4 < arg0)
         {
-            goto loop_4;
+            goto loop_1;
         }
     }
     return;
