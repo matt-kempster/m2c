@@ -106,11 +106,17 @@ def build_conditional_subgraph(
         if_condition = if_block_info.branch_condition.negated()
         if_body = build_flowgraph_between(context, start.fallthrough_edge, end, indent + 4)
     elif start.fallthrough_edge == end:
-        # Only an if block, so this is easy.
-        # I think this can only happen in the case where the other branch has
-        # an early return.
         if_condition = if_block_info.branch_condition
-        if_body = build_flowgraph_between(context, start.conditional_edge, end, indent + 4)
+        if not start.is_loop():
+            # Only an if block, so this is easy.
+            # I think this can only happen in the case where the other branch has
+            # an early return.
+            if_body = build_flowgraph_between(context, start.conditional_edge, end, indent + 4)
+        else:
+            # Don't want to follow the loop, otherwise we'd be trapped here.
+            # Instead, write a goto for the beginning of the loop.
+            label = f'loop_{start.block.index}'
+            if_body = Body(False, [SimpleStatement(indent + 4, f'goto {label};')])
     else:
         # We need to see if this is a compound if-statement, i.e. containing
         # && or ||.
@@ -170,7 +176,17 @@ def end_reachable_without(
                 assert start.fallthrough_edge != without
                 ret = end_reachable_without(context, start.fallthrough_edge, end, without)
             elif start.fallthrough_edge == without:
-                ret = end_reachable_without(context, start.conditional_edge, end, without)
+                if start.is_loop():
+                    # Going through the conditional node cannot help, since
+                    # that is a backwards arrow. There is no way to get to the
+                    # end.
+                    ret = False
+                else:
+                    ret = end_reachable_without(context, start.conditional_edge, end, without)
+            elif start.is_loop():
+                # No point in going through the loop - it won't help us get
+                # to the end.
+                ret = end_reachable_without(context, start.fallthrough_edge, end, without)
             else:
                 # Both routes are acceptable.
                 ret = (end_reachable_without(context, start.conditional_edge, end, without) or
@@ -196,7 +212,10 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
         if isinstance(node, BasicNode):
             stack.append(node.successor)
         elif isinstance(node, ConditionalNode):
-            stack.append(node.conditional_edge)
+            if not node.is_loop():
+                # If the node is a loop, then adding the conditional edge
+                # here would cause this while loop to never end.
+                stack.append(node.conditional_edge)
             stack.append(node.fallthrough_edge)
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
@@ -350,6 +369,13 @@ def build_flowgraph_between(
     """
     curr_start = start
     body = Body(print_node_comment=context.options.node_comments)
+    looped_to = any(
+        [idx >= start.block.index  # then the parent is making a backwards jump!
+            for idx in map(lambda node: node.block.index, start.parents)])
+    if looped_to:
+        # We currently write loops as labels and gotos. If a node is "looped
+        # to", then it needs a label.
+        body.add_statement(SimpleStatement(indent, f'loop_{start.block.index}:'))
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
@@ -369,8 +395,8 @@ def build_flowgraph_between(
             # let it do that.
             if isinstance(curr_start.successor, ReturnNode):
                 body.add_statement(SimpleStatement(indent, 'return;'))
-                handle_return(context, body, curr_start,
-                        curr_start.successor, indent)
+                handle_return(
+                    context, body, curr_start, curr_start.successor, indent)
                 break
             else:
                 curr_start = curr_start.successor
