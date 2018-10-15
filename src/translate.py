@@ -644,7 +644,7 @@ class PhiExpr:
         return []
 
     def get_var_name(self) -> str:
-        return self.name or 'unnamed-phi'
+        return self.name or f'unnamed-phi({self.reg.register_name})'
 
     def use(self, from_phi: Optional['PhiExpr']=None) -> None:
         if self.num_usages == 0:
