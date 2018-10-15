@@ -283,12 +283,11 @@ def build_blocks(function: Function) -> List[Block]:
 
             assert not item.is_branch_likely_instruction(), "Not yet able to handle general branch-likely instructions"
 
-            if item.is_branch_instruction():
-                # Split blocks at branches.
+            if item.is_jump_instruction():
+                # Split blocks at jumps.
                 block_builder.new_block()
-    # Split the last block.
-    block_builder.new_block()
 
+    # Throw away whatever is past the last "jr $ra" and return what we have.
     return block_builder.get_blocks()
 
 
@@ -357,7 +356,10 @@ Node = Union[
 ]
 
 def build_graph_from_block(
-    block: Block, blocks: List[Block], nodes: List[Node]
+    block: Block,
+    blocks: List[Block],
+    nodes: List[Node],
+    return_node: ReturnNode
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -374,45 +376,57 @@ def build_graph_from_block(
         return None
 
     # Extract branching instructions from this block.
-    branches: List[Instruction] = [
-        inst for inst in block.instructions if inst.is_branch_instruction()
+    jumps: List[Instruction] = [
+        inst for inst in block.instructions if inst.is_jump_instruction()
     ]
-    assert len(branches) in [0, 1], "too many branch instructions in one block"
+    assert len(jumps) in [0, 1], "too many jump instructions in one block"
 
-    # Since we've special-cased the return node, we know that there exists
-    # a fallthrough block.
-    assert block.index + 1 < len(blocks)
-    next_block = blocks[block.index + 1]
-
-    if len(branches) == 0:
-        # No branches, i.e. the next block is this node's successor block.
+    if len(jumps) == 0:
+        # No jumps, i.e. the next block is this node's successor block.
         new_node = BasicNode(block, dummy_node)
         nodes.append(new_node)
 
         # Recursively analyze.
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes)
+        next_block = blocks[block.index + 1]
+        new_node.successor = build_graph_from_block(next_block, blocks, nodes,
+                return_node)
 
         # Keep track of parents.
         new_node.successor.add_parent(new_node)
-    elif len(branches) == 1:
-        # There is a branch. This is either a BasicNode if the branch is
-        # unconditional, or a ConditionalNode.
-        branch = branches[0]
+    elif len(jumps) == 1:
+        # There is a jump. This is either a ReturnNode if it's "jr $ra", a
+        # BasicNode if it's an unconditional branch, or a ConditionalNode.
+        # Or, well, it would be a ReturnNode, but we handle the last "jr $ra"
+        # in build_nodes, and special-case the remaining ones below to retain
+        # the property of having only one return node.
+        jump = jumps[0]
+
+        if jump.mnemonic == 'jr':
+            # If jump.args[0] != Register('ra'), this is a switch or function
+            # pointer call, neither of which is supported. Delay that error
+            # until code emission though.
+            assert block != return_node.block, "we already handled the return block"
+            new_node = BasicNode(block, return_node)
+            return_node.add_parent(new_node)
+            nodes.append(new_node)
+            return new_node
+
+        assert jump.is_branch_instruction()
 
         # Get the block associated with the jump target.
-        branch_label = branch.get_branch_target()
+        branch_label = jump.get_branch_target()
         branch_block = find_block_by_label(branch_label)
         assert branch_block is not None, \
                 f"Cannot find branch target {branch_label.target}"
 
-        is_constant_branch = branch.mnemonic == 'b'
+        is_constant_branch = jump.mnemonic == 'b'
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(branch_block, blocks,
-                    nodes)
+                    nodes, return_node)
             # Keep track of parents.
             new_node.successor.add_parent(new_node)
         else:
@@ -421,10 +435,11 @@ def build_graph_from_block(
             new_node = ConditionalNode(block, dummy_node, dummy_node)
             nodes.append(new_node)
             # Recursively analyze this too.
+            next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(branch_block,
-                    blocks, nodes)
+                    blocks, nodes, return_node)
             new_node.fallthrough_edge = build_graph_from_block(next_block,
-                    blocks, nodes)
+                    blocks, nodes, return_node)
             # Keep track of parents.
             new_node.conditional_edge.add_parent(new_node)
             new_node.fallthrough_edge.add_parent(new_node)
@@ -432,20 +447,22 @@ def build_graph_from_block(
     return new_node
 
 
-def is_nontrivial_return_block(block: Block) -> bool:
-    # A heuristic for when a block is not a simple "early-return" block.
-    # This could certainly be improved.
+def is_trivial_return_block(block: Block) -> bool:
+    # A heuristic for when a block is a simple "early-return" block.
+    # This could be improved.
     stores = ['sb', 'sh', 'sw', 'swc1', 'sdc1', 'swr', 'swl', 'jal']
+    return_regs = [Register('v0'), Register('f0')]
     for instr in block.instructions:
         if instr.mnemonic in stores:
-            return True
-    return False
+            return False
+        if any(reg in instr.args for reg in return_regs):
+            return False
+    return True
 
 
 def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
-    # Base case: build the ReturnNode first (to avoid a special case later).
     return_block: Block = blocks[-1]
-    if is_nontrivial_return_block(return_block):
+    if not is_trivial_return_block(return_block):
         # If the return block is non-trivial, then it can't (hopefully) be an
         # early-return block, but is rather a block that execution reaches by
         # normal means and just happens to return. Hence, generate an
@@ -454,6 +471,8 @@ def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
         new_label = generate_temp_label()
         new_target = JumpTarget(new_label)
         new_block = Block(return_block.index + 1, Label(new_label), [])
+        return_block.instructions = [ins for ins in return_block.instructions
+                if ins.mnemonic != 'jr']
         return_block.instructions.append(Instruction('b', [new_target]))
         blocks.append(new_block)
         return_block = new_block
@@ -463,7 +482,7 @@ def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph)
+    build_graph_from_block(entry_block, blocks, graph, return_node)
 
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
