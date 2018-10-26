@@ -4,5 +4,6 @@ void test(s32 arg0) {
         return;
         // (possible return value: 1)
     }
+    return;
     // (possible return value: 0)
 }

@@ -343,6 +343,8 @@ class ConditionalNode(BaseNode):
 
 @attr.s(cmp=False)
 class ReturnNode(BaseNode):
+    real: bool = attr.ib()
+
     def add_parent(self, parent: 'Node') -> None:
         self.parents.append(parent)
 
@@ -358,8 +360,7 @@ Node = Union[
 def build_graph_from_block(
     block: Block,
     blocks: List[Block],
-    nodes: List[Node],
-    return_node: ReturnNode
+    nodes: List[Node]
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -388,26 +389,20 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes,
-                return_node)
+        new_node.successor = build_graph_from_block(next_block, blocks, nodes)
 
         # Keep track of parents.
         new_node.successor.add_parent(new_node)
     elif len(jumps) == 1:
         # There is a jump. This is either a ReturnNode if it's "jr $ra", a
         # BasicNode if it's an unconditional branch, or a ConditionalNode.
-        # Or, well, it would be a ReturnNode, but we handle the last "jr $ra"
-        # in build_nodes, and special-case the remaining ones below to retain
-        # the property of having only one return node.
         jump = jumps[0]
 
         if jump.mnemonic == 'jr':
             # If jump.args[0] != Register('ra'), this is a switch or function
             # pointer call, neither of which is supported. Delay that error
             # until code emission though.
-            assert block != return_node.block, "we already handled the return block"
-            new_node = BasicNode(block, return_node)
-            return_node.add_parent(new_node)
+            new_node = ReturnNode(block, real=True)
             nodes.append(new_node)
             return new_node
 
@@ -426,7 +421,7 @@ def build_graph_from_block(
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(branch_block, blocks,
-                    nodes, return_node)
+                    nodes)
             # Keep track of parents.
             new_node.successor.add_parent(new_node)
         else:
@@ -437,9 +432,9 @@ def build_graph_from_block(
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(branch_block,
-                    blocks, nodes, return_node)
+                    blocks, nodes)
             new_node.fallthrough_edge = build_graph_from_block(next_block,
-                    blocks, nodes, return_node)
+                    blocks, nodes)
             # Keep track of parents.
             new_node.conditional_edge.add_parent(new_node)
             new_node.fallthrough_edge.add_parent(new_node)
@@ -461,32 +456,52 @@ def is_trivial_return_block(block: Block) -> bool:
 
 
 def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
-    return_block: Block = blocks[-1]
-    if not is_trivial_return_block(return_block):
-        # If the return block is non-trivial, then it can't (hopefully) be an
-        # early-return block, but is rather a block that execution reaches by
-        # normal means and just happens to return. Hence, generate an
-        # artificial early-return block and make this one jump to it, so it
-        # becomes a normal BasicNode.
-        new_label = generate_temp_label()
-        new_target = JumpTarget(new_label)
-        new_block = Block(return_block.index + 1, Label(new_label), [])
-        return_block.instructions = [ins for ins in return_block.instructions
-                if ins.mnemonic != 'jr']
-        return_block.instructions.append(Instruction('b', [new_target]))
-        blocks.append(new_block)
-        return_block = new_block
-
-    return_node: ReturnNode = ReturnNode(return_block)
-    graph: List[Node] = [return_node]
+    graph: List[Node] = []
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph, return_node)
+    build_graph_from_block(entry_block, blocks, graph)
 
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
     return graph
+
+
+def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
+    """Check whether a given edge in the flow graph is an early return."""
+    if edge != nodes[-1]:
+        return False
+    if not is_trivial_return_block(edge.block):
+        # Only trivial return blocks can be used for premature returns,
+        # hopefully.
+        return False
+    if not isinstance(node, BasicNode):
+        # We only treat BasicNode's as being able to return early right now.
+        # (Handling ConditionalNode's seems to cause assertion failures --
+        # might need changes to build_flowgraph_between.)
+        return False
+    # The only node that is allowed to point to the return node is the node
+    # before it in the flow graph list. (You'd think it would be the node
+    # with index = return_node.index - 1, but that's not necessarily the
+    # case -- some functions have a dead penultimate block with a
+    # superfluous unreachable return.)
+    return node != nodes[-2]
+
+
+def duplicate_premature_returns(nodes: List[Node]) -> None:
+    """For each jump to an early return node, create a duplicate return node
+    for it to jump to. This ensures nice nesting for the if_statements code,
+    and avoids a phi node for the return value."""
+    extra_nodes: List[Node] = []
+    for node in nodes:
+        if (isinstance(node, BasicNode) and
+                is_premature_return(node, node.successor, nodes)):
+            assert isinstance(node.successor, ReturnNode)
+            n = ReturnNode(node.successor.block, real=False)
+            node.successor = n
+            extra_nodes.append(n)
+    nodes += extra_nodes
+    nodes.sort(key=lambda node: node.block.index)
 
 
 def compute_dominators(nodes: List[Node]) -> None:
@@ -519,10 +534,10 @@ def compute_dominators(nodes: List[Node]) -> None:
 class FlowGraph:
     nodes: List[Node] = attr.ib()
 
-
 def build_callgraph(function: Function) -> FlowGraph:
     blocks = build_blocks(function)
     nodes = build_nodes(function, blocks)
+    duplicate_premature_returns(nodes)
     compute_dominators(nodes)
     return FlowGraph(nodes)
 

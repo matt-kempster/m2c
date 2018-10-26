@@ -797,6 +797,7 @@ class BlockInfo:
     and block's final register states.
     """
     to_write: List[Statement] = attr.ib()
+    return_value: Optional[Expression] = attr.ib()
     branch_condition: Optional[BinaryOp] = attr.ib()
     final_register_states: RegInfo = attr.ib()
 
@@ -1354,18 +1355,19 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             phi.name = f'{prefix}_{counter}' if counter > 1 else prefix
             stack_info.phi_vars.append(phi)
 
-def translate_block_body(
-    block: Block, regs: RegInfo, stack_info: StackInfo
+def translate_node_body(
+    node: Node, regs: RegInfo, stack_info: StackInfo
 ) -> BlockInfo:
     """
-    Given a block and current register contents, return a BlockInfo containing
-    the translated AST for that block.
+    Given a node and current register contents, return a BlockInfo containing
+    the translated AST for that node.
     """
 
     to_write: List[Union[Statement]] = []
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
     subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
     branch_condition: Optional[BinaryOp] = None
+    return_value: Optional[Expression] = None
 
     def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
         if always_emit:
@@ -1389,7 +1391,7 @@ def translate_block_body(
             expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
         regs[reg] = expr
 
-    for instr in block.instructions:
+    for instr in node.block.instructions:
         # Save the current mnemonic.
         mnemonic = instr.mnemonic
         if mnemonic == 'nop':
@@ -1439,8 +1441,9 @@ def translate_block_body(
                 # Return from the function.
                 assert mnemonic == 'jr'
                 assert args.reg_ref(0) == Register('ra'), "Jump tables are not supported yet."
-                # TODO: Maybe assert ReturnNode?
-                # TODO: Figure out what to return. (Look through $v0 and $f0)
+                assert isinstance(node, ReturnNode)
+                return_value = regs.get_raw(Register('return_reg'))
+                break
             else:
                 # Function call. Well, let's double-check:
                 assert mnemonic == 'jal'
@@ -1500,9 +1503,11 @@ def translate_block_body(
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
 
-    if branch_condition is not None:
+    if return_value is not None:
+        mark_used(return_value)
+    elif branch_condition is not None:
         mark_used(branch_condition)
-    return BlockInfo(to_write, branch_condition, regs)
+    return BlockInfo(to_write, return_value, branch_condition, regs)
 
 
 def translate_graph_from_block(
@@ -1516,16 +1521,13 @@ def translate_graph_from_block(
     Given a FlowGraph node and a dictionary of register contents, give that node
     its appropriate BlockInfo (which contains the AST of its code).
     """
-    # Do not recalculate block info.
-    if node.block.block_info is not None:
-        return
 
     if options.debug:
         print(f'\nNode in question: {node.block}')
 
     # Translate the given node and discover final register states.
     try:
-        block_info = translate_block_body(node.block, regs, stack_info)
+        block_info = translate_node_body(node, regs, stack_info)
         if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
@@ -1535,7 +1537,7 @@ def translate_graph_from_block(
         emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
         error_stmt = CommentStmt('Error: ' + emsg)
-        block_info = BlockInfo([error_stmt], None, regs)
+        block_info = BlockInfo([error_stmt], None, None, regs)
 
     node.block.add_block_info(block_info)
 

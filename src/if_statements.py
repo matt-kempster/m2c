@@ -60,12 +60,15 @@ class Body:
     print_node_comment: bool = attr.ib()
     statements: List[Union[SimpleStatement, IfElseStatement]] = attr.ib(factory=list)
 
-    def add_node(self, node: Node, indent: int) -> None:
+    def add_node(self, node: Node, indent: int, comment_empty: bool) -> None:
+        assert isinstance(node.block.block_info, BlockInfo)
+        to_write = node.block.block_info.to_write
+        any_to_write = any(item.should_write() for item in to_write)
+
         # Add node header comment
-        if self.print_node_comment:
+        if self.print_node_comment and (any_to_write or comment_empty):
             self.add_comment(indent, f'Node {node.block.index}')
         # Add node contents
-        assert isinstance(node.block.block_info, BlockInfo)
         for item in node.block.block_info.to_write:
             if item.should_write():
                 self.statements.append(SimpleStatement(indent, str(item)))
@@ -132,43 +135,28 @@ def end_reachable_without(
 ) -> bool:
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
+    if end == without or start == without:
+        # Can't get to the end.
+        return False
+    if start == end:
+        # Already there! (Base case.)
+        return True
+
     key = (start.block.index, end.block.index, without.block.index)
     if key in context.reachable_without:
         return context.reachable_without[key]
-    if end == without or start == without:
-        # Can't get to the end.
-        ret = False
-    elif start == end:
-        # Already there! (Base case.)
-        ret = True
+
+    def reach(edge: Node) -> bool:
+        return end_reachable_without(context, edge, end, without)
+
+    if isinstance(start, BasicNode):
+        ret = reach(start.successor)
+    elif isinstance(start, ConditionalNode):
+        ret = reach(start.conditional_edge) or reach(start.fallthrough_edge)
     else:
-        if isinstance(start, BasicNode):
-            # Try to reach the end. A small caveat is premature returns. We
-            # actually don't want to allow a premature return to occur in
-            # this case, because otherwise the immediate postdominator will
-            # always end up as the return node.
-            is_premature_return = (
-                start.successor == context.flow_graph.nodes[-1] and
-                # You'd think a premature return would actually be the block
-                # with index = (end_index - 1). That is:
-                #   start.block.index != flow_graph.nodes[-1].block.index - 1
-                # However, this is not so; some functions have a dead
-                # penultimate block with a superfluous unreachable return. The
-                # way around this is to just check whether this is the
-                # penultimate block, not by index, but by position in the flow
-                # graph list:
-                start != context.flow_graph.nodes[-2]
-            )
-            ret = (not is_premature_return and
-                    end_reachable_without(context, start.successor, end, without))
-        elif isinstance(start, ConditionalNode):
-            # However, we don't do the same checks here; they seem to cause
-            # assertion failures and not improve anything...
-            ret = (end_reachable_without(context, start.conditional_edge, end, without) or
-                    end_reachable_without(context, start.fallthrough_edge, end, without))
-        else:
-            assert isinstance(start, ReturnNode)
-            assert False, "ReturnNode should not be reachable here (should hit end first)"
+        assert isinstance(start, ReturnNode)
+        ret = False
+
     context.reachable_without[key] = ret
     return ret
 
@@ -310,27 +298,22 @@ def get_full_if_condition(
                 context, start.conditional_edge, curr_end, indent + 4)
         )
 
-def handle_return(
-    context: Context, body: Body, node: Node, return_node: Node, indent: int
+def write_return(
+    context: Context, body: Body, node: ReturnNode, indent: int
 ) -> None:
-    ret_info = return_node.block.block_info
+    body.add_node(node, indent, comment_empty=node.real)
+
+    ret_info = node.block.block_info
     assert isinstance(ret_info, BlockInfo)
 
-    if any(w.should_write() for w in ret_info.to_write):
-        body.add_node(return_node, indent)
-
-    if Register('return_reg') in ret_info.final_register_states.written_in_block:
-        regs = ret_info.final_register_states
-    else:
-        assert isinstance(node.block.block_info, BlockInfo)
-        regs = node.block.block_info.final_register_states
-
-    ret = regs.get_raw(Register('return_reg'))
+    ret = ret_info.return_value
+    body.add_statement(SimpleStatement(indent, 'return;'))
     if ret is not None:
         context.return_type.unify(ret.type)
         body.add_comment(indent, f'(possible return value: {ret})')
     else:
         body.add_comment(indent, '(function likely void)')
+
 
 def build_flowgraph_between(
     context: Context, start: Node, end: Node, indent: int
@@ -349,24 +332,13 @@ def build_flowgraph_between(
     # iterate through these nodes, which are commonly referred to as
     # articulation nodes.
     while curr_start != end:
-        # Since curr_start != end, and since there should only be one
-        # ReturnNode, double-check that we haven't done anything wrong.
-        assert not isinstance(curr_start, ReturnNode)
-
-        # Write the current node.
-        body.add_node(curr_start, indent)
+        # Write the current node (but return nodes are handled specially).
+        if not isinstance(curr_start, ReturnNode):
+            body.add_node(curr_start, indent, comment_empty=True)
 
         if isinstance(curr_start, BasicNode):
-            # In a BasicNode, the successor is the next articulation node,
-            # unless the node is trying to prematurely return, in which case
-            # let it do that.
-            if isinstance(curr_start.successor, ReturnNode):
-                body.add_statement(SimpleStatement(indent, 'return;'))
-                handle_return(context, body, curr_start,
-                        curr_start.successor, indent)
-                break
-            else:
-                curr_start = curr_start.successor
+            # In a BasicNode, the successor is the next articulation node.
+            curr_start = curr_start.successor
         elif isinstance(curr_start, ConditionalNode):
             # A ConditionalNode means we need to find the next articulation
             # node. This means we need to find the "immediate postdominator"
@@ -380,9 +352,12 @@ def build_flowgraph_between(
                 build_conditional_subgraph(context, curr_start, curr_end, indent))
             # Move on.
             curr_start = curr_end
-
-    if isinstance(curr_start, ReturnNode):
-        context.can_reach_return = True
+        else:
+            assert isinstance(curr_start, ReturnNode)
+            # Write the return node, and break, because there is nothing more
+            # to process.
+            write_return(context, body, curr_start, indent)
+            break
 
     return body
 
@@ -395,8 +370,8 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if options.debug:
         print("Here's the whole function!\n")
     body: Body = build_flowgraph_between(context, start_node, return_node, 4)
-    if context.can_reach_return:
-        handle_return(context, body, return_node, return_node, 4)
+
+    write_return(context, body, return_node, 4)
 
     ret_type = 'void '
     if not context.return_type.is_any():
