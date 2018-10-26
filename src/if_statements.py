@@ -132,20 +132,18 @@ def end_reachable_without(
 ) -> bool:
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
-    trip = (start.block.index, end.block.index, without.block.index)
-    if trip in context.reachable_without:
-        return context.reachable_without[trip]
-    if without == end:
-        # Can't get to the end if it is removed.
+    key = (start.block.index, end.block.index, without.block.index)
+    if key in context.reachable_without:
+        return context.reachable_without[key]
+    if end == without or start == without:
+        # Can't get to the end.
         ret = False
-    if start == end:
+    elif start == end:
         # Already there! (Base case.)
         ret = True
     else:
-        assert not isinstance(start, ReturnNode)  # because then, start == end
         if isinstance(start, BasicNode):
-            # If the successor is removed, we can't make it. Otherwise, try
-            # to reach the end. A small caveat is premature returns. We
+            # Try to reach the end. A small caveat is premature returns. We
             # actually don't want to allow a premature return to occur in
             # this case, because otherwise the immediate postdominator will
             # always end up as the return node.
@@ -161,21 +159,17 @@ def end_reachable_without(
                 # graph list:
                 start != context.flow_graph.nodes[-2]
             )
-            ret = (start.successor != without and
-                    not is_premature_return and
+            ret = (not is_premature_return and
                     end_reachable_without(context, start.successor, end, without))
         elif isinstance(start, ConditionalNode):
-            # If one edge or the other is removed, you have to go the other route.
-            if start.conditional_edge == without:
-                assert start.fallthrough_edge != without
-                ret = end_reachable_without(context, start.fallthrough_edge, end, without)
-            elif start.fallthrough_edge == without:
-                ret = end_reachable_without(context, start.conditional_edge, end, without)
-            else:
-                # Both routes are acceptable.
-                ret = (end_reachable_without(context, start.conditional_edge, end, without) or
-                        end_reachable_without(context, start.fallthrough_edge, end, without))
-    context.reachable_without[trip] = ret
+            # However, we don't do the same checks here; they seem to cause
+            # assertion failures and not improve anything...
+            ret = (end_reachable_without(context, start.conditional_edge, end, without) or
+                    end_reachable_without(context, start.fallthrough_edge, end, without))
+        else:
+            assert isinstance(start, ReturnNode)
+            assert False, "ReturnNode should not be reachable here (should hit end first)"
+    context.reachable_without[key] = ret
     return ret
 
 def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
@@ -183,9 +177,8 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     Find the immediate postdominator of "start", where "end" is an exit node
     from the control flow graph.
     """
-    stack: List[Node] = []
+    stack: List[Node] = [start]
     postdominators: List[Node] = []
-    stack.append(start)
     while stack:
         # Get potential postdominator.
         node = stack.pop()
@@ -200,7 +193,7 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
             stack.append(node.fallthrough_edge)
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
-        if not end_reachable_without(context, start, end, node):
+        if node != start and not end_reachable_without(context, start, end, node):
             postdominators.append(node)
     assert postdominators  # at least "end" should be a postdominator
     # Get the earliest postdominator
