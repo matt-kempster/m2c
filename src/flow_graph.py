@@ -293,7 +293,7 @@ def build_blocks(function: Function) -> List[Block]:
 
 def is_loop_edge(node: 'Node', edge: 'Node') -> bool:
     # Loops are represented by backwards jumps.
-    return typing.cast(bool, (edge.block.index < node.block.index))
+    return typing.cast(bool, (edge.block.index <= node.block.index))
 
 @attr.s(cmp=False)
 class BaseNode:
