@@ -6,6 +6,5 @@ void test(s32 arg0) {
     {
         phi_v1 = 1;
     }
-    return;
-    // (possible return value: phi_v1)
+    return phi_v1;
 }

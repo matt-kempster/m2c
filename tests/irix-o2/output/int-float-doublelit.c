@@ -12,6 +12,5 @@ f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3) {
     {
         phi_f18 = (temp_f18 + 4294967296.0f);
     }
-    return;
-    // (possible return value: (phi_f18 + (f32) ((f64) (f32) (f64) (f32) ((f64) arg2 + 5.0) + D_400130)))
+    return (phi_f18 + (f32) ((f64) (f32) (f64) (f32) ((f64) arg2 + 5.0) + D_400130));
 }

@@ -21,6 +21,5 @@ void *test(s32 arg0) {
     D_4101F0 = (s32) (arg0 * 0x14);
     D_4101F0 = (s32) (arg0 * 0x15);
     D_4101F0 = (s32) (arg0 * 0x16);
-    return;
-    // (possible return value: &D_4101F0)
+    return &D_4101F0;
 }

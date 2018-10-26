@@ -307,12 +307,11 @@ def write_return(
     assert isinstance(ret_info, BlockInfo)
 
     ret = ret_info.return_value
-    body.add_statement(SimpleStatement(indent, 'return;'))
     if ret is not None:
         context.return_type.unify(ret.type)
-        body.add_comment(indent, f'(possible return value: {ret})')
+        body.add_statement(SimpleStatement(indent, f'return {ret};'))
     else:
-        body.add_comment(indent, '(function likely void)')
+        body.add_statement(SimpleStatement(indent, 'return;'))
 
 
 def build_flowgraph_between(

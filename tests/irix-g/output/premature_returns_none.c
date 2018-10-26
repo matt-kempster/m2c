@@ -6,6 +6,5 @@
     {
         sp4 = 1;
     }
-    return;
-    // (possible return value: sp4)
+    return sp4;
 }
