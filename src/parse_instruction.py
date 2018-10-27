@@ -137,7 +137,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
         elif tok == ')':
             # Break out to the parent of this call, since we are in parens.
             break
-        elif tok in ('-' + string.digits):
+        elif tok in string.digits or (tok == '-' and value is None):
             # Try a number.
             assert value is None
             value = AsmLiteral(parse_number(arg_elems))
@@ -161,7 +161,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             # Global symbol.
             assert value is None
             value = AsmGlobalSymbol(parse_word(arg_elems))
-        elif tok in '>+&':
+        elif tok in '>+-&':
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol))
 
@@ -170,7 +170,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                 expect('>')
                 op = '>>'
             else:
-                op = expect('&+')
+                op = expect('&+-')
 
             rhs = parse_arg_elems(arg_elems)
             # These operators can only use constants as the right-hand-side.
