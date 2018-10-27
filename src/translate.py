@@ -256,7 +256,7 @@ class StackInfo:
 
     def get_argument(self, location: int) -> 'PassedInArg':
         return PassedInArg(location, copied=True,
-                type=self.unique_type_for('stack', location))
+                type=self.unique_type_for('arg', location))
 
     def unique_type_for(self, category: str, key: Any) -> 'Type':
         key = (category, key)
@@ -273,7 +273,7 @@ class StackInfo:
             return LocalVar(location,
                     type=self.unique_type_for('stack', location))
         elif self.location_above_stack(location):
-            ret = self.get_argument(location)
+            ret = self.get_argument(location - self.allocated_stack_size)
             if not store:
                 self.add_argument(ret)
             return ret
