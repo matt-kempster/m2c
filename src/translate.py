@@ -25,7 +25,7 @@ CALLEE_SAVE_REGS = [
 ]
 
 SPECIAL_REGS = [
-    'ra', '31'
+    'ra', '31', 'fp'
 ]
 
 
@@ -820,7 +820,7 @@ def deref(
 ) -> Expression:
     if isinstance(arg, AddressMode):
         location=arg.offset
-        if arg.rhs.register_name == 'sp':
+        if arg.rhs.register_name in ['sp', 'fp']:
             return stack_info.get_stack_var(location, store=store)
         else:
             # Struct member is being dereferenced.
@@ -950,10 +950,10 @@ def handle_addi(args: InstrArgs) -> Expression:
     elif imm == Literal(0):
         # addiu $reg1, $reg2, 0 is a move
         return source
-    elif source_reg.register_name == 'sp':
+    elif source_reg.register_name in ['sp', 'fp']:
         # Adding to sp, i.e. passing an address.
         assert isinstance(imm, Literal)
-        if args.reg_ref(0).register_name == 'sp':
+        if args.reg_ref(0).register_name in ['sp', 'fp']:
             # Changing sp. Just ignore that.
             return source
         # Keep track of all local variables that we take addresses of.
@@ -976,7 +976,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     preserve_regs = CALLEE_SAVE_REGS + ARGUMENT_REGS + SPECIAL_REGS
     if (source_reg.register_name in preserve_regs and
             isinstance(target, AddressMode) and
-            target.rhs.register_name == 'sp'):
+            target.rhs.register_name in ['sp', 'fp']):
         # Elide register preserval. TODO: This isn't really right, what if
         # we're actually using the registers...
         return None
