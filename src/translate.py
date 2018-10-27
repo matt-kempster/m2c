@@ -501,7 +501,10 @@ class PassedInArg:
         return []
 
     def __str__(self) -> str:
-        return f'arg{format_hex(self.value // 4)}'
+        if self.value % 4 == 0:
+            return f'arg{format_hex(self.value // 4)}'
+        else:
+            return f'arg_unaligned{format_hex(self.value)}'
 
 @attr.s(frozen=True, cmp=True)
 class SubroutineArg:
