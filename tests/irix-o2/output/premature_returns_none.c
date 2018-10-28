@@ -1,8 +1,10 @@
 void test(s32 arg0) {
+    ? phi_v1;
+
+    phi_v1 = 0;
     if (arg0 != 0)
     {
-        return;
-        // (possible return value: 0)
+        phi_v1 = 1;
     }
-    // (possible return value: 0)
+    return phi_v1;
 }

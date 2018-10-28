@@ -8,25 +8,25 @@ from options import Options
 from parse_instruction import *
 from flow_graph import *
 
-ARGUMENT_REGS = [
+ARGUMENT_REGS = list(map(Register, [
     'a0', 'a1', 'a2', 'a3',
     'f12', 'f14'
-]
+]))
 
 # TODO: include temporary floating-point registers
-CALLER_SAVE_REGS = ARGUMENT_REGS + [
+CALLER_SAVE_REGS = ARGUMENT_REGS + list(map(Register, [
     'at',
     't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9',
     'hi', 'lo', 'condition_bit', 'return_reg'
-]
+]))
 
-CALLEE_SAVE_REGS = [
+CALLEE_SAVE_REGS = list(map(Register, [
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
-]
+]))
 
-SPECIAL_REGS = [
+SPECIAL_REGS = list(map(Register, [
     'ra', '31', 'fp'
-]
+]))
 
 
 @attr.s(cmp=False, repr=False)
@@ -215,6 +215,7 @@ class StackInfo:
     unique_type_map: Dict[Any, 'Type'] = attr.ib(factory=dict)
     local_vars: List['LocalVar'] = attr.ib(factory=list)
     temp_vars: List['EvalOnceStmt'] = attr.ib(factory=list)
+    phi_vars: List['PhiExpr'] = attr.ib(factory=list)
     arguments: List['PassedInArg'] = attr.ib(factory=list)
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
 
@@ -517,11 +518,14 @@ class SubroutineArg:
     def __str__(self) -> str:
         return f'subroutine_arg{format_hex(self.value // 4)}'
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, cmp=True)
 class StructAccess:
+    # This has cmp=True since it represents a live expression and not an access
+    # at a certain point in time -- this sometimes helps get rid of phi nodes.
+    # Really it should represent the latter, but making that so is hard.
     struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
-    type: Type = attr.ib()
+    type: Type = attr.ib(cmp=False)
 
     def dependencies(self) -> List['Expression']:
         return [self.struct_var]
@@ -617,11 +621,49 @@ class EvalOnceExpr:
             self.var = self.var()
         return self.var
 
+    def use(self) -> None:
+        self.num_usages += 1
+        if self.num_usages == 1 and not self.always_emit:
+            mark_used(self.wrapped_expr)
+
     def __str__(self) -> str:
         if self.num_usages <= 1:
             return str(self.wrapped_expr)
         else:
             return self.get_var_name()
+
+@attr.s(frozen=False, cmp=False)
+class PhiExpr:
+    reg: Register = attr.ib()
+    node: Node = attr.ib()
+    type: Type = attr.ib()
+    used_phis: List['PhiExpr'] = attr.ib()
+    name: Optional[str] = attr.ib(default=None)
+    num_usages: int = attr.ib(default=0)
+    replacement_expr: Optional['Expression'] = attr.ib(default=None)
+    used_by: Optional['PhiExpr'] = attr.ib(default=None)
+
+    def dependencies(self) -> List['Expression']:
+        return []
+
+    def get_var_name(self) -> str:
+        return self.name or f'unnamed-phi({self.reg.register_name})'
+
+    def use(self, from_phi: Optional['PhiExpr']=None) -> None:
+        if self.num_usages == 0:
+            self.used_phis.append(self)
+        self.num_usages += 1
+        self.used_by = from_phi
+
+    def propagates_to(self) -> 'PhiExpr':
+        if self.num_usages != 1 or self.used_by is None:
+            return self
+        return self.used_by.propagates_to()
+
+    def __str__(self) -> str:
+        if self.replacement_expr:
+            return str(self.replacement_expr)
+        return self.get_var_name()
 
 @attr.s
 class EvalOnceStmt:
@@ -640,6 +682,21 @@ class EvalOnceStmt:
         if self.expr.always_emit and self.expr.num_usages == 0:
             return f'{self.expr.wrapped_expr};'
         return f'{self.expr.get_var_name()} = {self.expr.wrapped_expr};'
+
+@attr.s
+class SetPhiStmt:
+    phi: PhiExpr = attr.ib()
+    expr: 'Expression' = attr.ib()
+
+    def should_write(self) -> bool:
+        expr = self.expr
+        if isinstance(expr, PhiExpr) and expr.propagates_to() != expr:
+            assert expr.propagates_to() == self.phi.propagates_to()
+            return False
+        return True
+
+    def __str__(self) -> str:
+        return f'{self.phi.propagates_to().get_var_name()} = {self.expr};'
 
 @attr.s
 class StoreStmt:
@@ -675,11 +732,13 @@ Expression = Union[
     StructAccess,
     SubroutineArg,
     EvalOnceExpr,
+    PhiExpr,
 ]
 
 Statement = Union[
     StoreStmt,
     EvalOnceStmt,
+    SetPhiStmt,
     CommentStmt,
 ]
 
@@ -687,12 +746,13 @@ Statement = Union[
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib()
     stack_info: StackInfo = attr.ib(repr=False)
-    wrote_return_register: bool = attr.ib(default=False)
+    written_in_block: Set[Register] = attr.ib(default=set)
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register('zero'):
             return Literal(0)
-        ret = self.contents[key]
+        ret = self.get_raw(key)
+        assert ret is not None, f'Read from unset register {key}'
         if isinstance(ret, PassedInArg) and not ret.copied:
             # Create a new argument object to better distinguish arguments we
             # are called with from arguments passed to subroutines. Also, unify
@@ -714,23 +774,20 @@ class RegInfo:
             del self.contents[key]
         if key.register_name in ['f0', 'v0']:
             self[Register('return_reg')] = value
-            self.wrote_return_register = True
+        self.written_in_block.add(key)
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')
         del self.contents[key]
 
-    def get_raw_arg(self, key: Register) -> Optional[Expression]:
+    def get_raw(self, key: Register) -> Optional[Expression]:
         return self.contents.get(key, None)
 
     def clear_caller_save_regs(self) -> None:
-        for reg in map(Register, CALLER_SAVE_REGS):
+        for reg in CALLER_SAVE_REGS:
             assert reg != Register('zero')
             if reg in self.contents:
                 del self.contents[reg]
-
-    def copy(self) -> 'RegInfo':
-        return RegInfo(contents=self.contents.copy(), stack_info=self.stack_info)
 
     def __str__(self) -> str:
         return ', '.join(f"{k}: {v}" for k,v in sorted(self.contents.items()))
@@ -743,6 +800,7 @@ class BlockInfo:
     and block's final register states.
     """
     to_write: List[Statement] = attr.ib()
+    return_value: Optional[Expression] = attr.ib()
     branch_condition: Optional[BinaryOp] = attr.ib()
     final_register_states: RegInfo = attr.ib()
 
@@ -891,14 +949,12 @@ def simplify_condition(expr: Expression) -> Expression:
         return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
     return expr
 
-def mark_used(expr: Expression, stack_info: StackInfo) -> None:
-    if isinstance(expr, EvalOnceExpr):
-        expr.num_usages += 1
-        if expr.num_usages == 1 and not expr.always_emit:
-            mark_used(expr.wrapped_expr, stack_info)
+def mark_used(expr: Expression) -> None:
+    if isinstance(expr, (PhiExpr, EvalOnceExpr)):
+        expr.use()
     else:
         for sub_expr in expr.dependencies():
-            mark_used(sub_expr, stack_info)
+            mark_used(sub_expr)
 
 def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     if isinstance(arg, AsmGlobalSymbol):
@@ -977,7 +1033,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     source_val = args.reg(0)
     target = args.memory_ref(1)
     preserve_regs = CALLEE_SAVE_REGS + ARGUMENT_REGS + SPECIAL_REGS
-    if (source_reg.register_name in preserve_regs and
+    if (source_reg in preserve_regs and
             isinstance(target, AddressMode) and
             target.rhs.register_name in ['sp', 'fp']):
         # Elide register preserval. TODO: This isn't really right, what if
@@ -1192,19 +1248,134 @@ CASES_DESTINATION_FIRST: InstrMap = {
     'ldc1': lambda a: handle_load(a),
 }
 
-def translate_block_body(
-    block: Block, regs: RegInfo, stack_info: StackInfo
+def output_regs_for_instr(instr: Instruction) -> List[Register]:
+    def reg_at(index: int) -> Register:
+        ret = instr.args[index]
+        assert isinstance(ret, Register)
+        return ret
+
+    mnemonic = instr.mnemonic
+    if (mnemonic in ['nop', 'jr'] or
+            mnemonic in CASES_SOURCE_FIRST_EXPRESSION or
+            mnemonic in CASES_BRANCHES or
+            mnemonic in CASES_FLOAT_BRANCHES):
+        return []
+    if mnemonic == 'jal':
+        return list(map(Register, ['return_reg', 'f0', 'v0', 'v1']))
+    if mnemonic in CASES_SOURCE_FIRST_REGISTER:
+        return [reg_at(1)]
+    if mnemonic in CASES_DESTINATION_FIRST:
+        return [reg_at(0)]
+    if mnemonic in CASES_FLOAT_COMP:
+        return [Register('condition_bit')]
+    if mnemonic in CASES_HI_LO:
+        return [Register('hi'), Register('lo')]
+    assert False, f"I don't know how to handle {mnemonic}!"
+
+def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
+    if node.immediate_dominator is None:
+        return set()
+    seen = set([node.immediate_dominator])
+    stack = node.parents[:]
+    clobbered = set()
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        for instr in n.block.instructions:
+            clobbered.update(output_regs_for_instr(instr))
+            if instr.mnemonic == 'jal':
+                clobbered.update(CALLER_SAVE_REGS)
+        stack.extend(n.parents)
+    return clobbered
+
+def reg_always_set(node: Node, reg: Register, dom_set: bool) -> bool:
+    if node.immediate_dominator is None:
+        return False
+    seen = set([node.immediate_dominator])
+    stack = node.parents[:]
+    while stack:
+        n = stack.pop()
+        if n == node.immediate_dominator and not dom_set:
+            return False
+        if n in seen:
+            continue
+        seen.add(n)
+        clobbered: Optional[bool] = None
+        for instr in n.block.instructions:
+            if instr.mnemonic == 'jal' and reg in CALLER_SAVE_REGS:
+                clobbered = True
+            if reg in output_regs_for_instr(instr):
+                clobbered = False
+        if clobbered == True:
+            return False
+        if clobbered is None:
+            stack.extend(n.parents)
+    return True
+
+def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
+    i = 0
+    # Iterate over used phis until there are no more remaining. New ones may
+    # appear during iteration, hence the while loop.
+    while i < len(used_phis):
+        phi = used_phis[i]
+        assert phi.num_usages > 0
+        assert phi.node.parents
+        exprs = []
+        for node in phi.node.parents:
+            block_info = node.block.block_info
+            assert isinstance(block_info, BlockInfo)
+            exprs.append(block_info.final_register_states[phi.reg])
+
+        if all(e == exprs[0] for e in exprs[1:]):
+            # All the phis have the same value (e.g. because we recomputed an
+            # expression after a store, or restored a register after a function
+            # call). Just use that value instead of introducing a phi node.
+            phi.replacement_expr = exprs[0]
+            for _ in range(phi.num_usages):
+                mark_used(exprs[0])
+        else:
+            for node in phi.node.parents:
+                block_info = node.block.block_info
+                assert isinstance(block_info, BlockInfo)
+                expr = block_info.final_register_states[phi.reg]
+                if isinstance(expr, PhiExpr):
+                    # Explicitly mark how the expression is used if it's a phi,
+                    # so we can propagate phi sets (to get rid of temporaries).
+                    expr.use(from_phi=phi)
+                else:
+                    mark_used(expr)
+                block_info.to_write.append(SetPhiStmt(phi, expr))
+        i += 1
+
+    name_counter: Dict[Register, int] = {}
+    for phi in used_phis:
+        if not phi.replacement_expr and phi.propagates_to() == phi:
+            counter = name_counter.get(phi.reg, 0) + 1
+            name_counter[phi.reg] = counter
+            prefix = f'phi_{phi.reg.register_name}'
+            phi.name = f'{prefix}_{counter}' if counter > 1 else prefix
+            stack_info.phi_vars.append(phi)
+
+def translate_node_body(
+    node: Node, regs: RegInfo, stack_info: StackInfo
 ) -> BlockInfo:
     """
-    Given a block and current register contents, return a BlockInfo containing
-    the translated AST for that block.
+    Given a node and current register contents, return a BlockInfo containing
+    the translated AST for that node.
     """
 
     to_write: List[Union[Statement]] = []
+    local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
+    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
+    branch_condition: Optional[BinaryOp] = None
+    return_value: Optional[Expression] = None
+
     def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
         if always_emit:
             # (otherwise this will be marked used once num_usages reaches 1)
-            mark_used(expr, stack_info)
+            mark_used(expr)
         expr = EvalOnceExpr(wrapped_expr=expr, always_emit=always_emit,
                 var=stack_info.temp_var_generator(prefix), type=expr.type)
         stmt = EvalOnceStmt(expr)
@@ -1213,13 +1384,17 @@ def translate_block_body(
         return expr
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
+        if isinstance(expr, LocalVar) and expr in local_var_writes:
+            # Elide register restores (only for the same register for now, to
+            # be conversative).
+            orig_reg, orig_expr = local_var_writes[expr]
+            if orig_reg == reg:
+                expr = orig_expr
         if expr is not None and not is_repeatable_expression(expr):
             expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
         regs[reg] = expr
 
-    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
-    branch_condition: Optional[BinaryOp] = None
-    for instr in block.instructions:
+    for instr in node.block.instructions:
         # Save the current mnemonic.
         mnemonic = instr.mnemonic
         if mnemonic == 'nop':
@@ -1237,10 +1412,14 @@ def translate_block_body(
             elif to_store is not None:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
+                    assert isinstance(to_store.source, Cast)
+                    assert to_store.source.reinterpret
+                    local_var_writes[to_store.dest] = (args.reg_ref(0),
+                            to_store.source.expr)
                 # This needs to be written out.
                 to_write.append(to_store)
-                mark_used(to_store.source, stack_info)
-                mark_used(to_store.dest, stack_info)
+                mark_used(to_store.source)
+                mark_used(to_store.dest)
 
         elif mnemonic in CASES_SOURCE_FIRST_REGISTER:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
@@ -1264,8 +1443,10 @@ def translate_block_body(
             if result is None:
                 # Return from the function.
                 assert mnemonic == 'jr'
-                # TODO: Maybe assert ReturnNode?
-                # TODO: Figure out what to return. (Look through $v0 and $f0)
+                assert args.reg_ref(0) == Register('ra'), "Jump tables are not supported yet."
+                assert isinstance(node, ReturnNode)
+                return_value = regs.get_raw(Register('return_reg'))
+                break
             else:
                 # Function call. Well, let's double-check:
                 assert mnemonic == 'jal'
@@ -1284,7 +1465,7 @@ def translate_block_body(
                     # first function call if an argument passed in the same
                     # position as we received it, but that's impossible to do
                     # anything about without access to function signatures.
-                    expr = regs.get_raw_arg(register)
+                    expr = regs.get_raw(register)
                     if expr is not None and (not isinstance(expr, PassedInArg)
                             or expr.copied):
                         func_args.append(expr)
@@ -1325,28 +1506,31 @@ def translate_block_body(
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
 
-    if branch_condition is not None:
-        mark_used(branch_condition, stack_info)
-    return BlockInfo(to_write, branch_condition, regs)
+    if return_value is not None:
+        mark_used(return_value)
+    elif branch_condition is not None:
+        mark_used(branch_condition)
+    return BlockInfo(to_write, return_value, branch_condition, regs)
 
 
 def translate_graph_from_block(
-    node: Node, regs: RegInfo, stack_info: StackInfo, options: Options
+    node: Node,
+    regs: RegInfo,
+    stack_info: StackInfo,
+    used_phis: List[PhiExpr],
+    options: Options
 ) -> None:
     """
     Given a FlowGraph node and a dictionary of register contents, give that node
     its appropriate BlockInfo (which contains the AST of its code).
     """
-    # Do not recalculate block info.
-    if node.block.block_info is not None:
-        return
 
     if options.debug:
         print(f'\nNode in question: {node.block}')
 
     # Translate the given node and discover final register states.
     try:
-        block_info = translate_block_body(node.block, regs, stack_info)
+        block_info = translate_node_body(node, regs, stack_info)
         if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
@@ -1356,23 +1540,27 @@ def translate_graph_from_block(
         emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
         error_stmt = CommentStmt('Error: ' + emsg)
-        block_info = BlockInfo([error_stmt], None,
-                RegInfo(contents={}, stack_info=stack_info))
+        block_info = BlockInfo([error_stmt], None, None, regs)
 
     node.block.add_block_info(block_info)
 
-    # Translate descendants recursively. Pass a copy of the dictionary since
-    # it will be modified.
-    if isinstance(node, BasicNode):
-        translate_graph_from_block(node.successor, regs.copy(),
-                stack_info, options)
-    elif isinstance(node, ConditionalNode):
-        translate_graph_from_block(node.conditional_edge, regs.copy(),
-                stack_info, options)
-        translate_graph_from_block(node.fallthrough_edge, regs.copy(),
-                stack_info, options)
-    else:
-        assert isinstance(node, ReturnNode)
+    # Translate everything dominated by this node, now that we know our own
+    # final register state. This will eventually reach every node.
+    for child in node.immediately_dominates:
+        new_contents = regs.contents.copy()
+        phi_regs = regs_clobbered_until_dominator(child)
+        for reg in phi_regs:
+            if reg_always_set(child, reg, (reg in regs)):
+                new_contents[reg] = PhiExpr(reg=reg, node=child,
+                        used_phis=used_phis, type=Type.any())
+            elif reg in new_contents:
+                del new_contents[reg]
+        new_regs = RegInfo(
+            contents=new_contents,
+            stack_info=stack_info,
+            written_in_block=set()
+        )
+        translate_graph_from_block(child, new_regs, stack_info, used_phis, options)
 
 @attr.s
 class FunctionInfo:
@@ -1396,8 +1584,8 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         Register('a3'): PassedInArg(12, copied=False, type=Type.any()),
         Register('f12'): PassedInArg(0, copied=False, type=Type.f32()),
         Register('f14'): PassedInArg(4, copied=False, type=Type.f32()),
-        **{Register(name): stack_info.global_symbol(AsmGlobalSymbol(name))
-            for name in CALLEE_SAVE_REGS + SPECIAL_REGS + ['sp']}
+        **{reg: stack_info.global_symbol(AsmGlobalSymbol(reg.register_name))
+            for reg in CALLEE_SAVE_REGS + SPECIAL_REGS + [Register('sp')]}
     }
 
     if options.debug:
@@ -1405,6 +1593,12 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         print('\nNow, we attempt to translate:')
 
     start_node = flow_graph.nodes[0]
-    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
-    translate_graph_from_block(start_node, start_reg, stack_info, options)
+    start_reg: RegInfo = RegInfo(
+        contents=initial_regs,
+        stack_info=stack_info,
+        written_in_block=set(initial_regs.keys())
+    )
+    used_phis: List[PhiExpr] = []
+    translate_graph_from_block(start_node, start_reg, stack_info, used_phis, options)
+    assign_phis(used_phis, stack_info)
     return FunctionInfo(stack_info, flow_graph)

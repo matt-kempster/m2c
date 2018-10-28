@@ -27,6 +27,10 @@ def main(options: Options, function_index_or_name: str) -> None:
                     f"0 and {count - 1}).", file=sys.stderr)
             return
 
+        if options.print_assembly:
+            print(function)
+            print()
+
         # Uncomment this to generate a graphviz rendering of the function:
         # visualize_callgraph(build_callgraph(function))
         function_info = translate_to_ast(function, options)
@@ -43,11 +47,14 @@ if __name__ == "__main__":
             help="don't print comments about node numbers", action='store_false')
     parser.add_argument('--stop-on-error', dest='stop_on_error',
             help="stop when encountering any error", action='store_true')
+    parser.add_argument('--print-assembly', dest='print_assembly',
+            help="print assembly of function to decompile", action='store_true')
     args = parser.parse_args()
     options = Options(
         filename=args.filename,
         debug=args.debug,
         stop_on_error=args.stop_on_error,
         node_comments=args.node_comments,
+        print_assembly=args.print_assembly,
     )
     main(options, args.function)

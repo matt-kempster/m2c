@@ -18,6 +18,5 @@ s32 test(s32 arg0) {
             goto loop_1;
         }
     }
-    return;
-    // (possible return value: sp4)
+    return sp4;
 }
