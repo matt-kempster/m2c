@@ -6,7 +6,7 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
 
 from options import Options
 from flow_graph import *
-from translate import FunctionInfo, BlockInfo, BinaryOp, Type, simplify_condition
+from translate import FunctionInfo, BlockInfo, BinaryOp, Type, simplify_condition, as_type
 
 @attr.s
 class Context:
@@ -320,7 +320,7 @@ def write_return(
 
     ret = ret_info.return_value
     if ret is not None:
-        context.return_type.unify(ret.type)
+        ret = as_type(ret, context.return_type, True)
         body.add_statement(SimpleStatement(indent, f'return {ret};'))
     else:
         body.add_statement(SimpleStatement(indent, 'return;'))
