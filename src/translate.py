@@ -17,7 +17,7 @@ ARGUMENT_REGS = list(map(Register, [
 CALLER_SAVE_REGS = ARGUMENT_REGS + list(map(Register, [
     'at',
     't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9',
-    'hi', 'lo', 'condition_bit', 'return_reg'
+    'hi', 'lo', 'condition_bit', 'return'
 ]))
 
 CALLEE_SAVE_REGS = list(map(Register, [
@@ -772,7 +772,7 @@ class RegInfo:
         elif key in self.contents:
             del self.contents[key]
         if key.register_name in ['f0', 'v0']:
-            self[Register('return_reg')] = value
+            self[Register('return')] = value
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')
@@ -1259,7 +1259,7 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
             mnemonic in CASES_FLOAT_BRANCHES):
         return []
     if mnemonic == 'jal':
-        return list(map(Register, ['return_reg', 'f0', 'v0', 'v1']))
+        return list(map(Register, ['return', 'f0', 'v0', 'v1']))
     if mnemonic in CASES_SOURCE_FIRST_REGISTER:
         return [reg_at(1)]
     if mnemonic in CASES_DESTINATION_FIRST:
@@ -1444,7 +1444,7 @@ def translate_node_body(
                 assert mnemonic == 'jr'
                 assert args.reg_ref(0) == Register('ra'), "Jump tables are not supported yet."
                 assert isinstance(node, ReturnNode)
-                return_value = regs.get_raw(Register('return_reg'))
+                return_value = regs.get_raw(Register('return'))
                 break
             else:
                 # Function call. Well, let's double-check:
@@ -1489,7 +1489,7 @@ def translate_node_body(
                         silent=True, type=Type.intish())
                 regs[Register('v1')] = as_u32(Cast(expr=call, reinterpret=True,
                         silent=False, type=Type.u64()))
-                regs[Register('return_reg')] = call
+                regs[Register('return')] = call
 
         elif mnemonic in CASES_FLOAT_COMP:
             regs[Register('condition_bit')] = CASES_FLOAT_COMP[mnemonic](args)
