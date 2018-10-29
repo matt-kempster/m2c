@@ -211,10 +211,11 @@ class Instruction:
     def is_jump_instruction(self) -> bool:
         # (we don't treat jal as a jump, since control flow will return after
         # the call)
-        return self.mnemonic == 'jr' or self.is_branch_instruction()
+        return self.is_branch_instruction() or self.mnemonic in ['j', 'jr']
 
     def is_delay_slot_instruction(self) -> bool:
-        return self.is_branch_instruction() or self.mnemonic in ['jr', 'jal']
+        return (self.is_branch_instruction() or
+                self.mnemonic in ['j', 'jr', 'jal', 'jalr'])
 
     def __str__(self) -> str:
         return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'

@@ -399,9 +399,8 @@ def build_graph_from_block(
         jump = jumps[0]
 
         if jump.mnemonic == 'jr':
-            # If jump.args[0] != Register('ra'), this is a switch or function
-            # pointer call, neither of which is supported. Delay that error
-            # until code emission though.
+            # If jump.args[0] != Register('ra'), this is a switch, which is not
+            # supported. Delay that error until code emission though.
             new_node = ReturnNode(block, real=True)
             nodes.append(new_node)
             return new_node
