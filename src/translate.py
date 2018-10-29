@@ -746,7 +746,6 @@ Statement = Union[
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib()
     stack_info: StackInfo = attr.ib(repr=False)
-    written_in_block: Set[Register] = attr.ib(default=set)
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register('zero'):
@@ -774,7 +773,6 @@ class RegInfo:
             del self.contents[key]
         if key.register_name in ['f0', 'v0']:
             self[Register('return_reg')] = value
-        self.written_in_block.add(key)
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')
@@ -1555,11 +1553,7 @@ def translate_graph_from_block(
                         used_phis=used_phis, type=Type.any())
             elif reg in new_contents:
                 del new_contents[reg]
-        new_regs = RegInfo(
-            contents=new_contents,
-            stack_info=stack_info,
-            written_in_block=set()
-        )
+        new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
         translate_graph_from_block(child, new_regs, stack_info, used_phis, options)
 
 @attr.s
@@ -1593,11 +1587,7 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         print('\nNow, we attempt to translate:')
 
     start_node = flow_graph.nodes[0]
-    start_reg: RegInfo = RegInfo(
-        contents=initial_regs,
-        stack_info=stack_info,
-        written_in_block=set(initial_regs.keys())
-    )
+    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
     used_phis: List[PhiExpr] = []
     translate_graph_from_block(start_node, start_reg, stack_info, used_phis, options)
     assign_phis(used_phis, stack_info)
