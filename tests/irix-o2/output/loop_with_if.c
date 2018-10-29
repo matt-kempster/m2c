@@ -1,7 +1,7 @@
-void test(s32 arg0) {
+s32 test(s32 arg0) {
     s32 phi_v1;
     s32 phi_v1_2;
-    ? phi_v1_3;
+    s32 phi_v1_3;
 
     phi_v1_3 = 0;
     if (arg0 > 0)

@@ -1330,7 +1330,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
-            phi.replacement_expr = exprs[0]
+            phi.replacement_expr = as_type(exprs[0], phi.type, True)
             for _ in range(phi.num_usages):
                 mark_used(exprs[0])
         else:
@@ -1344,7 +1344,8 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
                     expr.use(from_phi=phi)
                 else:
                     mark_used(expr)
-                block_info.to_write.append(SetPhiStmt(phi, expr))
+                typed_expr = as_type(expr, phi.type, True)
+                block_info.to_write.append(SetPhiStmt(phi, typed_expr))
         i += 1
 
     name_counter: Dict[Register, int] = {}
