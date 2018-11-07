@@ -496,8 +496,10 @@ def duplicate_premature_returns(nodes: List[Node]) -> None:
         if (isinstance(node, BasicNode) and
                 is_premature_return(node, node.successor, nodes)):
             assert isinstance(node.successor, ReturnNode)
+            node.successor.parents.remove(node)
             n = ReturnNode(node.successor.block, real=False)
             node.successor = n
+            n.add_parent(node)
             extra_nodes.append(n)
     nodes += extra_nodes
     nodes.sort(key=lambda node: node.block.index)
@@ -513,7 +515,7 @@ def compute_dominators(nodes: List[Node]) -> None:
     while changes:
         changes = False
         for n in nodes[1:]:
-            assert n.parents
+            assert n.parents, f"no predecessors for node: {n}"
             nset = n.dominators
             for p in n.parents:
                 nset = nset.intersection(p.dominators)
