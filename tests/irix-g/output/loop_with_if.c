@@ -4,7 +4,7 @@ s32 test(s32 arg0) {
     sp4 = 0;
     if (sp4 < arg0)
     {
-        loop_1:
+loop_1:
         if (sp4 == 5)
         {
             sp4 = (s32) (sp4 * 2);

@@ -351,7 +351,7 @@ def build_flowgraph_between(
             if any(node.block.index >= curr_start.block.index
                     for node in curr_start.parents):
                 label = f'loop_{curr_start.block.index}'
-                body.add_statement(SimpleStatement(indent, f'{label}:'))
+                body.add_statement(SimpleStatement(0, f'{label}:'))
             body.add_node(curr_start, indent, comment_empty=True)
 
         if isinstance(curr_start, BasicNode):
