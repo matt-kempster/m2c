@@ -7,6 +7,7 @@ s32 test(s32 arg0) {
     if (arg0 > 0)
     {
         phi_v1 = 0;
+        loop_2:
         if (phi_v1 == 5)
         {
             phi_v1_2 = (phi_v1 * 2);

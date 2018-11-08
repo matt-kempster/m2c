@@ -337,13 +337,6 @@ def build_flowgraph_between(
     """
     curr_start = start
     body = Body(print_node_comment=context.options.node_comments)
-    looped_to = any(
-        [idx >= start.block.index  # then the parent is making a backwards jump!
-            for idx in map(lambda node: node.block.index, start.parents)])
-    if looped_to:
-        # We currently write loops as labels and gotos. If a node is "looped
-        # to", then it needs a label.
-        body.add_statement(SimpleStatement(indent, f'loop_{start.block.index}:'))
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
@@ -352,6 +345,13 @@ def build_flowgraph_between(
     while curr_start != end:
         # Write the current node (but return nodes are handled specially).
         if not isinstance(curr_start, ReturnNode):
+            # We currently write loops as labels and gotos. If a node is
+            # "looped to", in the sense that some parent makes a backwards jump
+            # to it, then it needs a label.
+            if any(node.block.index >= curr_start.block.index
+                    for node in curr_start.parents):
+                label = f'loop_{curr_start.block.index}'
+                body.add_statement(SimpleStatement(indent, f'{label}:'))
             body.add_node(curr_start, indent, comment_empty=True)
 
         if isinstance(curr_start, BasicNode):
