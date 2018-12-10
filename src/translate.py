@@ -1154,9 +1154,9 @@ CASES_FLOAT_COMP: CmpInstrMap = {
     'c.eq.s': lambda a: BinaryOp.fcmp(a.reg(0), '==', a.reg(1)),
     'c.le.s': lambda a: BinaryOp.fcmp(a.reg(0), '<=', a.reg(1)),
     'c.lt.s': lambda a: BinaryOp.fcmp(a.reg(0), '<',  a.reg(1)),
-    'c.eq.d': lambda a: BinaryOp.dcmp(a.reg(0), '==', a.reg(1)),
-    'c.le.d': lambda a: BinaryOp.dcmp(a.reg(0), '<=', a.reg(1)),
-    'c.lt.d': lambda a: BinaryOp.dcmp(a.reg(0), '<',  a.reg(1)),
+    'c.eq.d': lambda a: BinaryOp.dcmp(a.dreg(0), '==', a.dreg(1)),
+    'c.le.d': lambda a: BinaryOp.dcmp(a.dreg(0), '<=', a.dreg(1)),
+    'c.lt.d': lambda a: BinaryOp.dcmp(a.dreg(0), '<',  a.dreg(1)),
 }
 CASES_HI_LO: PairInstrMap = {
     # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))

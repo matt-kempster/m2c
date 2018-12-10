@@ -10,7 +10,7 @@ f64 test(f32 arg0, s32 arg2, f64 arg4) {
     {
         return 5.0;
     }
-    if (0.0 < temp_f0)
+    if (9.0 < temp_f0)
     {
         return 5.0;
     }
