@@ -1,4 +1,5 @@
 import attr
+import copy
 
 import typing
 from typing import List, Union, Iterator, Optional, Dict, Set, Tuple, Callable, Any
@@ -17,6 +18,9 @@ class Block:
 
     def add_block_info(self, block_info: Any) -> None:
         self.block_info = block_info
+
+    def clone(self) -> 'Block':
+        return copy.deepcopy(self)
 
     def __str__(self) -> str:
         if self.label:
@@ -497,7 +501,7 @@ def duplicate_premature_returns(nodes: List[Node]) -> None:
                 is_premature_return(node, node.successor, nodes)):
             assert isinstance(node.successor, ReturnNode)
             node.successor.parents.remove(node)
-            n = ReturnNode(node.successor.block, real=False)
+            n = ReturnNode(node.successor.block.clone(), real=False)
             node.successor = n
             n.add_parent(node)
             extra_nodes.append(n)

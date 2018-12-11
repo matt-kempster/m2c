@@ -13,5 +13,5 @@ void test(s32 arg0, s32 arg1)
         *(&D_410178 + arg0) = (u8)5;
         return sp28;
     }
-    return sp28;
+    return 0;
 }
