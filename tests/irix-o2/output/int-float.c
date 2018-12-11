@@ -1,4 +1,5 @@
-f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3) {
+f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3)
+{
     s32 temp_a3;
     f32 temp_f18;
     f32 phi_f18;

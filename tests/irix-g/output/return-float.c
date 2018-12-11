@@ -1,4 +1,5 @@
-f32 test(f32 arg0) {
+f32 test(f32 arg0)
+{
     f32 phi_f14;
 
     if (arg0 != 0.0f)

@@ -1,4 +1,5 @@
-f64 test(f32 arg0, s32 arg2, f64 arg4) {
+f64 test(f32 arg0, s32 arg2, f64 arg4)
+{
     f64 sp0;
     f64 sp8;
 

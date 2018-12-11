@@ -399,7 +399,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     for arg in function_info.stack_info.arguments:
         arg_strs.append(f'{arg.type.to_decl()}{arg}')
     arg_str = ', '.join(arg_strs) or 'void'
-    print(f'{ret_type}{fn_name}({arg_str}) {{')
+    print(f'{ret_type}{fn_name}({arg_str})\n{{')
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars:

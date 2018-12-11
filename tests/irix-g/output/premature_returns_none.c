@@ -1,4 +1,5 @@
-?32 test(s32 arg0) {
+?32 test(s32 arg0)
+{
     ?32 sp4;
 
     sp4 = 0;

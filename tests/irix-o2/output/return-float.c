@@ -1,4 +1,5 @@
-f32 test(f32 arg0) {
+f32 test(f32 arg0)
+{
     if (arg0 != 0.0f)
     {
         return 0x41700000;

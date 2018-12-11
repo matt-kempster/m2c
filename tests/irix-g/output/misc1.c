@@ -1,4 +1,5 @@
-s32 test(s32 arg0, s32 arg1) {
+s32 test(s32 arg0, s32 arg1)
+{
     ?32 sp24;
     s32 sp28;
     s32 sp2C;

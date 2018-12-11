@@ -1,4 +1,5 @@
-s32 test(s32 arg0, s32 arg1, s32 arg2) {
+s32 test(s32 arg0, s32 arg1, s32 arg2)
+{
     s32 temp_v1;
 
     *sp = (?32) D_400120;

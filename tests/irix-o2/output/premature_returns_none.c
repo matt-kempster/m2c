@@ -1,4 +1,5 @@
-void test(s32 arg0) {
+void test(s32 arg0)
+{
     ? phi_v1;
 
     phi_v1 = 0;
