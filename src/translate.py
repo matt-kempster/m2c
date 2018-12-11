@@ -533,16 +533,22 @@ class StructAccess:
     def __str__(self) -> str:
         # TODO: don't treat offset == 0 specially if there have been other
         # non-zero-offset accesses for the same struct_var
+        def p(expr: Expression) -> str:
+            # Nested dereferences may need to be parenthesized. All other
+            # expressions will already have adequate parentheses added to them.
+            # (Except Cast's, TODO...)
+            s = str(expr)
+            return f'({s})' if s.startswith('*') else s
         if isinstance(self.struct_var, AddressOf):
             if self.offset == 0:
                 return f'{self.struct_var.expr}'
             else:
-                return f'{self.struct_var.expr}.unk{format_hex(self.offset)}'
+                return f'{p(self.struct_var.expr)}.unk{format_hex(self.offset)}'
         else:
             if self.offset == 0:
                 return f'*{self.struct_var}'
             else:
-                return f'{self.struct_var}->unk{format_hex(self.offset)}'
+                return f'{p(self.struct_var)}->unk{format_hex(self.offset)}'
 
 @attr.s(frozen=True, cmp=True)
 class GlobalSymbol:
