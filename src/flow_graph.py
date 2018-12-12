@@ -6,6 +6,7 @@ from typing import List, Union, Iterator, Optional, Dict, Set, Tuple, Callable, 
 
 from parse_instruction import *
 from parse_file import Function, Label
+from error import DecompFailure
 
 @attr.s(cmp=False)
 class Block:
@@ -273,8 +274,32 @@ def build_blocks(function: Function) -> List[Block]:
         elif isinstance(item, Instruction):
             if item.is_delay_slot_instruction():
                 next_item = next(body_iter)
-                assert isinstance(next_item, Instruction), "Delay slot instruction must not be a jump target"
-                assert not item.is_branch_likely_instruction(), "Not yet able to handle general branch-likely instructions"
+                if isinstance(next_item, Label):
+                    # We currently don't handle delay slot instructions that
+                    # are jump targets, which can occur in -O2-compiled code.
+                    # Emit a nice error message instead.
+                    msg = [
+                        f"Label {next_item.name} refers to a delay slot; this is currently not supported.",
+                        "Please modify the assembly to work around it (e.g. copy the instruction",
+                        "to all jump sources and move the label, or add a nop to the delay slot)."
+                    ]
+                    if next_item.name.startswith('Ltemp'):
+                        msg += [
+                            "",
+                            "This label was auto-generated as the target for a branch-likely",
+                            "instruction (e.g. beql); you can also try to turn that into a non-likely",
+                            "branch if that's equivalent in this context, i.e., if it's okay to",
+                            "execute its delay slot unconditionally."
+                        ]
+                    raise DecompFailure('\n'.join(msg))
+                assert isinstance(next_item, Instruction)
+
+                if item.is_branch_likely_instruction():
+                    raise DecompFailure("Not yet able to handle general branch-likely instruction:\n" \
+                            f"{item}\n\n" \
+                            "Only branch-likely instructions which can be turned into non-likely\n" \
+                            "versions pointing one step up are currently supported. Try rewriting\n" \
+                            "the assembly using non-branch-likely instructions.")
 
                 if item.mnemonic in ['jal', 'jr', 'jalr']:
                     # Move the delay slot instruction to before the call/return

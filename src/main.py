@@ -6,6 +6,7 @@ from parse_file import parse_file
 from translate import translate_to_ast
 from if_statements import write_function
 from options import Options
+from error import DecompFailure
 
 
 def main(options: Options, function_index_or_name: str) -> None:
@@ -20,22 +21,28 @@ def main(options: Options, function_index_or_name: str) -> None:
                 function = next(f for f in mips_file.functions if f.name == name)
             except StopIteration:
                 print(f"Function {name} not found.", file=sys.stderr)
-                return
+                exit(1)
         except IndexError:
             count = len(mips_file.functions)
-            print(f"Function index {index} is out of bounds (must be between " +
+            print(f"Function index {index} is out of bounds (must be between "
                     f"0 and {count - 1}).", file=sys.stderr)
-            return
+            exit(1)
 
         if options.print_assembly:
             print(function)
             print()
 
-        if options.visualize_flowgraph:
-            visualize_flowgraph(build_flowgraph(function))
-            return
-        function_info = translate_to_ast(function, options)
-        write_function(function_info, options)
+        try:
+            if options.visualize_flowgraph:
+                visualize_flowgraph(build_flowgraph(function))
+                return
+
+            function_info = translate_to_ast(function, options)
+            write_function(function_info, options)
+
+        except DecompFailure as e:
+            print(f"Failed to decompile function {function.name}:\n\n{e}")
+            exit(1)
 
 
 if __name__ == "__main__":
