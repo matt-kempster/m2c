@@ -33,3 +33,5 @@ Any decompilations whose results change should be manually inspected with `git d
 and committed along with the rest of the changes.
 
 Type annotations are used for all Python code. `mypy src/main.py` should pass without any errors.
+
+To get pretty graph visualizations, install `graphviz` using `pip` and globally on your system (e.g. `sudo apt install graphviz`), and pass the `--visualize` flag.
