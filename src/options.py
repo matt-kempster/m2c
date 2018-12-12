@@ -7,3 +7,4 @@ class Options:
     stop_on_error: bool = attr.ib()
     node_comments: bool = attr.ib()
     print_assembly: bool = attr.ib()
+    visualize_flowgraph: bool = attr.ib()

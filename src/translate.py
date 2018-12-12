@@ -1576,7 +1576,7 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_callgraph(function)
+    flow_graph: FlowGraph = build_flowgraph(function)
     stack_info = get_stack_info(function, flow_graph.nodes[0])
 
     initial_regs: Dict[Register, Expression] = {

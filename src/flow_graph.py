@@ -540,7 +540,7 @@ def compute_dominators(nodes: List[Node]) -> None:
 class FlowGraph:
     nodes: List[Node] = attr.ib()
 
-def build_callgraph(function: Function) -> FlowGraph:
+def build_flowgraph(function: Function) -> FlowGraph:
     blocks = build_blocks(function)
     nodes = build_nodes(function, blocks)
     duplicate_premature_returns(nodes)
@@ -548,7 +548,7 @@ def build_callgraph(function: Function) -> FlowGraph:
     return FlowGraph(nodes)
 
 
-def visualize_callgraph(flow_graph: FlowGraph) -> None:
+def visualize_flowgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
     dot = g.Digraph()
     for node in flow_graph.nodes:
@@ -561,3 +561,5 @@ def visualize_callgraph(flow_graph: FlowGraph) -> None:
         else:
             pass
     dot.render('graphviz_render.gv')
+    print("Rendered to graphviz_render.gv.pdf")
+    print("Key: green = successor, red = conditional edge, blue = fallthrough edge")

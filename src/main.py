@@ -1,7 +1,7 @@
 import sys
 import argparse
 
-from flow_graph import build_callgraph, visualize_callgraph
+from flow_graph import build_flowgraph, visualize_flowgraph
 from parse_file import parse_file
 from translate import translate_to_ast
 from if_statements import write_function
@@ -31,8 +31,9 @@ def main(options: Options, function_index_or_name: str) -> None:
             print(function)
             print()
 
-        # Uncomment this to generate a graphviz rendering of the function:
-        # visualize_callgraph(build_callgraph(function))
+        if options.visualize_flowgraph:
+            visualize_flowgraph(build_flowgraph(function))
+            return
         function_info = translate_to_ast(function, options)
         write_function(function_info, options)
 
@@ -49,6 +50,8 @@ if __name__ == "__main__":
             help="stop when encountering any error", action='store_true')
     parser.add_argument('--print-assembly', dest='print_assembly',
             help="print assembly of function to decompile", action='store_true')
+    parser.add_argument('--visualize', dest='visualize', action='store_true',
+            help="display a visualization of the control flow graph using graphviz")
     args = parser.parse_args()
     options = Options(
         filename=args.filename,
@@ -56,5 +59,6 @@ if __name__ == "__main__":
         stop_on_error=args.stop_on_error,
         node_comments=args.node_comments,
         print_assembly=args.print_assembly,
+        visualize_flowgraph=args.visualize,
     )
     main(options, args.function)
