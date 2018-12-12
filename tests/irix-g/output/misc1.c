@@ -1,8 +1,8 @@
 s32 test(s32 arg0, s32 arg1)
 {
-    ?32 sp24;
-    s32 sp28;
     s32 sp2C;
+    s32 sp28;
+    ?32 sp24;
 
     sp2C = (s32) ((D_4101C0 + (arg0 * 8))->unk4 + 1);
     sp24 = (?32) (D_4101C0 + (arg0 * 8))->unk8;

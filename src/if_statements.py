@@ -402,7 +402,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     print(f'{ret_type}{fn_name}({arg_str})\n{{')
 
     any_decl = False
-    for local_var in function_info.stack_info.local_vars:
+    for local_var in function_info.stack_info.local_vars[::-1]:
         type_decl = local_var.type.to_decl()
         print(SimpleStatement(4, f'{type_decl}{local_var};'))
         any_decl = True
