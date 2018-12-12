@@ -13,15 +13,16 @@ ARGUMENT_REGS = list(map(Register, [
     'f12', 'f14'
 ]))
 
-# TODO: include temporary floating-point registers
 CALLER_SAVE_REGS = ARGUMENT_REGS + list(map(Register, [
     'at',
     't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9',
+    'f4', 'f6', 'f8', 'f10', 'f16', 'f18',
     'hi', 'lo', 'condition_bit', 'return'
 ]))
 
 CALLEE_SAVE_REGS = list(map(Register, [
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
+    'f20', 'f22', 'f24', 'f26', 'f28', 'f30',
 ]))
 
 SPECIAL_REGS = list(map(Register, [
