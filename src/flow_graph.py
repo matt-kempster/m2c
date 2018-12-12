@@ -271,26 +271,27 @@ def build_blocks(function: Function) -> List[Block]:
             block_builder.new_block()
             block_builder.set_label(item)
         elif isinstance(item, Instruction):
-            # TODO: Should this behavior be reverted to its original behavior
-            # (leaving the delay slot after the branch/jump)? This way may be
-            # harder to test and produce hidden bugs.
-            # TODO: Assert that the output register of the following instruction
-            # isn't read by this one.
             if item.is_delay_slot_instruction():
-                # Handle the delay slot by taking the next instruction first.
-                # TODO: On -O2-compiled code, the delay slot instruction is
-                # sometimes a jump target, which makes things difficult.
                 next_item = next(body_iter)
                 assert isinstance(next_item, Instruction), "Delay slot instruction must not be a jump target"
-                block_builder.add_instruction(next_item)
-                # Now we take the original instruction.
-            block_builder.add_instruction(item)
+                assert not item.is_branch_likely_instruction(), "Not yet able to handle general branch-likely instructions"
 
-            assert not item.is_branch_likely_instruction(), "Not yet able to handle general branch-likely instructions"
+                if item.mnemonic in ['jal', 'jr', 'jalr']:
+                    # Move the delay slot instruction to before the call/return
+                    # so it passes correct arguments.
+                    # TODO: do something about jalr $r/jr $r where $r is
+                    # clobbered in the delay slot instruction...
+                    block_builder.add_instruction(next_item)
+                    block_builder.add_instruction(item)
+                else:
+                    block_builder.add_instruction(item)
+                    block_builder.add_instruction(next_item)
 
-            if item.is_jump_instruction():
-                # Split blocks at jumps.
-                block_builder.new_block()
+                if item.is_jump_instruction():
+                    # Split blocks at jumps, after the next instruction.
+                    block_builder.new_block()
+            else:
+                block_builder.add_instruction(item)
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
     return block_builder.get_blocks()
