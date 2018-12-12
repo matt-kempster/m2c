@@ -68,10 +68,10 @@ class BlockBuilder:
 
 
 temp_label_counter: int = 0
-def generate_temp_label() -> str:
+def generate_temp_label(name: str) -> str:
     global temp_label_counter
     temp_label_counter += 1
-    return 'Ltemp' + str(temp_label_counter)
+    return 'Ltemp' + str(temp_label_counter) + ('_' + name if name else '')
 
 
 # Branch-likely instructions only evaluate their delay slots when they are
@@ -113,12 +113,13 @@ def normalize_likely_branches(function: Function) -> Function:
     for item in body_iter:
         orig_item = item
         if isinstance(item, Instruction) and item.is_branch_likely_instruction():
-            before_target = label_prev_instr[item.get_branch_target().target]
+            old_label = item.get_branch_target().target
+            before_target = label_prev_instr[old_label]
             next_item = next(body_iter)
             orig_next_item = next_item
             if isinstance(next_item, Instruction) and str(before_target) == str(next_item):
                 if id(before_target) not in label_before_instr:
-                    new_label = generate_temp_label()
+                    new_label = generate_temp_label(old_label)
                     label_before_instr[id(before_target)] = new_label
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
