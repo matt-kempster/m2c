@@ -49,10 +49,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
     parser.add_argument('filename', help="input filename")
     parser.add_argument('function', help="function index or name", type=str)
-    parser.add_argument('--no-debug', dest='debug',
-            help="don't print any debug info", action='store_false')
-    parser.add_argument('--no-node-comments', dest='node_comments',
-            help="don't print comments about node numbers", action='store_false')
+    parser.add_argument('--debug', dest='debug',
+            help="print debug info", action='store_true')
     parser.add_argument('--stop-on-error', dest='stop_on_error',
             help="stop when encountering any error", action='store_true')
     parser.add_argument('--print-assembly', dest='print_assembly',
@@ -64,7 +62,6 @@ if __name__ == "__main__":
         filename=args.filename,
         debug=args.debug,
         stop_on_error=args.stop_on_error,
-        node_comments=args.node_comments,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
     )

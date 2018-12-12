@@ -336,7 +336,7 @@ def build_flowgraph_between(
     level of indentation.
     """
     curr_start = start
-    body = Body(print_node_comment=context.options.node_comments)
+    body = Body(print_node_comment=context.options.debug)
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
