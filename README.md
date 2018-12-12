@@ -1,17 +1,35 @@
 # mips_to_c
-Given a MIPS script, this program will convert it to pseudo-C. The goal is that eventually the output will be well-formed C, and eventually after that, byte-equivalent C.
+Given some MIPS assembly, this program will attempt to convert it to C.
+The goal is that eventually the output will be well-formed C, and eventually after that, byte-equivalent C.
 
-Progress is still forthcoming. Here is a list of things that need to be done:
+Right now the decompiler is fairly functional, though it sometimes generates suboptimal code
+(especially for loops), and sometimes crashes. See the `tests/` directory for some example output.
 
-- [x] Properly declare and name local variables
-- [x] Fix subroutine argument passing
-- [x] Improve output for struct member access
-- [x] Improve type-hint collection and output
-- [x] Support float literals
-- [ ] Support double operations
-- [ ] Support loops (currently the program will crash)
-- [ ] Support ternary operators/weird casts that cause blocks to conditionally modify registers
-- [x] Improve if-statement handler to automatically output || and && when appropriate
-- [ ] Improve handling of returns
-- [ ] Improve automatic commenting
-- [x] Write tests and test harness
+## Install
+
+Make sure you have Python 3.6 or later installed, then do `python3 -m pip install attrs`.
+
+You might need to install `pip` first; on Ubuntu this can be done with:
+```bash
+sudo apt update
+sudo apt install python3-pip
+```
+
+## Usage
+
+```bash
+python3 src/main.py [options] <asmfile> <functionname | index>
+```
+
+Run with `--help` to see which options are available.
+
+## Contributing
+
+There is much low-hanging fruit still. Take a look at the issues if you want to help out.
+
+There is a small test suite, which works as follows: for every commit, `./run-tests.sh` should be run,
+which runs the decompiler on a small corpus of IRIX 5.3-compiled MIPS assembly.
+Any decompilations whose results change should be manually inspected with `git diff`
+and committed along with the rest of the changes.
+
+Type annotations are used for all Python code. `mypy src/main.py` should pass without any errors.
