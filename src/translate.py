@@ -753,6 +753,7 @@ Statement = Union[
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib()
     stack_info: StackInfo = attr.ib(repr=False)
+    has_custom_return: bool = attr.ib()
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register('zero'):
@@ -780,6 +781,7 @@ class RegInfo:
             del self.contents[key]
         if key.register_name in ['f0', 'v0']:
             self[Register('return')] = value
+            self.has_custom_return = True
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register('zero')
@@ -1497,6 +1499,7 @@ def translate_node_body(
                 regs[Register('v1')] = as_u32(Cast(expr=call, reinterpret=True,
                         silent=False, type=Type.u64()))
                 regs[Register('return')] = call
+                regs.has_custom_return = False
 
         elif mnemonic in CASES_FLOAT_COMP:
             regs[Register('condition_bit')] = CASES_FLOAT_COMP[mnemonic](args)
@@ -1512,9 +1515,7 @@ def translate_node_body(
         else:
             assert False, f"I don't know how to handle {mnemonic}!"
 
-    if return_value is not None:
-        mark_used(return_value)
-    elif branch_condition is not None:
+    if branch_condition is not None:
         mark_used(branch_condition)
     return BlockInfo(to_write, return_value, branch_condition, regs)
 
@@ -1524,6 +1525,7 @@ def translate_graph_from_block(
     regs: RegInfo,
     stack_info: StackInfo,
     used_phis: List[PhiExpr],
+    return_blocks: List[BlockInfo],
     options: Options
 ) -> None:
     """
@@ -1549,6 +1551,8 @@ def translate_graph_from_block(
         block_info = BlockInfo([error_stmt], None, None, regs)
 
     node.block.add_block_info(block_info)
+    if isinstance(node, ReturnNode):
+        return_blocks.append(block_info)
 
     # Translate everything dominated by this node, now that we know our own
     # final register state. This will eventually reach every node.
@@ -1561,8 +1565,10 @@ def translate_graph_from_block(
                         used_phis=used_phis, type=Type.any())
             elif reg in new_contents:
                 del new_contents[reg]
-        new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
-        translate_graph_from_block(child, new_regs, stack_info, used_phis, options)
+        new_regs = RegInfo(contents=new_contents, stack_info=stack_info,
+                has_custom_return=regs.has_custom_return)
+        translate_graph_from_block(child, new_regs, stack_info, used_phis,
+                return_blocks, options)
 
 @attr.s
 class FunctionInfo:
@@ -1595,8 +1601,25 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         print('\nNow, we attempt to translate:')
 
     start_node = flow_graph.nodes[0]
-    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
+    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info,
+            has_custom_return=False)
     used_phis: List[PhiExpr] = []
-    translate_graph_from_block(start_node, start_reg, stack_info, used_phis, options)
+    return_blocks: List[BlockInfo] = []
+    translate_graph_from_block(start_node, start_reg, stack_info,
+            used_phis, return_blocks, options)
+
+    # We mark the function as having a return type if all return nodes have
+    # return values, and not all those values are trivial (e.g. from function
+    # calls). TODO: improve this analysis to go though phi nodes, and also
+    # to check that the values aren't read from for some other purpose.
+    has_return = all(b.return_value is not None for b in return_blocks) and \
+        any(b.final_register_states.has_custom_return for b in return_blocks)
+
+    for b in return_blocks:
+        if not has_return:
+            b.return_value = None
+        elif b.return_value is not None:
+            mark_used(b.return_value)
+
     assign_phis(used_phis, stack_info)
     return FunctionInfo(stack_info, flow_graph)

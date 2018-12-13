@@ -13,7 +13,6 @@ class Context:
     flow_graph: FlowGraph = attr.ib()
     options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[int, int, int], bool] = attr.ib(factory=dict)
-    can_reach_return: bool = attr.ib(default=False)
     return_type: Type = attr.ib(factory=Type.any)
 
 @attr.s
@@ -311,7 +310,7 @@ def get_full_if_condition(
         )
 
 def write_return(
-    context: Context, body: Body, node: ReturnNode, indent: int
+    context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
     body.add_node(node, indent, comment_empty=node.real)
 
@@ -322,7 +321,7 @@ def write_return(
     if ret is not None:
         ret = as_type(ret, context.return_type, True)
         body.add_statement(SimpleStatement(indent, f'return {ret};'))
-    else:
+    elif not last:
         body.add_statement(SimpleStatement(indent, 'return;'))
 
 
@@ -374,7 +373,7 @@ def build_flowgraph_between(
             assert isinstance(curr_start, ReturnNode)
             # Write the return node, and break, because there is nothing more
             # to process.
-            write_return(context, body, curr_start, indent)
+            write_return(context, body, curr_start, indent, last=False)
             break
 
     return body
@@ -389,7 +388,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         print("Here's the whole function!\n")
     body: Body = build_flowgraph_between(context, start_node, return_node, 4)
 
-    write_return(context, body, return_node, 4)
+    write_return(context, body, return_node, 4, last=True)
 
     ret_type = 'void '
     if not context.return_type.is_any():

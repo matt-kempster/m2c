@@ -15,5 +15,4 @@ loop_1:
             goto loop_1;
         }
     }
-    return;
 }
