@@ -334,12 +334,15 @@ class BaseNode:
     immediate_dominator: Optional['Node'] = attr.ib(init=False, default=None)
     immediately_dominates: List['Node'] = attr.ib(init=False, factory=list)
 
+    def add_parent(self, parent: 'Node') -> None:
+        self.parents.append(parent)
+
+    def name(self) -> str:
+        return str(self.block.index)
+
 @attr.s(cmp=False)
 class BasicNode(BaseNode):
     successor: 'Node' = attr.ib()
-
-    def add_parent(self, parent: 'Node') -> None:
-        self.parents.append(parent)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.successor)
@@ -356,9 +359,6 @@ class ConditionalNode(BaseNode):
     conditional_edge: 'Node' = attr.ib()
     fallthrough_edge: 'Node' = attr.ib()
 
-    def add_parent(self, parent: 'Node') -> None:
-        self.parents.append(parent)
-
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)
 
@@ -374,10 +374,14 @@ class ConditionalNode(BaseNode):
 
 @attr.s(cmp=False)
 class ReturnNode(BaseNode):
-    real: bool = attr.ib()
+    index: int = attr.ib()
 
-    def add_parent(self, parent: 'Node') -> None:
-        self.parents.append(parent)
+    def name(self) -> str:
+        name = super().name()
+        return name if self.is_real() else f'{name}.{self.index}'
+
+    def is_real(self) -> bool:
+        return self.index == 0
 
     def __str__(self) -> str:
         return f'{self.block}\n# {self.block.index} -> ret'
@@ -432,7 +436,7 @@ def build_graph_from_block(
         if jump.mnemonic == 'jr':
             # If jump.args[0] != Register('ra'), this is a switch, which is not
             # supported. Delay that error until code emission though.
-            new_node = ReturnNode(block, real=True)
+            new_node = ReturnNode(block, index=0)
             nodes.append(new_node)
             return new_node
 
@@ -523,12 +527,14 @@ def duplicate_premature_returns(nodes: List[Node]) -> None:
     for it to jump to. This ensures nice nesting for the if_statements code,
     and avoids a phi node for the return value."""
     extra_nodes: List[Node] = []
+    index = 0
     for node in nodes:
         if (isinstance(node, BasicNode) and
                 is_premature_return(node, node.successor, nodes)):
             assert isinstance(node.successor, ReturnNode)
             node.successor.parents.remove(node)
-            n = ReturnNode(node.successor.block.clone(), real=False)
+            index += 1
+            n = ReturnNode(node.successor.block.clone(), index=index)
             node.successor = n
             n.add_parent(node)
             extra_nodes.append(n)
@@ -578,12 +584,12 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
     dot = g.Digraph()
     for node in flow_graph.nodes:
-        dot.node(str(node.block.index))
+        dot.node(node.name())
         if isinstance(node, BasicNode):
-            dot.edge(str(node.block.index), str(node.successor.block.index), color='green')
+            dot.edge(node.name(), node.successor.name(), color='green')
         elif isinstance(node, ConditionalNode):
-            dot.edge(str(node.block.index), str(node.fallthrough_edge.block.index), color='blue')
-            dot.edge(str(node.block.index), str(node.conditional_edge.block.index), color='red')
+            dot.edge(node.name(), node.fallthrough_edge.name(), color='blue')
+            dot.edge(node.name(), node.conditional_edge.name(), color='red')
         else:
             pass
     dot.render('graphviz_render.gv')

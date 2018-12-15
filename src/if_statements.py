@@ -66,7 +66,7 @@ class Body:
 
         # Add node header comment
         if self.print_node_comment and (any_to_write or comment_empty):
-            self.add_comment(indent, f'Node {node.block.index}')
+            self.add_comment(indent, f'Node {node.name()}')
         # Add node contents
         for item in node.block.block_info.to_write:
             if item.should_write():
@@ -312,7 +312,7 @@ def get_full_if_condition(
 def write_return(
     context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
-    body.add_node(node, indent, comment_empty=node.real)
+    body.add_node(node, indent, comment_empty=node.is_real())
 
     ret_info = node.block.block_info
     assert isinstance(ret_info, BlockInfo)
