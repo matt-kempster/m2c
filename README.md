@@ -18,7 +18,7 @@ sudo apt install python3-pip
 ## Usage
 
 ```bash
-python3 src/main.py [options] <asmfile> <functionname | index>
+python3 src/main.py [options] <asmfile> <functionname | index | all>
 ```
 
 Run with `--help` to see which options are available.
