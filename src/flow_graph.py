@@ -576,7 +576,9 @@ class FlowGraph:
         return self.nodes[0]
 
     def return_node(self) -> Node:
-        return self.nodes[-1]
+        candidates = [n for n in self.nodes
+                if isinstance(n, ReturnNode) and n.is_real()]
+        return max(candidates, key=lambda n: n.block.index)
 
 def build_flowgraph(function: Function) -> FlowGraph:
     blocks = build_blocks(function)
