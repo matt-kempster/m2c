@@ -572,6 +572,12 @@ def compute_dominators(nodes: List[Node]) -> None:
 class FlowGraph:
     nodes: List[Node] = attr.ib()
 
+    def entry_node(self) -> Node:
+        return self.nodes[0]
+
+    def return_node(self) -> Node:
+        return self.nodes[-1]
+
 def build_flowgraph(function: Function) -> FlowGraph:
     blocks = build_blocks(function)
     nodes = build_nodes(function, blocks)

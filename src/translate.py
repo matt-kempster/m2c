@@ -1583,7 +1583,8 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
     """
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function)
-    stack_info = get_stack_info(function, flow_graph.nodes[0])
+    start_node = flow_graph.entry_node()
+    stack_info = get_stack_info(function, start_node)
 
     initial_regs: Dict[Register, Expression] = {
         Register('a0'): PassedInArg(0, copied=False, type=Type.intptr()),
@@ -1600,7 +1601,6 @@ def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
         print(stack_info)
         print('\nNow, we attempt to translate:')
 
-    start_node = flow_graph.nodes[0]
     start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info,
             has_custom_return=False)
     used_phis: List[PhiExpr] = []

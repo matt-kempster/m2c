@@ -380,8 +380,8 @@ def build_flowgraph_between(
 
 def write_function(function_info: FunctionInfo, options: Options) -> None:
     context = Context(flow_graph=function_info.flow_graph, options=options)
-    start_node: Node = context.flow_graph.nodes[0]
-    return_node: Node = context.flow_graph.nodes[-1]
+    start_node: Node = context.flow_graph.entry_node()
+    return_node: Node = context.flow_graph.return_node()
     assert isinstance(return_node, ReturnNode)
 
     if options.debug:
