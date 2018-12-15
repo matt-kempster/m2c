@@ -12,7 +12,7 @@ from translate import FunctionInfo, BlockInfo, BinaryOp, Type, simplify_conditio
 class Context:
     flow_graph: FlowGraph = attr.ib()
     options: Options = attr.ib()
-    reachable_without: Dict[typing.Tuple[int, int, int], bool] = attr.ib(factory=dict)
+    reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
 
 @attr.s
@@ -147,7 +147,7 @@ def end_reachable_without(
         # Already there! (Base case.)
         return True
 
-    key = (start.block.index, end.block.index, without.block.index)
+    key = (start, end, without)
     if key in context.reachable_without:
         return context.reachable_without[key]
 
@@ -168,11 +168,38 @@ def end_reachable_without(
     context.reachable_without[key] = ret
     return ret
 
+def get_reachable_nodes(start: Node) -> Set[Node]:
+    reachable_nodes: Set[Node] = set()
+    stack: List[Node] = [start]
+    while stack:
+        node = stack.pop()
+        if node in reachable_nodes:
+            continue
+        reachable_nodes.add(node)
+        if isinstance(node, BasicNode):
+            stack.append(node.successor)
+        elif isinstance(node, ConditionalNode):
+            if not node.is_loop():
+                stack.append(node.conditional_edge)
+            stack.append(node.fallthrough_edge)
+    return reachable_nodes
+
 def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     """
     Find the immediate postdominator of "start", where "end" is an exit node
     from the control flow graph.
     """
+    # If the end is unreachable, we are computing immediate postdominators
+    # of a subflow where every path ends in an early return. In this case we
+    # need to replace our end node, or else every node will be treated as a
+    # postdominator, and the earliest one might be within a conditional
+    # expression. That in turn can result in nodes emitted multiple times.
+    # (TODO: this is rather ad hoc, we should probably come up with a more
+    # principled approach to early returns...)
+    reachable_nodes = get_reachable_nodes(start)
+    if end not in reachable_nodes:
+        end = max(reachable_nodes, key=lambda n: n.block.index)
+
     stack: List[Node] = [start]
     postdominators: List[Node] = []
     while stack:

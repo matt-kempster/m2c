@@ -3,12 +3,10 @@ void test(s32 arg0)
     if (arg0 == 7)
     {
         func_0040012C(1);
-        if (arg0 != 8)
+        if (arg0 == 8)
         {
-            func_0040012C(3);
-            return;
+            func_0040012C(2);
         }
-        func_0040012C(2);
         func_0040012C(3);
         return;
     }
