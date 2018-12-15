@@ -175,6 +175,13 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
     ]
 
+    divu_pattern: List[str] = [
+        "bnez",
+        "nop",
+        "break 7",
+        "",
+    ]
+
     utf_pattern: List[str] = [
         "bgez",
         "cvt.s.w",
@@ -233,6 +240,16 @@ def simplify_standard_patterns(function: Function) -> Function:
             return None
         return ([], i + len(div_pattern) - 1)
 
+    def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i:i + len(divu_pattern)]
+        if not matches_pattern(actual, divu_pattern):
+            return None
+        label = typing.cast(Label, actual[3])
+        bnez = typing.cast(Instruction, actual[0])
+        if bnez.get_branch_target().target != label.name:
+            return None
+        return ([], i + len(divu_pattern) - 1)
+
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i:i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
@@ -251,8 +268,8 @@ def simplify_standard_patterns(function: Function) -> Function:
     new_function = Function(name=function.name)
     i = 0
     while i < len(function.body):
-        repl, i = (try_replace_div(i) or try_replace_utf_conv(i) or
-                no_replacement(i))
+        repl, i = (try_replace_div(i) or try_replace_divu(i) or
+                try_replace_utf_conv(i) or no_replacement(i))
         new_function.body.extend(repl)
     return new_function
 
