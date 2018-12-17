@@ -6,7 +6,7 @@ from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
 
 from options import Options
 from flow_graph import *
-from translate import FunctionInfo, BlockInfo, BinaryOp, Type, simplify_condition, as_type
+from translate import FunctionInfo, BlockInfo, BinaryOp, Condition, Type, simplify_condition, as_type
 
 @attr.s
 class Context:
@@ -17,7 +17,7 @@ class Context:
 
 @attr.s
 class IfElseStatement:
-    condition: BinaryOp = attr.ib()
+    condition: Condition = attr.ib()
     indent: int = attr.ib()
     if_body: 'Body' = attr.ib()
     else_body: Optional['Body'] = attr.ib(default=None)
@@ -271,11 +271,11 @@ def get_number_of_if_conditions(
         return count2
 
 def join_conditions(
-    conditions: List[BinaryOp], op: str, only_negate_last: bool
-) -> BinaryOp:
+    conditions: List[Condition], op: str, only_negate_last: bool
+) -> Condition:
     assert op in ['&&', '||']
     assert conditions
-    final_cond: Optional[BinaryOp] = None
+    final_cond: Optional[Condition] = None
     for i, cond in enumerate(conditions):
         if not only_negate_last or i == len(conditions) - 1:
             cond = cond.negated()
@@ -295,7 +295,7 @@ def get_full_if_condition(
 ) -> IfElseStatement:
     curr_node: Node = start
     prev_node: Optional[ConditionalNode] = None
-    conditions: List[BinaryOp] = []
+    conditions: List[Condition] = []
     # Get every condition.
     while count > 0:
         block_info = curr_node.block.block_info

@@ -363,6 +363,7 @@ class BinaryOp:
     op: str = attr.ib()
     right: 'Expression' = attr.ib()
     type: Type = attr.ib()
+    floating: bool = attr.ib(default=False)
 
     @staticmethod
     def int(left: 'Expression', op: str, right: 'Expression') -> 'BinaryOp':
@@ -387,12 +388,12 @@ class BinaryOp:
     @staticmethod
     def fcmp(left: 'Expression', op: str, right: 'Expression') -> 'BinaryOp':
         return BinaryOp(left=as_f32(left), op=op, right=as_f32(right),
-                type=Type.bool())
+                type=Type.bool(), floating=True)
 
     @staticmethod
     def dcmp(left: 'Expression', op: str, right: 'Expression') -> 'BinaryOp':
         return BinaryOp(left=as_f64(left), op=op, right=as_f64(right),
-                type=Type.bool())
+                type=Type.bool(), floating=True)
 
     @staticmethod
     def s32(left: 'Expression', op: str, right: 'Expression') -> 'BinaryOp':
@@ -407,18 +408,22 @@ class BinaryOp:
     @staticmethod
     def f32(left: 'Expression', op: str, right: 'Expression') -> 'BinaryOp':
         return BinaryOp(left=as_f32(left), op=op, right=as_f32(right),
-                type=Type.f32())
+                type=Type.f32(), floating=True)
 
     @staticmethod
     def f64(left: 'Expression', op: str, right: 'Expression') -> 'BinaryOp':
         return BinaryOp(left=as_f64(left), op=op, right=as_f64(right),
-                type=Type.f64())
+                type=Type.f64(), floating=True)
 
     def is_boolean(self) -> bool:
         return self.op in ['==', '!=', '>', '<', '>=', '<=']
 
-    def negated(self) -> 'BinaryOp':
+    def negated(self) -> 'Condition':
         assert self.is_boolean()
+        if self.floating and self.op in ['<', '>', '<=', '>=']:
+            # Floating-point comparisons cannot be negated in any nice way,
+            # due to nans.
+            return UnaryOp('!', self, type=Type.bool())
         return BinaryOp(
             left=self.left,
             op={
@@ -447,6 +452,11 @@ class UnaryOp:
 
     def dependencies(self) -> List['Expression']:
         return [self.expr]
+
+    def negated(self) -> 'Condition':
+        if self.op == '!' and isinstance(self.expr, (UnaryOp, BinaryOp)):
+            return self.expr
+        return UnaryOp('!', self, type=Type.bool())
 
     def __str__(self) -> str:
         return f'{self.op}{self.expr}'
@@ -742,6 +752,11 @@ Expression = Union[
     PhiExpr,
 ]
 
+Condition = Union[
+    BinaryOp,
+    UnaryOp,
+]
+
 Statement = Union[
     StoreStmt,
     EvalOnceStmt,
@@ -808,7 +823,7 @@ class BlockInfo:
     """
     to_write: List[Statement] = attr.ib()
     return_value: Optional[Expression] = attr.ib()
-    branch_condition: Optional[BinaryOp] = attr.ib()
+    branch_condition: Optional[Condition] = attr.ib()
     final_register_states: RegInfo = attr.ib()
 
     def __str__(self) -> str:
@@ -1377,7 +1392,7 @@ def translate_node_body(
     to_write: List[Union[Statement]] = []
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
     subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
-    branch_condition: Optional[BinaryOp] = None
+    branch_condition: Optional[Condition] = None
     return_value: Optional[Expression] = None
 
     def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
