@@ -12,6 +12,7 @@ from error import DecompFailure
 class Block:
     index: int = attr.ib()
     label: Optional[Label] = attr.ib()
+    approx_label_name: Optional[str] = attr.ib()
     instructions: List[Instruction] = attr.ib(factory=list)
 
     # TODO: fix "Any" to be "BlockInfo" (currently annoying due to circular imports)
@@ -24,8 +25,8 @@ class Block:
         return copy.deepcopy(self)
 
     def __str__(self) -> str:
-        if self.label:
-            name = f'{self.index} ({self.label.name})'
+        if self.approx_label_name:
+            name = f'{self.index} ({self.approx_label_name})'
         else:
             name = f'{self.index}'
         inst_str = '\n'.join(str(instruction) for instruction in self.instructions)
@@ -35,6 +36,8 @@ class Block:
 class BlockBuilder:
     curr_index: int = attr.ib(default=0)
     curr_label: Optional[Label] = attr.ib(default=None)
+    last_label: Optional[Label] = attr.ib(default=None)
+    label_counter: int = attr.ib(default=0)
     curr_instructions: List[Instruction] = attr.ib(factory=list)
     blocks: List[Block] = attr.ib(factory=list)
 
@@ -42,11 +45,18 @@ class BlockBuilder:
         if len(self.curr_instructions) == 0:
             return None
 
-        block = Block(self.curr_index, self.curr_label, self.curr_instructions)
+        label_name = None
+        if self.last_label is not None:
+            label_name = self.last_label.name
+            if self.label_counter > 0:
+                label_name += f'.{self.label_counter}'
+        block = Block(self.curr_index, self.curr_label, label_name,
+                self.curr_instructions)
         self.blocks.append(block)
 
         self.curr_index += 1
         self.curr_label = None
+        self.label_counter += 1
         self.curr_instructions = []
 
         return block
@@ -63,6 +73,8 @@ class BlockBuilder:
         # empty blocks. For now we don't, however.
         assert not self.curr_label, "A block can not have more than one label"
         self.curr_label = label
+        self.last_label = label
+        self.label_counter = 0
 
     def get_blocks(self) -> List[Block]:
         return self.blocks
