@@ -63,6 +63,9 @@ class MIPSFile:
 
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     mips_file: MIPSFile = MIPSFile(options.filename)
+    defines: Dict[str, int] = options.preproc_defines.copy()
+    ifdef_level: int = 0
+    ifdef_levels: List[int] = []
 
     for line in f:
         # Strip comments and whitespace
@@ -71,24 +74,44 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
         line = line.strip()
 
         if line == '':
-            continue
-        elif line.startswith('.') and line.endswith(':'):
-            # Label.
-            label_name: str = line.strip('.:')
-            mips_file.new_label(label_name)
-        elif line.startswith('.'):
-            # Assembler directive.
             pass
-        elif line.startswith('glabel'):
-            # Function label.
-            function_name: str = line.split(' ')[1]
-            if re.match('L[0-9A-F]{8}', function_name):
-                mips_file.new_jumptable_label(function_name)
+        elif line.startswith('.') and not line.endswith(':'):
+            # Assembler directive.
+            if line.startswith('.ifdef') or line.startswith('.ifndef'):
+                macro_name = line.split()[1]
+                if macro_name not in defines:
+                    defines[macro_name] = 0
+                    print(f"Note: assuming {macro_name} is unset for .ifdef, "
+                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.")
+                level = defines[macro_name]
+                if line.startswith('.ifdef'):
+                    level = 1 - level
+                ifdef_level += level
+                ifdef_levels.append(level)
+            elif line.startswith('.else'):
+                level = ifdef_levels.pop()
+                ifdef_level -= level
+                level = 1 - level
+                ifdef_level += level
+                ifdef_levels.append(level)
+            elif line.startswith('.endif'):
+                ifdef_level -= ifdef_levels.pop()
+        elif ifdef_level == 0:
+            if line.startswith('.'):
+                # Label.
+                if ifdef_level == 0:
+                    label_name: str = line.strip('.:')
+                    mips_file.new_label(label_name)
+            elif line.startswith('glabel'):
+                # Function label.
+                function_name: str = line.split(' ')[1]
+                if re.match('L[0-9A-F]{8}', function_name):
+                    mips_file.new_jumptable_label(function_name)
+                else:
+                    mips_file.new_function(function_name)
             else:
-                mips_file.new_function(function_name)
-        else:
-            # Instruction.
-            instruction: Instruction = parse_instruction(line)
-            mips_file.new_instruction(instruction)
+                # Instruction.
+                instruction: Instruction = parse_instruction(line)
+                mips_file.new_instruction(instruction)
 
     return mips_file

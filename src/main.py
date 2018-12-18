@@ -69,12 +69,21 @@ if __name__ == "__main__":
             help="print assembly of function to decompile", action='store_true')
     parser.add_argument('--visualize', dest='visualize', action='store_true',
             help="display a visualization of the control flow graph using graphviz")
+    parser.add_argument('-D', dest='defined', action='append',
+            help="mark preprocessor constant as defined")
+    parser.add_argument('-U', dest='undefined', action='append',
+            help="mark preprocessor constant as undefined")
     args = parser.parse_args()
+    preproc_defines = {
+        **{d: 0 for d in (args.undefined or [])},
+        **{d.split('=')[0]: 1 for d in (args.defined or [])},
+    }
     options = Options(
         filename=args.filename,
         debug=args.debug,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
+        preproc_defines=preproc_defines,
     )
     main(options, args.function)

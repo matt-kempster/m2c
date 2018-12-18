@@ -1,4 +1,5 @@
 import attr
+from typing import Dict
 
 @attr.s
 class Options:
@@ -7,3 +8,4 @@ class Options:
     stop_on_error: bool = attr.ib()
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()
+    preproc_defines: Dict[str, int] = attr.ib()
