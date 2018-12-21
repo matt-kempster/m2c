@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 import attr
 
 from options import Options
-from parse_instruction import *
+from parse_instruction import Instruction, Register, parse_instruction
 
 
 @attr.s(frozen=True)

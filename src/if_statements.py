@@ -1,9 +1,11 @@
-# from contextlib import contextmanager
 import queue
 import typing
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
 
-from flow_graph import *
+import attr
+
+from flow_graph import (BasicNode, Block, ConditionalNode, FlowGraph, Node,
+                        ReturnNode)
 from options import Options
 from translate import (BinaryOp, BlockInfo, Condition, FunctionInfo, Type,
                        as_type, simplify_condition)
