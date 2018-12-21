@@ -1,12 +1,12 @@
-import sys
 import argparse
+import sys
 
+from error import DecompFailure
 from flow_graph import build_flowgraph, visualize_flowgraph
-from parse_file import parse_file, Function
-from translate import translate_to_ast
 from if_statements import write_function
 from options import Options
-from error import DecompFailure
+from parse_file import Function, parse_file
+from translate import translate_to_ast
 
 
 def decompile_function(options: Options, function: Function) -> None:

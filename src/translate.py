@@ -1,12 +1,16 @@
-import attr
+import sys
 import traceback
-
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Tuple, Any
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
+                    Union)
 
+import attr
+
+from flow_graph import (Block, FlowGraph, Function, Node, ReturnNode,
+                        build_flowgraph)
 from options import Options
-from parse_instruction import *
-from flow_graph import *
+from parse_instruction import (Argument, AsmAddressMode, AsmGlobalSymbol,
+                               AsmLiteral, BinOp, Instruction, Macro, Register)
 
 ARGUMENT_REGS = list(map(Register, [
     'a0', 'a1', 'a2', 'a3',

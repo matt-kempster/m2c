@@ -1,12 +1,15 @@
-import attr
 import copy
-
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Set, Tuple, Callable, Any
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
+                    Union)
 
-from parse_instruction import *
-from parse_file import Function, Label
+import attr
+
 from error import DecompFailure
+from parse_file import Function, Label
+from parse_instruction import (AsmLiteral, Instruction, JumpTarget, Register,
+                               parse_instruction)
+
 
 @attr.s(cmp=False)
 class Block:

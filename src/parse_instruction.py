@@ -1,13 +1,13 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
 import ast
-import attr
 import re
 import string
 import sys
-
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Any
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+
+import attr
 
 
 @attr.s(frozen=True)
@@ -228,4 +228,3 @@ def parse_instruction(line: str) -> Instruction:
     args: List[Argument] = list(filter(None,
         [parse_arg(arg_str.strip()) for arg_str in args_str.split(',')]))
     return Instruction(mnemonic, args)
-
