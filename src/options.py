@@ -1,5 +1,7 @@
-import attr
 from typing import Dict
+
+import attr
+
 
 @attr.s
 class Options:

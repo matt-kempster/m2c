@@ -1,12 +1,13 @@
 # from contextlib import contextmanager
 import queue
-
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Any, Set
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
 
-from options import Options
 from flow_graph import *
-from translate import FunctionInfo, BlockInfo, BinaryOp, Condition, Type, simplify_condition, as_type
+from options import Options
+from translate import (BinaryOp, BlockInfo, Condition, FunctionInfo, Type,
+                       as_type, simplify_condition)
+
 
 @attr.s
 class Context:

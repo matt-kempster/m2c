@@ -1,12 +1,12 @@
-import attr
 import traceback
-
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Tuple, Any
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
+import attr
+
+from flow_graph import *
 from options import Options
 from parse_instruction import *
-from flow_graph import *
 
 ARGUMENT_REGS = list(map(Register, [
     'a0', 'a1', 'a2', 'a3',

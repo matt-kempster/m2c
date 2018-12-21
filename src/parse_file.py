@@ -1,11 +1,12 @@
-import attr
 import re
-
 import typing
-from typing import List, Union, Iterator, Optional, Dict, Callable, Any
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+
+import attr
 
 from options import Options
 from parse_instruction import *
+
 
 @attr.s(frozen=True)
 class Label:

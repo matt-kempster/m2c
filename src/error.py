@@ -1,5 +1,6 @@
 import attr
 
+
 @attr.s
 class DecompFailure(Exception):
     message: str = attr.ib()
