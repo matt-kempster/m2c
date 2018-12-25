@@ -17,6 +17,7 @@ class Context:
     options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
+    has_warned: bool = attr.ib(default=False)
 
 @attr.s
 class IfElseStatement:
@@ -243,12 +244,14 @@ def count_non_postdominated_parents(
     for parent in child.parents:
         if immediate_postdominator(context, parent, curr_end) != child:
             count += 1
-    # Either all this node's parents are immediately postdominated by it,
-    # or none of them are. To be honest, I don't have much evidence for
-    # this assertion, but if it fails, then the output of && and || will
-    # likely be incorrect. (A suitable TODO, perhaps, is to prove this
-    # mathematically.)
-    assert count in [0, len(child.parents)]
+    # Ideally, either all this node's parents are immediately postdominated by
+    # it, or none of them are. In practice this doesn't always hold, and then
+    # output of && and || may not be correct.
+    if count not in [0, len(child.parents)] and not context.has_warned:
+        context.has_warned = True
+        print("Warning: confusing control flow, output may contain duplicate "
+            "nodes or have incorrect && and || detection. Run with --debug "
+            "to see node comments.\n")
     return count
 
 
