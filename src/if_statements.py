@@ -17,6 +17,7 @@ class Context:
     options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
+    used_labels: Set[str] = attr.ib(factory=set)
     has_warned: bool = attr.ib(default=False)
 
 @attr.s
@@ -25,6 +26,9 @@ class IfElseStatement:
     indent: int = attr.ib()
     if_body: 'Body' = attr.ib()
     else_body: Optional['Body'] = attr.ib(default=None)
+
+    def should_write(self) -> bool:
+        return True
 
     def __str__(self) -> str:
         space = ' ' * self.indent
@@ -55,13 +59,29 @@ class SimpleStatement:
     indent: int = attr.ib()
     contents: str = attr.ib()
 
+    def should_write(self) -> bool:
+        return True
+
     def __str__(self) -> str:
         return f'{" " * self.indent}{self.contents}'
 
 @attr.s
+class LabelStatement:
+    context: Context = attr.ib()
+    name: str = attr.ib()
+
+    def should_write(self) -> bool:
+        return self.name in self.context.used_labels
+
+    def __str__(self) -> str:
+        return f'{self.name}:'
+
+Statement = Union[SimpleStatement, IfElseStatement, LabelStatement]
+
+@attr.s
 class Body:
     print_node_comment: bool = attr.ib()
-    statements: List[Union[SimpleStatement, IfElseStatement]] = attr.ib(factory=list)
+    statements: List[Statement] = attr.ib(factory=list)
 
     def add_node(self, node: Node, indent: int, comment_empty: bool) -> None:
         assert isinstance(node.block.block_info, BlockInfo)
@@ -76,7 +96,7 @@ class Body:
             if item.should_write():
                 self.statements.append(SimpleStatement(indent, str(item)))
 
-    def add_statement(self, statement: SimpleStatement) -> None:
+    def add_statement(self, statement: Statement) -> None:
         self.statements.append(statement)
 
     def add_comment(self, indent: int, contents: str) -> None:
@@ -86,7 +106,8 @@ class Body:
         self.statements.append(if_else)
 
     def __str__(self) -> str:
-        return '\n'.join(str(statement) for statement in self.statements)
+        return '\n'.join(str(statement) for statement in self.statements
+                if statement.should_write())
 
 
 def build_conditional_subgraph(
@@ -121,7 +142,8 @@ def build_conditional_subgraph(
         else:
             # Don't want to follow the loop, otherwise we'd be trapped here.
             # Instead, write a goto for the beginning of the loop.
-            label = f'loop_{start.conditional_edge.block.index}'
+            label = f'block_{start.conditional_edge.block.index}'
+            context.used_labels.add(label)
             if_body = Body(False, [SimpleStatement(indent + 4, f'goto {label};')])
     else:
         # We need to see if this is a compound if-statement, i.e. containing
@@ -377,13 +399,10 @@ def build_flowgraph_between(
     while curr_start != end:
         # Write the current node (but return nodes are handled specially).
         if not isinstance(curr_start, ReturnNode):
-            # We currently write loops as labels and gotos. If a node is
-            # "looped to", in the sense that some parent makes a backwards jump
-            # to it, then it needs a label.
-            if any(node.block.index >= curr_start.block.index
-                    for node in curr_start.parents):
-                label = f'loop_{curr_start.block.index}'
-                body.add_statement(SimpleStatement(0, f'{label}:'))
+            # Emit a label for the node (which is only printed if something
+            # jumps to it, e.g. currently for loops).
+            body.add_statement(LabelStatement(context,
+                f'block_{curr_start.block.index}'))
             body.add_node(curr_start, indent, comment_empty=True)
 
         if isinstance(curr_start, BasicNode):
