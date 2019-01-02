@@ -18,6 +18,7 @@ class Context:
     reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
     used_labels: Set[str] = attr.ib(factory=set)
+    emitted_nodes: Set[Node] = attr.ib(factory=set)
     has_warned: bool = attr.ib(default=False)
 
 @attr.s
@@ -399,6 +400,20 @@ def build_flowgraph_between(
     while curr_start != end:
         # Write the current node (but return nodes are handled specially).
         if not isinstance(curr_start, ReturnNode):
+            # If a node is ever encountered twice, we can emit a goto to the
+            # first place we emitted it. Since nodes represent positions in the
+            # assembly, and we use phi's for preserved variable contents, this
+            # will end up semantically equivalent. This can happen sometimes
+            # when early returns/continues/|| are not detected correctly, and
+            # hints at that situation better than if we just blindly duplicate
+            # the block.
+            if curr_start in context.emitted_nodes:
+                label = f'block_{curr_start.block.index}'
+                context.used_labels.add(label)
+                body.add_statement(SimpleStatement(indent, f'goto {label};'))
+                break
+            context.emitted_nodes.add(curr_start)
+
             # Emit a label for the node (which is only printed if something
             # jumps to it, e.g. currently for loops).
             body.add_statement(LabelStatement(context,
