@@ -107,7 +107,7 @@ def generate_temp_label(name: str) -> str:
 #
 # Branch-likely instructions that do not appear in this pattern are kept.
 def normalize_likely_branches(function: Function) -> Function:
-    label_prev_instr: Dict[str, Instruction] = {}
+    label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
@@ -118,7 +118,6 @@ def normalize_likely_branches(function: Function) -> Function:
                 prev_label = None
             prev_instr = item
         elif isinstance(item, Label):
-            assert prev_instr is not None
             label_prev_instr[item.name] = prev_instr
             prev_label = item
 
@@ -133,7 +132,8 @@ def normalize_likely_branches(function: Function) -> Function:
             before_target = label_prev_instr[old_label]
             next_item = next(body_iter)
             orig_next_item = next_item
-            if isinstance(next_item, Instruction) and str(before_target) == str(next_item):
+            if isinstance(next_item, Instruction) and before_target is not None and \
+                    str(before_target) == str(next_item):
                 if id(before_target) not in label_before_instr:
                     new_label = generate_temp_label(old_label)
                     label_before_instr[id(before_target)] = new_label
@@ -558,7 +558,7 @@ def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
 
 def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     """Check whether a given edge in the flow graph is an early return."""
-    if edge != nodes[-1]:
+    if not isinstance(edge, ReturnNode) or edge != nodes[-1]:
         return False
     if not is_trivial_return_block(edge.block):
         # Only trivial return blocks can be used for premature returns,
@@ -577,7 +577,7 @@ def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     return node != nodes[-2]
 
 
-def duplicate_premature_returns(nodes: List[Node]) -> None:
+def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
     """For each jump to an early return node, create a duplicate return node
     for it to jump to. This ensures nice nesting for the if_statements code,
     and avoids a phi node for the return value."""
@@ -593,8 +593,10 @@ def duplicate_premature_returns(nodes: List[Node]) -> None:
             node.successor = n
             n.add_parent(node)
             extra_nodes.append(n)
+
     nodes += extra_nodes
     nodes.sort(key=lambda node: node.block.index)
+    return [n for n in nodes if n.parents or n == nodes[0]]
 
 
 def compute_dominators(nodes: List[Node]) -> None:
@@ -630,15 +632,17 @@ class FlowGraph:
     def entry_node(self) -> Node:
         return self.nodes[0]
 
-    def return_node(self) -> Node:
+    def return_node(self) -> Optional[ReturnNode]:
         candidates = [n for n in self.nodes
                 if isinstance(n, ReturnNode) and n.is_real()]
+        if not candidates:
+            return None
         return max(candidates, key=lambda n: n.block.index)
 
 def build_flowgraph(function: Function) -> FlowGraph:
     blocks = build_blocks(function)
     nodes = build_nodes(function, blocks)
-    duplicate_premature_returns(nodes)
+    nodes = duplicate_premature_returns(nodes)
     compute_dominators(nodes)
     return FlowGraph(nodes)
 

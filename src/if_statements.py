@@ -448,14 +448,17 @@ def build_flowgraph_between(
 def write_function(function_info: FunctionInfo, options: Options) -> None:
     context = Context(flow_graph=function_info.flow_graph, options=options)
     start_node: Node = context.flow_graph.entry_node()
-    return_node: Node = context.flow_graph.return_node()
-    assert isinstance(return_node, ReturnNode)
+    return_node: Optional[ReturnNode] = context.flow_graph.return_node()
+    if return_node is None:
+        fictive_block = Block(-1, None, None)
+        return_node = ReturnNode(block=fictive_block, index=-1)
 
     if options.debug:
         print("Here's the whole function!\n")
     body: Body = build_flowgraph_between(context, start_node, return_node, 4)
 
-    write_return(context, body, return_node, 4, last=True)
+    if return_node.index != -1:
+        write_return(context, body, return_node, 4, last=True)
 
     ret_type = 'void '
     if not context.return_type.is_any():
