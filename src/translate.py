@@ -208,6 +208,9 @@ def as_intish(expr: 'Expression') -> 'Expression':
 def as_intptr(expr: 'Expression') -> 'Expression':
     return as_type(expr, Type.intptr(), True)
 
+def as_ptr(expr: 'Expression') -> 'Expression':
+    return as_type(expr, Type.ptr(), True)
+
 
 @attr.s
 class StackInfo:
@@ -486,15 +489,15 @@ class Cast:
 
 @attr.s(frozen=True, cmp=False)
 class FuncCall:
-    func_name: str = attr.ib()
+    function: 'Expression' = attr.ib()
     args: List['Expression'] = attr.ib()
     type: Type = attr.ib()
 
     def dependencies(self) -> List['Expression']:
-        return self.args
+        return self.args + [self.function]
 
     def __str__(self) -> str:
-        return f'{self.func_name}({", ".join(str(arg) for arg in self.args)})'
+        return f'{self.function}({", ".join(str(arg) for arg in self.args)})'
 
 @attr.s(frozen=True, cmp=True)
 class LocalVar:
@@ -1175,6 +1178,7 @@ CASES_FLOAT_BRANCHES: CmpInstrMap = {
 CASES_JUMPS: MaybeInstrMap = {
     # Unconditional jumps
     'jal': lambda a: a.imm(0),  # not sure what arguments!
+    'jalr': lambda a: a.reg(0), # not sure what arguments!
     'jr':  lambda a: None       # not sure what to return!
 }
 CASES_FLOAT_COMP: CmpInstrMap = {
@@ -1286,7 +1290,7 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
             mnemonic in CASES_BRANCHES or
             mnemonic in CASES_FLOAT_BRANCHES):
         return []
-    if mnemonic == 'jal':
+    if mnemonic in ['jal', 'jalr']:
         return list(map(Register, ['return', 'f0', 'v0', 'v1']))
     if mnemonic in CASES_SOURCE_FIRST_REGISTER:
         return [reg_at(1)]
@@ -1476,11 +1480,16 @@ def translate_node_body(
                 break
             else:
                 # Function call. Well, let's double-check:
-                assert mnemonic == 'jal'
-                target = args.imm(0)
-                assert isinstance(target, AddressOf)
-                target = target.expr
-                assert isinstance(target, GlobalSymbol)
+                assert mnemonic in ['jal', 'jalr']
+                if mnemonic == 'jal':
+                    target = args.imm(0)
+                    assert isinstance(target, AddressOf)
+                    target = target.expr
+                    assert isinstance(target, GlobalSymbol)
+                else:
+                    assert args.count() == 1, "Two-argument form of jalr is not supported."
+                    target = as_ptr(args.reg(0))
+
                 # At most one of $f12 and $a0 may be passed, and at most one of
                 # $f14 and $a1. We could try to figure out which ones, and cap
                 # the function call at the point where a register is empty, but
@@ -1503,7 +1512,7 @@ def translate_node_body(
                 # Reset subroutine_args, for the next potential function call.
                 subroutine_args = []
 
-                call: Expression = FuncCall(target.symbol_name, func_args, Type.any())
+                call: Expression = FuncCall(target, func_args, Type.any())
                 call = eval_once(call, always_emit=True, prefix='ret')
                 # Clear out caller-save registers, for clarity and to ensure
                 # that argument regs don't get passed into the next function.
