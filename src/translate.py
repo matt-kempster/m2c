@@ -1019,9 +1019,11 @@ def handle_ori(args: InstrArgs) -> Expression:
         # handled this in the lui, but let's put lhs into this register too.
         assert imm.right == Literal(0xFFFF)
         return imm.left
-    else:
-        # Regular bitwise OR.
-        return BinaryOp.int(left=args.reg(1), op='|', right=imm)
+    r = args.reg(1)
+    if isinstance(r, Literal) and isinstance(imm, Literal):
+        return Literal(value=(r.value | imm.value))
+    # Regular bitwise OR.
+    return BinaryOp.int(left=r, op='|', right=imm)
 
 def handle_addi(args: InstrArgs) -> Expression:
     # Two-argument form, mostly used for "addiu $reg, %lo(...)"
