@@ -479,12 +479,12 @@ class Cast:
         return [self.expr]
 
     def __str__(self) -> str:
-        if self.reinterpret and (self.silent or is_type_obvious(self.expr)):
-            return str(self.expr)
         if (self.reinterpret and
                 self.expr.type.is_float() != self.type.is_float()):
             # This shouldn't happen, but mark it in the output if it does.
             return f'(bitwise {self.type}) {self.expr}'
+        if self.reinterpret and (self.silent or is_type_obvious(self.expr)):
+            return str(self.expr)
         return f'({self.type}) {self.expr}'
 
 @attr.s(frozen=True, cmp=False)
