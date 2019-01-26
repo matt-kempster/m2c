@@ -8,7 +8,7 @@ void test(s32 arg0, s32 arg1)
     {
 block_1:
         *(arg0 + sp4) = (u8)0;
-        temp_t9 = (sp4 + 1);
+        temp_t9 = sp4 + 1;
         sp4 = temp_t9;
         if (temp_t9 < arg1)
         {

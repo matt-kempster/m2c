@@ -18,7 +18,7 @@ block_1:
             {
                 D_4101D0.unkC = 3;
 block_10:
-                temp_t7 = (sp4 + 1);
+                temp_t7 = sp4 + 1;
                 sp4 = temp_t7;
                 if (temp_t7 < arg0)
                 {

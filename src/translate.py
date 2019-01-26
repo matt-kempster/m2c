@@ -501,7 +501,8 @@ class FuncCall:
         return self.args + [self.function]
 
     def __str__(self) -> str:
-        return f'{self.function}({", ".join(str(arg) for arg in self.args)})'
+        args = ', '.join(stringify_expr(arg) for arg in self.args)
+        return f'{self.function}({args})'
 
 @attr.s(frozen=True, cmp=True)
 class LocalVar:
@@ -707,9 +708,10 @@ class EvalOnceStmt:
             return self.expr.num_usages > 1
 
     def __str__(self) -> str:
+        val_str = stringify_expr(self.expr.wrapped_expr)
         if self.expr.always_emit and self.expr.num_usages == 0:
-            return f'{self.expr.wrapped_expr};'
-        return f'{self.expr.get_var_name()} = {self.expr.wrapped_expr};'
+            return f'{val_str};'
+        return f'{self.expr.get_var_name()} = {val_str};'
 
 @attr.s
 class SetPhiStmt:
@@ -724,7 +726,8 @@ class SetPhiStmt:
         return True
 
     def __str__(self) -> str:
-        return f'{self.phi.propagates_to().get_var_name()} = {self.expr};'
+        val_str = stringify_expr(self.expr)
+        return f'{self.phi.propagates_to().get_var_name()} = {val_str};'
 
 @attr.s
 class StoreStmt:
@@ -735,7 +738,7 @@ class StoreStmt:
         return True
 
     def __str__(self) -> str:
-        return f'{self.dest} = {self.source};'
+        return f'{self.dest} = {stringify_expr(self.source)};'
 
 @attr.s
 class CommentStmt:
@@ -981,6 +984,30 @@ def simplify_condition(expr: Expression) -> Expression:
                 return left
         return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
     return expr
+
+def balanced_parentheses(string: str) -> bool:
+    """
+    Check if parentheses in a string are balanced, ignoring any non-parenthesis
+    characters. E.g. true for "(x())yz", false for ")(" or "(".
+    """
+    bal = 0
+    for c in string:
+        if c == '(':
+            bal += 1
+        elif c == ')':
+            if bal == 0:
+                return False
+            bal -= 1
+    return (bal == 0)
+
+def stringify_expr(expr: Expression) -> str:
+    """
+    Stringify an expression, stripping unnecessary parentheses around it.
+    """
+    ret = str(expr)
+    if ret.startswith('(') and balanced_parentheses(ret[1:-1]):
+        return ret[1:-1]
+    return ret
 
 def mark_used(expr: Expression) -> None:
     if isinstance(expr, (PhiExpr, EvalOnceExpr, Cast)):

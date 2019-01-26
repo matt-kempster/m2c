@@ -8,7 +8,7 @@ from flow_graph import (BasicNode, Block, ConditionalNode, FlowGraph, Node,
                         ReturnNode)
 from options import Options
 from translate import (BinaryOp, BlockInfo, Condition, FunctionInfo, Type,
-                       as_type, simplify_condition)
+                       as_type, simplify_condition, stringify_expr)
 
 
 @attr.s
@@ -36,11 +36,9 @@ class IfElseStatement:
         # Avoid duplicate parentheses. TODO: make this cleaner and do it more
         # uniformly, not just here.
         condition = simplify_condition(self.condition)
-        cond_str = str(condition)
-        if not isinstance(condition, BinaryOp):
-            cond_str = f'({cond_str})'
+        cond_str = stringify_expr(condition)
         if_str = '\n'.join([
-            f'{space}if {cond_str}',
+            f'{space}if ({cond_str})',
             f'{space}{{',
             str(self.if_body),  # has its own indentation
             f'{space}}}',
@@ -375,8 +373,8 @@ def write_return(
 
     ret = ret_info.return_value
     if ret is not None:
-        ret = as_type(ret, context.return_type, True)
-        body.add_statement(SimpleStatement(indent, f'return {ret};'))
+        ret_str = stringify_expr(as_type(ret, context.return_type, True))
+        body.add_statement(SimpleStatement(indent, f'return {ret_str};'))
     elif not last:
         body.add_statement(SimpleStatement(indent, 'return;'))
 
