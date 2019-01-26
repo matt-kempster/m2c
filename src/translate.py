@@ -478,6 +478,10 @@ class Cast:
     def dependencies(self) -> List['Expression']:
         return [self.expr]
 
+    def use(self) -> None:
+        # Try to unify, to make stringification output better.
+        self.expr.type.unify(self.type)
+
     def __str__(self) -> str:
         if (self.reinterpret and
                 self.expr.type.is_float() != self.type.is_float()):
@@ -979,9 +983,9 @@ def simplify_condition(expr: Expression) -> Expression:
     return expr
 
 def mark_used(expr: Expression) -> None:
-    if isinstance(expr, (PhiExpr, EvalOnceExpr)):
+    if isinstance(expr, (PhiExpr, EvalOnceExpr, Cast)):
         expr.use()
-    else:
+    if not isinstance(expr, EvalOnceExpr):
         for sub_expr in expr.dependencies():
             mark_used(sub_expr)
 

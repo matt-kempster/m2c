@@ -2,7 +2,7 @@ void test(s32 arg0, s32 arg1)
 {
     ?32 sp24;
     void *temp_v0;
-    ? temp_ret;
+    s32 temp_ret;
 
     temp_v0 = (D_410170 + (arg0 * 8));
     sp24 = (?32) temp_v0->unk8;
