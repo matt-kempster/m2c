@@ -367,7 +367,7 @@ def format_hex(val: int) -> str:
 
 @attr.s(frozen=True, cmp=False)
 class ErrorExpr:
-    type: Type = attr.ib()
+    type: Type = attr.ib(factory=Type.any)
 
     def dependencies(self) -> List['Expression']:
         return []
@@ -1192,6 +1192,11 @@ StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
 PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]]
 
+CASES_IGNORE: Set[str] = {
+    # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
+    # FCSR gets are as well, but it's fine to read ERROR for those.
+    'ctc1',
+}
 CASES_SOURCE_FIRST_EXPRESSION: StoreInstrMap = {
     # Storage instructions
     'sb': lambda a: make_store(a, type=Type.of_size(8)),
@@ -1204,7 +1209,6 @@ CASES_SOURCE_FIRST_EXPRESSION: StoreInstrMap = {
 CASES_SOURCE_FIRST_REGISTER: InstrMap = {
     # Floating point moving instruction
     'mtc1': lambda a: a.reg(0),
-    'ctc1': lambda a: a.reg(0),
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
@@ -1286,6 +1290,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     'cvt.s.w': lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f32()),
     'cvt.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
     'cvt.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
+    'cvt.u.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.u32()),
+    'cvt.u.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.u32()),
     'trunc.w.s': lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
     'trunc.w.d': lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
     # Bit arithmetic
@@ -1310,10 +1316,11 @@ CASES_DESTINATION_FIRST: InstrMap = {
     'move': lambda a: a.reg(1),
     # Floating point moving instructions
     'mfc1': lambda a: a.reg(1),
-    'cfc1': lambda a: a.reg(1),
     'mov.s': lambda a: a.reg(1),
     # (I don't know why this typing.cast is needed... mypy bug?)
     'mov.d': lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
+    # FCSR get
+    'cfc1': lambda a: ErrorExpr(),
     # Loading instructions (TODO: type annotations)
     'li': lambda a: a.imm(1),
     'lui': lambda a: load_upper(a),
@@ -1338,7 +1345,8 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
     if (mnemonic in ['nop', 'jr'] or
             mnemonic in CASES_SOURCE_FIRST_EXPRESSION or
             mnemonic in CASES_BRANCHES or
-            mnemonic in CASES_FLOAT_BRANCHES):
+            mnemonic in CASES_FLOAT_BRANCHES or
+            mnemonic in CASES_IGNORE):
         return []
     if mnemonic in ['jal', 'jalr']:
         return list(map(Register, ['return', 'f0', 'v0', 'v1']))
@@ -1484,7 +1492,10 @@ def translate_node_body(
         args = InstrArgs(instr.args, regs, stack_info)
 
         # Figure out what code to generate!
-        if mnemonic in CASES_SOURCE_FIRST_EXPRESSION:
+        if mnemonic in CASES_IGNORE:
+            pass
+
+        elif mnemonic in CASES_SOURCE_FIRST_EXPRESSION:
             # Store a value in a permanent place.
             to_store = CASES_SOURCE_FIRST_EXPRESSION[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
@@ -1626,8 +1637,7 @@ def translate_graph_from_block(
         emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
         error_stmt = CommentStmt('Error: ' + emsg)
-        dummy_cond = ErrorExpr(type=Type.any())
-        block_info = BlockInfo([error_stmt], None, dummy_cond, regs)
+        block_info = BlockInfo([error_stmt], None, ErrorExpr(), regs)
 
     node.block.add_block_info(block_info)
     if isinstance(node, ReturnNode):

@@ -175,6 +175,7 @@ def prune_unreferenced_labels(function: Function) -> Function:
 # Currently handled:
 # - checks for x/0 and INT_MIN/-1 after division (removed)
 # - unsigned to float conversion (converted to a made-up instruction)
+# - float/double to unsigned conversion (converted to a made-up instruction)
 def simplify_standard_patterns(function: Function) -> Function:
     BodyPart = Union[Instruction, Label]
 
@@ -209,6 +210,41 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
     ]
 
+    ftu_pattern: List[str] = [
+        "cfc1", # cfc1 Y, $31
+        "nop",
+        "andi",
+        "andi*", # (skippable)
+        "?", # bnez or bneql
+        "?",
+        "li*",
+        "mtc1",
+        "mtc1*",
+        "li",
+        "?", # sub.fmt ?, X, ?
+        "ctc1",
+        "nop",
+        "?", # cvt.w.fmt ?, ?
+        "cfc1",
+        "nop",
+        "andi",
+        "andi*",
+        "bnez",
+        "nop",
+        "mfc1",
+        "li",
+        "b",
+        "or",
+        "",
+        "b",
+        "li",
+        "?", # label: (moved one step down if bneql)
+        "?", # mfc1
+        "nop",
+        "bltz",
+        "nop",
+    ]
+
     def get_li_imm(ins: Instruction) -> Optional[int]:
         if ins.mnemonic == 'lui' and isinstance(ins.args[1], AsmLiteral):
             return (ins.args[1].value & 0xffff) << 16
@@ -224,13 +260,17 @@ def simplify_standard_patterns(function: Function) -> Function:
             return ins.args[2].value & 0xffff
         return None
 
-    def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> bool:
+    def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> int:
         def match_one(actual: BodyPart, expected: str) -> bool:
+            if expected == '?':
+                return True
             if not isinstance(actual, Instruction):
                 return (expected == "")
             ins = actual
             exp = parse_instruction(expected)
             if not exp.args:
+                if exp.mnemonic == 'li' and ins.mnemonic in ['lui', 'addiu']:
+                    return True
                 return ins.mnemonic == exp.mnemonic
             if str(ins) == str(exp):
                 return True
@@ -239,8 +279,15 @@ def simplify_standard_patterns(function: Function) -> Function:
                     isinstance(exp.args[1], AsmLiteral) and
                     (exp.args[1].value & 0xffffffff) == get_li_imm(ins))
 
-        return (len(actual) == len(pattern) and
-            all(match_one(a, e) for (a, e) in zip(actual, pattern)))
+        actuali = 0
+        for pat in pattern:
+            matches = (actuali < len(actual) and
+                    match_one(actual[actuali], pat.rstrip('*')))
+            if matches:
+                actuali += 1
+            elif not pat.endswith('*'):
+                return 0
+        return actuali
 
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i:i + len(div_pattern)]
@@ -279,6 +326,23 @@ def simplify_standard_patterns(function: Function) -> Function:
         new_instr = Instruction(mnemonic="cvt.s.u", args=cvt_instr.args)
         return ([new_instr], i + len(utf_pattern) - 1)
 
+    def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i:i + len(ftu_pattern)]
+        consumed = matches_pattern(actual, ftu_pattern)
+        if not consumed:
+            return None
+        sub = next(x for x in actual if isinstance(x, Instruction) and
+                x.mnemonic.startswith('sub'))
+        cfc = actual[0]
+        assert isinstance(cfc, Instruction)
+        fmt = sub.mnemonic.split('.')[-1]
+        args = [cfc.args[0], sub.args[1]]
+        if fmt == 's':
+            new_instr = Instruction(mnemonic="cvt.u.s", args=args)
+        else:
+            new_instr = Instruction(mnemonic="cvt.u.d", args=args)
+        return ([new_instr], i + consumed)
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
 
@@ -286,7 +350,8 @@ def simplify_standard_patterns(function: Function) -> Function:
     i = 0
     while i < len(function.body):
         repl, i = (try_replace_div(i) or try_replace_divu(i) or
-                try_replace_utf_conv(i) or no_replacement(i))
+                try_replace_utf_conv(i) or try_replace_ftu_conv(i) or
+                no_replacement(i))
         new_function.body.extend(repl)
     return new_function
 
