@@ -9,6 +9,7 @@ import attr
 from flow_graph import (Block, FlowGraph, Function, Node, ReturnNode,
                         build_flowgraph)
 from options import Options
+from error import DecompFailure
 from parse_instruction import (Argument, AsmAddressMode, AsmGlobalSymbol,
                                AsmLiteral, BinOp, Instruction, Macro, Register)
 
@@ -362,6 +363,20 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
 
 def format_hex(val: int) -> str:
     return format(val, 'x').upper()
+
+
+@attr.s(frozen=True, cmp=False)
+class ErrorExpr:
+    type: Type = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return []
+
+    def negated(self) -> 'Condition':
+        return self
+
+    def __str__(self) -> str:
+        return 'ERROR'
 
 
 @attr.s(frozen=True, cmp=False)
@@ -764,11 +779,13 @@ Expression = Union[
     SubroutineArg,
     EvalOnceExpr,
     PhiExpr,
+    ErrorExpr,
 ]
 
 Condition = Union[
     BinaryOp,
     UnaryOp,
+    ErrorExpr,
 ]
 
 Statement = Union[
@@ -1333,7 +1350,7 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
         return [Register('condition_bit')]
     if mnemonic in CASES_HI_LO:
         return [Register('hi'), Register('lo')]
-    assert False, f"I don't know how to handle {mnemonic}!"
+    raise DecompFailure(f"I don't know how to handle {mnemonic}!")
 
 def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
     if node.immediate_dominator is None:
@@ -1574,7 +1591,7 @@ def translate_node_body(
             set_reg(args.reg_ref(0), CASES_DESTINATION_FIRST[mnemonic](args))
 
         else:
-            assert False, f"I don't know how to handle {mnemonic}!"
+            raise DecompFailure(f"I don't know how to handle {mnemonic}!")
 
     if branch_condition is not None:
         mark_used(branch_condition)
@@ -1609,7 +1626,8 @@ def translate_graph_from_block(
         emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
         error_stmt = CommentStmt('Error: ' + emsg)
-        block_info = BlockInfo([error_stmt], None, None, regs)
+        dummy_cond = ErrorExpr(type=Type.any())
+        block_info = BlockInfo([error_stmt], None, dummy_cond, regs)
 
     node.block.add_block_info(block_info)
     if isinstance(node, ReturnNode):
