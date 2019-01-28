@@ -63,6 +63,8 @@ if __name__ == "__main__":
     parser.add_argument('function', help="function index or name (or 'all')", type=str)
     parser.add_argument('--debug', dest='debug',
             help="print debug info", action='store_true')
+    parser.add_argument('--no-andor', dest='andor_detection',
+            help="disable detection of &&/||", action='store_false')
     parser.add_argument('--stop-on-error', dest='stop_on_error',
             help="stop when encountering any error", action='store_true')
     parser.add_argument('--print-assembly', dest='print_assembly',
@@ -81,6 +83,7 @@ if __name__ == "__main__":
     options = Options(
         filename=args.filename,
         debug=args.debug,
+        andor_detection=args.andor_detection,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,

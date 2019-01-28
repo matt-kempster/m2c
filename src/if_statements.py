@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
 
 import attr
 
+from error import DecompFailure
 from flow_graph import (BasicNode, Block, ConditionalNode, FlowGraph, Node,
                         ReturnNode)
 from options import Options
@@ -270,9 +271,9 @@ def count_non_postdominated_parents(
     # output of && and || may not be correct.
     if count not in [0, len(child.parents)] and not context.has_warned:
         context.has_warned = True
-        print("Warning: confusing control flow, output may contain duplicate "
-            "nodes or have incorrect && and || detection. Run with --debug "
-            "to see node comments.\n")
+        print("Warning: confusing control flow, output may have incorrect && "
+            "and || detection. Run with --no-andor to disable detection and "
+            "print gotos instead.\n")
     return count
 
 
@@ -285,6 +286,11 @@ def get_number_of_if_conditions(
     "if (1 || 2 || ... || k)", where the numbers are labels for clauses.
     (It remains unclear how a predicate that mixes && and || would behave.)
     """
+    if not context.options.andor_detection:
+        # If &&/|| detection is disabled, short-circuit this logic and return
+        # 1 instead.
+        return 1
+
     count1 = count_non_postdominated_parents(context, node.conditional_edge,
                                              curr_end)
     count2 = count_non_postdominated_parents(context, node.fallthrough_edge,
@@ -325,11 +331,14 @@ def get_full_if_condition(
     conditions: List[Condition] = []
     # Get every condition.
     while count > 0:
+        if not isinstance(curr_node, ConditionalNode):
+            raise DecompFailure("Complex control flow; node assumed to be "
+                "part of &&/|| wasn't. Run with --no-andor to disable "
+                "detection of &&/|| and try again.")
         block_info = curr_node.block.block_info
         assert isinstance(block_info, BlockInfo)
         assert block_info.branch_condition is not None
         conditions.append(block_info.branch_condition)
-        assert isinstance(curr_node, ConditionalNode)
         prev_node = curr_node
         curr_node = curr_node.fallthrough_edge
         count -= 1

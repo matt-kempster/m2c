@@ -22,6 +22,8 @@ class Block:
     block_info: Optional[Any] = None
 
     def add_block_info(self, block_info: Any) -> None:
+        if self.block_info is not None:
+            print("duplicate add_block_info")
         self.block_info = block_info
 
     def clone(self) -> 'Block':
