@@ -8,7 +8,7 @@ s32 test(s32 arg0)
         phi_v0 = 0;
 block_2:
         temp_v0 = phi_v0 + 1;
-        D_410150 = 1;
+        D_410150.unk0 = 1;
         if (2 == D_410150.unk4)
         {
             D_410150.unk8 = 3;

@@ -7,7 +7,7 @@ void test(s32 arg0)
     if (arg0 > 0)
     {
 block_1:
-        D_4101D0 = 1;
+        D_4101D0.unk0 = 1;
         if (D_4101D0.unk4 == 2)
         {
             D_4101D0.unk8 = 3;

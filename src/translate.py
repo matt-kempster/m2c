@@ -227,6 +227,7 @@ class StackInfo:
     phi_vars: List['PhiExpr'] = attr.ib(factory=list)
     arguments: List['PassedInArg'] = attr.ib(factory=list)
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
+    nonzero_accesses: Set['Expression'] = attr.ib(factory=set)
 
     def temp_var_generator(self, prefix: str) -> Callable[[], str]:
         def gen() -> str:
@@ -267,6 +268,13 @@ class StackInfo:
     def get_argument(self, location: int) -> 'PassedInArg':
         return PassedInArg(location, copied=True,
                 type=self.unique_type_for('arg', location))
+
+    def record_struct_access(self, ptr: 'Expression', location: int) -> None:
+        if location:
+            self.nonzero_accesses.add(ptr)
+
+    def has_nonzero_access(self, ptr: 'Expression') -> bool:
+        return ptr in self.nonzero_accesses
 
     def unique_type_for(self, category: str, key: Any) -> 'Type':
         key = (category, key)
@@ -563,27 +571,28 @@ class StructAccess:
     # Really it should represent the latter, but making that so is hard.
     struct_var: 'Expression' = attr.ib()
     offset: int = attr.ib()
+    stack_info: StackInfo = attr.ib(cmp=False, repr=False)
     type: Type = attr.ib(cmp=False)
 
     def dependencies(self) -> List['Expression']:
         return [self.struct_var]
 
     def __str__(self) -> str:
-        # TODO: don't treat offset == 0 specially if there have been other
-        # non-zero-offset accesses for the same struct_var
         def p(expr: Expression) -> str:
             # Nested dereferences may need to be parenthesized. All other
             # expressions will already have adequate parentheses added to them.
             # (Except Cast's, TODO...)
             s = str(expr)
             return f'({s})' if s.startswith('*') else s
+
+        has_nonzero_access = self.stack_info.has_nonzero_access(self.struct_var)
         if isinstance(self.struct_var, AddressOf):
-            if self.offset == 0:
+            if self.offset == 0 and not has_nonzero_access:
                 return f'{self.struct_var.expr}'
             else:
                 return f'{p(self.struct_var.expr)}.unk{format_hex(self.offset)}'
         else:
-            if self.offset == 0:
+            if self.offset == 0 and not has_nonzero_access:
                 return f'*{self.struct_var}'
             else:
                 return f'{p(self.struct_var)}->unk{format_hex(self.offset)}'
@@ -940,7 +949,9 @@ def deref(
             # Struct member is being dereferenced.
             var = regs[arg.rhs]
             var.type.unify(Type.ptr())
+            stack_info.record_struct_access(var, location)
             return StructAccess(struct_var=var, offset=location,
+                    stack_info=stack_info,
                     type=stack_info.unique_type_for('struct', (var, location)))
     else:
         # Keep GlobalSymbol's as-is.
