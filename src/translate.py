@@ -229,12 +229,10 @@ class StackInfo:
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
     nonzero_accesses: Set['Expression'] = attr.ib(factory=set)
 
-    def temp_var_generator(self, prefix: str) -> Callable[[], str]:
-        def gen() -> str:
-            counter = self.temp_name_counter.get(prefix, 0) + 1
-            self.temp_name_counter[prefix] = counter
-            return f'temp_{prefix}' + (f'_{counter}' if counter > 1 else '')
-        return gen
+    def temp_var(self, prefix: str) -> str:
+        counter = self.temp_name_counter.get(prefix, 0) + 1
+        self.temp_name_counter[prefix] = counter
+        return prefix + (f'_{counter}' if counter > 1 else '')
 
     def in_subroutine_arg_region(self, location: int) -> bool:
         assert not self.is_leaf
@@ -271,10 +269,10 @@ class StackInfo:
 
     def record_struct_access(self, ptr: 'Expression', location: int) -> None:
         if location:
-            self.nonzero_accesses.add(ptr)
+            self.nonzero_accesses.add(unwrap_deep(ptr))
 
     def has_nonzero_access(self, ptr: 'Expression') -> bool:
-        return ptr in self.nonzero_accesses
+        return unwrap_deep(ptr) in self.nonzero_accesses
 
     def unique_type_for(self, category: str, key: Any) -> 'Type':
         key = (category, key)
@@ -372,6 +370,18 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
 def format_hex(val: int) -> str:
     return format(val, 'x').upper()
 
+
+@attr.s(cmp=False)
+class Var:
+    stack_info: StackInfo = attr.ib(repr=False)
+    prefix: str = attr.ib()
+    num_usages: int = attr.ib(default=0)
+    name: Optional[str] = attr.ib(default=None)
+
+    def __str__(self) -> str:
+        if self.name is None:
+            self.name = self.stack_info.temp_var(self.prefix)
+        return self.name
 
 @attr.s(frozen=True, cmp=False)
 class ErrorExpr:
@@ -585,17 +595,18 @@ class StructAccess:
             s = str(expr)
             return f'({s})' if s.startswith('*') else s
 
-        has_nonzero_access = self.stack_info.has_nonzero_access(self.struct_var)
-        if isinstance(self.struct_var, AddressOf):
+        var = unwrap(self.struct_var)
+        has_nonzero_access = self.stack_info.has_nonzero_access(var)
+        if isinstance(var, AddressOf):
             if self.offset == 0 and not has_nonzero_access:
-                return f'{self.struct_var.expr}'
+                return f'{var.expr}'
             else:
-                return f'{p(self.struct_var.expr)}.unk{format_hex(self.offset)}'
+                return f'{p(var.expr)}.unk{format_hex(self.offset)}'
         else:
             if self.offset == 0 and not has_nonzero_access:
-                return f'*{self.struct_var}'
+                return f'*{var}'
             else:
-                return f'{p(self.struct_var)}->unk{format_hex(self.offset)}'
+                return f'{p(var)}->unk{format_hex(self.offset)}'
 
 @attr.s(frozen=True, cmp=True)
 class GlobalSymbol:
@@ -661,29 +672,52 @@ class AddressMode:
 @attr.s(frozen=False, cmp=False)
 class EvalOnceExpr:
     wrapped_expr: 'Expression' = attr.ib()
-    var: Union[str, Callable[[], str]] = attr.ib(repr=False)
+    var: Var = attr.ib()
     always_emit: bool = attr.ib()
+    trivial: bool = attr.ib()
     type: Type = attr.ib()
     num_usages: int = attr.ib(default=0)
 
     def dependencies(self) -> List['Expression']:
         return [self.wrapped_expr]
 
-    def get_var_name(self) -> str:
-        if not isinstance(self.var, str):
-            self.var = self.var()
-        return self.var
-
     def use(self) -> None:
         self.num_usages += 1
-        if self.num_usages == 1 and not self.always_emit:
+        if self.trivial or (self.num_usages == 1 and not self.always_emit):
             mark_used(self.wrapped_expr)
 
+    def need_decl(self) -> bool:
+        return self.num_usages > 1 and not self.trivial
+
     def __str__(self) -> str:
-        if self.num_usages <= 1:
+        if not self.need_decl():
             return str(self.wrapped_expr)
         else:
-            return self.get_var_name()
+            return str(self.var)
+
+@attr.s(cmp=False)
+class ForceVarExpr:
+    wrapped_expr: EvalOnceExpr = attr.ib()
+    type: Type = attr.ib()
+
+    def dependencies(self) -> List['Expression']:
+        return [self.wrapped_expr]
+
+    def use(self) -> None:
+        # Transition the EvalOnceExpr to non-trivial, and mark it as used
+        # multiple times to force a var.
+        # TODO: If it was originally trivial, we may previously have marked its
+        # wrappee used multiple times, even though we now know that it should
+        # have been marked just once... We could fix that by moving marking of
+        # trivial EvalOnceExpr's to the very end. At least the consequences of
+        # getting this wrong are pretty mild -- it just causes extraneous var
+        # emission in rare cases.
+        self.wrapped_expr.trivial = False
+        self.wrapped_expr.use()
+        self.wrapped_expr.use()
+
+    def __str__(self) -> str:
+        return str(self.wrapped_expr)
 
 @attr.s(frozen=False, cmp=False)
 class PhiExpr:
@@ -723,19 +757,19 @@ class EvalOnceStmt:
     expr: EvalOnceExpr = attr.ib()
 
     def need_decl(self) -> bool:
-        return self.expr.num_usages > 1
+        return self.expr.need_decl()
 
     def should_write(self) -> bool:
         if self.expr.always_emit:
             return self.expr.num_usages != 1
         else:
-            return self.expr.num_usages > 1
+            return self.need_decl()
 
     def __str__(self) -> str:
         val_str = stringify_expr(self.expr.wrapped_expr)
         if self.expr.always_emit and self.expr.num_usages == 0:
             return f'{val_str};'
-        return f'{self.expr.get_var_name()} = {val_str};'
+        return f'{self.expr.var} = {val_str};'
 
 @attr.s
 class SetPhiStmt:
@@ -787,6 +821,7 @@ Expression = Union[
     StructAccess,
     SubroutineArg,
     EvalOnceExpr,
+    ForceVarExpr,
     PhiExpr,
     ErrorExpr,
 ]
@@ -823,6 +858,13 @@ class RegInfo:
             self.stack_info.add_argument(arg)
             arg.type.unify(ret.type)
             return arg
+        if isinstance(ret, ForceVarExpr):
+            # Some of the logic in this file is unprepared to deal with
+            # ForceVarExpr transparent wrappers... so for simplicity, we mark
+            # it used and return the wrappee. Not optimal (what if the value
+            # isn't used after all?), but it works decently well.
+            ret.use()
+            ret = ret.wrapped_expr
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -966,8 +1008,8 @@ def is_repeatable_expression(expr: Expression) -> bool:
     # expression was created and when it's used. For now, though, we make this
     # naive guess at the creation. (Another signal we could potentially use is
     # whether the expression is stored in a callee-save register.)
-    if expr is None or isinstance(expr, (EvalOnceExpr, Literal, GlobalSymbol,
-            LocalVar, PassedInArg, SubroutineArg)):
+    if expr is None or isinstance(expr, (EvalOnceExpr, ForceVarExpr, Literal,
+            GlobalSymbol, LocalVar, PassedInArg, SubroutineArg)):
         return True
     if isinstance(expr, AddressOf):
         return is_repeatable_expression(expr.expr)
@@ -986,8 +1028,10 @@ def is_type_obvious(expr: Expression) -> bool:
     """
     if isinstance(expr, (Cast, Literal, AddressOf, LocalVar, PassedInArg)):
         return True
+    if isinstance(expr, ForceVarExpr):
+        return is_type_obvious(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr):
-        if expr.num_usages > 1:
+        if expr.need_decl():
             return True
         return is_type_obvious(expr.wrapped_expr)
     return False
@@ -1038,11 +1082,42 @@ def stringify_expr(expr: Expression) -> str:
     return ret
 
 def mark_used(expr: Expression) -> None:
-    if isinstance(expr, (PhiExpr, EvalOnceExpr, Cast)):
+    if isinstance(expr, (PhiExpr, EvalOnceExpr, ForceVarExpr, Cast)):
         expr.use()
-    if not isinstance(expr, EvalOnceExpr):
+    if not isinstance(expr, (EvalOnceExpr, ForceVarExpr)):
         for sub_expr in expr.dependencies():
             mark_used(sub_expr)
+
+def uses_expr(expr: Expression, sub_expr: Expression) -> bool:
+    if expr == sub_expr:
+        return True
+    for e in expr.dependencies():
+        if uses_expr(e, sub_expr):
+            return True
+    return False
+
+def unwrap(expr: Expression) -> Expression:
+    """
+    Unwrap EvalOnceExpr's and ForceVarExpr's, stopping at variable boundaries.
+
+    This function may produce wrong results while code is being generated,
+    since at that point we don't know the final status of EvalOnceExpr's.
+    """
+    if isinstance(expr, ForceVarExpr):
+        return unwrap(expr.wrapped_expr)
+    if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
+        return unwrap(expr.wrapped_expr)
+    return expr
+
+def unwrap_deep(expr: Expression) -> Expression:
+    """
+    Unwrap EvalOnceExpr's and ForceVarExpr's, even past variable boundaries.
+
+    This should generally only be used for deep equality checks.
+    """
+    if isinstance(expr, (EvalOnceExpr, ForceVarExpr)):
+        return unwrap_deep(expr.wrapped_expr)
+    return expr
 
 def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     if isinstance(arg, AsmGlobalSymbol):
@@ -1427,7 +1502,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             assert isinstance(block_info, BlockInfo)
             exprs.append(block_info.final_register_states[phi.reg])
 
-        if all(e == exprs[0] for e in exprs[1:]):
+        if all(unwrap_deep(e) == unwrap_deep(exprs[0]) for e in exprs[1:]):
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
@@ -1472,16 +1547,38 @@ def translate_node_body(
     branch_condition: Optional[Condition] = None
     return_value: Optional[Expression] = None
 
-    def eval_once(expr: Expression, always_emit: bool, prefix: str) -> Expression:
+    def eval_once(
+        expr: Expression,
+        always_emit: bool,
+        trivial: bool,
+        prefix: str='',
+        reuse_var: Optional[Var]=None
+    ) -> EvalOnceExpr:
         if always_emit:
             # (otherwise this will be marked used once num_usages reaches 1)
             mark_used(expr)
+        assert reuse_var or prefix
+        var = reuse_var or Var(stack_info, 'temp_' + prefix)
         expr = EvalOnceExpr(wrapped_expr=expr, always_emit=always_emit,
-                var=stack_info.temp_var_generator(prefix), type=expr.type)
+                trivial=trivial, var=var, type=expr.type)
+        var.num_usages += 1
         stmt = EvalOnceStmt(expr)
         to_write.append(stmt)
         stack_info.temp_vars.append(stmt)
         return expr
+
+    def prevent_later_uses(sub_expr: Expression) -> None:
+        for r in regs.contents.keys():
+            e = regs.get_raw(r)
+            assert e is not None
+            if not isinstance(e, ForceVarExpr) and uses_expr(e, sub_expr):
+                # Mark the register as "if used, emit the expression's once
+                # var". I think we should always have a once var at this point,
+                # but if we don't, create one.
+                if not isinstance(e, EvalOnceExpr):
+                    e = eval_once(e, always_emit=False, trivial=False,
+                            prefix=r.register_name)
+                regs[r] = ForceVarExpr(e, type=e.type)
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if isinstance(expr, LocalVar) and expr in local_var_writes:
@@ -1490,9 +1587,29 @@ def translate_node_body(
             orig_reg, orig_expr = local_var_writes[expr]
             if orig_reg == reg:
                 expr = orig_expr
-        if expr is not None and not is_repeatable_expression(expr):
-            expr = eval_once(expr, always_emit=False, prefix=reg.register_name)
+        if expr is not None and not isinstance(expr, Literal):
+            expr = eval_once(expr, always_emit=False,
+                    trivial=is_repeatable_expression(expr),
+                    prefix=reg.register_name)
         regs[reg] = expr
+
+    def overwrite_reg(reg: Register, expr: Expression) -> None:
+        prev = regs.get_raw(reg)
+        if isinstance(prev, ForceVarExpr):
+            prev = prev.wrapped_expr
+        if (not isinstance(prev, EvalOnceExpr) or isinstance(expr, Literal) or
+                reg == Register('sp') or not prev.type.unify(expr.type)):
+            set_reg(reg, expr)
+        else:
+            # TODO: This is a bit heavy-handed: we're preventing later uses
+            # even though we are not sure whether we will actually emit the
+            # overwrite. Doing this properly is hard, however -- it would
+            # involve tracking "time" for uses, and sometimes moving timestamps
+            # backwards when EvalOnceExpr's get emitted as vars.
+            prevent_later_uses(prev)
+            regs[reg] = eval_once(expr, always_emit=False,
+                    trivial=is_repeatable_expression(expr),
+                    reuse_var=prev.var)
 
     for instr in node.block.instructions:
         # Save the current mnemonic.
@@ -1554,13 +1671,13 @@ def translate_node_body(
                 # Function call. Well, let's double-check:
                 assert mnemonic in ['jal', 'jalr']
                 if mnemonic == 'jal':
-                    target = args.imm(0)
-                    assert isinstance(target, AddressOf)
-                    target = target.expr
-                    assert isinstance(target, GlobalSymbol)
+                    fn_target = args.imm(0)
+                    assert isinstance(fn_target, AddressOf)
+                    fn_target = fn_target.expr
+                    assert isinstance(fn_target, GlobalSymbol)
                 else:
                     assert args.count() == 1, "Two-argument form of jalr is not supported."
-                    target = as_ptr(args.reg(0))
+                    fn_target = as_ptr(args.reg(0))
 
                 # At most one of $f12 and $a0 may be passed, and at most one of
                 # $f14 and $a1. We could try to figure out which ones, and cap
@@ -1584,8 +1701,9 @@ def translate_node_body(
                 # Reset subroutine_args, for the next potential function call.
                 subroutine_args = []
 
-                call: Expression = FuncCall(target, func_args, Type.any())
-                call = eval_once(call, always_emit=True, prefix='ret')
+                call: Expression = FuncCall(fn_target, func_args, Type.any())
+                call = eval_once(call, always_emit=True, trivial=False,
+                        prefix='ret')
                 # Clear out caller-save registers, for clarity and to ensure
                 # that argument regs don't get passed into the next function.
                 regs.clear_caller_save_regs()
@@ -1610,7 +1728,15 @@ def translate_node_body(
             set_reg(Register('lo'), lo)
 
         elif mnemonic in CASES_DESTINATION_FIRST:
-            set_reg(args.reg_ref(0), CASES_DESTINATION_FIRST[mnemonic](args))
+            target = args.reg_ref(0)
+            val = CASES_DESTINATION_FIRST[mnemonic](args)
+            if target in args.raw_args[1:]:
+                # IRIX tends to keep variables within single registers. Thus,
+                # if source = target, overwrite that variable instead of
+                # creating a new one.
+                overwrite_reg(target, val)
+            else:
+                set_reg(target, val)
 
         else:
             raise DecompFailure(f"I don't know how to handle {mnemonic}!")

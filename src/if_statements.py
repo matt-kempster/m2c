@@ -484,14 +484,14 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         type_decl = local_var.type.to_decl()
         print(SimpleStatement(4, f'{type_decl}{local_var};'))
         any_decl = True
-    temp_decls = []
+    temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
             expr = temp_var.expr
             type_decl = expr.type.to_decl()
-            temp_decls.append(f'{type_decl}{expr.var};')
+            temp_decls.add(f'{type_decl}{expr.var};')
             any_decl = True
-    for decl in sorted(temp_decls):
+    for decl in sorted(list(temp_decls)):
         print(SimpleStatement(4, decl))
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl()
