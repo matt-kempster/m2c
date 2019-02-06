@@ -1,4 +1,4 @@
-void test(s32 arg0, s32 arg1)
+? test(s32 arg0, s32 arg1)
 {
     ?32 sp24;
     s32 temp_ret;

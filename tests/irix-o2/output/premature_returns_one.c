@@ -1,4 +1,4 @@
-void test(s32 arg0)
+? test(s32 arg0)
 {
     if (arg0 != 0)
     {

@@ -18,6 +18,7 @@ class Context:
     options: Options = attr.ib()
     reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
+    is_void: bool = attr.ib(default=True)
     used_labels: Set[str] = attr.ib(factory=set)
     emitted_nodes: Set[Node] = attr.ib(factory=set)
     has_warned: bool = attr.ib(default=False)
@@ -384,6 +385,7 @@ def write_return(
     if ret is not None:
         ret_str = stringify_expr(as_type(ret, context.return_type, True))
         body.add_statement(SimpleStatement(indent, f'return {ret_str};'))
+        context.is_void = False
     elif not last:
         body.add_statement(SimpleStatement(indent, 'return;'))
 
@@ -468,7 +470,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         write_return(context, body, return_node, 4, last=True)
 
     ret_type = 'void '
-    if not context.return_type.is_any():
+    if not context.is_void:
         ret_type = context.return_type.to_decl()
     fn_name = function_info.stack_info.function.name
     arg_strs = []
