@@ -1,7 +1,7 @@
 void *test(void)
 {
-    f64 temp_f18;
     f32 temp_f8;
+    f64 temp_f18;
     f64 phi_f18;
     f32 phi_f8;
 
