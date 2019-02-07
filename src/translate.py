@@ -871,11 +871,7 @@ class RegInfo:
         return key in self.contents
 
     def __setitem__(self, key: Register, value: Optional[Expression]) -> None:
-        assert key != Register('zero')
-        if value is not None:
-            self.contents[key] = value
-        elif key in self.contents:
-            del self.contents[key]
+        self.set_raw(key, value)
         if key.register_name in ['f0', 'v0']:
             self[Register('return')] = value
             self.has_custom_return = True
@@ -886,6 +882,13 @@ class RegInfo:
 
     def get_raw(self, key: Register) -> Optional[Expression]:
         return self.contents.get(key, None)
+
+    def set_raw(self, key: Register, value: Optional[Expression]) -> None:
+        assert key != Register('zero')
+        if value is not None:
+            self.contents[key] = value
+        elif key in self.contents:
+            del self.contents[key]
 
     def clear_caller_save_regs(self) -> None:
         for reg in CALLER_SAVE_REGS:
@@ -1578,7 +1581,7 @@ def translate_node_body(
                 if not isinstance(e, EvalOnceExpr):
                     e = eval_once(e, always_emit=False, trivial=False,
                             prefix=r.register_name)
-                regs[r] = ForceVarExpr(e, type=e.type)
+                regs.set_raw(r, ForceVarExpr(e, type=e.type))
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if isinstance(expr, LocalVar) and expr in local_var_writes:
@@ -1640,6 +1643,8 @@ def translate_node_body(
                 to_write.append(to_store)
                 mark_used(to_store.source)
                 mark_used(to_store.dest)
+                # Prevent earlier reads from getting reordered across the store.
+                prevent_later_uses(to_store.dest)
 
         elif mnemonic in CASES_SOURCE_FIRST_REGISTER:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
