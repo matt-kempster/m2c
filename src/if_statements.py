@@ -376,6 +376,9 @@ def get_full_if_condition(
 def write_return(
     context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
+    if last:
+        body.add_statement(LabelStatement(context,
+            f'block_{node.block.index}'))
     body.add_node(node, indent, comment_empty=node.is_real())
 
     ret_info = node.block.block_info
@@ -454,6 +457,60 @@ def build_flowgraph_between(
 
     return body
 
+def build_naive(context: Context, nodes: List[Node]) -> Body:
+    """Naive procedure for generating output with only gotos for control flow.
+
+    Used for --no-ifs, when the regular if_statements code fails."""
+
+    body = Body(print_node_comment=context.options.debug)
+
+    def emit_node(node: Node) -> None:
+        body.add_statement(LabelStatement(context,
+            f'block_{node.block.index}'))
+        body.add_node(node, 4, True)
+
+    def emit_goto(node: Node, sub_body: Body, indent: int) -> None:
+        label = f'block_{node.block.index}'
+        context.used_labels.add(label)
+        sub_body.add_statement(SimpleStatement(indent, f'goto {label};'))
+
+    def maybe_emit_return(node: Node, sub_body: Body, indent: int) -> bool:
+        if not isinstance(node, ReturnNode) or node.is_real():
+            return False
+        write_return(context, sub_body, node, indent, last=False)
+        return True
+
+    def emit_successor(node: Node, cur_index: int) -> None:
+        if maybe_emit_return(node, body, 4):
+            return
+        if cur_index + 1 < len(nodes) and nodes[cur_index + 1] == node:
+            # Fallthrough is fine
+            return
+        emit_goto(node, body, 4)
+
+    for i, node in enumerate(nodes):
+        if isinstance(node, ReturnNode):
+            # Do not emit return nodes; they are often duplicated and don't
+            # have a well-defined position, so we emit them next to where they
+            # are jumped to instead.
+            pass
+        elif isinstance(node, BasicNode):
+            emit_node(node)
+            emit_successor(node.successor, i)
+        else: # ConditionalNode
+            emit_node(node)
+            if_body = Body(print_node_comment=False)
+            if not maybe_emit_return(node.conditional_edge, if_body, 8):
+                emit_goto(node.conditional_edge, if_body, 8)
+            block_info = node.block.block_info
+            assert isinstance(block_info, BlockInfo)
+            assert block_info.branch_condition is not None
+            body.add_if_else(IfElseStatement(block_info.branch_condition, 4,
+                if_body=if_body, else_body=None))
+            emit_successor(node.fallthrough_edge, i)
+
+    return body
+
 def write_function(function_info: FunctionInfo, options: Options) -> None:
     context = Context(flow_graph=function_info.flow_graph, options=options)
     start_node: Node = context.flow_graph.entry_node()
@@ -464,7 +521,8 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
 
     if options.debug:
         print("Here's the whole function!\n")
-    body: Body = build_flowgraph_between(context, start_node, return_node, 4)
+    body: Body = (build_flowgraph_between(context, start_node, return_node, 4)
+            if options.ifs else build_naive(context, context.flow_graph.nodes))
 
     if return_node.index != -1:
         write_return(context, body, return_node, 4, last=True)
