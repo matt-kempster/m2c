@@ -72,6 +72,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
         # Strip comments and whitespace
         line = re.sub(r'/\*.*?\*/', '', line)
         line = re.sub(r'#.*$', '', line)
+        line = re.sub(r'\s+', ' ', line)
         line = line.strip()
 
         if line == '':
