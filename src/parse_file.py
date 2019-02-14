@@ -69,6 +69,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     ifdef_levels: List[int] = []
 
     for line in f:
+        # Check for goto markers before stripping comments
+        emit_goto = any(pattern in line for pattern in options.goto_patterns)
+
         # Strip comments and whitespace
         line = re.sub(r'/\*.*?\*/', '', line)
         line = re.sub(r'#.*$', '', line)
@@ -113,7 +116,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     mips_file.new_function(function_name)
             else:
                 # Instruction.
-                instruction: Instruction = parse_instruction(line)
-                mips_file.new_instruction(instruction)
+                instr: Instruction = parse_instruction(line, emit_goto)
+                mips_file.new_instruction(instr)
 
     return mips_file

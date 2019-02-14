@@ -67,26 +67,32 @@ if __name__ == "__main__":
             help="disable control flow generation; emit gotos for everything", action='store_false')
     parser.add_argument('--no-andor', dest='andor_detection',
             help="disable detection of &&/||", action='store_false')
+    parser.add_argument('--goto', metavar='PATTERN', dest='goto_patterns',
+            action='append', default=['GOTO'],
+            help="emit gotos for branches on lines containing this substring "
+            "(possibly within a comment). Default: \"GOTO\". Multiple "
+            "patterns are allowed.")
     parser.add_argument('--stop-on-error', dest='stop_on_error',
             help="stop when encountering any error", action='store_true')
     parser.add_argument('--print-assembly', dest='print_assembly',
             help="print assembly of function to decompile", action='store_true')
     parser.add_argument('--visualize', dest='visualize', action='store_true',
             help="display a visualization of the control flow graph using graphviz")
-    parser.add_argument('-D', dest='defined', action='append',
+    parser.add_argument('-D', dest='defined', action='append', default=[],
             help="mark preprocessor constant as defined")
-    parser.add_argument('-U', dest='undefined', action='append',
+    parser.add_argument('-U', dest='undefined', action='append', default=[],
             help="mark preprocessor constant as undefined")
     args = parser.parse_args()
     preproc_defines = {
-        **{d: 0 for d in (args.undefined or [])},
-        **{d.split('=')[0]: 1 for d in (args.defined or [])},
+        **{d: 0 for d in args.undefined},
+        **{d.split('=')[0]: 1 for d in args.defined},
     }
     options = Options(
         filename=args.filename,
         debug=args.debug,
         andor_detection=args.andor_detection,
         ifs=args.ifs,
+        goto_patterns=args.goto_patterns,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,

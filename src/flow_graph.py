@@ -22,8 +22,7 @@ class Block:
     block_info: Optional[Any] = None
 
     def add_block_info(self, block_info: Any) -> None:
-        if self.block_info is not None:
-            print("duplicate add_block_info")
+        assert self.block_info is None
         self.block_info = block_info
 
     def clone(self) -> 'Block':
@@ -129,7 +128,8 @@ def normalize_likely_branches(function: Function) -> Function:
                     label_before_instr[id(before_target)] = new_label
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
-                item = Instruction(item.mnemonic[:-1], item.args[:-1] + [new_target])
+                item = Instruction(item.mnemonic[:-1],
+                        item.args[:-1] + [new_target], item.emit_goto)
                 next_item = Instruction('nop', [])
             new_body.append((orig_item, item))
             new_body.append((orig_next_item, next_item))
@@ -255,7 +255,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             if not isinstance(actual, Instruction):
                 return (expected == "")
             ins = actual
-            exp = parse_instruction(expected)
+            exp = parse_instruction(expected, emit_goto=False)
             if not exp.args:
                 if exp.mnemonic == 'li' and ins.mnemonic in ['lui', 'addiu']:
                     return True
@@ -439,6 +439,7 @@ def is_loop_edge(node: 'Node', edge: 'Node') -> bool:
 @attr.s(cmp=False)
 class BaseNode:
     block: Block = attr.ib()
+    emit_goto: bool = attr.ib()
     parents: List['Node'] = attr.ib(init=False, factory=list)
     dominators: Set['Node'] = attr.ib(init=False, factory=set)
     immediate_dominator: Optional['Node'] = attr.ib(init=False, default=None)
@@ -529,7 +530,7 @@ def build_graph_from_block(
 
     if len(jumps) == 0:
         # No jumps, i.e. the next block is this node's successor block.
-        new_node = BasicNode(block, dummy_node)
+        new_node = BasicNode(block, False, dummy_node)
         nodes.append(new_node)
 
         # Recursively analyze.
@@ -546,7 +547,7 @@ def build_graph_from_block(
         if jump.mnemonic == 'jr':
             # If jump.args[0] != Register('ra'), this is a switch, which is not
             # supported. Delay that error until code emission though.
-            new_node = ReturnNode(block, index=0)
+            new_node = ReturnNode(block, False, index=0)
             nodes.append(new_node)
             return new_node
 
@@ -561,7 +562,7 @@ def build_graph_from_block(
         is_constant_branch = jump.mnemonic == 'b'
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
-            new_node = BasicNode(block, dummy_node)
+            new_node = BasicNode(block, jump.emit_goto, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(branch_block, blocks,
@@ -571,7 +572,8 @@ def build_graph_from_block(
         else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
-            new_node = ConditionalNode(block, dummy_node, dummy_node)
+            new_node = ConditionalNode(block, jump.emit_goto,
+                    dummy_node, dummy_node)
             nodes.append(new_node)
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
@@ -639,12 +641,12 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
     extra_nodes: List[Node] = []
     index = 0
     for node in nodes:
-        if (isinstance(node, BasicNode) and
+        if (isinstance(node, BasicNode) and not node.emit_goto and
                 is_premature_return(node, node.successor, nodes)):
             assert isinstance(node.successor, ReturnNode)
             node.successor.parents.remove(node)
             index += 1
-            n = ReturnNode(node.successor.block.clone(), index=index)
+            n = ReturnNode(node.successor.block.clone(), False, index=index)
             node.successor = n
             n.add_parent(node)
             extra_nodes.append(n)

@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List
 
 import attr
 
@@ -9,6 +9,7 @@ class Options:
     debug: bool = attr.ib()
     ifs: bool = attr.ib()
     andor_detection: bool = attr.ib()
+    goto_patterns: List[str] = attr.ib()
     stop_on_error: bool = attr.ib()
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()

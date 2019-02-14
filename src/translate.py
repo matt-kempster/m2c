@@ -1417,9 +1417,10 @@ CASES_DESTINATION_FIRST: InstrMap = {
     'mov.d': lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
     # FCSR get
     'cfc1': lambda a: ErrorExpr(),
-    # Loading instructions (TODO: type annotations)
+    # Immediates
     'li': lambda a: a.imm(1),
     'lui': lambda a: load_upper(a),
+    # Loading instructions (TODO: type annotations)
     'lb': lambda a: handle_load(a),
     'lh': lambda a: handle_load(a),
     'lw': lambda a: handle_load(a),
@@ -1610,8 +1611,8 @@ def translate_node_body(
             # Emit the expression as is. It's probably a volatile load.
             mark_used(expr)
             to_write.append(ExprStmt(expr))
-            return
-        regs[reg] = expr
+        else:
+            regs[reg] = expr
 
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)

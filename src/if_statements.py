@@ -119,6 +119,15 @@ def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
     context.goto_nodes.add(target)
     body.add_statement(SimpleStatement(indent, f'goto {label};'))
 
+def emit_goto_or_early_return(
+    context: Context, target: Node, body: Body, indent: int
+) -> None:
+    """Emit a goto to a node, *unless* that node is an early return, which we
+    can't goto to since it's not a real node and won't ever be emitted."""
+    if isinstance(target, ReturnNode) and not target.is_real():
+        write_return(context, body, target, indent, last=False)
+    else:
+        emit_goto(context, target, body, indent)
 
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node, indent: int
@@ -436,6 +445,36 @@ def build_flowgraph_between(
             body.add_statement(LabelStatement(context, curr_start))
             body.add_node(curr_start, indent, comment_empty=True)
 
+        if curr_start.emit_goto:
+            # If we have decided to emit a goto here, then we should just fall
+            # through to the next node, after writing a goto/conditional goto/
+            # return.
+            if isinstance(curr_start, BasicNode):
+                emit_goto_or_early_return(context, curr_start.successor, body,
+                        indent)
+            elif isinstance(curr_start, ConditionalNode):
+                target = curr_start.conditional_edge
+                if_body = Body(print_node_comment=False)
+                emit_goto_or_early_return(context, target, if_body, indent + 4)
+                block_info = curr_start.block.block_info
+                assert isinstance(block_info, BlockInfo)
+                assert block_info.branch_condition is not None
+                body.add_if_else(IfElseStatement(block_info.branch_condition,
+                    indent, if_body=if_body, else_body=None))
+            else: # ReturnNode
+                assert curr_start.is_real(), \
+                        "Fake return nodes must never be marked as emit_goto"
+                write_return(context, body, curr_start, indent, last=False)
+
+            # Advance to the next node in block order. This may skip over
+            # unreachable blocks -- hopefully none too important.
+            index = context.flow_graph.nodes.index(curr_start)
+            fallthrough = context.flow_graph.nodes[index + 1]
+            if isinstance(curr_start, ConditionalNode):
+                assert fallthrough == curr_start.fallthrough_edge
+            curr_start = fallthrough
+            continue
+
         if isinstance(curr_start, BasicNode):
             # In a BasicNode, the successor is the next articulation node.
             curr_start = curr_start.successor
@@ -452,8 +491,7 @@ def build_flowgraph_between(
                 build_conditional_subgraph(context, curr_start, curr_end, indent))
             # Move on.
             curr_start = curr_end
-        else:
-            assert isinstance(curr_start, ReturnNode)
+        else: # ReturnNode
             # Write the return node, and break, because there is nothing more
             # to process.
             write_return(context, body, curr_start, indent, last=False)
@@ -472,19 +510,12 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         body.add_statement(LabelStatement(context, node))
         body.add_node(node, 4, True)
 
-    def maybe_emit_return(node: Node, sub_body: Body, indent: int) -> bool:
-        if not isinstance(node, ReturnNode) or node.is_real():
-            return False
-        write_return(context, sub_body, node, indent, last=False)
-        return True
-
     def emit_successor(node: Node, cur_index: int) -> None:
-        if maybe_emit_return(node, body, 4):
-            return
-        if cur_index + 1 < len(nodes) and nodes[cur_index + 1] == node:
+        if (cur_index + 1 < len(nodes) and nodes[cur_index + 1] == node and
+                not (isinstance(node, ReturnNode) and not node.is_real())):
             # Fallthrough is fine
             return
-        emit_goto(context, node, body, 4)
+        emit_goto_or_early_return(context, node, body, 4)
 
     for i, node in enumerate(nodes):
         if isinstance(node, ReturnNode):
@@ -498,8 +529,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         else: # ConditionalNode
             emit_node(node)
             if_body = Body(print_node_comment=False)
-            if not maybe_emit_return(node.conditional_edge, if_body, 8):
-                emit_goto(context, node.conditional_edge, if_body, 8)
+            emit_goto_or_early_return(context, node.conditional_edge, if_body, 8)
             block_info = node.block.block_info
             assert isinstance(block_info, BlockInfo)
             assert block_info.branch_condition is not None
@@ -515,7 +545,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     return_node: Optional[ReturnNode] = context.flow_graph.return_node()
     if return_node is None:
         fictive_block = Block(-1, None, '', [])
-        return_node = ReturnNode(block=fictive_block, index=-1)
+        return_node = ReturnNode(fictive_block, False, index=-1)
 
     if options.debug:
         print("Here's the whole function!\n")

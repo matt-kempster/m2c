@@ -190,6 +190,7 @@ def parse_arg(arg: str) -> Optional[Argument]:
 class Instruction:
     mnemonic: str = attr.ib()
     args: List[Argument] = attr.ib()
+    emit_goto: bool = attr.ib(default=False)
 
     def is_branch_instruction(self) -> bool:
         return self.mnemonic in [
@@ -220,11 +221,11 @@ class Instruction:
     def __str__(self) -> str:
         return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
 
-def parse_instruction(line: str) -> Instruction:
+def parse_instruction(line: str, emit_goto: bool) -> Instruction:
     # First token is instruction name, rest is args.
     line = line.strip()
     mnemonic, _, args_str = line.partition(' ')
     # Parse arguments.
     args: List[Argument] = list(filter(None,
         [parse_arg(arg_str.strip()) for arg_str in args_str.split(',')]))
-    return Instruction(mnemonic, args)
+    return Instruction(mnemonic, args, emit_goto)
