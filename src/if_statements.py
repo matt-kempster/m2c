@@ -19,7 +19,7 @@ class Context:
     reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
     is_void: bool = attr.ib(default=True)
-    used_labels: Set[str] = attr.ib(factory=set)
+    goto_nodes: Set[Node] = attr.ib(factory=set)
     emitted_nodes: Set[Node] = attr.ib(factory=set)
     has_warned: bool = attr.ib(default=False)
 
@@ -69,13 +69,13 @@ class SimpleStatement:
 @attr.s
 class LabelStatement:
     context: Context = attr.ib()
-    name: str = attr.ib()
+    node: Node = attr.ib()
 
     def should_write(self) -> bool:
-        return self.name in self.context.used_labels
+        return self.node in self.context.goto_nodes
 
     def __str__(self) -> str:
-        return f'{self.name}:'
+        return f'{label_for_node(self.node)}:'
 
 Statement = Union[SimpleStatement, IfElseStatement, LabelStatement]
 
@@ -111,6 +111,15 @@ class Body:
                 if statement.should_write())
 
 
+def label_for_node(node: Node) -> str:
+    return f'block_{node.block.index}'
+
+def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
+    label = label_for_node(target)
+    context.goto_nodes.add(target)
+    body.add_statement(SimpleStatement(indent, f'goto {label};'))
+
+
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
@@ -143,9 +152,8 @@ def build_conditional_subgraph(
         else:
             # Don't want to follow the loop, otherwise we'd be trapped here.
             # Instead, write a goto for the beginning of the loop.
-            label = f'block_{start.conditional_edge.block.index}'
-            context.used_labels.add(label)
-            if_body = Body(False, [SimpleStatement(indent + 4, f'goto {label};')])
+            if_body = Body(False, [])
+            emit_goto(context, start.conditional_edge, if_body, indent + 4)
     else:
         # We need to see if this is a compound if-statement, i.e. containing
         # && or ||.
@@ -377,8 +385,7 @@ def write_return(
     context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
     if last:
-        body.add_statement(LabelStatement(context,
-            f'block_{node.block.index}'))
+        body.add_statement(LabelStatement(context, node))
     body.add_node(node, indent, comment_empty=node.is_real())
 
     ret_info = node.block.block_info
@@ -420,16 +427,13 @@ def build_flowgraph_between(
             # hints at that situation better than if we just blindly duplicate
             # the block.
             if curr_start in context.emitted_nodes:
-                label = f'block_{curr_start.block.index}'
-                context.used_labels.add(label)
-                body.add_statement(SimpleStatement(indent, f'goto {label};'))
+                emit_goto(context, curr_start, body, indent)
                 break
             context.emitted_nodes.add(curr_start)
 
             # Emit a label for the node (which is only printed if something
             # jumps to it, e.g. currently for loops).
-            body.add_statement(LabelStatement(context,
-                f'block_{curr_start.block.index}'))
+            body.add_statement(LabelStatement(context, curr_start))
             body.add_node(curr_start, indent, comment_empty=True)
 
         if isinstance(curr_start, BasicNode):
@@ -465,14 +469,8 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
     body = Body(print_node_comment=context.options.debug)
 
     def emit_node(node: Node) -> None:
-        body.add_statement(LabelStatement(context,
-            f'block_{node.block.index}'))
+        body.add_statement(LabelStatement(context, node))
         body.add_node(node, 4, True)
-
-    def emit_goto(node: Node, sub_body: Body, indent: int) -> None:
-        label = f'block_{node.block.index}'
-        context.used_labels.add(label)
-        sub_body.add_statement(SimpleStatement(indent, f'goto {label};'))
 
     def maybe_emit_return(node: Node, sub_body: Body, indent: int) -> bool:
         if not isinstance(node, ReturnNode) or node.is_real():
@@ -486,7 +484,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         if cur_index + 1 < len(nodes) and nodes[cur_index + 1] == node:
             # Fallthrough is fine
             return
-        emit_goto(node, body, 4)
+        emit_goto(context, node, body, 4)
 
     for i, node in enumerate(nodes):
         if isinstance(node, ReturnNode):
@@ -501,7 +499,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             emit_node(node)
             if_body = Body(print_node_comment=False)
             if not maybe_emit_return(node.conditional_edge, if_body, 8):
-                emit_goto(node.conditional_edge, if_body, 8)
+                emit_goto(context, node.conditional_edge, if_body, 8)
             block_info = node.block.block_info
             assert isinstance(block_info, BlockInfo)
             assert block_info.branch_condition is not None
