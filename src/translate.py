@@ -788,6 +788,16 @@ class SetPhiStmt:
         return f'{self.phi.propagates_to().get_var_name()} = {val_str};'
 
 @attr.s
+class ExprStmt:
+    expr: 'Expression' = attr.ib()
+
+    def should_write(self) -> bool:
+        return True
+
+    def __str__(self) -> str:
+        return f'{stringify_expr(self.expr)};'
+
+@attr.s
 class StoreStmt:
     source: 'Expression' = attr.ib()
     dest: 'Expression' = attr.ib()
@@ -836,6 +846,7 @@ Statement = Union[
     StoreStmt,
     EvalOnceStmt,
     SetPhiStmt,
+    ExprStmt,
     CommentStmt,
 ]
 
@@ -870,7 +881,7 @@ class RegInfo:
     def __contains__(self, key: Register) -> bool:
         return key in self.contents
 
-    def __setitem__(self, key: Register, value: Optional[Expression]) -> None:
+    def __setitem__(self, key: Register, value: Expression) -> None:
         self.set_raw(key, value)
         if key.register_name in ['f0', 'v0']:
             self[Register('return')] = value
@@ -883,12 +894,9 @@ class RegInfo:
     def get_raw(self, key: Register) -> Optional[Expression]:
         return self.contents.get(key, None)
 
-    def set_raw(self, key: Register, value: Optional[Expression]) -> None:
+    def set_raw(self, key: Register, value: Expression) -> None:
         assert key != Register('zero')
-        if value is not None:
-            self.contents[key] = value
-        elif key in self.contents:
-            del self.contents[key]
+        self.contents[key] = value
 
     def clear_caller_save_regs(self) -> None:
         for reg in CALLER_SAVE_REGS:
@@ -1584,16 +1592,26 @@ def translate_node_body(
                 regs.set_raw(r, ForceVarExpr(e, type=e.type))
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
+        if expr is None:
+            if reg in regs:
+                del regs[reg]
+            return
+
         if isinstance(expr, LocalVar) and expr in local_var_writes:
             # Elide register restores (only for the same register for now, to
             # be conversative).
             orig_reg, orig_expr = local_var_writes[expr]
             if orig_reg == reg:
                 expr = orig_expr
-        if expr is not None and not isinstance(expr, Literal):
+        if not isinstance(expr, Literal):
             expr = eval_once(expr, always_emit=False,
                     trivial=is_repeatable_expression(expr),
                     prefix=reg.register_name)
+        if reg == Register('zero'):
+            # Emit the expression as is. It's probably a volatile load.
+            mark_used(expr)
+            to_write.append(ExprStmt(expr))
+            return
         regs[reg] = expr
 
     def overwrite_reg(reg: Register, expr: Expression) -> None:
@@ -1725,7 +1743,9 @@ def translate_node_body(
                 regs.has_custom_return = False
 
         elif mnemonic in CASES_FLOAT_COMP:
-            regs[Register('condition_bit')] = CASES_FLOAT_COMP[mnemonic](args)
+            expr = CASES_FLOAT_COMP[mnemonic](args)
+            assert expr is not None
+            regs[Register('condition_bit')] = expr
 
         elif mnemonic in CASES_HI_LO:
             hi, lo = CASES_HI_LO[mnemonic](args)
