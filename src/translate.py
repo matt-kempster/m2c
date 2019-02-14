@@ -1283,13 +1283,14 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
+InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], Optional[BinaryOp]]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
 PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]]
 
-CASES_IGNORE: Set[str] = {
+CASES_IGNORE: InstrSet = {
     # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
     # FCSR gets are as well, but it's fine to read ERROR for those.
     'ctc1',
@@ -1309,7 +1310,6 @@ CASES_SOURCE_FIRST_REGISTER: InstrMap = {
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
-    # TODO! These are wrong. (Are they??)
     'b': lambda a: None,
     'beq': lambda a:  BinaryOp.icmp(a.reg(0), '==', a.reg(1)),
     'bne': lambda a:  BinaryOp.icmp(a.reg(0), '!=', a.reg(1)),
@@ -1320,17 +1320,16 @@ CASES_BRANCHES: CmpInstrMap = {
     'bltz': lambda a: BinaryOp.icmp(a.reg(0), '<',  Literal(0)),
     'bgez': lambda a: BinaryOp.icmp(a.reg(0), '>=', Literal(0)),
 }
-CASES_FLOAT_BRANCHES: CmpInstrMap = {
+CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
-    # We don't have to do any work here, since the condition bit was already set.
-    'bc1t': lambda a: None,
-    'bc1f': lambda a: None,
+    'bc1t',
+    'bc1f',
 }
-CASES_JUMPS: MaybeInstrMap = {
+CASES_JUMPS: InstrSet = {
     # Unconditional jumps
-    'jal': lambda a: a.imm(0),  # not sure what arguments!
-    'jalr': lambda a: a.reg(0), # not sure what arguments!
-    'jr':  lambda a: None       # not sure what to return!
+    'jal',
+    'jalr',
+    'jr',
 }
 CASES_FLOAT_COMP: CmpInstrMap = {
     # Floating point comparisons
@@ -1682,16 +1681,14 @@ def translate_node_body(
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in CASES_JUMPS:
-            result = CASES_JUMPS[mnemonic](args)
-            if result is None:
+            if mnemonic == 'jr':
                 # Return from the function.
-                assert mnemonic == 'jr'
                 assert args.reg_ref(0) == Register('ra'), "Jump tables are not supported yet."
                 assert isinstance(node, ReturnNode)
                 return_value = regs.get_raw(Register('return'))
                 break
             else:
-                # Function call. Well, let's double-check:
+                # Function or function pointer call. Well, let's double-check:
                 assert mnemonic in ['jal', 'jalr']
                 if mnemonic == 'jal':
                     fn_target = args.imm(0)
@@ -1699,7 +1696,8 @@ def translate_node_body(
                     fn_target = fn_target.expr
                     assert isinstance(fn_target, GlobalSymbol)
                 else:
-                    assert args.count() == 1, "Two-argument form of jalr is not supported."
+                    if args.count() != 1:
+                        raise DecompFailure("Two-argument form of jalr is not supported.")
                     fn_target = as_ptr(args.reg(0))
 
                 # At most one of $f12 and $a0 may be passed, and at most one of
