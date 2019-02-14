@@ -106,3 +106,7 @@ venv.bak/
 # Graphviz
 *.gv
 *.gv.*
+
+# Temporary files used by the test runner
+.stdout
+.stderr
