@@ -80,13 +80,6 @@ class BlockBuilder:
         return self.blocks
 
 
-temp_label_counter: int = 0
-def generate_temp_label(name: str) -> str:
-    global temp_label_counter
-    temp_label_counter += 1
-    return 'Ltemp' + str(temp_label_counter) + ('_' + name if name else '')
-
-
 # Branch-likely instructions only evaluate their delay slots when they are
 # taken, making control flow more complex. However, on the IRIX compiler they
 # only occur in a very specific pattern:
@@ -132,7 +125,7 @@ def normalize_likely_branches(function: Function) -> Function:
             if isinstance(next_item, Instruction) and before_target is not None and \
                     str(before_target) == str(next_item):
                 if id(before_target) not in label_before_instr:
-                    new_label = generate_temp_label(old_label)
+                    new_label = old_label + '_before'
                     label_before_instr[id(before_target)] = new_label
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
