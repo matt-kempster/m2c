@@ -514,7 +514,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     start_node: Node = context.flow_graph.entry_node()
     return_node: Optional[ReturnNode] = context.flow_graph.return_node()
     if return_node is None:
-        fictive_block = Block(-1, None, None)
+        fictive_block = Block(-1, None, '', [])
         return_node = ReturnNode(block=fictive_block, index=-1)
 
     if options.debug:
