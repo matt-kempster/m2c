@@ -656,6 +656,57 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
     return [n for n in nodes if n.parents or n == nodes[0]]
 
 
+def ensure_fallthrough(nodes: List[Node]) -> None:
+    """For any node which is only reachable through indirect jumps (switch
+    labels, loop edges, emit_goto edges), mark its predecessor as emit_goto to
+    ensure we continue to generate code after it."""
+    last_reachable: Set[Node] = set()
+    while True:
+        # Traverse all edges other than indirect jumps, and collect the targets.
+        reachable: Set[Node] = {nodes[0]}
+        predecessors: Dict[Node, Node] = {}
+        for i, node in enumerate(nodes):
+            fallthrough: Optional[Node]
+            if i + 1 < len(nodes):
+                fallthrough = nodes[i + 1]
+                predecessors[fallthrough] = node
+            else:
+                fallthrough = None
+            if isinstance(node, BasicNode):
+                if node.emit_goto and fallthrough is not None:
+                    reachable.add(fallthrough)
+                if not node.emit_goto and not node.is_loop():
+                    reachable.add(node.successor)
+            elif isinstance(node, ConditionalNode):
+                assert fallthrough is not None
+                assert fallthrough == node.fallthrough_edge
+                reachable.add(fallthrough)
+                if not node.emit_goto and not node.is_loop():
+                    reachable.add(node.conditional_edge)
+            else: # ReturnNode
+                if node.emit_goto and fallthrough is not None:
+                    reachable.add(fallthrough)
+
+        # We can make the first node not in the set be included in the set by
+        # making its predecessor fall through, and then repeat. For efficiency
+        # we actually do this for all nodes not in the set, but note that we
+        # still need the repeat, since marking nodes fallthrough can cause
+        # edges to disappear.
+        #
+        # At each point we mark more and more nodes fallthrough, so eventually
+        # this process will terminate.
+        assert reachable != last_reachable, "Fallthrough process hit a cycle"
+        last_reachable = reachable
+        unreachable = set(nodes).difference(reachable)
+        if not unreachable:
+            break
+        for node in unreachable:
+            assert node in predecessors, "Start node is never unreachable"
+            pre = predecessors[node]
+            assert not isinstance(pre, ConditionalNode)
+            pre.emit_goto = True
+
+
 def compute_dominators(nodes: List[Node]) -> None:
     entry = nodes[0]
     entry.dominators = {entry}
@@ -700,6 +751,7 @@ def build_flowgraph(function: Function) -> FlowGraph:
     blocks = build_blocks(function)
     nodes = build_nodes(function, blocks)
     nodes = duplicate_premature_returns(nodes)
+    ensure_fallthrough(nodes)
     compute_dominators(nodes)
     return FlowGraph(nodes)
 
