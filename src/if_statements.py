@@ -114,6 +114,15 @@ class Body:
 def label_for_node(node: Node) -> str:
     return f'block_{node.block.index}'
 
+def emit_node(context: Context, node: Node, body: Body, indent: int) -> None:
+    """Emit a node, together with a label for it (which is only printed if
+    something jumps to it, e.g. currently for loops)."""
+    if isinstance(node, ReturnNode) and not node.is_real():
+        body.add_node(node, indent, comment_empty=False)
+    else:
+        body.add_statement(LabelStatement(context, node))
+        body.add_node(node, indent, comment_empty=True)
+
 def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
     label = label_for_node(target)
     context.goto_nodes.add(target)
@@ -393,9 +402,7 @@ def get_full_if_condition(
 def write_return(
     context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
-    if last:
-        body.add_statement(LabelStatement(context, node))
-    body.add_node(node, indent, comment_empty=node.is_real())
+    emit_node(context, node, body, indent)
 
     ret_info = node.block.block_info
     assert isinstance(ret_info, BlockInfo)
@@ -440,10 +447,8 @@ def build_flowgraph_between(
                 break
             context.emitted_nodes.add(curr_start)
 
-            # Emit a label for the node (which is only printed if something
-            # jumps to it, e.g. currently for loops).
-            body.add_statement(LabelStatement(context, curr_start))
-            body.add_node(curr_start, indent, comment_empty=True)
+            # Emit the node, and possibly a label for it.
+            emit_node(context, curr_start, body, indent)
 
         if curr_start.emit_goto:
             # If we have decided to emit a goto here, then we should just fall
@@ -506,10 +511,6 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
 
     body = Body(print_node_comment=context.options.debug)
 
-    def emit_node(node: Node) -> None:
-        body.add_statement(LabelStatement(context, node))
-        body.add_node(node, 4, True)
-
     def emit_successor(node: Node, cur_index: int) -> None:
         if (cur_index + 1 < len(nodes) and nodes[cur_index + 1] == node and
                 not (isinstance(node, ReturnNode) and not node.is_real())):
@@ -524,10 +525,10 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             # are jumped to instead.
             pass
         elif isinstance(node, BasicNode):
-            emit_node(node)
+            emit_node(context, node, body, 4)
             emit_successor(node.successor, i)
         else: # ConditionalNode
-            emit_node(node)
+            emit_node(context, node, body, 4)
             if_body = Body(print_node_comment=False)
             emit_goto_or_early_return(context, node.conditional_edge, if_body, 8)
             block_info = node.block.block_info
