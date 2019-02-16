@@ -260,27 +260,29 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
         end = max(reachable_nodes, key=lambda n: n.block.index)
 
     stack: List[Node] = [start]
+    seen: Set[Node] = set()
     postdominators: List[Node] = []
     while stack:
         # Get potential postdominator.
         node = stack.pop()
-        if node.block.index > end.block.index:
-            # Don't go beyond the end.
+        if node.block.index > end.block.index or node in seen:
+            # Don't go beyond the end, or revisit nodes.
             continue
+        seen.add(node)
         # Add children of node.
         if isinstance(node, BasicNode):
             stack.append(node.successor)
         elif isinstance(node, ConditionalNode):
             if not node.is_loop():
-                # If the node is a loop, then adding the conditional edge
-                # here would cause this while loop to never end.
+                # This check is wonky, see end_reachable_without.
+                # It should be kept the same as in get_reachable_nodes.
                 stack.append(node.conditional_edge)
             stack.append(node.fallthrough_edge)
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
         if node != start and not end_reachable_without(context, start, end, node):
             postdominators.append(node)
-    assert postdominators  # at least "end" should be a postdominator
+    assert postdominators, "at least 'end' should be a postdominator"
     # Get the earliest postdominator
     postdominators.sort(key=lambda node: node.block.index)
     return postdominators[0]
