@@ -10,6 +10,7 @@ from flow_graph import (Block, FlowGraph, Function, Node, ReturnNode,
                         build_flowgraph)
 from options import Options
 from error import DecompFailure
+from parse_file import Rodata
 from parse_instruction import (Argument, AsmAddressMode, AsmGlobalSymbol,
                                AsmLiteral, BinOp, Instruction, Macro, Register)
 
@@ -1825,14 +1826,16 @@ class FunctionInfo:
     stack_info: StackInfo = attr.ib()
     flow_graph: FlowGraph = attr.ib()
 
-def translate_to_ast(function: Function, options: Options) -> FunctionInfo:
+def translate_to_ast(
+    function: Function, options: Options, rodata: Rodata
+) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
     information and has AST transformations for each block of code and
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function)
+    flow_graph: FlowGraph = build_flowgraph(function, rodata)
     start_node = flow_graph.entry_node()
     stack_info = get_stack_info(function, start_node)
 

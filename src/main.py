@@ -5,31 +5,41 @@ from error import DecompFailure
 from flow_graph import build_flowgraph, visualize_flowgraph
 from if_statements import write_function
 from options import Options
-from parse_file import Function, parse_file
+from parse_file import Function, Rodata, parse_file
 from translate import translate_to_ast
 
 
-def decompile_function(options: Options, function: Function) -> None:
+def decompile_function(
+    options: Options, function: Function, rodata: Rodata
+) -> None:
     if options.print_assembly:
         print(function)
         print()
 
     if options.visualize_flowgraph:
-        visualize_flowgraph(build_flowgraph(function))
+        visualize_flowgraph(build_flowgraph(function, rodata))
         return
 
-    function_info = translate_to_ast(function, options)
+    function_info = translate_to_ast(function, options, rodata)
     write_function(function_info, options)
 
 
 def main(options: Options, function_index_or_name: str) -> None:
     with open(options.filename, 'r') as f:
         mips_file = parse_file(f, options)
+
+        # Move over jtbl rodata from files given by --rodata
+        for rodata_file in options.rodata_files:
+            with open(rodata_file, 'r') as f2:
+                sub_file = parse_file(f2, options)
+                for (sym, value) in sub_file.rodata.values.items():
+                    mips_file.rodata.values[sym] = value
+
         if function_index_or_name == 'all':
             options.stop_on_error = True
             for fn in mips_file.functions:
                 try:
-                    decompile_function(options, fn)
+                    decompile_function(options, fn, mips_file.rodata)
                 except Exception:
                     print(f'{fn.name}: ERROR')
                 print()
@@ -51,7 +61,7 @@ def main(options: Options, function_index_or_name: str) -> None:
                 exit(1)
 
             try:
-                decompile_function(options, function)
+                decompile_function(options, function, mips_file.rodata)
             except DecompFailure as e:
                 print(f"Failed to decompile function {function.name}:\n\n{e}")
                 exit(1)
@@ -72,6 +82,8 @@ if __name__ == "__main__":
             help="emit gotos for branches on lines containing this substring "
             "(possibly within a comment). Default: \"GOTO\". Multiple "
             "patterns are allowed.")
+    parser.add_argument('--rodata', metavar='ASM_FILE', dest='rodata_files',
+            action='append', default=[], help="read jump table data from this file")
     parser.add_argument('--stop-on-error', dest='stop_on_error',
             help="stop when encountering any error", action='store_true')
     parser.add_argument('--print-assembly', dest='print_assembly',
@@ -90,9 +102,10 @@ if __name__ == "__main__":
     options = Options(
         filename=args.filename,
         debug=args.debug,
-        andor_detection=args.andor_detection,
         ifs=args.ifs,
+        andor_detection=args.andor_detection,
         goto_patterns=args.goto_patterns,
+        rodata_files=args.rodata_files,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,

@@ -6,7 +6,7 @@ from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
 import attr
 
 from error import DecompFailure
-from parse_file import Function, Label
+from parse_file import Function, Label, Rodata
 from parse_instruction import (AsmLiteral, Instruction, JumpTarget, Register,
                                parse_instruction)
 
@@ -752,7 +752,7 @@ class FlowGraph:
             return None
         return max(candidates, key=lambda n: n.block.index)
 
-def build_flowgraph(function: Function) -> FlowGraph:
+def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
     blocks = build_blocks(function)
     nodes = build_nodes(function, blocks)
     nodes = duplicate_premature_returns(nodes)

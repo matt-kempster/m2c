@@ -36,10 +36,16 @@ class Function:
         return f'glabel {self.name}\n{body}'
 
 @attr.s
+class Rodata:
+    values: Dict[str, List[str]] = attr.ib(factory=dict)
+
+@attr.s
 class MIPSFile:
     filename: str = attr.ib()
     functions: List[Function] = attr.ib(factory=list)
+    rodata: Rodata = attr.ib(factory=Rodata)
     current_function: Optional[Function] = attr.ib(default=None, repr=False)
+    current_rodata: List[str] = attr.ib(factory=list)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
@@ -57,6 +63,13 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_jumptable_label(label_name)
 
+    def new_rodata_symbol(self, symbol_name: str) -> None:
+        self.current_rodata = []
+        self.rodata.values[symbol_name] = self.current_rodata
+
+    def new_rodata_word(self, word: str) -> None:
+        self.current_rodata.append(word)
+
     def __str__(self) -> str:
         functions_str = '\n\n'.join(str(function) for function in self.functions)
         return f'# {self.filename}\n{functions_str}'
@@ -64,9 +77,10 @@ class MIPSFile:
 
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     mips_file: MIPSFile = MIPSFile(options.filename)
-    defines: Dict[str, int] = options.preproc_defines.copy()
+    defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
+    curr_section = '.text'
 
     for line in f:
         # Check for goto markers before stripping comments
@@ -101,22 +115,36 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 ifdef_levels.append(level)
             elif line.startswith('.endif'):
                 ifdef_level -= ifdef_levels.pop()
+            elif ifdef_level == 0:
+                if line.startswith('.section'):
+                    curr_section = line.split(' ')[1].split(',')[0]
+                elif line.startswith('.rdata'):
+                    curr_section = '.rodata'
+                elif line.startswith('.text'):
+                    curr_section = '.text'
+                elif line.startswith('.word') and curr_section == '.rodata':
+                    for w in line[5:].split(','):
+                        mips_file.new_rodata_word(w.strip())
         elif ifdef_level == 0:
-            if line.startswith('.'):
-                # Label.
-                if ifdef_level == 0:
-                    label_name: str = line.strip('.:')
+            if curr_section == '.rodata':
+                if line.startswith('glabel'):
+                    name = line.split(' ')[1]
+                    mips_file.new_rodata_symbol(name)
+            elif curr_section == '.text':
+                if line.startswith('.'):
+                    # Label.
+                    label_name: str = line.strip('.: ')
                     mips_file.new_label(label_name)
-            elif line.startswith('glabel'):
-                # Function label.
-                function_name: str = line.split(' ')[1]
-                if re.match('L[0-9A-F]{8}', function_name):
-                    mips_file.new_jumptable_label(function_name)
+                elif line.startswith('glabel'):
+                    # Function label.
+                    function_name: str = line.split(' ')[1]
+                    if re.match('L[0-9A-F]{8}', function_name):
+                        mips_file.new_jumptable_label(function_name)
+                    else:
+                        mips_file.new_function(function_name)
                 else:
-                    mips_file.new_function(function_name)
-            else:
-                # Instruction.
-                instr: Instruction = parse_instruction(line, emit_goto)
-                mips_file.new_instruction(instr)
+                    # Instruction.
+                    instr: Instruction = parse_instruction(line, emit_goto)
+                    mips_file.new_instruction(instr)
 
     return mips_file
