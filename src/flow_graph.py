@@ -70,7 +70,9 @@ class BlockBuilder:
             return
         # We could support multiple labels at the same position, and output
         # empty blocks. For now we don't, however.
-        assert not self.curr_label, "A block can not have more than one label"
+        if self.curr_label:
+            raise DecompFailure(f"A block is currently not allowed to have more than one label,\n"
+                "but {self.curr_label.name}/{label.name} is given two.")
         self.curr_label = label
         self.last_label_name = label.name
         self.label_counter = 0
@@ -385,7 +387,7 @@ def build_blocks(function: Function) -> List[Block]:
                             "Please modify the assembly to work around it (e.g. copy the instruction",
                             "to all jump sources and move the label, or add a nop to the delay slot)."
                         ]
-                        if label.name.startswith('Ltemp'):
+                        if '_before' in label.name:
                             msg += [
                                 "",
                                 "This label was auto-generated as the target for a branch-likely",
@@ -399,17 +401,19 @@ def build_blocks(function: Function) -> List[Block]:
                     raise DecompFailure(f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}")
 
                 if item.is_branch_likely_instruction():
-                    raise DecompFailure("Not yet able to handle general branch-likely instruction:\n" \
-                            f"{item}\n\n" \
-                            "Only branch-likely instructions which can be turned into non-likely\n" \
-                            "versions pointing one step up are currently supported. Try rewriting\n" \
+                    raise DecompFailure("Not yet able to handle general branch-likely instruction:\n"
+                            f"{item}\n\n"
+                            "Only branch-likely instructions which can be turned into non-likely\n"
+                            "versions pointing one step up are currently supported. Try rewriting\n"
                             "the assembly using non-branch-likely instructions.")
 
                 if item.mnemonic in ['jal', 'jr', 'jalr']:
                     # Move the delay slot instruction to before the call/return
                     # so it passes correct arguments.
-                    # TODO: do something about jalr $r/jr $r where $r is
-                    # clobbered in the delay slot instruction...
+                    if next_item.args and next_item.args[0] == item.args[0]:
+                        raise DecompFailure(f"Instruction after {item.mnemonic} clobbers its source\n"
+                                "register, which is currently not supported.\n\n"
+                                "Try rewriting the assembly to avoid that.")
                     block_builder.add_instruction(next_item)
                     block_builder.add_instruction(item)
                 else:
@@ -556,8 +560,9 @@ def build_graph_from_block(
         # Get the block associated with the jump target.
         branch_label = jump.get_branch_target()
         branch_block = find_block_by_label(branch_label)
-        assert branch_block is not None, \
-                f"Cannot find branch target {branch_label.target}"
+        if branch_block is None:
+            target = branch_label.target
+            raise DecompFailure(f"Cannot find branch target {target}")
 
         is_constant_branch = jump.mnemonic == 'b'
         if is_constant_branch:
