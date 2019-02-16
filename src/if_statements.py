@@ -6,10 +6,11 @@ import attr
 
 from error import DecompFailure
 from flow_graph import (BasicNode, Block, ConditionalNode, FlowGraph, Node,
-                        ReturnNode)
+                        ReturnNode, SwitchNode)
 from options import Options
-from translate import (BinaryOp, BlockInfo, Condition, FunctionInfo, Type,
-                       as_type, simplify_condition, stringify_expr)
+from translate import (BinaryOp, BlockInfo, Condition, Expression,
+                       FunctionInfo, Type, as_type, simplify_condition,
+                       stringify_expr)
 
 
 @attr.s
@@ -35,8 +36,6 @@ class IfElseStatement:
 
     def __str__(self) -> str:
         space = ' ' * self.indent
-        # Avoid duplicate parentheses. TODO: make this cleaner and do it more
-        # uniformly, not just here.
         condition = simplify_condition(self.condition)
         cond_str = stringify_expr(condition)
         if_str = '\n'.join([
@@ -128,6 +127,12 @@ def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
     context.goto_nodes.add(target)
     body.add_statement(SimpleStatement(indent, f'goto {label};'))
 
+def emit_switch_jump(
+    context: Context, expr: Expression, body: Body, indent: int
+) -> None:
+    body.add_statement(SimpleStatement(indent,
+        f'goto *{stringify_expr(expr)};'))
+
 def emit_goto_or_early_return(
     context: Context, target: Node, body: Body, indent: int
 ) -> None:
@@ -214,6 +219,8 @@ def end_reachable_without(
         # backwards arrow. There is no way to get to the end.
         ret = (reach(start.fallthrough_edge) or
             (not start.is_loop() and reach(start.conditional_edge)))
+    elif isinstance(start, SwitchNode):
+        ret = any(reach(edge) for edge in start.cases)
     else:
         assert isinstance(start, ReturnNode)
         ret = False
@@ -454,6 +461,8 @@ def build_flowgraph_between(
             # If we have decided to emit a goto here, then we should just fall
             # through to the next node, after writing a goto/conditional goto/
             # return.
+            block_info = curr_start.block.block_info
+            assert isinstance(block_info, BlockInfo)
             if isinstance(curr_start, BasicNode):
                 emit_goto_or_early_return(context, curr_start.successor, body,
                         indent)
@@ -461,11 +470,12 @@ def build_flowgraph_between(
                 target = curr_start.conditional_edge
                 if_body = Body(print_node_comment=False)
                 emit_goto_or_early_return(context, target, if_body, indent + 4)
-                block_info = curr_start.block.block_info
-                assert isinstance(block_info, BlockInfo)
                 assert block_info.branch_condition is not None
                 body.add_if_else(IfElseStatement(block_info.branch_condition,
                     indent, if_body=if_body, else_body=None))
+            elif isinstance(curr_start, SwitchNode):
+                assert block_info.switch_value is not None
+                emit_switch_jump(context, block_info.switch_value, body, indent)
             else: # ReturnNode
                 assert curr_start.is_real(), \
                         "Fake return nodes must never be marked as emit_goto"
@@ -479,6 +489,9 @@ def build_flowgraph_between(
                 assert fallthrough == curr_start.fallthrough_edge
             curr_start = fallthrough
             continue
+
+        # Switch nodes are always marked emit_goto.
+        assert not isinstance(curr_start, SwitchNode)
 
         if isinstance(curr_start, BasicNode):
             # In a BasicNode, the successor is the next articulation node.
@@ -519,6 +532,8 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         emit_goto_or_early_return(context, node, body, 4)
 
     for i, node in enumerate(nodes):
+        block_info = node.block.block_info
+        assert isinstance(block_info, BlockInfo)
         if isinstance(node, ReturnNode):
             # Do not emit return nodes; they are often duplicated and don't
             # have a well-defined position, so we emit them next to where they
@@ -527,12 +542,14 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         elif isinstance(node, BasicNode):
             emit_node(context, node, body, 4)
             emit_successor(node.successor, i)
+        elif isinstance(node, SwitchNode):
+            emit_node(context, node, body, 4)
+            assert block_info.switch_value is not None
+            emit_switch_jump(context, block_info.switch_value, body, 4)
         else: # ConditionalNode
             emit_node(context, node, body, 4)
             if_body = Body(print_node_comment=False)
             emit_goto_or_early_return(context, node.conditional_edge, if_body, 8)
-            block_info = node.block.block_info
-            assert isinstance(block_info, BlockInfo)
             assert block_info.branch_condition is not None
             body.add_if_else(IfElseStatement(block_info.branch_condition, 4,
                 if_body=if_body, else_body=None))
@@ -547,6 +564,11 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if return_node is None:
         fictive_block = Block(-1, None, '', [])
         return_node = ReturnNode(fictive_block, False, index=-1)
+
+    for node in context.flow_graph.nodes:
+        if isinstance(node, SwitchNode):
+            for target in node.cases:
+                context.goto_nodes.add(target)
 
     if options.debug:
         print("Here's the whole function!\n")

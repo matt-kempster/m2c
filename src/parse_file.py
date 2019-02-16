@@ -31,6 +31,9 @@ class Function:
     def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
 
+    def bodyless_copy(self) -> 'Function':
+        return Function(name=self.name, jumptable_labels=self.jumptable_labels)
+
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
         return f'glabel {self.name}\n{body}'

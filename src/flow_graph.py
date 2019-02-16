@@ -7,8 +7,8 @@ import attr
 
 from error import DecompFailure
 from parse_file import Function, Label, Rodata
-from parse_instruction import (AsmLiteral, Instruction, JumpTarget, Register,
-                               parse_instruction)
+from parse_instruction import (AsmGlobalSymbol, AsmLiteral, Instruction,
+                               JumpTarget, Macro, Register, parse_instruction)
 
 
 @attr.s(cmp=False)
@@ -138,7 +138,7 @@ def normalize_likely_branches(function: Function) -> Function:
         else:
             new_body.append((orig_item, item))
 
-    new_function = Function(name=function.name)
+    new_function = function.bodyless_copy()
     for (orig_item, new_item) in new_body:
         if id(orig_item) in insert_label_before:
             new_function.new_label(insert_label_before[id(orig_item)])
@@ -153,7 +153,7 @@ def prune_unreferenced_labels(function: Function) -> Function:
         if isinstance(item, Instruction) and item.is_branch_instruction():
             labels_used.add(item.get_branch_target().target)
 
-    new_function = Function(name=function.name)
+    new_function = function.bodyless_copy()
     for item in function.body:
         if not (isinstance(item, Label) and item.name not in labels_used):
             new_function.body.append(item)
@@ -336,7 +336,7 @@ def simplify_standard_patterns(function: Function) -> Function:
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
 
-    new_function = Function(name=function.name)
+    new_function = function.bodyless_copy()
     i = 0
     while i < len(function.body):
         repl, i = (try_replace_div(i) or try_replace_divu(i) or
@@ -501,16 +501,26 @@ class ReturnNode(BaseNode):
     def __str__(self) -> str:
         return f'{self.block}\n# {self.block.index} -> ret'
 
+@attr.s(cmp=False)
+class SwitchNode(BaseNode):
+    cases: List['Node'] = attr.ib()
+
+    def __str__(self) -> str:
+        targets = ', '.join(str(c.block.index) for c in self.cases)
+        return f'{self.block}\n# {self.block.index} -> {targets}'
+
 Node = Union[
     BasicNode,
     ConditionalNode,
     ReturnNode,
+    SwitchNode,
 ]
 
 def build_graph_from_block(
     block: Block,
     blocks: List[Block],
-    nodes: List[Node]
+    nodes: List[Node],
+    rodata: Rodata
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -520,9 +530,9 @@ def build_graph_from_block(
     new_node: Node
     dummy_node: Any = None
 
-    def find_block_by_label(label: JumpTarget) -> Optional[Block]:
+    def find_block_by_label(label: str) -> Optional[Block]:
         for block in blocks:
-            if block.label and block.label.name == label.target:
+            if block.label and block.label.name == label:
                 return block
         return None
 
@@ -539,27 +549,68 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes)
+        new_node.successor = build_graph_from_block(next_block,
+                blocks, nodes, rodata)
 
         # Keep track of parents.
         new_node.successor.add_parent(new_node)
     elif len(jumps) == 1:
-        # There is a jump. This is either a ReturnNode if it's "jr $ra", a
-        # BasicNode if it's an unconditional branch, or a ConditionalNode.
+        # There is a jump. This is either:
+        # - a ReturnNode, if it's "jr $ra",
+        # - a SwitchNode, if it's "jr $something_else",
+        # - a BasicNode, if it's an unconditional branch, or
+        # - a ConditionalNode.
         jump = jumps[0]
 
-        if jump.mnemonic == 'jr':
-            # If jump.args[0] != Register('ra'), this is a switch, which is not
-            # supported. Delay that error until code emission though.
+        if jump.mnemonic == 'jr' and jump.args[0] == Register('ra'):
             new_node = ReturnNode(block, False, index=0)
             nodes.append(new_node)
+            return new_node
+
+        if jump.mnemonic == 'jr':
+            new_node = SwitchNode(block, True, [])
+            nodes.append(new_node)
+
+            jtbl_names = []
+            for ins in block.instructions:
+                for arg in ins.args:
+                    if (isinstance(arg, Macro) and arg.macro_name == 'hi' and
+                            isinstance(arg.argument, AsmGlobalSymbol) and
+                            arg.argument.symbol_name.startswith('jtbl')):
+                        jtbl_names.append(arg.argument.symbol_name)
+            if len(jtbl_names) != 1:
+                raise DecompFailure("Unable to determine jump table for jr instruction.\n\n"
+                        "There must be a read of a variable in the same block as\n"
+                        "the instruction, which has a name starting with \"jtbl\".")
+
+            jtbl_name = jtbl_names[0]
+            if jtbl_name not in rodata.values:
+                raise DecompFailure("Found jr instruction, but the corresponding jump table is not provided.\n\n"
+                        "Please pass a --rodata flag to mips_to_c, pointing to the right .s file.\n\n"
+                        "(You might need to pass --goto and --no-andor flags as well,\n"
+                        "to get correct control flow for non-jtbl switch jumps.)")
+
+            jtbl_entries = rodata.values[jtbl_name]
+            for entry in jtbl_entries:
+                if entry == "0":
+                    # We have entered padding, stop reading.
+                    break
+                case_block = find_block_by_label(entry)
+                if case_block is None:
+                    raise DecompFailure(f"Cannot find jtbl target {entry}")
+                case_node = build_graph_from_block(case_block,
+                        blocks, nodes, rodata)
+                new_node.cases.append(case_node)
+                if new_node not in case_node.parents:
+                    case_node.add_parent(new_node)
+
             return new_node
 
         assert jump.is_branch_instruction()
 
         # Get the block associated with the jump target.
         branch_label = jump.get_branch_target()
-        branch_block = find_block_by_label(branch_label)
+        branch_block = find_block_by_label(branch_label.target)
         if branch_block is None:
             target = branch_label.target
             raise DecompFailure(f"Cannot find branch target {target}")
@@ -570,8 +621,8 @@ def build_graph_from_block(
             new_node = BasicNode(block, jump.emit_goto, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
-            new_node.successor = build_graph_from_block(branch_block, blocks,
-                    nodes)
+            new_node.successor = build_graph_from_block(branch_block,
+                    blocks, nodes, rodata)
             # Keep track of parents.
             new_node.successor.add_parent(new_node)
         else:
@@ -583,9 +634,9 @@ def build_graph_from_block(
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(branch_block,
-                    blocks, nodes)
+                    blocks, nodes, rodata)
             new_node.fallthrough_edge = build_graph_from_block(next_block,
-                    blocks, nodes)
+                    blocks, nodes, rodata)
             # Keep track of parents.
             new_node.conditional_edge.add_parent(new_node)
             new_node.fallthrough_edge.add_parent(new_node)
@@ -606,12 +657,14 @@ def is_trivial_return_block(block: Block) -> bool:
     return True
 
 
-def build_nodes(function: Function, blocks: List[Block]) -> List[Node]:
+def build_nodes(
+    function: Function, blocks: List[Block], rodata: Rodata
+) -> List[Node]:
     graph: List[Node] = []
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph)
+    build_graph_from_block(entry_block, blocks, graph, rodata)
 
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
@@ -688,6 +741,9 @@ def ensure_fallthrough(nodes: List[Node]) -> None:
                 reachable.add(fallthrough)
                 if not node.emit_goto and not node.is_loop():
                     reachable.add(node.conditional_edge)
+            elif isinstance(node, SwitchNode):
+                assert fallthrough is not None
+                reachable.add(fallthrough)
             else: # ReturnNode
                 if node.emit_goto and fallthrough is not None:
                     reachable.add(fallthrough)
@@ -754,7 +810,7 @@ class FlowGraph:
 
 def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
     blocks = build_blocks(function)
-    nodes = build_nodes(function, blocks)
+    nodes = build_nodes(function, blocks, rodata)
     nodes = duplicate_premature_returns(nodes)
     ensure_fallthrough(nodes)
     compute_dominators(nodes)

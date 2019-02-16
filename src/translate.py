@@ -7,7 +7,7 @@ from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
 import attr
 
 from flow_graph import (Block, FlowGraph, Function, Node, ReturnNode,
-                        build_flowgraph)
+                        SwitchNode, build_flowgraph)
 from options import Options
 from error import DecompFailure
 from parse_file import Rodata
@@ -917,6 +917,7 @@ class BlockInfo:
     """
     to_write: List[Statement] = attr.ib()
     return_value: Optional[Expression] = attr.ib()
+    switch_value: Optional[Expression] = attr.ib()
     branch_condition: Optional[Condition] = attr.ib()
     final_register_states: RegInfo = attr.ib()
 
@@ -1558,6 +1559,7 @@ def translate_node_body(
     subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
     branch_condition: Optional[Condition] = None
     return_value: Optional[Expression] = None
+    switch_value: Optional[Expression] = None
 
     def eval_once(
         expr: Expression,
@@ -1683,11 +1685,15 @@ def translate_node_body(
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in CASES_JUMPS:
-            if mnemonic == 'jr':
+            if mnemonic == 'jr' and args.reg_ref(0) == Register('ra'):
                 # Return from the function.
-                assert args.reg_ref(0) == Register('ra'), "Jump tables are not supported yet."
                 assert isinstance(node, ReturnNode)
                 return_value = regs.get_raw(Register('return'))
+                break
+            elif mnemonic == 'jr':
+                # Switch jump.
+                assert isinstance(node, SwitchNode)
+                switch_value = args.reg(0)
                 break
             else:
                 # Function or function pointer call. Well, let's double-check:
@@ -1768,7 +1774,8 @@ def translate_node_body(
 
     if branch_condition is not None:
         mark_used(branch_condition)
-    return BlockInfo(to_write, return_value, branch_condition, regs)
+    return BlockInfo(to_write, return_value, switch_value, branch_condition,
+            regs)
 
 
 def translate_graph_from_block(
@@ -1799,7 +1806,7 @@ def translate_graph_from_block(
         emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
         error_stmt = CommentStmt('Error: ' + emsg)
-        block_info = BlockInfo([error_stmt], None, ErrorExpr(), regs)
+        block_info = BlockInfo([error_stmt], None, None, ErrorExpr(), regs)
 
     node.block.add_block_info(block_info)
     if isinstance(node, ReturnNode):
