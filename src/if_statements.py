@@ -1,6 +1,7 @@
 import queue
 import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
+                    Union)
 
 import attr
 
@@ -17,7 +18,7 @@ from translate import (BinaryOp, BlockInfo, Condition, Expression,
 class Context:
     flow_graph: FlowGraph = attr.ib()
     options: Options = attr.ib()
-    reachable_without: Dict[typing.Tuple[Node, Node, Node], bool] = attr.ib(factory=dict)
+    reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
     is_void: bool = attr.ib(default=True)
     goto_nodes: Set[Node] = attr.ib(factory=set)
@@ -198,35 +199,33 @@ def end_reachable_without(
 ) -> bool:
     """Return whether "end" is reachable from "start" if "without" were removed.
     """
-    if end == without or start == without:
-        # Can't get to the end.
-        return False
-    if start == end:
-        # Already there! (Base case.)
-        return True
-
-    key = (start, end, without)
+    key = (start, without)
     if key in context.reachable_without:
-        return context.reachable_without[key]
+        return end in context.reachable_without[key]
 
-    def reach(edge: Node) -> bool:
-        return end_reachable_without(context, edge, end, without)
+    reachable: Set[Node] = set()
+    stack: List[Node] = [start]
 
-    if isinstance(start, BasicNode):
-        ret = reach(start.successor)
-    elif isinstance(start, ConditionalNode):
-        # Going through the conditional node cannot help, since that is a
-        # backwards arrow. There is no way to get to the end.
-        ret = (reach(start.fallthrough_edge) or
-            (not start.is_loop() and reach(start.conditional_edge)))
-    elif isinstance(start, SwitchNode):
-        ret = any(reach(edge) for edge in start.cases)
-    else:
-        assert isinstance(start, ReturnNode)
-        ret = False
+    while stack:
+        node = stack.pop()
+        if node == without or node in reachable:
+            continue
+        reachable.add(node)
+        if isinstance(node, BasicNode):
+            stack.append(node.successor)
+        elif isinstance(node, ConditionalNode):
+            stack.append(node.fallthrough_edge)
+            if not node.is_loop():
+                # For compatibility with older code, don't add back edges.
+                # (It would cause infinite loops before this was rewritten
+                # iteratively, with a 'node in reachable' check avoiding
+                # loops.) TODO: revisit this?
+                stack.append(node.conditional_edge)
+        else:
+            assert isinstance(node, ReturnNode)
 
-    context.reachable_without[key] = ret
-    return ret
+    context.reachable_without[key] = reachable
+    return end in reachable
 
 def get_reachable_nodes(start: Node) -> Set[Node]:
     reachable_nodes: Set[Node] = set()
@@ -572,8 +571,11 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
 
     if options.debug:
         print("Here's the whole function!\n")
-    body: Body = (build_flowgraph_between(context, start_node, return_node, 4)
-            if options.ifs else build_naive(context, context.flow_graph.nodes))
+    body: Body
+    if options.ifs:
+        body = build_flowgraph_between(context, start_node, return_node, 4)
+    else:
+        body = build_naive(context, context.flow_graph.nodes)
 
     if return_node.index != -1:
         write_return(context, body, return_node, 4, last=True)
