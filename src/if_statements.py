@@ -221,8 +221,10 @@ def end_reachable_without(
                 # iteratively, with a 'node in reachable' check avoiding
                 # loops.) TODO: revisit this?
                 stack.append(node.conditional_edge)
+        elif isinstance(node, SwitchNode):
+            stack.extend(node.cases)
         else:
-            assert isinstance(node, ReturnNode)
+            _: ReturnNode = node
 
     context.reachable_without[key] = reachable
     return end in reachable
@@ -241,6 +243,10 @@ def get_reachable_nodes(start: Node) -> Set[Node]:
             if not node.is_loop():
                 stack.append(node.conditional_edge)
             stack.append(node.fallthrough_edge)
+        elif isinstance(node, SwitchNode):
+            stack.extend(node.cases)
+        else:
+            _: ReturnNode = node
     return reachable_nodes
 
 def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
@@ -278,6 +284,10 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
                 # It should be kept the same as in get_reachable_nodes.
                 stack.append(node.conditional_edge)
             stack.append(node.fallthrough_edge)
+        elif isinstance(node, SwitchNode):
+            stack.extend(node.cases)
+        else:
+            _: ReturnNode = node
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
         if node != start and not end_reachable_without(context, start, end, node):
