@@ -8,7 +8,7 @@ s32 test(s32 arg0)
     if (arg0 > 0)
     {
         phi_v1 = 0;
-block_2:
+loop_2:
         if (phi_v1 == 5)
         {
             phi_v1_2 = phi_v1 * 2;
@@ -21,7 +21,7 @@ block_2:
         phi_v1_3 = phi_v1_2;
         if (phi_v1_2 < arg0)
         {
-            goto block_2;
+            goto loop_2;
         }
     }
     return phi_v1_3;

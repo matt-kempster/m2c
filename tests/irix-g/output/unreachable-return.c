@@ -1,6 +1,6 @@
 void test(void)
 {
-block_0:
+loop_0:
     D_4100E0 = 1;
-    goto block_0;
+    goto loop_0;
 }

@@ -6,7 +6,7 @@ void test(s32 arg0)
     sp4 = 0;
     if (arg0 > 0)
     {
-block_1:
+loop_1:
         D_4101D0.unk0 = 1;
         if (D_4101D0.unk4 == 2)
         {
@@ -22,7 +22,7 @@ block_10:
                 sp4 = temp_t7;
                 if (temp_t7 < arg0)
                 {
-                    goto block_1;
+                    goto loop_1;
                 }
             }
             else

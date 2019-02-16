@@ -21,7 +21,9 @@ class Context:
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
     is_void: bool = attr.ib(default=True)
+    case_nodes: Dict[Node, List[int]] = attr.ib(factory=dict)
     goto_nodes: Set[Node] = attr.ib(factory=set)
+    loop_nodes: Set[Node] = attr.ib(factory=set)
     emitted_nodes: Set[Node] = attr.ib(factory=set)
     has_warned: bool = attr.ib(default=False)
 
@@ -68,14 +70,23 @@ class SimpleStatement:
 
 @attr.s
 class LabelStatement:
+    indent: int = attr.ib()
     context: Context = attr.ib()
     node: Node = attr.ib()
 
     def should_write(self) -> bool:
-        return self.node in self.context.goto_nodes
+        return (self.node in self.context.goto_nodes or
+                self.node in self.context.case_nodes)
 
     def __str__(self) -> str:
-        return f'{label_for_node(self.node)}:'
+        lines = []
+        if self.node in self.context.case_nodes:
+            for case in self.context.case_nodes[self.node]:
+                case_str = f'case {case}' if case != -1 else 'default'
+                lines.append(f'{" " * self.indent}{case_str}:')
+        if self.node in self.context.goto_nodes:
+            lines.append(f'{label_for_node(self.context, self.node)}:')
+        return '\n'.join(lines)
 
 Statement = Union[SimpleStatement, IfElseStatement, LabelStatement]
 
@@ -111,8 +122,11 @@ class Body:
                 if statement.should_write())
 
 
-def label_for_node(node: Node) -> str:
-    return f'block_{node.block.index}'
+def label_for_node(context: Context, node: Node) -> str:
+    if node in context.loop_nodes:
+        return f'loop_{node.block.index}'
+    else:
+        return f'block_{node.block.index}'
 
 def emit_node(context: Context, node: Node, body: Body, indent: int) -> None:
     """Emit a node, together with a label for it (which is only printed if
@@ -120,11 +134,11 @@ def emit_node(context: Context, node: Node, body: Body, indent: int) -> None:
     if isinstance(node, ReturnNode) and not node.is_real():
         body.add_node(node, indent, comment_empty=False)
     else:
-        body.add_statement(LabelStatement(context, node))
+        body.add_statement(LabelStatement(max(indent - 4, 0), context, node))
         body.add_node(node, indent, comment_empty=True)
 
 def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
-    label = label_for_node(target)
+    label = label_for_node(context, target)
     context.goto_nodes.add(target)
     body.add_statement(SimpleStatement(indent, f'goto {label};'))
 
@@ -578,8 +592,19 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
 
     for node in context.flow_graph.nodes:
         if isinstance(node, SwitchNode):
-            for target in node.cases:
-                context.goto_nodes.add(target)
+            assert node.cases, "jtbl list must not be empty"
+            most_common = max(node.cases, key=node.cases.count)
+            context.case_nodes[most_common] = [-1]
+            for index, target in enumerate(node.cases):
+                if target == most_common:
+                    continue
+                if target not in context.case_nodes:
+                    context.case_nodes[target] = []
+                context.case_nodes[target].append(index)
+        elif isinstance(node, ConditionalNode) and node.is_loop():
+            context.loop_nodes.add(node.conditional_edge)
+        elif isinstance(node, BasicNode) and node.is_loop():
+            context.loop_nodes.add(node.successor)
 
     if options.debug:
         print("Here's the whole function!\n")
