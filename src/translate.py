@@ -1774,6 +1774,8 @@ def translate_node_body(
 
     if branch_condition is not None:
         mark_used(branch_condition)
+    if switch_value is not None:
+        mark_used(switch_value)
     return BlockInfo(to_write, return_value, switch_value, branch_condition,
             regs)
 
