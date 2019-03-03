@@ -200,7 +200,7 @@ class Instruction:
 
     def is_branch_likely_instruction(self) -> bool:
         return self.mnemonic in [
-            'beql', 'bnel', 'neqzl', 'bnezl', 'bgezl', 'bgtzl', 'blezl', 'bltzl',
+            'beql', 'bnel', 'beqzl', 'bnezl', 'bgezl', 'bgtzl', 'blezl', 'bltzl',
             'bc1tl', 'bc1fl'
         ]
 
