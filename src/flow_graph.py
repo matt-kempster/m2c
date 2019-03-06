@@ -238,16 +238,8 @@ def simplify_standard_patterns(function: Function) -> Function:
     def get_li_imm(ins: Instruction) -> Optional[int]:
         if ins.mnemonic == 'lui' and isinstance(ins.args[1], AsmLiteral):
             return (ins.args[1].value & 0xffff) << 16
-        if (ins.mnemonic in ['addi', 'addiu'] and
-                ins.args[1] == Register('zero') and
-                isinstance(ins.args[2], AsmLiteral)):
-            val = ins.args[2].value & 0xffff
-            if val >= 0x8000:
-                val -= 0x10000
-            return val & 0xffffffff
-        if (ins.mnemonic == 'ori' and ins.args[1] == Register('zero') and
-                isinstance(ins.args[2], AsmLiteral)):
-            return ins.args[2].value & 0xffff
+        if ins.mnemonic == 'li' and isinstance(ins.args[1], AsmLiteral):
+            return ins.args[1].value & 0xffffffff
         return None
 
     def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> int:

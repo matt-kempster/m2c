@@ -1181,11 +1181,9 @@ def handle_addi(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
-    if source_reg.register_name == 'zero':
-        # addiu $reg, $zero, <imm> is one way of writing 'li'
-        return imm
-    elif imm == Literal(0):
+    if imm == Literal(0):
         # addiu $reg1, $reg2, 0 is a move
+        # (this happens when replacing %lo(...) by 0)
         return source
     elif source_reg.register_name in ['sp', 'fp']:
         # Adding to sp, i.e. passing an address.

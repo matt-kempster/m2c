@@ -115,7 +115,10 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             # Register.
             assert value is None
             arg_elems.pop(0)
-            value = Register(parse_word(arg_elems))
+            reg = parse_word(arg_elems)
+            if reg == 's8':
+                reg = 'fp'
+            value = Register(reg)
         elif tok == '.':
             # A jump target (i.e. a label).
             assert value is None
@@ -221,6 +224,23 @@ class Instruction:
     def __str__(self) -> str:
         return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
 
+def normalize_instruction(instr: Instruction) -> Instruction:
+    args = instr.args
+    if len(args) >= 2:
+        if instr.mnemonic == 'or' and args[-1] == Register('zero'):
+            return Instruction('move', args[:-1], instr.emit_goto)
+        if instr.mnemonic == 'addiu' and args[-1] == AsmLiteral(0):
+            return Instruction('move', args[:-1], instr.emit_goto)
+        if (instr.mnemonic == 'ori' and args[1] == Register('zero') and
+                isinstance(args[-1], AsmLiteral)):
+            lit = AsmLiteral(args[-1].value & 0xffff)
+            return Instruction('li', [args[0], lit], instr.emit_goto)
+        if (instr.mnemonic == 'addiu' and args[1] == Register('zero') and
+                isinstance(args[-1], AsmLiteral)):
+            lit = AsmLiteral(((args[-1].value + 0x8000) & 0xffff) - 0x8000)
+            return Instruction('li', [args[0], lit], instr.emit_goto)
+    return instr
+
 def parse_instruction(line: str, emit_goto: bool) -> Instruction:
     # First token is instruction name, rest is args.
     line = line.strip()
@@ -228,4 +248,5 @@ def parse_instruction(line: str, emit_goto: bool) -> Instruction:
     # Parse arguments.
     args: List[Argument] = list(filter(None,
         [parse_arg(arg_str.strip()) for arg_str in args_str.split(',')]))
-    return Instruction(mnemonic, args, emit_goto)
+    instr = Instruction(mnemonic, args, emit_goto)
+    return normalize_instruction(instr)
