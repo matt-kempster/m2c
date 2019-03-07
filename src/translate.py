@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import sys
 import traceback
 import typing
@@ -34,6 +35,23 @@ CALLEE_SAVE_REGS = list(map(Register, [
 SPECIAL_REGS = list(map(Register, [
     'ra', '31', 'fp'
 ]))
+
+
+@attr.s
+class InstrProcessingFailure(Exception):
+    instr: Instruction = attr.ib()
+
+    def __str__(self) -> str:
+        return f'Error while processing instruction:\n{self.instr}'
+
+@contextmanager
+def current_instr(instr: Instruction):
+    """Mark an instruction as being the one currently processed, for the
+    purposes of error messages. Use like |with current_instr(instr): ...|"""
+    try:
+        yield
+    except Exception as e:
+        raise InstrProcessingFailure(instr) from e
 
 
 @attr.s(cmp=False, repr=False)
@@ -1294,6 +1312,7 @@ CASES_IGNORE: InstrSet = {
     # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
     # FCSR gets are as well, but it's fine to read ERROR for those.
     'ctc1',
+    'nop',
 }
 CASES_SOURCE_FIRST_EXPRESSION: StoreInstrMap = {
     # Storage instructions
@@ -1472,9 +1491,10 @@ def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
             continue
         seen.add(n)
         for instr in n.block.instructions:
-            clobbered.update(output_regs_for_instr(instr))
-            if instr.mnemonic == 'jal':
-                clobbered.update(CALLER_SAVE_REGS)
+            with current_instr(instr):
+                clobbered.update(output_regs_for_instr(instr))
+                if instr.mnemonic == 'jal':
+                    clobbered.update(CALLER_SAVE_REGS)
         stack.extend(n.parents)
     return clobbered
 
@@ -1492,10 +1512,11 @@ def reg_always_set(node: Node, reg: Register, dom_set: bool) -> bool:
         seen.add(n)
         clobbered: Optional[bool] = None
         for instr in n.block.instructions:
-            if instr.mnemonic == 'jal' and reg in CALLER_SAVE_REGS:
-                clobbered = True
-            if reg in output_regs_for_instr(instr):
-                clobbered = False
+            with current_instr(instr):
+                if instr.mnemonic == 'jal' and reg in CALLER_SAVE_REGS:
+                    clobbered = True
+                if reg in output_regs_for_instr(instr):
+                    clobbered = False
         if clobbered == True:
             return False
         if clobbered is None:
@@ -1636,12 +1657,10 @@ def translate_node_body(
                     trivial=is_repeatable_expression(expr),
                     reuse_var=prev.var)
 
-    for instr in node.block.instructions:
-        # Save the current mnemonic.
-        mnemonic = instr.mnemonic
-        if mnemonic == 'nop':
-            continue
+    def process_instr(instr) -> None:
+        nonlocal branch_condition, return_value, switch_value
 
+        mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
 
         # Figure out what code to generate!
@@ -1690,12 +1709,10 @@ def translate_node_body(
                 # Return from the function.
                 assert isinstance(node, ReturnNode)
                 return_value = regs.get_raw(Register('return'))
-                break
             elif mnemonic == 'jr':
                 # Switch jump.
                 assert isinstance(node, SwitchNode)
                 switch_value = args.reg(0)
-                break
             else:
                 # Function or function pointer call. Well, let's double-check:
                 assert mnemonic in ['jal', 'jalr']
@@ -1773,6 +1790,10 @@ def translate_node_body(
         else:
             raise DecompFailure(f"I don't know how to handle {mnemonic}!")
 
+    for instr in node.block.instructions:
+        with current_instr(instr):
+            process_instr(instr)
+
     if branch_condition is not None:
         mark_used(branch_condition)
     if switch_value is not None:
@@ -1805,11 +1826,24 @@ def translate_graph_from_block(
     except Exception as e:  # TODO: handle issues better
         if options.stop_on_error:
             raise e
-        traceback.print_exc()
-        emsg = str(e) or traceback.format_tb(sys.exc_info()[2])[-1]
+
+        instr: Optional[Instruction] = None
+        if isinstance(e, InstrProcessingFailure):
+            instr = e.instr
+            e = e.__cause__
+
+        tb = e.__traceback__
+        traceback.print_exception(None, e, tb)
+        emsg = str(e) or traceback.format_tb(tb)[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
-        error_stmt = CommentStmt('Error: ' + emsg)
-        block_info = BlockInfo([error_stmt], None, None, ErrorExpr(), regs)
+        error_stmts = [CommentStmt(f'Error: {emsg}')]
+        if instr is not None:
+            print(f"Error occurred while processing instruction:\n{instr}",
+                    file=sys.stderr)
+            stripped = str(instr).strip()
+            error_stmts.append(CommentStmt(f'At instruction: {stripped}'))
+        print(file=sys.stderr)
+        block_info = BlockInfo(error_stmts, None, None, ErrorExpr(), regs)
 
     node.block.add_block_info(block_info)
     if isinstance(node, ReturnNode):
