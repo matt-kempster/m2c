@@ -226,19 +226,27 @@ class Instruction:
 
 def normalize_instruction(instr: Instruction) -> Instruction:
     args = instr.args
-    if len(args) >= 2:
-        if instr.mnemonic == 'or' and args[-1] == Register('zero'):
-            return Instruction('move', args[:-1], instr.emit_goto)
-        if instr.mnemonic == 'addiu' and args[-1] == AsmLiteral(0):
-            return Instruction('move', args[:-1], instr.emit_goto)
+    if len(args) == 3:
+        if instr.mnemonic == 'or' and args[2] == Register('zero'):
+            return Instruction('move', args[:2], instr.emit_goto)
+        if instr.mnemonic == 'nor' and args[1] == Register('zero'):
+            return Instruction('not', [args[0], args[2]])
+        if instr.mnemonic == 'nor' and args[2] == Register('zero'):
+            return Instruction('not', [args[0], args[1]])
+        if instr.mnemonic == 'addiu' and args[2] == AsmLiteral(0):
+            return Instruction('move', args[:2], instr.emit_goto)
         if (instr.mnemonic == 'ori' and args[1] == Register('zero') and
-                isinstance(args[-1], AsmLiteral)):
-            lit = AsmLiteral(args[-1].value & 0xffff)
+                isinstance(args[2], AsmLiteral)):
+            lit = AsmLiteral(args[2].value & 0xffff)
             return Instruction('li', [args[0], lit], instr.emit_goto)
         if (instr.mnemonic == 'addiu' and args[1] == Register('zero') and
-                isinstance(args[-1], AsmLiteral)):
-            lit = AsmLiteral(((args[-1].value + 0x8000) & 0xffff) - 0x8000)
+                isinstance(args[2], AsmLiteral)):
+            lit = AsmLiteral(((args[2].value + 0x8000) & 0xffff) - 0x8000)
             return Instruction('li', [args[0], lit], instr.emit_goto)
+        if (instr.mnemonic in ['bne', 'beq', 'beql', 'bnel'] and
+                args[1] == Register('zero')):
+            mn = instr.mnemonic[:3] + 'z' + instr.mnemonic[3:]
+            return Instruction(mn, [args[0], args[2]], instr.emit_goto)
     return instr
 
 def parse_instruction(line: str, emit_goto: bool) -> Instruction:
