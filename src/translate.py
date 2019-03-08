@@ -2,8 +2,8 @@ from contextlib import contextmanager
 import sys
 import traceback
 import typing
-from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
-                    Union)
+from typing import (Any, Callable, Dict, Iterator, Iterable, List, Optional,
+                    Set, Tuple, Union)
 
 import attr
 
@@ -45,7 +45,7 @@ class InstrProcessingFailure(Exception):
         return f'Error while processing instruction:\n{self.instr}'
 
 @contextmanager
-def current_instr(instr: Instruction):
+def current_instr(instr: Instruction) -> Iterator[None]:
     """Mark an instruction as being the one currently processed, for the
     purposes of error messages. Use like |with current_instr(instr): ...|"""
     try:
@@ -1657,7 +1657,7 @@ def translate_node_body(
                     trivial=is_repeatable_expression(expr),
                     reuse_var=prev.var)
 
-    def process_instr(instr) -> None:
+    def process_instr(instr: Instruction) -> None:
         nonlocal branch_condition, return_value, switch_value
 
         mnemonic = instr.mnemonic
@@ -1746,7 +1746,7 @@ def translate_node_body(
                 for arg in subroutine_args:
                     func_args.append(arg[0])
                 # Reset subroutine_args, for the next potential function call.
-                subroutine_args = []
+                subroutine_args.clear()
 
                 call: Expression = FuncCall(fn_target, func_args, Type.any())
                 call = eval_once(call, always_emit=True, trivial=False,
@@ -1828,7 +1828,8 @@ def translate_graph_from_block(
             raise e
 
         instr: Optional[Instruction] = None
-        if isinstance(e, InstrProcessingFailure):
+        if (isinstance(e, InstrProcessingFailure) and
+                isinstance(e.__cause__, Exception)):
             instr = e.instr
             e = e.__cause__
 
@@ -1836,7 +1837,7 @@ def translate_graph_from_block(
         traceback.print_exception(None, e, tb)
         emsg = str(e) or traceback.format_tb(tb)[-1]
         emsg = emsg.strip().split('\n')[-1].strip()
-        error_stmts = [CommentStmt(f'Error: {emsg}')]
+        error_stmts: List[Statement] = [CommentStmt(f'Error: {emsg}')]
         if instr is not None:
             print(f"Error occurred while processing instruction:\n{instr}",
                     file=sys.stderr)
