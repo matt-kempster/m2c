@@ -250,11 +250,15 @@ def normalize_instruction(instr: Instruction) -> Instruction:
     return instr
 
 def parse_instruction(line: str, emit_goto: bool) -> Instruction:
-    # First token is instruction name, rest is args.
-    line = line.strip()
-    mnemonic, _, args_str = line.partition(' ')
-    # Parse arguments.
-    args: List[Argument] = list(filter(None,
-        [parse_arg(arg_str.strip()) for arg_str in args_str.split(',')]))
-    instr = Instruction(mnemonic, args, emit_goto)
-    return normalize_instruction(instr)
+    try:
+        # First token is instruction name, rest is args.
+        line = line.strip()
+        mnemonic, _, args_str = line.partition(' ')
+        # Parse arguments.
+        args: List[Argument] = list(filter(None,
+            [parse_arg(arg_str.strip()) for arg_str in args_str.split(',')]))
+        instr = Instruction(mnemonic, args, emit_goto)
+        return normalize_instruction(instr)
+    except Exception as e:
+        print(f"Failed to parse instruction: {line}\n", file=sys.stderr)
+        raise e
