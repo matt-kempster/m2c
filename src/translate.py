@@ -30,10 +30,7 @@ CALLER_SAVE_REGS = ARGUMENT_REGS + list(map(Register, [
 CALLEE_SAVE_REGS = list(map(Register, [
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
     'f20', 'f22', 'f24', 'f26', 'f28', 'f30',
-]))
-
-SPECIAL_REGS = list(map(Register, [
-    'ra', '31', 'fp'
+    'ra', '31', 'fp',
 ]))
 
 
@@ -237,6 +234,7 @@ class StackInfo:
     function: Function = attr.ib()
     allocated_stack_size: int = attr.ib(default=0)
     is_leaf: bool = attr.ib(default=True)
+    uses_framepointer: bool = attr.ib(default=False)
     local_vars_region_bottom: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
@@ -320,6 +318,13 @@ class StackInfo:
             return LocalVar(location,
                     type=self.unique_type_for('stack', location))
 
+    def is_stack_reg(self, reg: Register) -> bool:
+        if reg.register_name == 'sp':
+            return True
+        if reg.register_name == 'fp':
+            return self.uses_framepointer
+        return False
+
     def __str__(self) -> str:
         return '\n'.join([
             f'Stack info for function {self.function.name}:',
@@ -345,6 +350,12 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].value)
+        elif (inst.mnemonic == 'move' and destination.register_name == 'fp' and
+              isinstance(inst.args[1], Register) and
+              inst.args[1].register_name == 'sp'):
+            # "move fp, sp" very likely means the code is compiled with frame
+            # pointers enabled; thus fp should be treated the same as sp.
+            info.uses_framepointer = True
         elif inst.mnemonic == 'sw' and destination.register_name == 'ra':
             # Saving the return address on the stack.
             assert isinstance(inst.args[1], AsmAddressMode)
@@ -1016,7 +1027,7 @@ def deref(
 ) -> Expression:
     if isinstance(arg, AddressMode):
         location=arg.offset
-        if arg.rhs.register_name in ['sp', 'fp']:
+        if stack_info.is_stack_reg(arg.rhs):
             return stack_info.get_stack_var(location, store=store)
         else:
             # Struct member is being dereferenced.
@@ -1203,10 +1214,10 @@ def handle_addi(args: InstrArgs) -> Expression:
         # addiu $reg1, $reg2, 0 is a move
         # (this happens when replacing %lo(...) by 0)
         return source
-    elif source_reg.register_name in ['sp', 'fp']:
+    elif stack_info.is_stack_reg(source_reg):
         # Adding to sp, i.e. passing an address.
         assert isinstance(imm, Literal)
-        if args.reg_ref(0).register_name in ['sp', 'fp']:
+        if stack_info.is_stack_reg(args.reg_ref(0)):
             # Changing sp. Just ignore that.
             return source
         # Keep track of all local variables that we take addresses of.
@@ -1226,10 +1237,10 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
     target = args.memory_ref(1)
-    preserve_regs = CALLEE_SAVE_REGS + ARGUMENT_REGS + SPECIAL_REGS
+    preserve_regs = CALLEE_SAVE_REGS + ARGUMENT_REGS
     if (source_reg in preserve_regs and
             isinstance(target, AddressMode) and
-            target.rhs.register_name in ['sp', 'fp']):
+            stack_info.is_stack_reg(target.rhs)):
         # Elide register preserval. TODO: This isn't really right, what if
         # we're actually using the registers...
         return None
@@ -1892,7 +1903,7 @@ def translate_to_ast(
         Register('f12'): PassedInArg(0, copied=False, type=Type.f32()),
         Register('f14'): PassedInArg(4, copied=False, type=Type.f32()),
         **{reg: stack_info.global_symbol(AsmGlobalSymbol(reg.register_name))
-            for reg in CALLEE_SAVE_REGS + SPECIAL_REGS + [Register('sp')]}
+            for reg in CALLEE_SAVE_REGS + [Register('sp')]}
     }
 
     if options.debug:
