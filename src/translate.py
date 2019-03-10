@@ -20,14 +20,14 @@ ARGUMENT_REGS = list(map(Register, [
     'f12', 'f14'
 ]))
 
-CALLER_SAVE_REGS = ARGUMENT_REGS + list(map(Register, [
+TEMP_REGS = ARGUMENT_REGS + list(map(Register, [
     'at',
     't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9',
     'f4', 'f6', 'f8', 'f10', 'f16', 'f18',
     'hi', 'lo', 'condition_bit', 'return'
 ]))
 
-CALLEE_SAVE_REGS = list(map(Register, [
+SAVED_REGS = list(map(Register, [
     's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7',
     'f20', 'f22', 'f24', 'f26', 'f28', 'f30',
     'ra', '31', 'fp',
@@ -300,6 +300,14 @@ class StackInfo:
     def global_symbol(self, sym: AsmGlobalSymbol) -> 'GlobalSymbol':
         return GlobalSymbol(symbol_name=sym.symbol_name,
                 type=self.unique_type_for('symbol', sym.symbol_name))
+
+    def saved_reg_symbol(self, reg_name: str) -> 'GlobalSymbol':
+        sym_name = 'saved_reg_' + reg_name
+        return self.global_symbol(AsmGlobalSymbol(sym_name))
+
+    def is_saved_reg_symbol(self, expr: 'Expression') -> bool:
+        return (isinstance(expr, GlobalSymbol) and
+                expr.symbol_name.startswith('saved_reg_'))
 
     def get_stack_var(self, location: int, store: bool) -> 'Expression':
         if self.in_local_var_region(location):
@@ -929,7 +937,7 @@ class RegInfo:
         self.contents[key] = value
 
     def clear_caller_save_regs(self) -> None:
-        for reg in CALLER_SAVE_REGS:
+        for reg in TEMP_REGS:
             assert reg != Register('zero')
             if reg in self.contents:
                 del self.contents[reg]
@@ -1236,13 +1244,16 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
+    source_raw = args.regs.get_raw(source_reg)
     target = args.memory_ref(1)
-    preserve_regs = CALLEE_SAVE_REGS + ARGUMENT_REGS
-    if (source_reg in preserve_regs and
-            isinstance(target, AddressMode) and
+    should_save = (stack_info.is_saved_reg_symbol(source_val) or
+            (isinstance(source_raw, PassedInArg) and not source_raw.copied))
+    # should_save = (source_reg in (SAVED_REGS + ARGUMENT_REGS))
+    if (should_save and isinstance(target, AddressMode) and
             stack_info.is_stack_reg(target.rhs)):
-        # Elide register preserval. TODO: This isn't really right, what if
-        # we're actually using the registers...
+        # Elide register preserval. TODO: This is wrong when arguments are
+        # stored to the stack, onto other variables than their default stack
+        # spilling locations... In that case it hides assignments.
         return None
     dest = deref(target, args.regs, stack_info, store=True)
     dest.type.unify(type)
@@ -1505,7 +1516,7 @@ def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
             with current_instr(instr):
                 clobbered.update(output_regs_for_instr(instr))
                 if instr.mnemonic == 'jal':
-                    clobbered.update(CALLER_SAVE_REGS)
+                    clobbered.update(TEMP_REGS)
         stack.extend(n.parents)
     return clobbered
 
@@ -1524,7 +1535,7 @@ def reg_always_set(node: Node, reg: Register, dom_set: bool) -> bool:
         clobbered: Optional[bool] = None
         for instr in n.block.instructions:
             with current_instr(instr):
-                if instr.mnemonic == 'jal' and reg in CALLER_SAVE_REGS:
+                if instr.mnemonic == 'jal' and reg in TEMP_REGS:
                     clobbered = True
                 if reg in output_regs_for_instr(instr):
                     clobbered = False
@@ -1622,7 +1633,11 @@ def translate_node_body(
                 # Mark the register as "if used, emit the expression's once
                 # var". I think we should always have a once var at this point,
                 # but if we don't, create one.
+                # Exception: unused PassedInArg, which can pass the uses_expr
+                # test simply based on having the same variable name.
                 if not isinstance(e, EvalOnceExpr):
+                    if isinstance(e, PassedInArg) and not e.copied:
+                        continue
                     e = eval_once(e, always_emit=False, trivial=False,
                             prefix=r.register_name)
                 regs.set_raw(r, ForceVarExpr(e, type=e.type))
@@ -1902,8 +1917,9 @@ def translate_to_ast(
         Register('a3'): PassedInArg(12, copied=False, type=Type.any()),
         Register('f12'): PassedInArg(0, copied=False, type=Type.f32()),
         Register('f14'): PassedInArg(4, copied=False, type=Type.f32()),
-        **{reg: stack_info.global_symbol(AsmGlobalSymbol(reg.register_name))
-            for reg in CALLEE_SAVE_REGS + [Register('sp')]}
+        Register('sp'): GlobalSymbol('sp', type=Type.ptr()),
+        **{reg: stack_info.saved_reg_symbol(reg.register_name)
+            for reg in SAVED_REGS}
     }
 
     if options.debug:
