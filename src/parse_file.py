@@ -141,7 +141,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 elif line.startswith('glabel'):
                     # Function label.
                     function_name: str = line.split(' ')[1]
-                    if re.match('L[0-9A-F]{8}', function_name):
+                    if re.match('L(_U_)?[0-9A-F]{8}', function_name):
                         mips_file.new_jumptable_label(function_name)
                     else:
                         mips_file.new_function(function_name)
