@@ -252,7 +252,8 @@ class StackInfo:
         return prefix + (f'_{counter}' if counter > 1 else '')
 
     def in_subroutine_arg_region(self, location: int) -> bool:
-        assert not self.is_leaf
+        if self.is_leaf:
+            return False
         if self.callee_save_reg_locations:
             subroutine_arg_top = min(self.callee_save_reg_locations.values())
             assert self.return_addr_location > subroutine_arg_top
