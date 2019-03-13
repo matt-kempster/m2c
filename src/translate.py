@@ -1176,22 +1176,28 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     if isinstance(arg, AsmLiteral):
         return Literal(arg.value)
     assert isinstance(arg, BinOp), f'argument {arg} must be a literal'
-    return BinaryOp.int(left=literal_expr(arg.lhs, stack_info), op=arg.op,
-            right=literal_expr(arg.rhs, stack_info))
+    lhs = literal_expr(arg.lhs, stack_info)
+    rhs = literal_expr(arg.rhs, stack_info)
+    if isinstance(lhs, Literal) and isinstance(rhs, Literal):
+        if arg.op == '+':
+            return Literal(lhs.value + rhs.value)
+        if arg.op == '-':
+            return Literal(lhs.value - rhs.value)
+        if arg.op == '>>':
+            return Literal(lhs.value >> rhs.value)
+        if arg.op == '<<':
+            return Literal(lhs.value << rhs.value)
+        if arg.op == '&':
+            return Literal(lhs.value & rhs.value)
+    return BinaryOp.int(left=lhs, op=arg.op, right=rhs)
 
 
 def load_upper(args: InstrArgs) -> Expression:
     if isinstance(args.raw_args[1], Macro):
         return args.hi_imm(1)
     expr = args.imm(1)
-    if isinstance(expr, BinaryOp) and expr.op == '>>':
-        # Something like "lui REG (lhs >> 16)". Just take "lhs".
-        assert expr.right == Literal(16)
-        return expr.left
-    else:
-        assert isinstance(expr, Literal)
-        # Something like "lui 0x1", meaning 0x10000.
-        return Literal(expr.value << 16)
+    assert isinstance(expr, Literal)
+    return Literal(expr.value << 16)
 
 def handle_ori(args: InstrArgs) -> Expression:
     # Two-argument form, mostly used for "ori $reg, (x & 0xffff)"
@@ -1199,11 +1205,6 @@ def handle_ori(args: InstrArgs) -> Expression:
         args.duplicate_dest_reg()
 
     imm = args.imm(2)
-    if isinstance(imm, BinaryOp) and imm.op == '&':
-        # Something like "ori REG (lhs & 0xFFFF)". We (hopefully) already
-        # handled this in the lui, but let's put lhs into this register too.
-        assert imm.right == Literal(0xFFFF)
-        return imm.left
     r = args.reg(1)
     if isinstance(r, Literal) and isinstance(imm, Literal):
         return Literal(value=(r.value | imm.value))
