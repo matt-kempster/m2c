@@ -521,6 +521,11 @@ class BinaryOp:
         return [self.left, self.right]
 
     def __str__(self) -> str:
+        if (self.op == '+' and not self.floating and
+                isinstance(self.right, Literal) and self.right.value < 0):
+            neg = Literal(value=-self.right.value, type=self.right.type)
+            sub = BinaryOp(op='-', left=self.left, right=neg, type=self.type)
+            return str(sub)
         return f'({self.left} {self.op} {self.right})'
 
 @attr.s(frozen=True, cmp=False)
