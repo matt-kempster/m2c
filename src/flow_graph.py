@@ -71,8 +71,8 @@ class BlockBuilder:
         # We could support multiple labels at the same position, and output
         # empty blocks. For now we don't, however.
         if self.curr_label:
-            raise DecompFailure(f"A block is currently not allowed to have more than one label,\n"
-                "but {self.curr_label.name}/{label.name} is given two.")
+            raise DecompFailure("A block is currently not allowed to have more than one label,\n"
+                f"but {self.curr_label.name}/{label.name} is given two.")
         self.curr_label = label
         self.last_label_name = label.name
         self.label_counter = 0
