@@ -1196,6 +1196,9 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
             return Literal(lhs.value & rhs.value)
     return BinaryOp.int(left=lhs, op=arg.op, right=rhs)
 
+def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
+    return FuncCall(function=GlobalSymbol(symbol_name=fn_name, type=Type.any()),
+            args=args, type=type)
 
 def load_upper(args: InstrArgs) -> Expression:
     if isinstance(args.raw_args[1], Macro):
@@ -1418,12 +1421,16 @@ CASES_DESTINATION_FIRST: InstrMap = {
     'add.s': lambda a: BinaryOp.f32(a.reg(1), '+', a.reg(2)),
     'sub.s': lambda a: BinaryOp.f32(a.reg(1), '-', a.reg(2)),
     'neg.s': lambda a: UnaryOp('-', as_f32(a.reg(1)), type=Type.f32()),
+    'abs.s': lambda a: fn_op('fabsf', [as_f32(a.reg(1))], Type.f32()),
+    'sqrt.s': lambda a: fn_op('sqrtf', [as_f32(a.reg(1))], Type.f32()),
     'div.s': lambda a: BinaryOp.f32(a.reg(1), '/', a.reg(2)),
     'mul.s': lambda a: BinaryOp.f32(a.reg(1), '*', a.reg(2)),
     # Double-precision arithmetic
     'add.d': lambda a: BinaryOp.f64(a.dreg(1), '+', a.dreg(2)),
     'sub.d': lambda a: BinaryOp.f64(a.dreg(1), '-', a.dreg(2)),
     'neg.d': lambda a: UnaryOp('-', as_f64(a.dreg(1)), type=Type.f64()),
+    'abs.d': lambda a: fn_op('fabs', [as_f64(a.dreg(1))], Type.f64()),
+    'sqrt.d': lambda a: fn_op('sqrt', [as_f64(a.dreg(1))], Type.f64()),
     'div.d': lambda a: BinaryOp.f64(a.dreg(1), '/', a.dreg(2)),
     'mul.d': lambda a: BinaryOp.f64(a.dreg(1), '*', a.dreg(2)),
     # Floating point conversions
