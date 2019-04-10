@@ -7,6 +7,7 @@ import attr
 class Options:
     filename: str = attr.ib()
     debug: bool = attr.ib()
+    void: bool = attr.ib()
     ifs: bool = attr.ib()
     andor_detection: bool = attr.ib()
     goto_patterns: List[str] = attr.ib()

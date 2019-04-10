@@ -1947,6 +1947,9 @@ def translate_to_ast(
     has_return = all(b.return_value is not None for b in return_blocks) and \
         any(b.final_register_states.has_custom_return for b in return_blocks)
 
+    if options.void:
+        has_return = False
+
     for b in return_blocks:
         if not has_return:
             b.return_value = None

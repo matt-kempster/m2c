@@ -73,6 +73,8 @@ if __name__ == "__main__":
     parser.add_argument('function', help="function index or name (or 'all')", type=str)
     parser.add_argument('--debug', dest='debug',
             help="print debug info", action='store_true')
+    parser.add_argument('--void', dest='void',
+            help="assume the decompiled function returns void", action='store_true')
     parser.add_argument('--no-ifs', dest='ifs',
             help="disable control flow generation; emit gotos for everything", action='store_false')
     parser.add_argument('--no-andor', dest='andor_detection',
@@ -102,6 +104,7 @@ if __name__ == "__main__":
     options = Options(
         filename=args.filename,
         debug=args.debug,
+        void=args.void,
         ifs=args.ifs,
         andor_detection=args.andor_detection,
         goto_patterns=args.goto_patterns,
