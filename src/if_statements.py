@@ -21,7 +21,7 @@ class Context:
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     return_type: Type = attr.ib(factory=Type.any)
     is_void: bool = attr.ib(default=True)
-    case_nodes: Dict[Node, List[int]] = attr.ib(factory=dict)
+    case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(factory=dict)
     goto_nodes: Set[Node] = attr.ib(factory=set)
     loop_nodes: Set[Node] = attr.ib(factory=set)
     emitted_nodes: Set[Node] = attr.ib(factory=set)
@@ -81,9 +81,10 @@ class LabelStatement:
     def __str__(self) -> str:
         lines = []
         if self.node in self.context.case_nodes:
-            for case in self.context.case_nodes[self.node]:
+            for (switch, case) in self.context.case_nodes[self.node]:
                 case_str = f'case {case}' if case != -1 else 'default'
-                lines.append(f'{" " * self.indent}{case_str}:')
+                switch_str = f' // switch {switch}' if switch != 0 else ''
+                lines.append(f'{" " * self.indent}{case_str}:{switch_str}')
         if self.node in self.context.goto_nodes:
             lines.append(f'{label_for_node(self.context, self.node)}:')
         return '\n'.join(lines)
@@ -590,17 +591,22 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         fictive_block = Block(-1, None, '', [])
         return_node = ReturnNode(fictive_block, False, index=-1)
 
+    num_switches = len([node for node in context.flow_graph.nodes \
+            if isinstance(node, SwitchNode)])
+    switch_index = 0
     for node in context.flow_graph.nodes:
         if isinstance(node, SwitchNode):
             assert node.cases, "jtbl list must not be empty"
+            if num_switches > 1:
+                switch_index += 1
             most_common = max(node.cases, key=node.cases.count)
-            context.case_nodes[most_common] = [-1]
+            context.case_nodes[most_common] = [(switch_index, -1)]
             for index, target in enumerate(node.cases):
                 if target == most_common:
                     continue
                 if target not in context.case_nodes:
                     context.case_nodes[target] = []
-                context.case_nodes[target].append(index)
+                context.case_nodes[target].append((switch_index, index))
         elif isinstance(node, ConditionalNode) and node.is_loop():
             context.loop_nodes.add(node.conditional_edge)
         elif isinstance(node, BasicNode) and node.is_loop():
