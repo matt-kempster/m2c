@@ -27,6 +27,14 @@ Run with `--help` to see which options are available.
 
 There is much low-hanging fruit still. Take a look at the issues if you want to help out.
 
+We use `black` to auto-format our code. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
+```bash
+pip install pre-commit black
+pre-commit install
+```
+
+Your commits will then be automatically formatted. You can also manually run `black` on the command-line.
+
 There is a small test suite, which works as follows: for every commit, `./run-tests.sh` should be run,
 which runs the decompiler on a small corpus of IRIX 5.3-compiled MIPS assembly.
 Any decompilations whose results change should be manually inspected with `git diff`

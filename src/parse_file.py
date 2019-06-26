@@ -13,7 +13,8 @@ class Label:
     name: str = attr.ib()
 
     def __str__(self) -> str:
-        return f'  .{self.name}:'
+        return f"  .{self.name}:"
+
 
 @attr.s
 class Function:
@@ -31,16 +32,18 @@ class Function:
     def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
 
-    def bodyless_copy(self) -> 'Function':
+    def bodyless_copy(self) -> "Function":
         return Function(name=self.name, jumptable_labels=self.jumptable_labels)
 
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
-        return f'glabel {self.name}\n{body}'
+        return f"glabel {self.name}\n{body}"
+
 
 @attr.s
 class Rodata:
     values: Dict[str, List[str]] = attr.ib(factory=dict)
+
 
 @attr.s
 class MIPSFile:
@@ -74,8 +77,8 @@ class MIPSFile:
         self.current_rodata.append(word)
 
     def __str__(self) -> str:
-        functions_str = '\n\n'.join(str(function) for function in self.functions)
-        return f'# {self.filename}\n{functions_str}'
+        functions_str = "\n\n".join(str(function) for function in self.functions)
+        return f"# {self.filename}\n{functions_str}"
 
 
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
@@ -83,65 +86,67 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
-    curr_section = '.text'
+    curr_section = ".text"
 
     for line in f:
         # Check for goto markers before stripping comments
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
 
         # Strip comments and whitespace
-        line = re.sub(r'/\*.*?\*/', '', line)
-        line = re.sub(r'#.*$', '', line)
-        line = re.sub(r'\s+', ' ', line)
+        line = re.sub(r"/\*.*?\*/", "", line)
+        line = re.sub(r"#.*$", "", line)
+        line = re.sub(r"\s+", " ", line)
         line = line.strip()
 
-        if line == '':
+        if line == "":
             pass
-        elif line.startswith('.') and not line.endswith(':'):
+        elif line.startswith(".") and not line.endswith(":"):
             # Assembler directive.
-            if line.startswith('.ifdef') or line.startswith('.ifndef'):
+            if line.startswith(".ifdef") or line.startswith(".ifndef"):
                 macro_name = line.split()[1]
                 if macro_name not in defines:
                     defines[macro_name] = 0
-                    print(f"Note: assuming {macro_name} is unset for .ifdef, "
-                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.")
+                    print(
+                        f"Note: assuming {macro_name} is unset for .ifdef, "
+                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly."
+                    )
                 level = defines[macro_name]
-                if line.startswith('.ifdef'):
+                if line.startswith(".ifdef"):
                     level = 1 - level
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif line.startswith('.else'):
+            elif line.startswith(".else"):
                 level = ifdef_levels.pop()
                 ifdef_level -= level
                 level = 1 - level
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif line.startswith('.endif'):
+            elif line.startswith(".endif"):
                 ifdef_level -= ifdef_levels.pop()
             elif ifdef_level == 0:
-                if line.startswith('.section'):
-                    curr_section = line.split(' ')[1].split(',')[0]
-                elif line.startswith('.rdata'):
-                    curr_section = '.rodata'
-                elif line.startswith('.text'):
-                    curr_section = '.text'
-                elif line.startswith('.word') and curr_section == '.rodata':
-                    for w in line[5:].split(','):
+                if line.startswith(".section"):
+                    curr_section = line.split(" ")[1].split(",")[0]
+                elif line.startswith(".rdata"):
+                    curr_section = ".rodata"
+                elif line.startswith(".text"):
+                    curr_section = ".text"
+                elif line.startswith(".word") and curr_section == ".rodata":
+                    for w in line[5:].split(","):
                         mips_file.new_rodata_word(w.strip())
         elif ifdef_level == 0:
-            if curr_section == '.rodata':
-                if line.startswith('glabel'):
-                    name = line.split(' ')[1]
+            if curr_section == ".rodata":
+                if line.startswith("glabel"):
+                    name = line.split(" ")[1]
                     mips_file.new_rodata_symbol(name)
-            elif curr_section == '.text':
-                if line.startswith('.'):
+            elif curr_section == ".text":
+                if line.startswith("."):
                     # Label.
-                    label_name: str = line.strip('.: ')
+                    label_name: str = line.strip(".: ")
                     mips_file.new_label(label_name)
-                elif line.startswith('glabel'):
+                elif line.startswith("glabel"):
                     # Function label.
-                    function_name: str = line.split(' ')[1]
-                    if re.match('L(_U_)?[0-9A-F]{8}', function_name):
+                    function_name: str = line.split(" ")[1]
+                    if re.match("L(_U_)?[0-9A-F]{8}", function_name):
                         mips_file.new_jumptable_label(function_name)
                     else:
                         mips_file.new_function(function_name)

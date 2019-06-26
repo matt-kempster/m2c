@@ -9,9 +9,7 @@ from parse_file import Function, Rodata, parse_file
 from translate import translate_to_ast
 
 
-def decompile_function(
-    options: Options, function: Function, rodata: Rodata
-) -> None:
+def decompile_function(options: Options, function: Function, rodata: Rodata) -> None:
     if options.print_assembly:
         print(function)
         print()
@@ -25,23 +23,23 @@ def decompile_function(
 
 
 def main(options: Options, function_index_or_name: str) -> None:
-    with open(options.filename, 'r') as f:
+    with open(options.filename, "r") as f:
         mips_file = parse_file(f, options)
 
         # Move over jtbl rodata from files given by --rodata
         for rodata_file in options.rodata_files:
-            with open(rodata_file, 'r') as f2:
+            with open(rodata_file, "r") as f2:
                 sub_file = parse_file(f2, options)
                 for (sym, value) in sub_file.rodata.values.items():
                     mips_file.rodata.values[sym] = value
 
-        if function_index_or_name == 'all':
+        if function_index_or_name == "all":
             options.stop_on_error = True
             for fn in mips_file.functions:
                 try:
                     decompile_function(options, fn, mips_file.rodata)
                 except Exception:
-                    print(f'{fn.name}: ERROR')
+                    print(f"{fn.name}: ERROR")
                 print()
         else:
             try:
@@ -56,8 +54,11 @@ def main(options: Options, function_index_or_name: str) -> None:
                     exit(1)
             except IndexError:
                 count = len(mips_file.functions)
-                print(f"Function index {index} is out of bounds (must be between "
-                        f"0 and {count - 1}).", file=sys.stderr)
+                print(
+                    f"Function index {index} is out of bounds (must be between "
+                    f"0 and {count - 1}).",
+                    file=sys.stderr,
+                )
                 exit(1)
 
             try:
@@ -69,37 +70,83 @@ def main(options: Options, function_index_or_name: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
-    parser.add_argument('filename', help="input filename")
-    parser.add_argument('function', help="function index or name (or 'all')", type=str)
-    parser.add_argument('--debug', dest='debug',
-            help="print debug info", action='store_true')
-    parser.add_argument('--void', dest='void',
-            help="assume the decompiled function returns void", action='store_true')
-    parser.add_argument('--no-ifs', dest='ifs',
-            help="disable control flow generation; emit gotos for everything", action='store_false')
-    parser.add_argument('--no-andor', dest='andor_detection',
-            help="disable detection of &&/||", action='store_false')
-    parser.add_argument('--goto', metavar='PATTERN', dest='goto_patterns',
-            action='append', default=['GOTO'],
-            help="emit gotos for branches on lines containing this substring "
-            "(possibly within a comment). Default: \"GOTO\". Multiple "
-            "patterns are allowed.")
-    parser.add_argument('--rodata', metavar='ASM_FILE', dest='rodata_files',
-            action='append', default=[], help="read jump table data from this file")
-    parser.add_argument('--stop-on-error', dest='stop_on_error',
-            help="stop when encountering any error", action='store_true')
-    parser.add_argument('--print-assembly', dest='print_assembly',
-            help="print assembly of function to decompile", action='store_true')
-    parser.add_argument('--visualize', dest='visualize', action='store_true',
-            help="display a visualization of the control flow graph using graphviz")
-    parser.add_argument('-D', dest='defined', action='append', default=[],
-            help="mark preprocessor constant as defined")
-    parser.add_argument('-U', dest='undefined', action='append', default=[],
-            help="mark preprocessor constant as undefined")
+    parser.add_argument("filename", help="input filename")
+    parser.add_argument("function", help="function index or name (or 'all')", type=str)
+    parser.add_argument(
+        "--debug", dest="debug", help="print debug info", action="store_true"
+    )
+    parser.add_argument(
+        "--void",
+        dest="void",
+        help="assume the decompiled function returns void",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--no-ifs",
+        dest="ifs",
+        help="disable control flow generation; emit gotos for everything",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--no-andor",
+        dest="andor_detection",
+        help="disable detection of &&/||",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--goto",
+        metavar="PATTERN",
+        dest="goto_patterns",
+        action="append",
+        default=["GOTO"],
+        help="emit gotos for branches on lines containing this substring "
+        '(possibly within a comment). Default: "GOTO". Multiple '
+        "patterns are allowed.",
+    )
+    parser.add_argument(
+        "--rodata",
+        metavar="ASM_FILE",
+        dest="rodata_files",
+        action="append",
+        default=[],
+        help="read jump table data from this file",
+    )
+    parser.add_argument(
+        "--stop-on-error",
+        dest="stop_on_error",
+        help="stop when encountering any error",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--print-assembly",
+        dest="print_assembly",
+        help="print assembly of function to decompile",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--visualize",
+        dest="visualize",
+        action="store_true",
+        help="display a visualization of the control flow graph using graphviz",
+    )
+    parser.add_argument(
+        "-D",
+        dest="defined",
+        action="append",
+        default=[],
+        help="mark preprocessor constant as defined",
+    )
+    parser.add_argument(
+        "-U",
+        dest="undefined",
+        action="append",
+        default=[],
+        help="mark preprocessor constant as undefined",
+    )
     args = parser.parse_args()
     preproc_defines = {
         **{d: 0 for d in args.undefined},
-        **{d.split('=')[0]: 1 for d in args.defined},
+        **{d.split("=")[0]: 1 for d in args.defined},
     }
     options = Options(
         filename=args.filename,

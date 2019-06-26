@@ -1,14 +1,20 @@
 import copy
 import typing
-from typing import (Any, Callable, Dict, Iterator, List, Optional, Set, Tuple,
-                    Union)
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
 
 from error import DecompFailure
 from parse_file import Function, Label, Rodata
-from parse_instruction import (AsmGlobalSymbol, AsmLiteral, Instruction,
-                               JumpTarget, Macro, Register, parse_instruction)
+from parse_instruction import (
+    AsmGlobalSymbol,
+    AsmLiteral,
+    Instruction,
+    JumpTarget,
+    Macro,
+    Register,
+    parse_instruction,
+)
 
 
 @attr.s(cmp=False)
@@ -25,19 +31,20 @@ class Block:
         assert self.block_info is None
         self.block_info = block_info
 
-    def clone(self) -> 'Block':
+    def clone(self) -> "Block":
         return copy.deepcopy(self)
 
     def __str__(self) -> str:
-        name = f'{self.index} ({self.approx_label_name})'
-        inst_str = '\n'.join(str(instruction) for instruction in self.instructions)
-        return f'# {name}\n{inst_str}\n'
+        name = f"{self.index} ({self.approx_label_name})"
+        inst_str = "\n".join(str(instruction) for instruction in self.instructions)
+        return f"# {name}\n{inst_str}\n"
+
 
 @attr.s(cmp=False)
 class BlockBuilder:
     curr_index: int = attr.ib(default=0)
     curr_label: Optional[Label] = attr.ib(default=None)
-    last_label_name: str = attr.ib(default='initial')
+    last_label_name: str = attr.ib(default="initial")
     label_counter: int = attr.ib(default=0)
     curr_instructions: List[Instruction] = attr.ib(factory=list)
     blocks: List[Block] = attr.ib(factory=list)
@@ -48,9 +55,10 @@ class BlockBuilder:
 
         label_name = self.last_label_name
         if self.label_counter > 0:
-            label_name += f'.{self.label_counter}'
-        block = Block(self.curr_index, self.curr_label, label_name,
-                self.curr_instructions)
+            label_name += f".{self.label_counter}"
+        block = Block(
+            self.curr_index, self.curr_label, label_name, self.curr_instructions
+        )
         self.blocks.append(block)
 
         self.curr_index += 1
@@ -71,8 +79,10 @@ class BlockBuilder:
         # We could support multiple labels at the same position, and output
         # empty blocks. For now we don't, however.
         if self.curr_label:
-            raise DecompFailure("A block is currently not allowed to have more than one label,\n"
-                f"but {self.curr_label.name}/{label.name} is given two.")
+            raise DecompFailure(
+                "A block is currently not allowed to have more than one label,\n"
+                f"but {self.curr_label.name}/{label.name} is given two."
+            )
         self.curr_label = label
         self.last_label_name = label.name
         self.label_counter = 0
@@ -123,16 +133,20 @@ def normalize_likely_branches(function: Function) -> Function:
             before_target = label_prev_instr[old_label]
             next_item = next(body_iter)
             orig_next_item = next_item
-            if isinstance(next_item, Instruction) and before_target is not None and \
-                    str(before_target) == str(next_item):
+            if (
+                isinstance(next_item, Instruction)
+                and before_target is not None
+                and str(before_target) == str(next_item)
+            ):
                 if id(before_target) not in label_before_instr:
-                    new_label = old_label + '_before'
+                    new_label = old_label + "_before"
                     label_before_instr[id(before_target)] = new_label
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
-                item = Instruction(item.mnemonic[:-1],
-                        item.args[:-1] + [new_target], item.emit_goto)
-                next_item = Instruction('nop', [])
+                item = Instruction(
+                    item.mnemonic[:-1], item.args[:-1] + [new_target], item.emit_goto
+                )
+                next_item = Instruction("nop", [])
             new_body.append((orig_item, item))
             new_body.append((orig_next_item, next_item))
         else:
@@ -148,7 +162,7 @@ def normalize_likely_branches(function: Function) -> Function:
 
 
 def prune_unreferenced_labels(function: Function) -> Function:
-    labels_used : Set[str] = set(l.name for l in function.jumptable_labels)
+    labels_used: Set[str] = set(l.name for l in function.jumptable_labels)
     for item in function.body:
         if isinstance(item, Instruction) and item.is_branch_instruction():
             labels_used.add(item.get_branch_target().target)
@@ -183,12 +197,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
     ]
 
-    divu_pattern: List[str] = [
-        "bnez",
-        "nop",
-        "break 7",
-        "",
-    ]
+    divu_pattern: List[str] = ["bnez", "nop", "break 7", ""]
 
     utf_pattern: List[str] = [
         "bgez",
@@ -201,20 +210,20 @@ def simplify_standard_patterns(function: Function) -> Function:
     ]
 
     ftu_pattern: List[str] = [
-        "cfc1", # cfc1 Y, $31
+        "cfc1",  # cfc1 Y, $31
         "nop",
         "andi",
-        "andi*", # (skippable)
-        "?", # bnez or bneql
+        "andi*",  # (skippable)
+        "?",  # bnez or bneql
         "?",
         "li*",
         "mtc1",
         "mtc1*",
         "li",
-        "?", # sub.fmt ?, X, ?
+        "?",  # sub.fmt ?, X, ?
         "ctc1",
         "nop",
-        "?", # cvt.w.fmt ?, ?
+        "?",  # cvt.w.fmt ?, ?
         "cfc1",
         "nop",
         "andi",
@@ -228,51 +237,55 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
         "b",
         "li",
-        "?", # label: (moved one step down if bneql)
-        "?", # mfc1
+        "?",  # label: (moved one step down if bneql)
+        "?",  # mfc1
         "nop",
         "bltz",
         "nop",
     ]
 
     def get_li_imm(ins: Instruction) -> Optional[int]:
-        if ins.mnemonic == 'lui' and isinstance(ins.args[1], AsmLiteral):
-            return (ins.args[1].value & 0xffff) << 16
-        if ins.mnemonic == 'li' and isinstance(ins.args[1], AsmLiteral):
-            return ins.args[1].value & 0xffffffff
+        if ins.mnemonic == "lui" and isinstance(ins.args[1], AsmLiteral):
+            return (ins.args[1].value & 0xFFFF) << 16
+        if ins.mnemonic == "li" and isinstance(ins.args[1], AsmLiteral):
+            return ins.args[1].value & 0xFFFFFFFF
         return None
 
     def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> int:
         def match_one(actual: BodyPart, expected: str) -> bool:
-            if expected == '?':
+            if expected == "?":
                 return True
             if not isinstance(actual, Instruction):
-                return (expected == "")
+                return expected == ""
             ins = actual
             exp = parse_instruction(expected, emit_goto=False)
             if not exp.args:
-                if exp.mnemonic == 'li' and ins.mnemonic in ['lui', 'addiu']:
+                if exp.mnemonic == "li" and ins.mnemonic in ["lui", "addiu"]:
                     return True
                 return ins.mnemonic == exp.mnemonic
             if str(ins) == str(exp):
                 return True
             # A bit of an ugly hack, but since 'li' can be spelled many ways...
-            return (exp.mnemonic == 'li' and exp.args[0] == ins.args[0] and
-                    isinstance(exp.args[1], AsmLiteral) and
-                    (exp.args[1].value & 0xffffffff) == get_li_imm(ins))
+            return (
+                exp.mnemonic == "li"
+                and exp.args[0] == ins.args[0]
+                and isinstance(exp.args[1], AsmLiteral)
+                and (exp.args[1].value & 0xFFFFFFFF) == get_li_imm(ins)
+            )
 
         actuali = 0
         for pat in pattern:
-            matches = (actuali < len(actual) and
-                    match_one(actual[actuali], pat.rstrip('*')))
+            matches = actuali < len(actual) and match_one(
+                actual[actuali], pat.rstrip("*")
+            )
             if matches:
                 actuali += 1
-            elif not pat.endswith('*'):
+            elif not pat.endswith("*"):
                 return 0
         return actuali
 
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i:i + len(div_pattern)]
+        actual = function.body[i : i + len(div_pattern)]
         if not matches_pattern(actual, div_pattern):
             return None
         label1 = typing.cast(Label, actual[3])
@@ -280,14 +293,16 @@ def simplify_standard_patterns(function: Function) -> Function:
         bnez = typing.cast(Instruction, actual[0])
         bne1 = typing.cast(Instruction, actual[5])
         bne2 = typing.cast(Instruction, actual[7])
-        if (bnez.get_branch_target().target != label1.name or
-                bne1.get_branch_target().target != label2.name and
-                bne2.get_branch_target().target != label2.name):
+        if (
+            bnez.get_branch_target().target != label1.name
+            or bne1.get_branch_target().target != label2.name
+            and bne2.get_branch_target().target != label2.name
+        ):
             return None
         return ([], i + len(div_pattern) - 1)
 
     def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i:i + len(divu_pattern)]
+        actual = function.body[i : i + len(divu_pattern)]
         if not matches_pattern(actual, divu_pattern):
             return None
         label = typing.cast(Label, actual[3])
@@ -297,7 +312,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         return ([], i + len(divu_pattern) - 1)
 
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i:i + len(utf_pattern)]
+        actual = function.body[i : i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
             return None
         label = typing.cast(Label, actual[6])
@@ -309,17 +324,20 @@ def simplify_standard_patterns(function: Function) -> Function:
         return ([new_instr], i + len(utf_pattern) - 1)
 
     def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i:i + len(ftu_pattern)]
+        actual = function.body[i : i + len(ftu_pattern)]
         consumed = matches_pattern(actual, ftu_pattern)
         if not consumed:
             return None
-        sub = next(x for x in actual if isinstance(x, Instruction) and
-                x.mnemonic.startswith('sub'))
+        sub = next(
+            x
+            for x in actual
+            if isinstance(x, Instruction) and x.mnemonic.startswith("sub")
+        )
         cfc = actual[0]
         assert isinstance(cfc, Instruction)
-        fmt = sub.mnemonic.split('.')[-1]
+        fmt = sub.mnemonic.split(".")[-1]
         args = [cfc.args[0], sub.args[1]]
-        if fmt == 's':
+        if fmt == "s":
             new_instr = Instruction(mnemonic="cvt.u.s", args=args)
         else:
             new_instr = Instruction(mnemonic="cvt.u.d", args=args)
@@ -331,9 +349,13 @@ def simplify_standard_patterns(function: Function) -> Function:
     new_function = function.bodyless_copy()
     i = 0
     while i < len(function.body):
-        repl, i = (try_replace_div(i) or try_replace_divu(i) or
-                try_replace_utf_conv(i) or try_replace_ftu_conv(i) or
-                no_replacement(i))
+        repl, i = (
+            try_replace_div(i)
+            or try_replace_divu(i)
+            or try_replace_utf_conv(i)
+            or try_replace_ftu_conv(i)
+            or no_replacement(i)
+        )
         new_function.body.extend(repl)
     return new_function
 
@@ -347,6 +369,7 @@ def build_blocks(function: Function) -> List[Block]:
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
+
     def process(item: Union[Instruction, Label]) -> None:
         process_after: List[Union[Instruction, Label]] = []
         if isinstance(item, Label):
@@ -365,7 +388,9 @@ def build_blocks(function: Function) -> List[Block]:
                     label = next_item
                     next_item = next(body_iter)
 
-                    assert isinstance(next_item, Instruction), "Cannot have two labels in a row"
+                    assert isinstance(
+                        next_item, Instruction
+                    ), "Cannot have two labels in a row"
 
                     # (Best-effort check for whether the instruction can be
                     # executed twice in a row.)
@@ -377,35 +402,41 @@ def build_blocks(function: Function) -> List[Block]:
                         msg = [
                             f"Label {label.name} refers to a delay slot; this is currently not supported.",
                             "Please modify the assembly to work around it (e.g. copy the instruction",
-                            "to all jump sources and move the label, or add a nop to the delay slot)."
+                            "to all jump sources and move the label, or add a nop to the delay slot).",
                         ]
-                        if '_before' in label.name:
+                        if "_before" in label.name:
                             msg += [
                                 "",
                                 "This label was auto-generated as the target for a branch-likely",
                                 "instruction (e.g. beql); you can also try to turn that into a non-likely",
                                 "branch if that's equivalent in this context, i.e., if it's okay to",
-                                "execute its delay slot unconditionally."
+                                "execute its delay slot unconditionally.",
                             ]
-                        raise DecompFailure('\n'.join(msg))
+                        raise DecompFailure("\n".join(msg))
 
                 if next_item.is_delay_slot_instruction():
-                    raise DecompFailure(f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}")
+                    raise DecompFailure(
+                        f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
+                    )
 
                 if item.is_branch_likely_instruction():
-                    raise DecompFailure("Not yet able to handle general branch-likely instruction:\n"
-                            f"{item}\n\n"
-                            "Only branch-likely instructions which can be turned into non-likely\n"
-                            "versions pointing one step up are currently supported. Try rewriting\n"
-                            "the assembly using non-branch-likely instructions.")
+                    raise DecompFailure(
+                        "Not yet able to handle general branch-likely instruction:\n"
+                        f"{item}\n\n"
+                        "Only branch-likely instructions which can be turned into non-likely\n"
+                        "versions pointing one step up are currently supported. Try rewriting\n"
+                        "the assembly using non-branch-likely instructions."
+                    )
 
-                if item.mnemonic in ['jal', 'jr', 'jalr']:
+                if item.mnemonic in ["jal", "jr", "jalr"]:
                     # Move the delay slot instruction to before the call/return
                     # so it passes correct arguments.
                     if next_item.args and next_item.args[0] == item.args[0]:
-                        raise DecompFailure(f"Instruction after {item.mnemonic} clobbers its source\n"
-                                "register, which is currently not supported.\n\n"
-                                "Try rewriting the assembly to avoid that.")
+                        raise DecompFailure(
+                            f"Instruction after {item.mnemonic} clobbers its source\n"
+                            "register, which is currently not supported.\n\n"
+                            "Try rewriting the assembly to avoid that."
+                        )
                     block_builder.add_instruction(next_item)
                     block_builder.add_instruction(item)
                 else:
@@ -428,55 +459,63 @@ def build_blocks(function: Function) -> List[Block]:
     return block_builder.get_blocks()
 
 
-def is_loop_edge(node: 'Node', edge: 'Node') -> bool:
+def is_loop_edge(node: "Node", edge: "Node") -> bool:
     # Loops are represented by backwards jumps.
     return typing.cast(bool, (edge.block.index <= node.block.index))
+
 
 @attr.s(cmp=False)
 class BaseNode:
     block: Block = attr.ib()
     emit_goto: bool = attr.ib()
-    parents: List['Node'] = attr.ib(init=False, factory=list)
-    dominators: Set['Node'] = attr.ib(init=False, factory=set)
-    immediate_dominator: Optional['Node'] = attr.ib(init=False, default=None)
-    immediately_dominates: List['Node'] = attr.ib(init=False, factory=list)
+    parents: List["Node"] = attr.ib(init=False, factory=list)
+    dominators: Set["Node"] = attr.ib(init=False, factory=set)
+    immediate_dominator: Optional["Node"] = attr.ib(init=False, default=None)
+    immediately_dominates: List["Node"] = attr.ib(init=False, factory=list)
 
-    def add_parent(self, parent: 'Node') -> None:
+    def add_parent(self, parent: "Node") -> None:
         self.parents.append(parent)
 
     def name(self) -> str:
         return str(self.block.index)
 
+
 @attr.s(cmp=False)
 class BasicNode(BaseNode):
-    successor: 'Node' = attr.ib()
+    successor: "Node" = attr.ib()
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.successor)
 
     def __str__(self) -> str:
-        return ''.join([
-            f'{self.block}\n',
-            f'# {self.block.index} -> {self.successor.block.index}',
-            " (loop)" if self.is_loop() else ""])
+        return "".join(
+            [
+                f"{self.block}\n",
+                f"# {self.block.index} -> {self.successor.block.index}",
+                " (loop)" if self.is_loop() else "",
+            ]
+        )
 
 
 @attr.s(cmp=False)
 class ConditionalNode(BaseNode):
-    conditional_edge: 'Node' = attr.ib()
-    fallthrough_edge: 'Node' = attr.ib()
+    conditional_edge: "Node" = attr.ib()
+    fallthrough_edge: "Node" = attr.ib()
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)
 
     def __str__(self) -> str:
-        return ''.join([
-            f'{self.block}\n',
-            f'# {self.block.index} -> ',
-            f'cond: {self.conditional_edge.block.index}',
-            ' (loop)' if self.is_loop() else '',
-            ', ',
-            f'def: {self.fallthrough_edge.block.index}'])
+        return "".join(
+            [
+                f"{self.block}\n",
+                f"# {self.block.index} -> ",
+                f"cond: {self.conditional_edge.block.index}",
+                " (loop)" if self.is_loop() else "",
+                ", ",
+                f"def: {self.fallthrough_edge.block.index}",
+            ]
+        )
 
 
 @attr.s(cmp=False)
@@ -485,34 +524,29 @@ class ReturnNode(BaseNode):
 
     def name(self) -> str:
         name = super().name()
-        return name if self.is_real() else f'{name}.{self.index}'
+        return name if self.is_real() else f"{name}.{self.index}"
 
     def is_real(self) -> bool:
         return self.index == 0
 
     def __str__(self) -> str:
-        return f'{self.block}\n# {self.block.index} -> ret'
+        return f"{self.block}\n# {self.block.index} -> ret"
+
 
 @attr.s(cmp=False)
 class SwitchNode(BaseNode):
-    cases: List['Node'] = attr.ib()
+    cases: List["Node"] = attr.ib()
 
     def __str__(self) -> str:
-        targets = ', '.join(str(c.block.index) for c in self.cases)
-        return f'{self.block}\n# {self.block.index} -> {targets}'
+        targets = ", ".join(str(c.block.index) for c in self.cases)
+        return f"{self.block}\n# {self.block.index} -> {targets}"
 
-Node = Union[
-    BasicNode,
-    ConditionalNode,
-    ReturnNode,
-    SwitchNode,
-]
+
+Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode]
+
 
 def build_graph_from_block(
-    block: Block,
-    blocks: List[Block],
-    nodes: List[Node],
-    rodata: Rodata
+    block: Block, blocks: List[Block], nodes: List[Node], rodata: Rodata
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -541,8 +575,7 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block,
-                blocks, nodes, rodata)
+        new_node.successor = build_graph_from_block(next_block, blocks, nodes, rodata)
 
         # Keep track of parents.
         new_node.successor.add_parent(new_node)
@@ -554,33 +587,40 @@ def build_graph_from_block(
         # - a ConditionalNode.
         jump = jumps[0]
 
-        if jump.mnemonic == 'jr' and jump.args[0] == Register('ra'):
+        if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
             new_node = ReturnNode(block, False, index=0)
             nodes.append(new_node)
             return new_node
 
-        if jump.mnemonic == 'jr':
+        if jump.mnemonic == "jr":
             new_node = SwitchNode(block, True, [])
             nodes.append(new_node)
 
             jtbl_names = []
             for ins in block.instructions:
                 for arg in ins.args:
-                    if (isinstance(arg, Macro) and arg.macro_name == 'hi' and
-                            isinstance(arg.argument, AsmGlobalSymbol) and
-                            arg.argument.symbol_name.startswith('jtbl')):
+                    if (
+                        isinstance(arg, Macro)
+                        and arg.macro_name == "hi"
+                        and isinstance(arg.argument, AsmGlobalSymbol)
+                        and arg.argument.symbol_name.startswith("jtbl")
+                    ):
                         jtbl_names.append(arg.argument.symbol_name)
             if len(jtbl_names) != 1:
-                raise DecompFailure("Unable to determine jump table for jr instruction.\n\n"
-                        "There must be a read of a variable in the same block as\n"
-                        "the instruction, which has a name starting with \"jtbl\".")
+                raise DecompFailure(
+                    "Unable to determine jump table for jr instruction.\n\n"
+                    "There must be a read of a variable in the same block as\n"
+                    'the instruction, which has a name starting with "jtbl".'
+                )
 
             jtbl_name = jtbl_names[0]
             if jtbl_name not in rodata.values:
-                raise DecompFailure("Found jr instruction, but the corresponding jump table is not provided.\n\n"
-                        "Please pass a --rodata flag to mips_to_c, pointing to the right .s file.\n\n"
-                        "(You might need to pass --goto and --no-andor flags as well,\n"
-                        "to get correct control flow for non-jtbl switch jumps.)")
+                raise DecompFailure(
+                    "Found jr instruction, but the corresponding jump table is not provided.\n\n"
+                    "Please pass a --rodata flag to mips_to_c, pointing to the right .s file.\n\n"
+                    "(You might need to pass --goto and --no-andor flags as well,\n"
+                    "to get correct control flow for non-jtbl switch jumps.)"
+                )
 
             jtbl_entries = rodata.values[jtbl_name]
             for entry in jtbl_entries:
@@ -590,8 +630,7 @@ def build_graph_from_block(
                 case_block = find_block_by_label(entry)
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
-                case_node = build_graph_from_block(case_block,
-                        blocks, nodes, rodata)
+                case_node = build_graph_from_block(case_block, blocks, nodes, rodata)
                 new_node.cases.append(case_node)
                 if new_node not in case_node.parents:
                     case_node.add_parent(new_node)
@@ -607,28 +646,30 @@ def build_graph_from_block(
             target = branch_label.target
             raise DecompFailure(f"Cannot find branch target {target}")
 
-        is_constant_branch = jump.mnemonic == 'b'
+        is_constant_branch = jump.mnemonic == "b"
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, jump.emit_goto, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
-            new_node.successor = build_graph_from_block(branch_block,
-                    blocks, nodes, rodata)
+            new_node.successor = build_graph_from_block(
+                branch_block, blocks, nodes, rodata
+            )
             # Keep track of parents.
             new_node.successor.add_parent(new_node)
         else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
-            new_node = ConditionalNode(block, jump.emit_goto,
-                    dummy_node, dummy_node)
+            new_node = ConditionalNode(block, jump.emit_goto, dummy_node, dummy_node)
             nodes.append(new_node)
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
-            new_node.conditional_edge = build_graph_from_block(branch_block,
-                    blocks, nodes, rodata)
-            new_node.fallthrough_edge = build_graph_from_block(next_block,
-                    blocks, nodes, rodata)
+            new_node.conditional_edge = build_graph_from_block(
+                branch_block, blocks, nodes, rodata
+            )
+            new_node.fallthrough_edge = build_graph_from_block(
+                next_block, blocks, nodes, rodata
+            )
             # Keep track of parents.
             new_node.conditional_edge.add_parent(new_node)
             new_node.fallthrough_edge.add_parent(new_node)
@@ -639,8 +680,8 @@ def build_graph_from_block(
 def is_trivial_return_block(block: Block) -> bool:
     # A heuristic for when a block is a simple "early-return" block.
     # This could be improved.
-    stores = ['sb', 'sh', 'sw', 'swc1', 'sdc1', 'swr', 'swl', 'jal']
-    return_regs = [Register('v0'), Register('f0')]
+    stores = ["sb", "sh", "sw", "swc1", "sdc1", "swr", "swl", "jal"]
+    return_regs = [Register("v0"), Register("f0")]
     for instr in block.instructions:
         if instr.mnemonic in stores:
             return False
@@ -649,9 +690,7 @@ def is_trivial_return_block(block: Block) -> bool:
     return True
 
 
-def build_nodes(
-    function: Function, blocks: List[Block], rodata: Rodata
-) -> List[Node]:
+def build_nodes(function: Function, blocks: List[Block], rodata: Rodata) -> List[Node]:
     graph: List[Node] = []
 
     # Traverse through the block tree.
@@ -691,8 +730,11 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
     extra_nodes: List[Node] = []
     index = 0
     for node in nodes:
-        if (isinstance(node, BasicNode) and not node.emit_goto and
-                is_premature_return(node, node.successor, nodes)):
+        if (
+            isinstance(node, BasicNode)
+            and not node.emit_goto
+            and is_premature_return(node, node.successor, nodes)
+        ):
             assert isinstance(node.successor, ReturnNode)
             node.successor.parents.remove(node)
             index += 1
@@ -736,7 +778,7 @@ def ensure_fallthrough(nodes: List[Node]) -> None:
             elif isinstance(node, SwitchNode):
                 assert fallthrough is not None
                 reachable.add(fallthrough)
-            else: # ReturnNode
+            else:  # ReturnNode
                 if node.emit_goto and fallthrough is not None:
                     reachable.add(fallthrough)
 
@@ -786,6 +828,7 @@ def compute_dominators(nodes: List[Node]) -> None:
     for n in nodes:
         n.immediately_dominates.sort(key=lambda x: x.block.index)
 
+
 @attr.s(frozen=True)
 class FlowGraph:
     nodes: List[Node] = attr.ib()
@@ -794,11 +837,13 @@ class FlowGraph:
         return self.nodes[0]
 
     def return_node(self) -> Optional[ReturnNode]:
-        candidates = [n for n in self.nodes
-                if isinstance(n, ReturnNode) and n.is_real()]
+        candidates = [
+            n for n in self.nodes if isinstance(n, ReturnNode) and n.is_real()
+        ]
         if not candidates:
             return None
         return max(candidates, key=lambda n: n.block.index)
+
 
 def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
     blocks = build_blocks(function)
@@ -811,16 +856,17 @@ def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
 
 def visualize_flowgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
+
     dot = g.Digraph()
     for node in flow_graph.nodes:
         dot.node(node.name())
         if isinstance(node, BasicNode):
-            dot.edge(node.name(), node.successor.name(), color='green')
+            dot.edge(node.name(), node.successor.name(), color="green")
         elif isinstance(node, ConditionalNode):
-            dot.edge(node.name(), node.fallthrough_edge.name(), color='blue')
-            dot.edge(node.name(), node.conditional_edge.name(), color='red')
+            dot.edge(node.name(), node.fallthrough_edge.name(), color="blue")
+            dot.edge(node.name(), node.conditional_edge.name(), color="red")
         else:
             pass
-    dot.render('graphviz_render.gv')
+    dot.render("graphviz_render.gv")
     print("Rendered to graphviz_render.gv.pdf")
     print("Key: green = successor, red = conditional edge, blue = fallthrough edge")
