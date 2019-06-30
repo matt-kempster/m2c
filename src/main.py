@@ -1,12 +1,12 @@
 import argparse
 import sys
 
-from error import DecompFailure
-from flow_graph import build_flowgraph, visualize_flowgraph
-from if_statements import write_function
-from options import Options
-from parse_file import Function, Rodata, parse_file
-from translate import translate_to_ast
+from .error import DecompFailure
+from .flow_graph import build_flowgraph, visualize_flowgraph
+from .if_statements import write_function
+from .options import Options
+from .parse_file import Function, Rodata, parse_file
+from .translate import translate_to_ast
 
 
 def decompile_function(options: Options, function: Function, rodata: Rodata) -> None:
@@ -22,7 +22,7 @@ def decompile_function(options: Options, function: Function, rodata: Rodata) -> 
     write_function(function_info, options)
 
 
-def main(options: Options, function_index_or_name: str) -> None:
+def main(options: Options, function_index_or_name: str) -> int:
     with open(options.filename, "r") as f:
         mips_file = parse_file(f, options)
 
@@ -51,7 +51,7 @@ def main(options: Options, function_index_or_name: str) -> None:
                     function = next(f for f in mips_file.functions if f.name == name)
                 except StopIteration:
                     print(f"Function {name} not found.", file=sys.stderr)
-                    exit(1)
+                    return 1
             except IndexError:
                 count = len(mips_file.functions)
                 print(
@@ -59,13 +59,14 @@ def main(options: Options, function_index_or_name: str) -> None:
                     f"0 and {count - 1}).",
                     file=sys.stderr,
                 )
-                exit(1)
+                return 1
 
             try:
                 decompile_function(options, function, mips_file.rodata)
             except DecompFailure as e:
                 print(f"Failed to decompile function {function.name}:\n\n{e}")
-                exit(1)
+                return 1
+        return 0
 
 
 if __name__ == "__main__":
@@ -161,4 +162,4 @@ if __name__ == "__main__":
         visualize_flowgraph=args.visualize,
         preproc_defines=preproc_defines,
     )
-    main(options, args.function)
+    sys.exit(main(options, args.function))
