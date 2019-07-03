@@ -86,7 +86,7 @@ def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> None:
 
 
 def main(should_overwrite: bool) -> int:
-    for e2e_test_path in Path("tests/end_to_end").iterdir():
+    for e2e_test_path in (Path(__file__).parent / "tests" / "end_to_end").iterdir():
         run_e2e_test(e2e_test_path, should_overwrite)
 
     return 0
