@@ -1512,7 +1512,7 @@ def strip_macros(arg: Argument) -> Argument:
 
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
-CmpInstrMap = Dict[str, Callable[[InstrArgs], Optional[BinaryOp]]]
+CmpInstrMap = Dict[str, Callable[[InstrArgs], BinaryOp]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
 PairInstrMap = Dict[
@@ -1524,8 +1524,9 @@ CASES_IGNORE: InstrSet = {
     # FCSR gets are as well, but it's fine to read ERROR for those.
     "ctc1",
     "nop",
+    "b",
 }
-CASES_SOURCE_FIRST_EXPRESSION: StoreInstrMap = {
+CASES_STORE: StoreInstrMap = {
     # Storage instructions
     "sb": lambda a: make_store(a, type=Type.of_size(8)),
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
@@ -1534,13 +1535,8 @@ CASES_SOURCE_FIRST_EXPRESSION: StoreInstrMap = {
     "swc1": lambda a: make_store(a, type=Type.f32()),
     "sdc1": lambda a: make_store(a, type=Type.f64()),
 }
-CASES_SOURCE_FIRST_REGISTER: InstrMap = {
-    # Floating point moving instruction
-    "mtc1": lambda a: a.reg(0)
-}
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
-    "b": lambda a: None,
     "beq": lambda a: BinaryOp.icmp(a.reg(0), "==", a.reg(1)),
     "bne": lambda a: BinaryOp.icmp(a.reg(0), "!=", a.reg(1)),
     "beqz": lambda a: BinaryOp.icmp(a.reg(0), "==", Literal(0)),
@@ -1556,10 +1552,13 @@ CASES_FLOAT_BRANCHES: InstrSet = {
     "bc1f",
 }
 CASES_JUMPS: InstrSet = {
-    # Unconditional jumps
+    # Unconditional jump
+    "jr"
+}
+CASES_FN_CALL: InstrSet = {
+    # Function call
     "jal",
     "jalr",
-    "jr",
 }
 CASES_FLOAT_COMP: CmpInstrMap = {
     # Floating point comparisons
@@ -1582,6 +1581,10 @@ CASES_HI_LO: PairInstrMap = {
     ),
     # The high part of multiplication cannot be directly represented in C
     "multu": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
+}
+CASES_SOURCE_FIRST: InstrMap = {
+    # Floating point moving instruction
+    "mtc1": lambda a: a.reg(0)
 }
 CASES_DESTINATION_FIRST: InstrMap = {
     # Flag-setting instructions
@@ -1687,16 +1690,16 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
 
     mnemonic = instr.mnemonic
     if (
-        mnemonic in ["nop", "jr"]
-        or mnemonic in CASES_SOURCE_FIRST_EXPRESSION
+        mnemonic in CASES_JUMPS
+        or mnemonic in CASES_STORE
         or mnemonic in CASES_BRANCHES
         or mnemonic in CASES_FLOAT_BRANCHES
         or mnemonic in CASES_IGNORE
     ):
         return []
-    if mnemonic in ["jal", "jalr"]:
+    if mnemonic in CASES_FN_CALL:
         return list(map(Register, ["return", "f0", "v0", "v1"]))
-    if mnemonic in CASES_SOURCE_FIRST_REGISTER:
+    if mnemonic in CASES_SOURCE_FIRST:
         return [reg_at(1)]
     if mnemonic in CASES_DESTINATION_FIRST:
         return [reg_at(0)]
@@ -1916,9 +1919,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if mnemonic in CASES_IGNORE:
             pass
 
-        elif mnemonic in CASES_SOURCE_FIRST_EXPRESSION:
+        elif mnemonic in CASES_STORE:
             # Store a value in a permanent place.
-            to_store = CASES_SOURCE_FIRST_EXPRESSION[mnemonic](args)
+            to_store = CASES_STORE[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
                 # About to call a subroutine with this argument.
                 subroutine_args.append((to_store.source, to_store.dest))
@@ -1938,9 +1941,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # Prevent earlier reads from getting reordered across the store.
                 prevent_later_uses(to_store.dest)
 
-        elif mnemonic in CASES_SOURCE_FIRST_REGISTER:
+        elif mnemonic in CASES_SOURCE_FIRST:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
-            set_reg(args.reg_ref(1), CASES_SOURCE_FIRST_REGISTER[mnemonic](args))
+            set_reg(args.reg_ref(1), CASES_SOURCE_FIRST[mnemonic](args))
 
         elif mnemonic in CASES_BRANCHES:
             assert branch_condition is None
@@ -1956,71 +1959,70 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in CASES_JUMPS:
-            if mnemonic == "jr" and args.reg_ref(0) == Register("ra"):
+            assert mnemonic == "jr"
+            if args.reg_ref(0) == Register("ra"):
                 # Return from the function.
                 assert isinstance(node, ReturnNode)
                 return_value = regs.get_raw(Register("return"))
-            elif mnemonic == "jr":
+            else:
                 # Switch jump.
                 assert isinstance(node, SwitchNode)
                 switch_value = args.reg(0)
+
+        elif mnemonic in CASES_FN_CALL:
+            if mnemonic == "jal":
+                fn_target = args.imm(0)
+                assert isinstance(fn_target, AddressOf)
+                fn_target = fn_target.expr
+                assert isinstance(fn_target, GlobalSymbol)
             else:
-                # Function or function pointer call. Well, let's double-check:
-                assert mnemonic in ["jal", "jalr"]
-                if mnemonic == "jal":
-                    fn_target = args.imm(0)
-                    assert isinstance(fn_target, AddressOf)
-                    fn_target = fn_target.expr
-                    assert isinstance(fn_target, GlobalSymbol)
-                else:
-                    if args.count() != 1:
-                        raise DecompFailure(
-                            "Two-argument form of jalr is not supported."
-                        )
-                    fn_target = as_ptr(args.reg(0))
+                assert mnemonic == "jalr"
+                if args.count() != 1:
+                    raise DecompFailure("Two-argument form of jalr is not supported.")
+                fn_target = as_ptr(args.reg(0))
 
-                # At most one of $f12 and $a0 may be passed, and at most one of
-                # $f14 and $a1. We could try to figure out which ones, and cap
-                # the function call at the point where a register is empty, but
-                # for now we'll leave that for manual fixup.
-                func_args: List[Expression] = []
-                for register in map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"]):
-                    # The latter check verifies that the register is not just
-                    # meant for us. This might give false positives for the
-                    # first function call if an argument passed in the same
-                    # position as we received it, but that's impossible to do
-                    # anything about without access to function signatures.
-                    expr = regs.get_raw(register)
-                    if expr is not None and (
-                        not isinstance(expr, PassedInArg) or expr.copied
-                    ):
-                        func_args.append(expr)
-                # Add the arguments after a3.
-                subroutine_args.sort(key=lambda a: a[1].value)
-                for arg in subroutine_args:
-                    func_args.append(arg[0])
-                # Reset subroutine_args, for the next potential function call.
-                subroutine_args.clear()
+            # At most one of $f12 and $a0 may be passed, and at most one of
+            # $f14 and $a1. We could try to figure out which ones, and cap
+            # the function call at the point where a register is empty, but
+            # for now we'll leave that for manual fixup.
+            func_args: List[Expression] = []
+            for register in map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"]):
+                # The latter check verifies that the register is not just
+                # meant for us. This might give false positives for the
+                # first function call if an argument passed in the same
+                # position as we received it, but that's impossible to do
+                # anything about without access to function signatures.
+                expr = regs.get_raw(register)
+                if expr is not None and (
+                    not isinstance(expr, PassedInArg) or expr.copied
+                ):
+                    func_args.append(expr)
+            # Add the arguments after a3.
+            subroutine_args.sort(key=lambda a: a[1].value)
+            for arg in subroutine_args:
+                func_args.append(arg[0])
+            # Reset subroutine_args, for the next potential function call.
+            subroutine_args.clear()
 
-                call: Expression = FuncCall(fn_target, func_args, Type.any())
-                call = eval_once(call, always_emit=True, trivial=False, prefix="ret")
-                # Clear out caller-save registers, for clarity and to ensure
-                # that argument regs don't get passed into the next function.
-                regs.clear_caller_save_regs()
-                # We don't know what this function's return register is,
-                # be it $v0, $f0, or something else, so this hack will have
-                # to do. (TODO: handle it...)
-                regs[Register("f0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.f32()
-                )
-                regs[Register("v0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.intish()
-                )
-                regs[Register("v1")] = as_u32(
-                    Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
-                )
-                regs[Register("return")] = call
-                regs.has_custom_return = False
+            call: Expression = FuncCall(fn_target, func_args, Type.any())
+            call = eval_once(call, always_emit=True, trivial=False, prefix="ret")
+            # Clear out caller-save registers, for clarity and to ensure
+            # that argument regs don't get passed into the next function.
+            regs.clear_caller_save_regs()
+            # We don't know what this function's return register is,
+            # be it $v0, $f0, or something else, so this hack will have
+            # to do. (TODO: handle it...)
+            regs[Register("f0")] = Cast(
+                expr=call, reinterpret=True, silent=True, type=Type.f32()
+            )
+            regs[Register("v0")] = Cast(
+                expr=call, reinterpret=True, silent=True, type=Type.intish()
+            )
+            regs[Register("v1")] = as_u32(
+                Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
+            )
+            regs[Register("return")] = call
+            regs.has_custom_return = False
 
         elif mnemonic in CASES_FLOAT_COMP:
             expr = CASES_FLOAT_COMP[mnemonic](args)
