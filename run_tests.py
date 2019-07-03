@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from src.main import main as decompile
+from src.main import run as decompile
 from src.options import Options
 
 CRASH_STRING = "CRASHED\n"

@@ -22,7 +22,7 @@ def decompile_function(options: Options, function: Function, rodata: Rodata) -> 
     write_function(function_info, options)
 
 
-def main(options: Options, function_index_or_name: str) -> int:
+def run(options: Options, function_index_or_name: str) -> int:
     with open(options.filename, "r") as f:
         mips_file = parse_file(f, options)
 
@@ -69,7 +69,7 @@ def main(options: Options, function_index_or_name: str) -> int:
         return 0
 
 
-if __name__ == "__main__":
+def main() -> int:
     parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
     parser.add_argument("filename", help="input filename")
     parser.add_argument("function", help="function index or name (or 'all')", type=str)
@@ -162,4 +162,8 @@ if __name__ == "__main__":
         visualize_flowgraph=args.visualize,
         preproc_defines=preproc_defines,
     )
-    sys.exit(main(options, args.function))
+    return run(options, args.function)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

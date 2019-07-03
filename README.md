@@ -18,7 +18,7 @@ sudo apt install python3-pip
 ## Usage
 
 ```bash
-python3 src/main.py [options] <asmfile> <functionname | index | all>
+python3 mips_to_c.py [options] <asmfile> <functionname | index | all>
 ```
 
 Run with `--help` to see which options are available.
@@ -43,6 +43,6 @@ There is a small test suite, which works as follows:
 You are encouraged to add new tests using the `./tests/add_test.py` script.
 Make sure to `./run_tests.py` after adding new tests.
 
-Type annotations are used for all Python code. `mypy src/main.py` should pass without any errors.
+Type annotations are used for all Python code. `mypy mips_to_c.py` should pass without any errors.
 
 To get pretty graph visualizations, install `graphviz` using `pip` and globally on your system (e.g. `sudo apt install graphviz`), and pass the `--visualize` flag.
