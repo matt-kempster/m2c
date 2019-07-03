@@ -187,9 +187,6 @@ class Type:
     def is_unsigned(self) -> bool:
         return self.get_representative().sign == Type.UNSIGNED
 
-    def is_any(self) -> bool:
-        return str(self) == "?"
-
     def get_size(self) -> int:
         return self.get_representative().size or 32
 
@@ -247,6 +244,22 @@ class Type:
     @staticmethod
     def f64() -> "Type":
         return Type(kind=Type.K_FLOAT, size=64, sign=Type.ANY_SIGN)
+
+    @staticmethod
+    def s8() -> "Type":
+        return Type(kind=Type.K_INT, size=8, sign=Type.SIGNED)
+
+    @staticmethod
+    def u8() -> "Type":
+        return Type(kind=Type.K_INT, size=8, sign=Type.UNSIGNED)
+
+    @staticmethod
+    def s16() -> "Type":
+        return Type(kind=Type.K_INT, size=16, sign=Type.SIGNED)
+
+    @staticmethod
+    def u16() -> "Type":
+        return Type(kind=Type.K_INT, size=16, sign=Type.UNSIGNED)
 
     @staticmethod
     def s32() -> "Type":
@@ -1218,7 +1231,7 @@ def is_type_obvious(expr: Expression) -> bool:
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, (Cast, Literal, AddressOf, LocalVar, PassedInArg)):
+    if isinstance(expr, (Cast, Literal, AddressOf, LocalVar, PassedInArg, FuncCall)):
         return True
     if isinstance(expr, ForceVarExpr):
         return is_type_obvious(expr.wrapped_expr)
@@ -1398,8 +1411,12 @@ def handle_addi(args: InstrArgs) -> Expression:
         return BinaryOp.intptr(left=source, op="+", right=imm)
 
 
-def handle_load(args: InstrArgs) -> Expression:
-    return deref(args.memory_ref(1), args.regs, args.stack_info)
+def handle_load(args: InstrArgs, type: Type) -> Expression:
+    # For now, make the cast silent so that output doesn't become cluttered.
+    # Though really, it would be great to expose the load types somehow...
+    expr = deref(args.memory_ref(1), args.regs, args.stack_info)
+    # (mypy bug...)
+    return typing.cast(Expression, as_type(expr, type, silent=True))
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
@@ -1650,16 +1667,15 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Immediates
     "li": lambda a: a.imm(1),
     "lui": lambda a: load_upper(a),
-    # Loading instructions (TODO: type annotations)
-    "lb": lambda a: handle_load(a),
-    "lh": lambda a: handle_load(a),
-    "lw": lambda a: handle_load(a),
-    "lbu": lambda a: handle_load(a),
-    "lhu": lambda a: handle_load(a),
-    "lwu": lambda a: handle_load(a),
-    # Floating point loading instructions
-    "lwc1": lambda a: handle_load(a),
-    "ldc1": lambda a: handle_load(a),
+    # Loading instructions
+    "lb": lambda a: handle_load(a, type=Type.s8()),
+    "lbu": lambda a: handle_load(a, type=Type.u8()),
+    "lh": lambda a: handle_load(a, type=Type.s16()),
+    "lhu": lambda a: handle_load(a, type=Type.u16()),
+    "lw": lambda a: handle_load(a, type=Type.intptr()),
+    "lwu": lambda a: handle_load(a, type=Type.u32()),
+    "lwc1": lambda a: handle_load(a, type=Type.f32()),
+    "ldc1": lambda a: handle_load(a, type=Type.f64()),
 }
 
 
@@ -1755,7 +1771,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
-            phi.replacement_expr = as_type(exprs[0], phi.type, True)
+            phi.replacement_expr = as_type(exprs[0], phi.type, silent=True)
             for _ in range(phi.num_usages):
                 mark_used(exprs[0])
         else:
@@ -1769,7 +1785,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
                     expr.use(from_phi=phi)
                 else:
                     mark_used(expr)
-                typed_expr = as_type(expr, phi.type, True)
+                typed_expr = as_type(expr, phi.type, silent=True)
                 block_info.to_write.append(SetPhiStmt(phi, typed_expr))
         i += 1
 
