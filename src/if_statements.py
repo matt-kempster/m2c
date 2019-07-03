@@ -4,8 +4,8 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Un
 
 import attr
 
-from error import DecompFailure
-from flow_graph import (
+from .error import DecompFailure
+from .flow_graph import (
     BasicNode,
     Block,
     ConditionalNode,
@@ -14,8 +14,8 @@ from flow_graph import (
     ReturnNode,
     SwitchNode,
 )
-from options import Options
-from translate import (
+from .options import Options
+from .translate import (
     BinaryOp,
     BlockInfo,
     Condition,

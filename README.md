@@ -33,12 +33,15 @@ pip install pre-commit black
 pre-commit install
 ```
 
-Your commits will then be automatically formatted. You can also manually run `black` on the command-line.
+Your commits will then be automatically formatted per commit. You can also manually run `black` on the command-line.
 
-There is a small test suite, which works as follows: for every commit, `./run-tests.sh` should be run,
-which runs the decompiler on a small corpus of IRIX 5.3-compiled MIPS assembly.
-Any decompilations whose results change should be manually inspected with `git diff`
-and committed along with the rest of the changes.
+There is a small test suite, which works as follows:
+ - As you develop your commit, occasionally run `./run_tests.py` to see if any tests have changed output.
+   These tests run the decompiler on a small corpus of IRIX 5.3-compiled MIPS assembly.
+ - Before pushing your commit, run `./run_tests.py --overwrite` to write changed tests to disk, and commit resultant changes.
+
+You are encouraged to add new tests using the `./tests/add_test.py` script.
+Make sure to `./run_tests.py` after adding new tests.
 
 Type annotations are used for all Python code. `mypy src/main.py` should pass without any errors.
 

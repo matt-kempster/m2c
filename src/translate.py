@@ -17,7 +17,7 @@ from typing import (
 
 import attr
 
-from flow_graph import (
+from .flow_graph import (
     Block,
     FlowGraph,
     Function,
@@ -26,10 +26,10 @@ from flow_graph import (
     SwitchNode,
     build_flowgraph,
 )
-from options import Options
-from error import DecompFailure
-from parse_file import Rodata
-from parse_instruction import (
+from .options import Options
+from .error import DecompFailure
+from .parse_file import Rodata
+from .parse_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,

@@ -4,9 +4,9 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Un
 
 import attr
 
-from error import DecompFailure
-from parse_file import Function, Label, Rodata
-from parse_instruction import (
+from .error import DecompFailure
+from .parse_file import Function, Label, Rodata
+from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
