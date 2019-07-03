@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import contextlib
+import difflib
 import io
 import logging
 import sys
@@ -21,7 +22,7 @@ def set_up_logging(debug: bool) -> None:
 
 def decompile_and_compare(
     asm_file_path: Path, output_path: Path, should_overwrite: bool
-) -> bool:
+) -> None:
     logging.debug(
         f"Decompiling {asm_file_path}"
         + (f" into {output_path}" if should_overwrite else "")
@@ -42,15 +43,13 @@ def decompile_and_compare(
         logging.info(
             "\n".join(
                 [
-                    f"Output of {asm_file_path} changed!",
-                    "PREVIOUS:",
-                    original_contents,
-                    "NEW:",
-                    final_contents,
+                    f"Output of {asm_file_path} changed! Diff:",
+                    *difflib.unified_diff(
+                        original_contents.splitlines(), final_contents.splitlines()
+                    ),
                 ]
             )
         )
-    return changed
 
 
 def decompile_and_capture_output(output_path: Path, asm_file_path: Path) -> str:
@@ -78,26 +77,18 @@ def decompile_and_capture_output(output_path: Path, asm_file_path: Path) -> str:
         return CRASH_STRING
 
 
-def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> bool:
+def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> None:
     logging.info(f"Running test: {e2e_test_path.name}")
-    any_changed = False
+
     for asm_file_path in e2e_test_path.glob("*.s"):
         old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
-        any_changed = (
-            decompile_and_compare(asm_file_path, old_output_path, should_overwrite)
-            or any_changed
-        )
-    return any_changed
+        decompile_and_compare(asm_file_path, old_output_path, should_overwrite)
 
 
 def main(should_overwrite: bool) -> int:
-    any_changed = False
     for e2e_test_path in Path("tests/end_to_end").iterdir():
-        any_changed = run_e2e_test(e2e_test_path, should_overwrite) or any_changed
+        run_e2e_test(e2e_test_path, should_overwrite)
 
-    if any_changed:
-        logging.info("The output of some tests changed.")
-        return 1
     return 0
 
 

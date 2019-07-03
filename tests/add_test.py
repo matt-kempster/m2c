@@ -13,9 +13,6 @@ from tempfile import NamedTemporaryFile
 from typing import Dict, List, Mapping, NamedTuple, Optional, Tuple
 
 OUT_FILES_TO_IRIX_FLAG: Mapping[str, str] = {"irix-g": "-g", "irix-o2": "-O2"}
-QEMU_IRIX: Optional[str] = None
-IRIX_ROOT: Optional[str] = None
-SM64_TOOLS: Optional[str] = None
 
 
 def set_up_logging(debug: bool) -> None:
@@ -25,38 +22,50 @@ def set_up_logging(debug: bool) -> None:
     )
 
 
-def get_environment_variables() -> bool:
-    global QEMU_IRIX, IRIX_ROOT, SM64_TOOLS
-    success = True
-    try:
-        QEMU_IRIX = str(os.environ["QEMU_IRIX"])
-    except KeyError:
-        logging.error("env variable QEMU_IRIX should point to the qemu-mips binary")
-        success = False
-    try:
-        IRIX_ROOT = str(os.environ["IRIX_ROOT"])
-    except KeyError:
-        logging.error(
-            "env variable IRIX_ROOT should point to the IRIX compiler directory"
-        )
-        success = False
-    try:
-        SM64_TOOLS = str(os.environ["SM64_TOOLS"])
-    except KeyError:
-        logging.error(
+class PathsToBinaries(NamedTuple):
+    QEMU_IRIX: str
+    IRIX_ROOT: str
+    SM64_TOOLS: str
+
+
+def get_environment_variables() -> Optional[PathsToBinaries]:
+    def load(env_var_name: str, error_message: str) -> Optional[str]:
+        env_var = os.environ.get(env_var_name)
+        if env_var is None:
+            logging.error(error_message)
+        return env_var
+
+    QEMU_IRIX = load(
+        "QEMU_IRIX", "env variable QEMU_IRIX should point to the qemu-mips binary"
+    )
+    IRIX_ROOT = load(
+        "IRIX_ROOT",
+        "env variable IRIX_ROOT should point to the IRIX compiler directory",
+    )
+    SM64_TOOLS = load(
+        "SM64_TOOLS",
+        (
             "env variable SM64_TOOLS should point to a checkout of "
             "https://github.com/queueRAM/sm64tools/, with mipsdisasm built"
+        ),
+    )
+    if not QEMU_IRIX or not IRIX_ROOT or not SM64_TOOLS:
+        logging.error(
+            "One or more required environment variables are not set. Bailing."
         )
-        success = False
-    return success
+        return None
+    else:
+        return PathsToBinaries(QEMU_IRIX, IRIX_ROOT, SM64_TOOLS)
 
 
 class DisassemblyInfo(NamedTuple):
-    entry: bytes
+    entry_point: bytes
     disasm: bytes
 
 
-def do_disassembly_step(temp_out_file: str) -> DisassemblyInfo:
+def do_disassembly_step(
+    temp_out_file: str, env_vars: PathsToBinaries
+) -> DisassemblyInfo:
     section_lines: List[str] = subprocess.run(
         ["mips-linux-gnu-readelf", "-S", temp_out_file],
         stdout=subprocess.PIPE,
@@ -67,29 +76,33 @@ def do_disassembly_step(temp_out_file: str) -> DisassemblyInfo:
         ["mips-linux-gnu-readelf", "-h", temp_out_file], stdout=subprocess.PIPE
     ).stdout.split(b"\n")
 
+    entry_point: bytes = b""
     for line in header_lines:
         if b"Entry" in line:
-            entry = line.split(b" ")[-1]
+            entry_point = line.split(b" ")[-1]
             break
+    if not entry_point:
+        raise Exception("no entry point found in ELF file")
 
-    for line in section_lines:
-        if " .text" not in line:
+    for section_line in section_lines:
+        if " .text" not in section_line:
             continue
-        addr = "0x" + line[42:][:7]
-        index = "0x" + line[51:][:5]
-        size = "0x" + line[58:][:5]
+        addr = "0x" + section_line[42:][:7]
+        index = "0x" + section_line[51:][:5]
+        size = "0x" + section_line[58:][:5]
         break
 
     arg = f"{addr}:{index}+{size}"
-    logging.debug(f"Calling mipsdisasm with arg {arg} and entry point {entry}...")
+    logging.debug(f"Calling mipsdisasm with arg {arg} and entry point {entry_point}...")
     final_asm = subprocess.run(
-        [str(SM64_TOOLS) + "/mipsdisasm", temp_out_file, arg], stdout=subprocess.PIPE
+        [env_vars.SM64_TOOLS + "/mipsdisasm", temp_out_file, arg],
+        stdout=subprocess.PIPE,
     ).stdout
 
     if final_asm is None:
         raise Exception("mipsdisasm didn't output anything")
 
-    return DisassemblyInfo(entry, final_asm)
+    return DisassemblyInfo(entry_point, final_asm)
 
 
 def do_linker_step(temp_out_file: str, temp_o_file: str) -> None:
@@ -98,14 +111,16 @@ def do_linker_step(temp_out_file: str, temp_o_file: str) -> None:
     )
 
 
-def do_compilation_step(temp_o_file: str, in_file: str, flag: str) -> None:
+def do_compilation_step(
+    temp_o_file: str, in_file: str, flag: str, env_vars: PathsToBinaries
+) -> None:
     subprocess.run(
         [
-            str(QEMU_IRIX),
+            env_vars.QEMU_IRIX,
             "-silent",
             "-L",
-            str(IRIX_ROOT),
-            str(IRIX_ROOT) + "/usr/bin/cc",
+            env_vars.IRIX_ROOT,
+            env_vars.IRIX_ROOT + "/usr/bin/cc",
             "-c",
             "-Wab,-r4300_mul",
             "-non_shared",
@@ -137,7 +152,7 @@ def do_fix_lohi_step(disasm_info: DisassemblyInfo) -> bytes:
     waiting_hi: Dict[bytes, Tuple[int, int, bytes]] = {}
     for line in disasm_info.disasm.split(b"\n"):
         line = line.strip()
-        if (disasm_info.entry + b" ")[2:].upper() in line:
+        if (disasm_info.entry_point + b" ")[2:].upper() in line:
             output.append(b"glabel test")
 
         index = len(output)
@@ -167,35 +182,27 @@ def do_fix_lohi_step(disasm_info: DisassemblyInfo) -> bytes:
     return b"\n".join(output)
 
 
-def irix_compile_with_flag(in_file: Path, out_file: Path, flag: str) -> None:
+def irix_compile_with_flag(
+    in_file: Path, out_file: Path, flag: str, env_vars: PathsToBinaries
+) -> None:
     logging.info(f"Compiling {in_file} to {out_file} using this flag: {flag}")
     with ExitStack() as stack:
         temp_o_file = stack.enter_context(NamedTemporaryFile(suffix=".o")).name
         temp_out_file = stack.enter_context(NamedTemporaryFile(suffix=".out")).name
         logging.debug(f"Compiling and linking {in_file} with {flag}...")
-        do_compilation_step(temp_o_file, str(in_file), flag)
+        do_compilation_step(temp_o_file, str(in_file), flag, env_vars)
         do_linker_step(temp_out_file, temp_o_file)
-        disasm_info = do_disassembly_step(temp_out_file)
+        disasm_info = do_disassembly_step(temp_out_file, env_vars)
         final_asm = do_fix_lohi_step(disasm_info)
     out_file.write_bytes(final_asm)
     logging.info(f"Successfully wrote disassembly to {out_file}.")
 
 
-def add_test_from_file(orig_file: Path) -> None:
-    test_dir = Path("end_to_end") / orig_file.stem
-    try:
-        test_dir.mkdir()
-    except FileExistsError:
-        raise Exception(f"{test_dir} already exists. Name your test something else.")
-    logging.debug(f"Created new directory: {test_dir}")
-
-    in_file: Path = test_dir / "orig.c"
-    shutil.copy(str(orig_file), str(in_file))
-    logging.debug(f"Created {in_file}")
-
+def add_test_from_file(orig_file: Path, env_vars: PathsToBinaries) -> None:
+    test_dir = orig_file.parent
     for asm_filename, flag in OUT_FILES_TO_IRIX_FLAG.items():
         asm_file_path = Path(str(test_dir / asm_filename) + ".s")
-        irix_compile_with_flag(in_file, asm_file_path, flag)
+        irix_compile_with_flag(orig_file, asm_file_path, flag, env_vars)
 
 
 def main() -> int:
@@ -203,7 +210,13 @@ def main() -> int:
         description="Add or update end-to-end decompiler tests."
     )
     parser.add_argument(
-        "files", help="files containing C code to compile (then decompile)", nargs="+"
+        "files",
+        help=(
+            "Files containing C code to compile (then decompile). "
+            "Each one must have a path of the form "
+            "`tests/end_to_end/TEST_NAME/orig.c`."
+        ),
+        nargs="+",
     )
     parser.add_argument(
         "--debug", dest="debug", help="print debug info", action="store_true"
@@ -212,14 +225,24 @@ def main() -> int:
     args = parser.parse_args()
     set_up_logging(args.debug)
 
-    if not get_environment_variables():
+    env_vars = get_environment_variables()
+    if env_vars is None:
         return 2
 
-    for orig_file in args.files:
-        if not Path(orig_file).is_file():
+    for orig_filename in args.files:
+        orig_file = Path(orig_filename)
+        if not orig_file.is_file():
             logging.error(f"{orig_file} does not exist. Skipping.")
             continue
-        add_test_from_file(Path(orig_file))
+        if orig_file != (
+            Path(__file__).parent / "end_to_end" / orig_file.parent.name / "orig.c"
+        ):
+            logging.error(
+                f"{orig_file} does not have a path of the form "
+                "`tests/end_to_end/TEST_NAME/orig.c`! Skipping."
+            )
+            continue
+        add_test_from_file(orig_file, env_vars)
 
     return 0
 
