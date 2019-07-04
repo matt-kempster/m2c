@@ -126,7 +126,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             elif ifdef_level == 0:
                 if line.startswith(".section"):
                     curr_section = line.split(" ")[1].split(",")[0]
-                elif line.startswith(".rdata"):
+                    if curr_section == ".late_rodata":
+                        curr_section = ".rodata"
+                elif line.startswith(".rdata") or line.startswith(".late_rodata"):
                     curr_section = ".rodata"
                 elif line.startswith(".text"):
                     curr_section = ".text"
