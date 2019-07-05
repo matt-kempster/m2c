@@ -1178,8 +1178,12 @@ def deref(
         if stack_info.is_stack_reg(arg.rhs):
             return stack_info.get_stack_var(location, store=store)
         else:
-            # Struct member is being dereferenced.
             var = regs[arg.rhs]
+            # Struct member is being dereferenced.
+            if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
+                # Cope slightly better with raw pointers.
+                var = Literal(var.value + location, type=var.type)
+                location = 0
             var.type.unify(Type.ptr())
             stack_info.record_struct_access(var, location)
             return StructAccess(
