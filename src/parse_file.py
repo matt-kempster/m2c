@@ -159,10 +159,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 elif line.startswith('func'):
                     # Other kind of function label.
                     function_name: str = line.rstrip(":")
-                    if re.match('L(_U_)?[0-9A-F]{8}', function_name):
-                        mips_file.new_jumptable_label(function_name)
-                    else:
-                        mips_file.new_function(function_name)
+                    mips_file.new_function(function_name)
                 else:
                     # Instruction.
                     instr: Instruction = parse_instruction(line, emit_goto)
