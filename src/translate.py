@@ -1981,9 +1981,15 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 assert isinstance(fn_target, GlobalSymbol)
             else:
                 assert mnemonic == "jalr"
-                if args.count() != 1:
-                    raise DecompFailure("Two-argument form of jalr is not supported.")
-                fn_target = as_ptr(args.reg(0))
+                if args.count() == 1:
+                    fn_target = as_ptr(args.reg(0))
+                else:
+                    assert args.count() == 2
+                    if args.reg(0) != Register("ra"):
+                        raise DecompFailure(
+                            "Two-argument form of jalr is not supported."
+                        )
+                    fn_target = as_ptr(args.reg(1))
 
             # At most one of $f12 and $a0 may be passed, and at most one of
             # $f14 and $a1. We could try to figure out which ones, and cap
