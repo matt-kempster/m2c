@@ -525,6 +525,7 @@ class Var:
 
 @attr.s(frozen=True, cmp=False)
 class ErrorExpr:
+    desc: Optional[str] = attr.ib(default=None)
     type: Type = attr.ib(factory=Type.any)
 
     def dependencies(self) -> List["Expression"]:
@@ -534,6 +535,8 @@ class ErrorExpr:
         return self
 
     def __str__(self) -> str:
+        if self.desc is not None:
+            return f"ERROR({self.desc})"
         return "ERROR"
 
 
@@ -1670,7 +1673,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # (I don't know why this typing.cast is needed... mypy bug?)
     "mov.d": lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
     # FCSR get
-    "cfc1": lambda a: ErrorExpr(),
+    "cfc1": lambda a: ErrorExpr("cfc1"),
     # Immediates
     "li": lambda a: a.imm(1),
     "lui": lambda a: load_upper(a),
@@ -2056,7 +2059,16 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 set_reg(target, val)
 
         else:
-            raise DecompFailure(f"I don't know how to handle {mnemonic}!")
+            expr = ErrorExpr(f"unknown instruction: {instr}")
+            if args.count() >= 1 and isinstance(args.raw_args[0], Register):
+                reg = args.reg_ref(0)
+                expr = eval_once(
+                    expr, always_emit=True, trivial=False, prefix=reg.register_name
+                )
+                if reg != Register("zero"):
+                    regs[reg] = expr
+            else:
+                to_write.append(ExprStmt(expr))
 
     for instr in node.block.instructions:
         with current_instr(instr):
