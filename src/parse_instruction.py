@@ -252,7 +252,7 @@ class Instruction:
         ]
 
     def __str__(self) -> str:
-        return f'    {self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
+        return f'{self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
 
 
 def normalize_instruction(instr: Instruction) -> Instruction:

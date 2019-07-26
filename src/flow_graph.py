@@ -36,7 +36,7 @@ class Block:
 
     def __str__(self) -> str:
         name = f"{self.index} ({self.approx_label_name})"
-        inst_str = "\n".join(str(instruction) for instruction in self.instructions)
+        inst_str = "\n".join("    " + str(instr) for instr in self.instructions)
         return f"# {name}\n{inst_str}\n"
 
 
