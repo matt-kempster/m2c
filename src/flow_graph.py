@@ -186,18 +186,18 @@ def simplify_standard_patterns(function: Function) -> Function:
     div_pattern: List[str] = [
         "bnez",
         "nop",
-        "break 7",
+        "break",
         "",
         "li $at, -1",
         "bne",
         "li $at, 0x80000000",
         "bne",
         "nop",
-        "break 6",
+        "break",
         "",
     ]
 
-    divu_pattern: List[str] = ["bnez", "nop", "break 7", ""]
+    divu_pattern: List[str] = ["bnez", "nop", "break", ""]
 
     utf_pattern: List[str] = [
         "bgez",
