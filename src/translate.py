@@ -1992,7 +1992,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     fn_target = as_ptr(args.reg(0))
                 else:
                     assert args.count() == 2
-                    if args.reg(0) != Register("ra"):
+                    if args.reg_ref(0) != Register("ra"):
                         raise DecompFailure(
                             "Two-argument form of jalr is not supported."
                         )
