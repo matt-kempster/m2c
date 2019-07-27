@@ -1714,7 +1714,11 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
         return [Register("condition_bit")]
     if mnemonic in CASES_HI_LO:
         return [Register("hi"), Register("lo")]
-    raise DecompFailure(f"I don't know how to handle {mnemonic}!")
+    if instr.args:
+        arg = instr.args[0]
+        if isinstance(arg, Register):
+            return [arg]
+    return []
 
 
 def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
