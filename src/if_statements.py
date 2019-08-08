@@ -321,30 +321,30 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     while stack:
         # Get potential postdominator.
         node = stack.pop()
-        if node.block.index > end.block.index or node in seen:
-            # Don't go beyond the end, or revisit nodes.
+        if node in seen:
+            # Don't revisit nodes.
             continue
         seen.add(node)
-        # Add children of node.
-        if isinstance(node, BasicNode):
-            stack.append(node.successor)
-        elif isinstance(node, ConditionalNode):
-            if not node.is_loop():
-                # This check is wonky, see end_reachable_without.
-                # It should be kept the same as in get_reachable_nodes.
-                stack.append(node.conditional_edge)
-            stack.append(node.fallthrough_edge)
-        elif isinstance(node, SwitchNode):
-            stack.extend(node.cases)
-        else:
-            _: ReturnNode = node
         # If removing the node means the end becomes unreachable,
         # the node is a postdominator.
         if node != start and not end_reachable_without(context, start, end, node):
             postdominators.append(node)
-    assert postdominators, "at least 'end' should be a postdominator"
-    # Get the earliest postdominator
-    postdominators.sort(key=lambda node: node.block.index)
+        else:
+            # Otherwise, add the children of the node and continue the search.
+            assert node != end
+            if isinstance(node, BasicNode):
+                stack.append(node.successor)
+            elif isinstance(node, ConditionalNode):
+                if not node.is_loop():
+                    # This check is wonky, see end_reachable_without.
+                    # It should be kept the same as in get_reachable_nodes.
+                    stack.append(node.conditional_edge)
+                stack.append(node.fallthrough_edge)
+            elif isinstance(node, SwitchNode):
+                stack.extend(node.cases)
+            else:
+                _: ReturnNode = node
+    assert len(postdominators) == 1, "we should always find exactly one postdominator"
     return postdominators[0]
 
 
