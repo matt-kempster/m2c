@@ -2212,6 +2212,7 @@ def translate_to_ast(
         Register("f12"): PassedInArg(0, copied=False, type=Type.f32()),
         Register("f14"): PassedInArg(4, copied=False, type=Type.f32()),
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
+        Register("gp"): GlobalSymbol("GP", type=Type.ptr()),
         **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
     }
 
