@@ -13,5 +13,6 @@ f64 test(f32 arg0, s32 arg2, f64 arg4)
     {
         sp0 = 0.0;
     }
+    D_410180 = sp0;
     return sp0;
 }

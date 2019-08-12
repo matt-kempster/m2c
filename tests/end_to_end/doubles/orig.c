@@ -1,3 +1,5 @@
+double global;
+
 double test(double a, int b, double c) {
     double d = a * b + a / c, e;
     d -= 7;
@@ -6,5 +8,6 @@ double test(double a, int b, double c) {
     } else {
         e = 6.0f;
     }
+    global = e;
     return e;
 }
