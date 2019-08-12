@@ -555,6 +555,17 @@ class ErrorExpr:
 
 
 @attr.s(frozen=True, cmp=False)
+class SecondF64Half:
+    type: Type = attr.ib(factory=Type.any)
+
+    def dependencies(self) -> List["Expression"]:
+        return []
+
+    def __str__(self) -> str:
+        return "(second half of f64)"
+
+
+@attr.s(frozen=True, cmp=False)
 class BinaryOp:
     left: "Expression" = attr.ib()
     op: str = attr.ib()
@@ -1034,6 +1045,7 @@ Expression = Union[
     ForceVarExpr,
     PhiExpr,
     ErrorExpr,
+    SecondF64Half,
 ]
 
 Condition = Union[BinaryOp, UnaryOp, ErrorExpr]
@@ -2075,6 +2087,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 overwrite_reg(target, val)
             else:
                 set_reg(target, val)
+            mn_parts = mnemonic.split(".")
+            if len(mn_parts) >= 2 and mn_parts[1] == "d":
+                set_reg(target.other_f64_reg(), SecondF64Half())
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")

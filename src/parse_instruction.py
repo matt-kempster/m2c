@@ -20,6 +20,13 @@ class Register:
     def is_float(self) -> bool:
         return self.register_name[0] == "f" and self.register_name != "fp"
 
+    def other_f64_reg(self) -> "Register":
+        assert (
+            self.is_float()
+        ), "tried to get complement reg of non-floating point register"
+        num = int(self.register_name[1:])
+        return Register(f"f{num ^ 1}")
+
     def __str__(self) -> str:
         return f"${self.register_name}"
 
