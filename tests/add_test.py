@@ -165,7 +165,7 @@ def do_fix_lohi_step(disasm_info: DisassemblyInfo) -> bytes:
                 waiting_hi[reg[:-1]] = (index, imm, imm_hex)
         else:
             lo_regs = [reg for reg in waiting_hi.keys() if reg in line]
-            if lo_regs and "0x" in line:
+            if lo_regs and b"0x" in line:
                 lo_reg = lo_regs[0]
                 hi_ind, hi_imm, hi_imm_hex = waiting_hi[lo_reg]
                 lo_imm_hex = line.split(b" ")[-1].split(b"(")[0]
