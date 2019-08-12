@@ -412,10 +412,12 @@ class StackInfo:
         sym_name = "saved_reg_" + reg_name
         return self.global_symbol(AsmGlobalSymbol(sym_name))
 
-    def is_saved_reg_symbol(self, expr: "Expression") -> bool:
-        return isinstance(expr, GlobalSymbol) and expr.symbol_name.startswith(
-            "saved_reg_"
-        )
+    def should_save(self, expr: "Expression") -> bool:
+        if isinstance(expr, GlobalSymbol) and expr.symbol_name.startswith("saved_reg_"):
+            return True
+        if isinstance(expr, PassedInArg) and not expr.copied:
+            return True
+        return False
 
     def get_stack_var(self, location: int, store: bool) -> "Expression":
         if self.in_local_var_region(location):
@@ -1108,7 +1110,11 @@ class RegInfo:
                 del self.contents[reg]
 
     def __str__(self) -> str:
-        return ", ".join(f"{k}: {v}" for k, v in sorted(self.contents.items()))
+        return ", ".join(
+            f"{k}: {v}"
+            for k, v in sorted(self.contents.items())
+            if not self.stack_info.should_save(v)
+        )
 
 
 @attr.s
@@ -1458,12 +1464,10 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     source_val = args.reg(0)
     source_raw = args.regs.get_raw(source_reg)
     target = args.memory_ref(1)
-    should_save = stack_info.is_saved_reg_symbol(source_val) or (
-        isinstance(source_raw, PassedInArg) and not source_raw.copied
-    )
-    # should_save = (source_reg in (SAVED_REGS + ARGUMENT_REGS))
+    # if source_reg in (SAVED_REGS + ARGUMENT_REGS)
     if (
-        should_save
+        source_raw is not None
+        and stack_info.should_save(source_raw)
         and isinstance(target, AddressMode)
         and stack_info.is_stack_reg(target.rhs)
     ):
