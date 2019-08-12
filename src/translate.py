@@ -1971,12 +1971,25 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         args.reg_ref(0),
                         to_store.source.expr,
                     )
-                # This needs to be written out.
-                to_write.append(to_store)
+                # Emit a write. This includes four steps:
+                # - mark the expression as used (since writes are always emitted)
+                # - mark the dest used (if it's a struct access it needs to be
+                # evaluated, though ideally we would not mark the top-level expression
+                # used; it may cause early emissions that shouldn't happen)
+                # - mark other usages of the dest as "emit before this point if used".
+                # - emit the actual write.
+                #
+                # Note that the prevent_later_uses step happens after mark_used, since
+                # the stored expression is allowed to reference its destination var,
+                # but before the write is written, since prevent_later_uses might emit
+                # writes of its own that should go before this write. In practice that
+                # probably never occurs -- all relevant register contents should be
+                # EvalOnceExpr's that can be emitted at their point of creation, but
+                # I'm not 100% certain that that's always the case and will remain so.
                 mark_used(to_store.source)
                 mark_used(to_store.dest)
-                # Prevent earlier reads from getting reordered across the store.
                 prevent_later_uses(to_store.dest)
+                to_write.append(to_store)
 
         elif mnemonic in CASES_SOURCE_FIRST:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
