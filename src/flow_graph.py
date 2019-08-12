@@ -428,9 +428,9 @@ def build_blocks(function: Function) -> List[Block]:
                         "the assembly using non-branch-likely instructions."
                     )
 
-                if item.mnemonic in ["jal", "jr", "jalr"]:
-                    # Move the delay slot instruction to before the call/return
-                    # so it passes correct arguments.
+                if item.mnemonic in ["jal", "jalr"]:
+                    # Move the delay slot instruction to before the call so it
+                    # passes correct arguments.
                     if next_item.args and next_item.args[0] == item.args[0]:
                         raise DecompFailure(
                             f"Instruction after {item.mnemonic} clobbers its source\n"

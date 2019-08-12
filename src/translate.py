@@ -1849,7 +1849,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
     subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
     branch_condition: Optional[Condition] = None
-    return_value: Optional[Expression] = None
     switch_value: Optional[Expression] = None
 
     def eval_once(
@@ -1947,7 +1946,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, return_value, switch_value
+        nonlocal branch_condition, switch_value
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
@@ -2013,7 +2012,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if args.reg_ref(0) == Register("ra"):
                 # Return from the function.
                 assert isinstance(node, ReturnNode)
-                return_value = regs.get_raw(Register("return"))
             else:
                 # Switch jump.
                 assert isinstance(node, SwitchNode)
@@ -2124,6 +2122,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         mark_used(branch_condition)
     if switch_value is not None:
         mark_used(switch_value)
+    return_value: Optional[Expression] = None
+    if isinstance(node, ReturnNode):
+        return_value = regs.get_raw(Register("return"))
     return BlockInfo(to_write, return_value, switch_value, branch_condition, regs)
 
 
