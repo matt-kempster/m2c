@@ -1720,9 +1720,12 @@ CASES_DESTINATION_FIRST: InstrMap = {
 
 
 def output_regs_for_instr(instr: Instruction) -> List[Register]:
-    def reg_at(index: int) -> Register:
-        ret = instr.args[index]
-        assert isinstance(ret, Register)
+    def reg_at(index: int) -> List[Register]:
+        reg = instr.args[index]
+        assert isinstance(reg, Register)
+        ret = [reg]
+        if reg.register_name in ["f0", "v0"]:
+            ret.append(Register("return"))
         return ret
 
     mnemonic = instr.mnemonic
@@ -1737,17 +1740,15 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
     if mnemonic in CASES_FN_CALL:
         return list(map(Register, ["return", "f0", "v0", "v1"]))
     if mnemonic in CASES_SOURCE_FIRST:
-        return [reg_at(1)]
+        return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
-        return [reg_at(0)]
+        return reg_at(0)
     if mnemonic in CASES_FLOAT_COMP:
         return [Register("condition_bit")]
     if mnemonic in CASES_HI_LO:
         return [Register("hi"), Register("lo")]
-    if instr.args:
-        arg = instr.args[0]
-        if isinstance(arg, Register):
-            return [arg]
+    if instr.args and isinstance(instr.args[0], Register):
+        return reg_at(0)
     return []
 
 
@@ -1765,7 +1766,7 @@ def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
         for instr in n.block.instructions:
             with current_instr(instr):
                 clobbered.update(output_regs_for_instr(instr))
-                if instr.mnemonic == "jal":
+                if instr.mnemonic in CASES_FN_CALL:
                     clobbered.update(TEMP_REGS)
         stack.extend(n.parents)
     return clobbered
@@ -1786,7 +1787,7 @@ def reg_always_set(node: Node, reg: Register, dom_set: bool) -> bool:
         clobbered: Optional[bool] = None
         for instr in n.block.instructions:
             with current_instr(instr):
-                if instr.mnemonic == "jal" and reg in TEMP_REGS:
+                if instr.mnemonic in CASES_FN_CALL and reg in TEMP_REGS:
                     clobbered = True
                 if reg in output_regs_for_instr(instr):
                     clobbered = False
