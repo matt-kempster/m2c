@@ -2170,11 +2170,9 @@ def translate_graph_from_block(
         error_stmts: List[Statement] = [CommentStmt(f"Error: {emsg}")]
         if instr is not None:
             print(
-                f"Error occurred while processing instruction:\n{instr}",
-                file=sys.stderr,
+                f"Error occurred while processing instruction: {instr}", file=sys.stderr
             )
-            stripped = str(instr).strip()
-            error_stmts.append(CommentStmt(f"At instruction: {stripped}"))
+            error_stmts.append(CommentStmt(f"At instruction: {instr}"))
         print(file=sys.stderr)
         block_info = BlockInfo(error_stmts, None, None, ErrorExpr(), regs)
 
