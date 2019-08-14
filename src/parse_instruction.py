@@ -15,7 +15,7 @@ class Register:
     register_name: str = attr.ib()
 
     def is_callee_save(self) -> bool:
-        return bool(re.match("s[0-7]", self.register_name))
+        return bool(re.match("s[0-7]|f2[0-9]|f3[01]", self.register_name))
 
     def is_float(self) -> bool:
         return self.register_name[0] == "f" and self.register_name != "fp"

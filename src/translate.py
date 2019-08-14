@@ -491,7 +491,7 @@ def get_stack_info(function: Function, start_node: Node) -> StackInfo:
                 # this function only calls subroutines with no arguments.
                 info.return_addr_location = 0
         elif (
-            inst.mnemonic == "sw"
+            inst.mnemonic in ["sw", "swc1", "sdc1"]
             and destination.is_callee_save()
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs.register_name == "sp"
