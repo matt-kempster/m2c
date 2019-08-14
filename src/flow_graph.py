@@ -373,7 +373,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         if num % 2 == 1:
             ra, rb = rb, ra
             ma, mb = mb, ma
-        # Store the even-numbered register (ra) into the low address (ma).
+        # Store the even-numbered register (ra) into the low address (mb).
         new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
         new_instr = Instruction(mnemonic=new_mn, args=new_args)

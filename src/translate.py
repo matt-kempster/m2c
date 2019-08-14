@@ -2104,7 +2104,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             else:
                 set_reg(target, val)
             mn_parts = mnemonic.split(".")
-            if len(mn_parts) >= 2 and mn_parts[1] == "d":
+            if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
 
         else:
