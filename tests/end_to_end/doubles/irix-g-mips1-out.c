@@ -1,25 +1,20 @@
-f32 test(f32 arg0, s32 arg2, f32 arg4, f32 arg5)
+f64 test(f32 arg0, s32 arg2, f64 arg4)
 {
-    f32 spC;
-    f32 sp8;
+    f64 sp8;
     f32 sp4;
-    f32 sp0;
+    f64 sp0;
 
-    spC = (f32) (((f64) arg2 * arg0) + (arg0 / arg5));
-    sp8 = (f32) (second half of f64);
-    spC = (f32) (spC - 7.0);
-    sp8 = (f32) (second half of f64);
-    if (((spC < arg5) || (spC == arg5)) || (9.0 < spC))
+    sp8 = (f64) (((f64) arg2 * arg0) + (arg0 / arg4));
+    sp8 = (f64) (sp8 - 7.0);
+    if (((sp8 < arg4) || (sp8 == arg4)) || (9.0 < sp8))
     {
         sp0 = 2.3125f;
         sp4 = 0.0f;
     }
     else
     {
-        sp0 = 2.375f;
-        sp4 = 0.0f;
+        sp0 = 0.0;
     }
     D_4101B0 = sp0;
-    D_4101B0 = sp4;
-    return sp4;
+    return sp0;
 }

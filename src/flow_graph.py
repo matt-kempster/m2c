@@ -7,6 +7,7 @@ import attr
 from .error import DecompFailure
 from .parse_file import Function, Label, Rodata
 from .parse_instruction import (
+    AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
@@ -343,6 +344,41 @@ def simplify_standard_patterns(function: Function) -> Function:
             new_instr = Instruction(mnemonic="cvt.u.d", args=args)
         return ([new_instr], i + consumed)
 
+    def try_replace_mips1_double_load_store(
+        i: int
+    ) -> Optional[Tuple[List[BodyPart], int]]:
+        # TODO: sometimes the instructions aren't consecutive.
+        actual = function.body[i : i + 2]
+        if not matches_pattern(actual, ["lwc1", "lwc1"]) and not matches_pattern(
+            actual, ["swc1", "swc1"]
+        ):
+            return None
+        a, b = actual
+        assert isinstance(a, Instruction)
+        assert isinstance(b, Instruction)
+        ra, rb = a.args[0], b.args[0]
+        ma, mb = a.args[1], b.args[1]
+        # TODO: verify that the memory locations are consecutive as well (a bit
+        # annoying with macros...)
+        if not (
+            isinstance(ra, Register)
+            and ra.is_float()
+            and ra.other_f64_reg() == rb
+            and isinstance(ma, AsmAddressMode)
+            and isinstance(mb, AsmAddressMode)
+            and ma.rhs == mb.rhs
+        ):
+            return None
+        num = int(ra.register_name[1:])
+        if num % 2 == 1:
+            ra, rb = rb, ra
+            ma, mb = mb, ma
+        # Store the even-numbered register (ra) into the low address (ma).
+        new_args = [ra, mb]
+        new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
+        new_instr = Instruction(mnemonic=new_mn, args=new_args)
+        return ([new_instr], i + 2)
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
 
@@ -354,6 +390,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             or try_replace_divu(i)
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
+            or try_replace_mips1_double_load_store(i)
             or no_replacement(i)
         )
         new_function.body.extend(repl)

@@ -1805,7 +1805,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
     while i < len(used_phis):
         phi = used_phis[i]
         assert phi.num_usages > 0
-        assert phi.node.parents
+        assert len(phi.node.parents) >= 2
         exprs = []
         for node in phi.node.parents:
             block_info = node.block.block_info
