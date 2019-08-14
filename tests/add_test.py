@@ -12,7 +12,12 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict, List, Mapping, NamedTuple, Optional, Tuple
 
-OUT_FILES_TO_IRIX_FLAG: Mapping[str, str] = {"irix-g": "-g", "irix-o2": "-O2"}
+OUT_FILES_TO_IRIX_FLAGS: Mapping[str, List[str]] = {
+    "irix-g": ["-g", "-mips2"],
+    "irix-o2": ["-O2", "-mips2"],
+    # "irix-g-mips1": ["-g", "-mips1"],
+    # "irix-o2-mips1": ["-O2", "-mips1"],
+}
 
 
 def set_up_logging(debug: bool) -> None:
@@ -112,7 +117,7 @@ def do_linker_step(temp_out_file: str, temp_o_file: str) -> None:
 
 
 def do_compilation_step(
-    temp_o_file: str, in_file: str, flag: str, env_vars: PathsToBinaries
+    temp_o_file: str, in_file: str, flags: List[str], env_vars: PathsToBinaries
 ) -> None:
     subprocess.run(
         [
@@ -130,14 +135,12 @@ def do_compilation_step(
             "-fullwarn",
             "-wlint",
             "-woff",
-            "819,820,852,821",
+            "819,820,852,821,827",
             "-signed",
-            "-DVERSION_JP=1",
-            "-mips2",
             "-o",
             temp_o_file,
             in_file,
-            flag,
+            *flags,
         ]
     )
 
@@ -183,14 +186,15 @@ def do_fix_lohi_step(disasm_info: DisassemblyInfo) -> bytes:
 
 
 def irix_compile_with_flag(
-    in_file: Path, out_file: Path, flag: str, env_vars: PathsToBinaries
+    in_file: Path, out_file: Path, flags: List[str], env_vars: PathsToBinaries
 ) -> None:
-    logging.info(f"Compiling {in_file} to {out_file} using this flag: {flag}")
+    flags_str = " ".join(flags)
+    logging.info(f"Compiling {in_file} to {out_file} using these flags: {flags_str}")
     with ExitStack() as stack:
         temp_o_file = stack.enter_context(NamedTemporaryFile(suffix=".o")).name
         temp_out_file = stack.enter_context(NamedTemporaryFile(suffix=".out")).name
-        logging.debug(f"Compiling and linking {in_file} with {flag}...")
-        do_compilation_step(temp_o_file, str(in_file), flag, env_vars)
+        logging.debug(f"Compiling and linking {in_file} with {flags_str}...")
+        do_compilation_step(temp_o_file, str(in_file), flags, env_vars)
         do_linker_step(temp_out_file, temp_o_file)
         disasm_info = do_disassembly_step(temp_out_file, env_vars)
         final_asm = do_fix_lohi_step(disasm_info)
@@ -200,9 +204,9 @@ def irix_compile_with_flag(
 
 def add_test_from_file(orig_file: Path, env_vars: PathsToBinaries) -> None:
     test_dir = orig_file.parent
-    for asm_filename, flag in OUT_FILES_TO_IRIX_FLAG.items():
+    for asm_filename, flags in OUT_FILES_TO_IRIX_FLAGS.items():
         asm_file_path = Path(str(test_dir / asm_filename) + ".s")
-        irix_compile_with_flag(orig_file, asm_file_path, flag, env_vars)
+        irix_compile_with_flag(orig_file, asm_file_path, flags, env_vars)
 
 
 def main() -> int:
