@@ -123,6 +123,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 ifdef_levels.append(level)
             elif line.startswith(".endif"):
                 ifdef_level -= ifdef_levels.pop()
+            elif line.startswith(".macro"):
+                ifdef_level += 1
+            elif line.startswith(".endm"):
+                ifdef_level -= 1
             elif ifdef_level == 0:
                 if line.startswith(".section"):
                     curr_section = line.split(" ")[1].split(",")[0]

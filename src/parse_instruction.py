@@ -1,6 +1,5 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
-import ast
 import re
 import string
 import sys
@@ -91,7 +90,7 @@ Argument = Union[
 ]
 
 valid_word = string.ascii_letters + string.digits + "_"
-valid_number = "-x" + string.hexdigits
+valid_number = "-xX" + string.hexdigits
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
@@ -103,8 +102,9 @@ def parse_word(elems: List[str], valid: str = valid_word) -> str:
 
 def parse_number(elems: List[str]) -> int:
     number_str = parse_word(elems, valid_number)
-    ret = ast.literal_eval(number_str)
-    assert isinstance(ret, int)
+    if number_str[0] == "0":
+        assert len(number_str) == 1 or number_str[1] in "xX"
+    ret = int(number_str, 0)
     return ret
 
 
