@@ -246,8 +246,6 @@ def simplify_standard_patterns(function: Function) -> Function:
     ]
 
     def get_li_imm(ins: Instruction) -> Optional[int]:
-        if ins.mnemonic == "lui" and isinstance(ins.args[1], AsmLiteral):
-            return (ins.args[1].value & 0xFFFF) << 16
         if ins.mnemonic == "li" and isinstance(ins.args[1], AsmLiteral):
             return ins.args[1].value & 0xFFFFFFFF
         return None

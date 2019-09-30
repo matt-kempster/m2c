@@ -1401,11 +1401,12 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
 
 
 def load_upper(args: InstrArgs) -> Expression:
-    if isinstance(args.raw_args[1], Macro):
-        return args.hi_imm(1)
-    expr = args.imm(1)
-    assert isinstance(expr, Literal)
-    return Literal(expr.value << 16)
+    if not isinstance(args.raw_args[1], Macro):
+        assert not isinstance(
+            args.raw_args[1], Literal
+        ), "normalize_instruction should convert lui <literal> to li"
+        raise DecompFailure("lui argument must be a literal or %hi macro")
+    return args.hi_imm(1)
 
 
 def handle_ori(args: InstrArgs) -> Expression:

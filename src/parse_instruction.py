@@ -292,6 +292,10 @@ def normalize_instruction(instr: Instruction) -> Instruction:
         ):
             mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
             return Instruction(mn, [args[0], args[2]], instr.emit_goto)
+    if len(args) == 2:
+        if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
+            lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
+            return Instruction("li", [args[0], lit], instr.emit_goto)
     return instr
 
 
