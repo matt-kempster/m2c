@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 
 import attr
 
+from .error import DecompFailure
+
 
 @attr.s(frozen=True)
 class Register:
@@ -242,7 +244,18 @@ class Instruction:
 
     def get_branch_target(self) -> JumpTarget:
         label = self.args[-1]
-        assert isinstance(label, JumpTarget)
+        if not isinstance(label, JumpTarget):
+            if isinstance(label, AsmGlobalSymbol):
+                raise DecompFailure(
+                    f'Couldn\'t parse instruction "{self}": mips_to_c currently '
+                    'only supports jumps to labels prefixed with ".".\nNon '
+                    "dot-prefixed labels act as function separators, except for "
+                    '"glabel L[0-9A-F]{8}" which is used for jump table targets.\n'
+                    "Try adding a dot in front of label name."
+                )
+            raise DecompFailure(
+                f'Couldn\'t parse instruction "{self}": invalid branch target'
+            )
         return label
 
     def is_jump_instruction(self) -> bool:
