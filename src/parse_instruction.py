@@ -4,11 +4,54 @@ import re
 import string
 import sys
 import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
 
 import attr
 
 from .error import DecompFailure
+
+LENGTH_TWO: Set[str] = {
+    "negu",
+    "not",
+    "neg.s",
+    "abs.s",
+    "sqrt.s",
+    "neg.d",
+    "abs.d",
+    "sqrt.d",
+}
+
+LENGTH_THREE: Set[str] = {
+    "slt",
+    "slti",
+    "sltu",
+    "sltiu",
+    "addi",
+    "addiu",
+    "addu",
+    "subu",
+    "add.s",
+    "sub.s",
+    "div.s",
+    "mul.s",
+    "add.d",
+    "sub.d",
+    "div.d",
+    "mul.d",
+    "ori",
+    "and",
+    "or",
+    "nor",
+    "xor",
+    "andi",
+    "xori",
+    "sll",
+    "sllv",
+    "srl",
+    "srlv",
+    "sra",
+    "srav",
+}
 
 
 @attr.s(frozen=True)
@@ -313,6 +356,11 @@ def normalize_instruction(instr: Instruction) -> Instruction:
         if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
             lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
             return Instruction("li", [args[0], lit], instr.emit_goto)
+        if instr.mnemonic in LENGTH_THREE:
+            return Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+    if len(args) == 1:
+        if instr.mnemonic in LENGTH_TWO:
+            return Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
     return instr
 
 

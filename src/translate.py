@@ -1147,9 +1147,6 @@ class InstrArgs:
     regs: RegInfo = attr.ib(repr=False)
     stack_info: StackInfo = attr.ib(repr=False)
 
-    def duplicate_dest_reg(self) -> None:
-        self.raw_args.insert(1, self.raw_args[0])
-
     def reg_ref(self, index: int) -> Register:
         ret = self.raw_args[index]
         assert isinstance(ret, Register)
@@ -1410,10 +1407,6 @@ def load_upper(args: InstrArgs) -> Expression:
 
 
 def handle_ori(args: InstrArgs) -> Expression:
-    # Two-argument form, mostly used for "ori $reg, (x & 0xffff)"
-    if args.count() == 2:
-        args.duplicate_dest_reg()
-
     imm = args.imm(2)
     r = args.reg(1)
     if isinstance(r, Literal) and isinstance(imm, Literal):
@@ -1423,10 +1416,6 @@ def handle_ori(args: InstrArgs) -> Expression:
 
 
 def handle_addi(args: InstrArgs) -> Expression:
-    # Two-argument form, mostly used for "addiu $reg, %lo(...)"
-    if args.count() == 2:
-        args.duplicate_dest_reg()
-
     stack_info = args.stack_info
     source_reg = args.reg_ref(1)
     source = args.reg(1)
