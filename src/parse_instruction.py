@@ -286,6 +286,10 @@ def normalize_instruction(instr: Instruction) -> Instruction:
             return Instruction("not", [args[0], args[1]])
         if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
             return Instruction("move", args[:2], instr.emit_goto)
+        if instr.mnemonic in ["div", "divu"]:
+            if args[0] != Register("zero"):
+                raise DecompFailure("first argument to div must be $zero")
+            return Instruction(instr.mnemonic, args[1:], instr.emit_goto)
         if (
             instr.mnemonic == "ori"
             and args[1] == Register("zero")

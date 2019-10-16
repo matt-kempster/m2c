@@ -1610,12 +1610,12 @@ CASES_FLOAT_COMP: CmpInstrMap = {
 CASES_HI_LO: PairInstrMap = {
     # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
     "div": lambda a: (
-        BinaryOp.s32(a.reg(1), "%", a.reg(2)),
-        BinaryOp.s32(a.reg(1), "/", a.reg(2)),
+        BinaryOp.s32(a.reg(0), "%", a.reg(1)),
+        BinaryOp.s32(a.reg(0), "/", a.reg(1)),
     ),
     "divu": lambda a: (
-        BinaryOp.u32(a.reg(1), "%", a.reg(2)),
-        BinaryOp.u32(a.reg(1), "/", a.reg(2)),
+        BinaryOp.u32(a.reg(0), "%", a.reg(1)),
+        BinaryOp.u32(a.reg(0), "/", a.reg(1)),
     ),
     # The high part of multiplication cannot be directly represented in C
     "multu": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
