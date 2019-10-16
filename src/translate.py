@@ -2154,10 +2154,15 @@ def translate_graph_from_block(
             instr = e.instr
             e = e.__cause__
 
-        tb = e.__traceback__
-        traceback.print_exception(None, e, tb)
-        emsg = str(e) or traceback.format_tb(tb)[-1]
-        emsg = emsg.strip().split("\n")[-1].strip()
+        if isinstance(e, DecompFailure):
+            emsg = str(e)
+            print(emsg)
+        else:
+            tb = e.__traceback__
+            traceback.print_exception(None, e, tb)
+            emsg = str(e) or traceback.format_tb(tb)[-1]
+            emsg = emsg.strip().split("\n")[-1].strip()
+
         error_stmts: List[Statement] = [CommentStmt(f"Error: {emsg}")]
         if instr is not None:
             print(
