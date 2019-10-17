@@ -174,6 +174,8 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             reg = parse_word(arg_elems)
             if reg == "s8":
                 reg = "fp"
+            if reg == "r0":
+                reg = "zero"
             value = Register(reg)
         elif tok == ".":
             # A jump target (i.e. a label).
