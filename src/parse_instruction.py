@@ -153,6 +153,25 @@ def parse_number(elems: List[str]) -> int:
     return ret
 
 
+def constant_fold(arg: Argument) -> Argument:
+    if not isinstance(arg, BinOp):
+        return arg
+    lhs = constant_fold(arg.lhs)
+    rhs = constant_fold(arg.rhs)
+    if isinstance(lhs, AsmLiteral) and isinstance(rhs, AsmLiteral):
+        if arg.op == "+":
+            return AsmLiteral(lhs.value + rhs.value)
+        if arg.op == "-":
+            return AsmLiteral(lhs.value - rhs.value)
+        if arg.op == ">>":
+            return AsmLiteral(lhs.value >> rhs.value)
+        if arg.op == "<<":
+            return AsmLiteral(lhs.value << rhs.value)
+        if arg.op == "&":
+            return AsmLiteral(lhs.value & rhs.value)
+    return arg
+
+
 # Main parser.
 def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
     value: Optional[Argument] = None
@@ -213,7 +232,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             expect(")")
             if isinstance(rhs, BinOp):
                 # Binary operation.
-                return rhs
+                return constant_fold(rhs)
             else:
                 # Address mode.
                 assert isinstance(rhs, Register)

@@ -1376,17 +1376,6 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     assert isinstance(arg, BinOp), f"argument {arg} must be a literal"
     lhs = literal_expr(arg.lhs, stack_info)
     rhs = literal_expr(arg.rhs, stack_info)
-    if isinstance(lhs, Literal) and isinstance(rhs, Literal):
-        if arg.op == "+":
-            return Literal(lhs.value + rhs.value)
-        if arg.op == "-":
-            return Literal(lhs.value - rhs.value)
-        if arg.op == ">>":
-            return Literal(lhs.value >> rhs.value)
-        if arg.op == "<<":
-            return Literal(lhs.value << rhs.value)
-        if arg.op == "&":
-            return Literal(lhs.value & rhs.value)
     return BinaryOp.int(left=lhs, op=arg.op, right=rhs)
 
 
