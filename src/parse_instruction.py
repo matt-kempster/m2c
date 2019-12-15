@@ -368,6 +368,8 @@ def normalize_instruction(instr: Instruction) -> Instruction:
         ):
             lit = AsmLiteral(((args[2].value + 0x8000) & 0xFFFF) - 0x8000)
             return Instruction("li", [args[0], lit], instr.emit_goto)
+        if instr.mnemonic == "beq" and args[0] == args[1] == Register("zero"):
+            return Instruction("b", [args[2]], instr.emit_goto)
         if instr.mnemonic in ["bne", "beq", "beql", "bnel"] and args[1] == Register(
             "zero"
         ):
