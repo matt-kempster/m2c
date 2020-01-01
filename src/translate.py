@@ -2005,9 +2005,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_FN_CALL:
             if mnemonic == "jal":
                 fn_target = args.imm(0)
-                assert isinstance(fn_target, AddressOf)
-                fn_target = fn_target.expr
-                assert isinstance(fn_target, GlobalSymbol)
+                if isinstance(fn_target, AddressOf):
+                    fn_target = fn_target.expr
+                    assert isinstance(fn_target, GlobalSymbol)
+                else:
+                    assert isinstance(fn_target, Literal)
+                    fn_target = as_ptr(fn_target)
             else:
                 assert mnemonic == "jalr"
                 if args.count() == 1:
