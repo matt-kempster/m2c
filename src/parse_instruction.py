@@ -256,8 +256,12 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
 
             rhs = parse_arg_elems(arg_elems)
             # These operators can only use constants as the right-hand-side.
-            if rhs:
+            if rhs and isinstance(rhs, BinOp) and rhs.op == "*":
                 rhs = constant_fold(rhs)
+            if isinstance(rhs, BinOp) and isinstance(constant_fold(rhs), AsmLiteral):
+                raise DecompFailure(
+                    "Math is too complicated for mips_to_c. Try adding parentheses."
+                )
             assert isinstance(rhs, AsmLiteral)
             return BinOp(op, value, rhs)
         else:
