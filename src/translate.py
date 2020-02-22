@@ -846,7 +846,11 @@ class Literal:
         elif self.type.get_size() == 16:
             prefix = "(u16)"
         suffix = "U" if self.type.is_unsigned() else ""
-        mid = str(self.value) if abs(self.value) < 10 else hex(self.value)
+        mid = (
+            str(self.value)
+            if abs(self.value) < 10
+            else hex(self.value).upper().replace("X", "x")
+        )
         return prefix + mid + suffix
 
 
