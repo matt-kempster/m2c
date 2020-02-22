@@ -163,6 +163,8 @@ def constant_fold(arg: Argument) -> Argument:
             return AsmLiteral(lhs.value + rhs.value)
         if arg.op == "-":
             return AsmLiteral(lhs.value - rhs.value)
+        if arg.op == "*":
+            return AsmLiteral(lhs.value * rhs.value)
         if arg.op == ">>":
             return AsmLiteral(lhs.value >> rhs.value)
         if arg.op == "<<":
@@ -232,7 +234,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             expect(")")
             if isinstance(rhs, BinOp):
                 # Binary operation.
-                return constant_fold(rhs)
+                value = constant_fold(rhs)
             else:
                 # Address mode.
                 assert isinstance(rhs, Register)
@@ -241,7 +243,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             # Global symbol.
             assert value is None
             value = AsmGlobalSymbol(parse_word(arg_elems))
-        elif tok in ">+-&":
+        elif tok in ">+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol))
 
@@ -250,10 +252,12 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                 expect(">")
                 op = ">>"
             else:
-                op = expect("&+-")
+                op = expect("&+-*")
 
             rhs = parse_arg_elems(arg_elems)
             # These operators can only use constants as the right-hand-side.
+            if rhs:
+                rhs = constant_fold(rhs)
             assert isinstance(rhs, AsmLiteral)
             return BinOp(op, value, rhs)
         else:

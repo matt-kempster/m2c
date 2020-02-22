@@ -10,7 +10,7 @@ glabel test
 addiu $sp, $sp, -0x34
 sw $s0, 0X30($sp)
 beq $zero, $zero, .label
-lui $v0, (0x12345678 >> 0x10)
+lui $v0, (0x12345678 >> (8 + 0x4 * 2))
 .label:
 jr $ra
 addiu $sp, $sp, 0x34
