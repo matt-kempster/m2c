@@ -319,7 +319,7 @@ class Instruction:
                     'only supports jumps to labels prefixed with ".".\nNon '
                     "dot-prefixed labels act as function separators, except for "
                     '"glabel L[0-9A-F]{8}" which is used for jump table targets.\n'
-                    "Try adding a dot in front of label name."
+                    "Try adding a dot in front of the label name."
                 )
             raise DecompFailure(
                 f'Couldn\'t parse instruction "{self}": invalid branch target'

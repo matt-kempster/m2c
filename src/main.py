@@ -24,14 +24,18 @@ def decompile_function(options: Options, function: Function, rodata: Rodata) -> 
 
 def run(options: Options, function_index_or_name: str) -> int:
     with open(options.filename, "r") as f:
-        mips_file = parse_file(f, options)
+        try:
+            mips_file = parse_file(f, options)
 
-        # Move over jtbl rodata from files given by --rodata
-        for rodata_file in options.rodata_files:
-            with open(rodata_file, "r") as f2:
-                sub_file = parse_file(f2, options)
-                for (sym, value) in sub_file.rodata.values.items():
-                    mips_file.rodata.values[sym] = value
+            # Move over jtbl rodata from files given by --rodata
+            for rodata_file in options.rodata_files:
+                with open(rodata_file, "r") as f2:
+                    sub_file = parse_file(f2, options)
+                    for (sym, value) in sub_file.rodata.values.items():
+                        mips_file.rodata.values[sym] = value
+        except DecompFailure as e:
+            print(e)
+            return 1
 
         if function_index_or_name == "all":
             options.stop_on_error = True
