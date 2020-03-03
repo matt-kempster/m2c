@@ -546,9 +546,6 @@ def build_flowgraph_between(
                 assert block_info.switch_value is not None
                 emit_switch_jump(context, block_info.switch_value, body, indent)
             else:  # ReturnNode
-                assert (
-                    curr_start.is_real()
-                ), "Fake return nodes must never be marked as emit_goto"
                 write_return(context, body, curr_start, indent, last=False)
 
             # Advance to the next node in block order. This may skip over
