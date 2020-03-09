@@ -4,6 +4,13 @@ import attr
 
 
 @attr.s
+class CodingStyle:
+    newline_after_function: bool = attr.ib()
+    newline_after_if: bool = attr.ib()
+    newline_before_else: bool = attr.ib()
+
+
+@attr.s
 class Options:
     filename: str = attr.ib()
     debug: bool = attr.ib()
@@ -16,3 +23,4 @@ class Options:
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()
     preproc_defines: Dict[str, int] = attr.ib()
+    coding_style: CodingStyle = attr.ib()

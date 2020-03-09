@@ -14,7 +14,7 @@ from .flow_graph import (
     ReturnNode,
     SwitchNode,
 )
-from .options import Options
+from .options import Options, CodingStyle
 from .translate import (
     BinaryOp,
     BlockInfo,
@@ -46,6 +46,7 @@ class Context:
 class IfElseStatement:
     condition: Condition = attr.ib()
     indent: int = attr.ib()
+    coding_style: CodingStyle = attr.ib()
     if_body: "Body" = attr.ib()
     else_body: Optional["Body"] = attr.ib(default=None)
 
@@ -56,19 +57,20 @@ class IfElseStatement:
         space = " " * self.indent
         condition = simplify_condition(self.condition)
         cond_str = stringify_expr(condition)
+        brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
         if_str = "\n".join(
             [
-                f"{space}if ({cond_str})",
-                f"{space}{{",
+                f"{space}if ({cond_str}){brace_after_if}",
                 str(self.if_body),  # has its own indentation
                 f"{space}}}",
             ]
         )
         if self.else_body is not None:
+            whitespace = f"\n{space}" if self.coding_style.newline_before_else else " "
             else_str = "\n".join(
-                [f"{space}else", f"{space}{{", str(self.else_body), f"{space}}}"]
+                [f"{whitespace}else{brace_after_if}", str(self.else_body), f"{space}}}"]
             )
-            if_str = if_str + "\n" + else_str
+            if_str = if_str + else_str
         return if_str
 
 
@@ -239,7 +241,13 @@ def build_conditional_subgraph(
         else:  # multiple conditions in if-statement
             return get_full_if_condition(context, conds, start, end, indent)
 
-    return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body)
+    return IfElseStatement(
+        if_condition,
+        indent,
+        context.options.coding_style,
+        if_body=if_body,
+        else_body=else_body,
+    )
 
 
 def end_reachable_without(
@@ -447,6 +455,7 @@ def get_full_if_condition(
             # body instead of jumping to it, hence it must jump OVER the body.
             join_conditions(conditions, "||", only_negate_last=True),
             indent,
+            context.options.coding_style,
             if_body=build_flowgraph_between(
                 context, start.conditional_edge, curr_end, indent + 4
             ),
@@ -463,6 +472,7 @@ def get_full_if_condition(
             # OVER the if body.
             join_conditions(conditions, "&&", only_negate_last=False),
             indent,
+            context.options.coding_style,
             if_body=build_flowgraph_between(context, curr_node, curr_end, indent + 4),
             else_body=build_flowgraph_between(
                 context, start.conditional_edge, curr_end, indent + 4
@@ -538,6 +548,7 @@ def build_flowgraph_between(
                     IfElseStatement(
                         block_info.branch_condition,
                         indent,
+                        context.options.coding_style,
                         if_body=if_body,
                         else_body=None,
                     )
@@ -625,7 +636,11 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             assert block_info.branch_condition is not None
             body.add_if_else(
                 IfElseStatement(
-                    block_info.branch_condition, 4, if_body=if_body, else_body=None
+                    block_info.branch_condition,
+                    4,
+                    context.options.coding_style,
+                    if_body=if_body,
+                    else_body=None,
                 )
             )
             emit_successor(node.fallthrough_edge, i)
@@ -682,7 +697,8 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     for arg in function_info.stack_info.arguments:
         arg_strs.append(f"{arg.type.to_decl()}{arg}")
     arg_str = ", ".join(arg_strs) or "void"
-    print(f"{ret_type}{fn_name}({arg_str})\n{{")
+    whitespace = "\n" if options.coding_style.newline_after_function else " "
+    print(f"{ret_type}{fn_name}({arg_str}){whitespace}{{")
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:

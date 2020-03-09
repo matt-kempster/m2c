@@ -4,7 +4,7 @@ import sys
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import write_function
-from .options import Options
+from .options import Options, CodingStyle
 from .parse_file import Function, Rodata, parse_file
 from .translate import translate_to_ast
 
@@ -135,6 +135,12 @@ def main() -> int:
         help="display a visualization of the control flow graph using graphviz",
     )
     parser.add_argument(
+        "--allman",
+        dest="allman",
+        action="store_true",
+        help="put braces on separate lines",
+    )
+    parser.add_argument(
         "-D",
         dest="defined",
         action="append",
@@ -153,6 +159,11 @@ def main() -> int:
         **{d: 0 for d in args.undefined},
         **{d.split("=")[0]: 1 for d in args.defined},
     }
+    coding_style = CodingStyle(
+        newline_after_function=args.allman,
+        newline_after_if=args.allman,
+        newline_before_else=args.allman,
+    )
     options = Options(
         filename=args.filename,
         debug=args.debug,
@@ -165,6 +176,7 @@ def main() -> int:
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
         preproc_defines=preproc_defines,
+        coding_style=coding_style,
     )
     return run(options, args.function)
 

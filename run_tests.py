@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from src.main import run as decompile
-from src.options import Options
+from src.options import Options, CodingStyle
 
 CRASH_STRING = "CRASHED\n"
 
@@ -68,6 +68,11 @@ def decompile_and_capture_output(output_path: Path, asm_file_path: Path) -> str:
                 print_assembly=False,
                 visualize_flowgraph=False,
                 preproc_defines={},
+                coding_style=CodingStyle(
+                    newline_after_function=True,
+                    newline_after_if=True,
+                    newline_before_else=True,
+                ),
             ),
             "test",
         )
