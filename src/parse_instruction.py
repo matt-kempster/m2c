@@ -84,6 +84,20 @@ class AsmGlobalSymbol:
 
 
 @attr.s(frozen=True)
+class AsmSectionGlobalSymbol(AsmGlobalSymbol):
+    section_name: str = attr.ib()
+    addend: int = attr.ib()
+
+
+def asm_section_global_symbol(section_name: str, addend: int) -> AsmSectionGlobalSymbol:
+    return AsmSectionGlobalSymbol(
+        symbol_name=f"__{section_name}{hex(addend)[2:].upper()}",
+        section_name=section_name,
+        addend=addend,
+    )
+
+
+@attr.s(frozen=True)
 class Macro:
     macro_name: str = attr.ib()
     argument: "Argument" = attr.ib()  # forward-declare
@@ -199,10 +213,14 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                 reg = "zero"
             value = Register(reg)
         elif tok == ".":
-            # A jump target (i.e. a label).
+            # Either a jump target (i.e. a label), or a section reference.
             assert value is None
             arg_elems.pop(0)
-            value = JumpTarget(parse_word(arg_elems))
+            word = parse_word(arg_elems)
+            if word in ["data", "rodata", "bss", "text"]:
+                value = asm_section_global_symbol(word, 0)
+            else:
+                value = JumpTarget(word)
         elif tok == "%":
             # A macro (i.e. %hi(...) or %lo(...)).
             assert value is None
@@ -263,6 +281,10 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                     "Math is too complicated for mips_to_c. Try adding parentheses."
                 )
             assert isinstance(rhs, AsmLiteral)
+            if isinstance(value, AsmSectionGlobalSymbol):
+                return asm_section_global_symbol(
+                    value.section_name, value.addend + rhs.value
+                )
             return BinOp(op, value, rhs)
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
