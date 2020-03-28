@@ -1,15 +1,19 @@
 import argparse
 import sys
+from typing import Optional
 
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import write_function
 from .options import Options, CodingStyle
-from .parse_file import Function, Rodata, parse_file
+from .parse_file import Function, MIPSFile, Rodata, parse_file
 from .translate import translate_to_ast
+from .c_types import TypeMap, build_typemap
 
 
-def decompile_function(options: Options, function: Function, rodata: Rodata) -> None:
+def decompile_function(
+    options: Options, function: Function, rodata: Rodata, typemap: Optional[TypeMap]
+) -> None:
     if options.print_assembly:
         print(function)
         print()
@@ -23,6 +27,8 @@ def decompile_function(options: Options, function: Function, rodata: Rodata) -> 
 
 
 def run(options: Options, function_index_or_name: str) -> int:
+    mips_file: MIPSFile
+    typemap: Optional[TypeMap] = None
     try:
         with open(options.filename, "r") as f:
             mips_file = parse_file(f, options)
@@ -33,7 +39,11 @@ def run(options: Options, function_index_or_name: str) -> int:
                 sub_file = parse_file(f, options)
                 for (sym, value) in sub_file.rodata.values.items():
                     mips_file.rodata.values[sym] = value
-    except DecompFailure as e:
+
+        if options.c_context is not None:
+            with open(options.c_context, "r") as f:
+                typemap = build_typemap(f.read())
+    except (OSError, DecompFailure) as e:
         print(e)
         return 1
 
@@ -41,7 +51,7 @@ def run(options: Options, function_index_or_name: str) -> int:
         options.stop_on_error = True
         for fn in mips_file.functions:
             try:
-                decompile_function(options, fn, mips_file.rodata)
+                decompile_function(options, fn, mips_file.rodata, typemap)
             except Exception:
                 print(f"{fn.name}: ERROR")
             print()
@@ -66,7 +76,7 @@ def run(options: Options, function_index_or_name: str) -> int:
             return 1
 
         try:
-            decompile_function(options, function, mips_file.rodata)
+            decompile_function(options, function, mips_file.rodata, typemap)
         except DecompFailure as e:
             print(f"Failed to decompile function {function.name}:\n\n{e}")
             return 1
@@ -154,6 +164,13 @@ def main() -> int:
         default=[],
         help="mark preprocessor constant as undefined",
     )
+    parser.add_argument(
+        "--context",
+        metavar="C_FILE",
+        dest="c_context",
+        help="read variable types/function signatures/structs from an existing C file. "
+        "The file must already have been processed by the C preprocessor.",
+    )
     args = parser.parse_args()
     preproc_defines = {
         **{d: 0 for d in args.undefined},
@@ -175,6 +192,7 @@ def main() -> int:
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
+        c_context=args.c_context,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )

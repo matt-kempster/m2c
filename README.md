@@ -7,7 +7,7 @@ Right now the decompiler is fairly functional, though it sometimes generates sub
 
 ## Install
 
-Make sure you have Python 3.6 or later installed, then do `python3 -m pip install --upgrade attrs`.
+Make sure you have Python 3.6 or later installed, then do `python3 -m pip install --upgrade attrs pycparser`.
 
 You might need to install `pip` first; on Ubuntu this can be done with:
 ```bash

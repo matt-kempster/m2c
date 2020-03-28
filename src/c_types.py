@@ -9,6 +9,7 @@ import attr
 from pycparser import c_ast as ca
 from pycparser.c_ast import ArrayDecl, TypeDecl, PtrDecl, FuncDecl, IdentifierType
 from pycparser.c_generator import CGenerator
+from pycparser.c_parser import CParser
 
 from .error import DecompFailure
 
@@ -243,7 +244,8 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
     return Struct(fields=fields, size=size, align=align)
 
 
-def build_typemap(ast: ca.FileAST) -> TypeMap:
+def build_typemap(source: str, filename: str = "") -> TypeMap:
+    ast: ca.FileAST = CParser().parse(source, filename)
     ret = TypeMap()
     for item in ast.ext:
         if isinstance(item, ca.Typedef):
