@@ -2,7 +2,7 @@
 based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
-from typing import Union, Dict, Set, List, Tuple
+from typing import Dict, Set, List, Tuple, Optional, Union
 import sys
 
 import attr
@@ -125,44 +125,46 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
     ), "parse_struct is only called on structs with .decls"
     assert struct.decls, "Empty structs are not valid C"
 
-    def parse_struct_member(type: Type, field_name: str) -> Tuple[int, int]:
+    def parse_struct_member(
+        type: Type, field_name: str
+    ) -> Tuple[int, int, Optional[Struct]]:
         type = resolve_typedefs(type, typemap)
         if isinstance(type, PtrDecl):
-            return 4, 4
+            return 4, 4, None
         if isinstance(type, ArrayDecl):
             if type.dim is None:
                 raise DecompFailure(f"Array field {field_name} must have a size")
             dim = parse_constant_int(type.dim)
-            size, align = parse_struct_member(type.type, field_name)
-            return size * dim, align
+            size, align, _ = parse_struct_member(type.type, field_name)
+            return size * dim, align, None
         assert not isinstance(type, FuncDecl), "Struct can not contain a function"
         inner_type = type.type
         if isinstance(inner_type, (ca.Struct, ca.Union)):
             if inner_type.name is not None and inner_type.name in typemap.struct_defs:
                 substr = typemap.struct_defs[inner_type.name]
-                return substr.size, substr.align
+                return substr.size, substr.align, substr
             if inner_type.decls is not None:
                 substr = parse_struct(inner_type, typemap)
                 if inner_type.name is not None:
                     typemap.struct_defs[inner_type.name] = substr
-                return substr.size, substr.align
+                return substr.size, substr.align, substr
             raise DecompFailure(
                 f"Field {field_name} is of undefined struct type {inner_type.name}"
             )
         if isinstance(inner_type, ca.Enum):
-            return 4, 4
+            return 4, 4, None
         # Otherwise it has to be of type IdentifierType
         if "double" in inner_type.names:
-            return 8, 8
+            return 8, 8, None
         if "float" in inner_type.names:
-            return 4, 4
+            return 4, 4, None
         if "short" in inner_type.names:
-            return 2, 2
+            return 2, 2, None
         if "char" in inner_type.names:
-            return 1, 1
+            return 1, 1, None
         if inner_type.names.count("long") == 2:
-            return 8, 8
-        return 4, 4
+            return 8, 8, None
+        return 4, 4, None
 
     fields: Dict[int, List[StructField]] = defaultdict(list)
     union_size = 0
@@ -173,6 +175,7 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
         if not isinstance(decl, ca.Decl):
             continue
         field_name = f"{struct.name}.{decl.name}"
+        type = decl.type
 
         if decl.bitsize is not None:
             # A bitfield "type a : b;" has the following effects on struct layout:
@@ -184,11 +187,11 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
             #   alignment boundary, skip all bits up to that boundary and then use the
             #   next 'b' bits from there instead.
             width = parse_constant_int(decl.bitsize)
-            ssize, salign = parse_struct_member(decl.type, field_name)
+            ssize, salign, substr = parse_struct_member(type, field_name)
             align = max(align, salign)
             if width == 0:
                 continue
-            if ssize != salign:
+            if ssize != salign or substr is not None:
                 raise DecompFailure(f"Bitfield {field_name} is not of primitive type")
             if width > ssize * 8:
                 raise DecompFailure(f"Width of bitfield {field_name} exceeds its type")
@@ -208,20 +211,26 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
             offset += 1
 
         if decl.name is not None:
-            ssize, salign = parse_struct_member(decl.type, field_name)
+            ssize, salign, substr = parse_struct_member(type, field_name)
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
-            fields[offset].append(StructField(type=decl.type, name=decl.name))
+            fields[offset].append(StructField(type=type, name=decl.name))
+            if substr is not None:
+                for off, sfields in substr.fields.items():
+                    for field in sfields:
+                        fields[offset + off].append(
+                            StructField(
+                                type=field.type, name=decl.name + "." + field.name
+                            )
+                        )
             if is_union:
                 union_size = max(union_size, ssize)
             else:
                 offset += ssize
-        elif (
-            isinstance(decl.type, (ca.Struct, ca.Union)) and decl.type.decls is not None
-        ):
-            if decl.type.name is None:
+        elif isinstance(type, (ca.Struct, ca.Union)) and type.decls is not None:
+            if type.name is None:
                 # C extension: anonymous struct/union, whose members are flattened
-                substr = parse_struct(decl.type, typemap)
+                substr = parse_struct(type, typemap)
                 align = max(align, substr.align)
                 offset = (offset + substr.align - 1) & -substr.align
                 for off, sfields in substr.fields.items():
@@ -233,8 +242,8 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
                     offset += substr.size
             else:
                 # Struct defined within another. Silly but valid C.
-                substr = parse_struct(decl.type, typemap)
-                typemap.struct_defs[decl.type.name] = substr
+                substr = parse_struct(type, typemap)
+                typemap.struct_defs[type.name] = substr
 
     if not is_union and bit_offset != 0:
         bit_offset = 0
