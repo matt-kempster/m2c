@@ -32,9 +32,16 @@ class Struct:
 
 
 @attr.s
+class Param:
+    type: Type = attr.ib()
+    name: Optional[str] = attr.ib()
+
+
+@attr.s
 class Function:
     ret_type: Type = attr.ib()
-    # TODO: parameters
+    params: List[Param] = attr.ib()
+    variadic: bool = attr.ib()
 
 
 @attr.s
@@ -90,8 +97,32 @@ def deref_type(type: Type, typemap: TypeMap) -> Type:
 
 
 def parse_function(fn: FuncDecl) -> Function:
-    # TODO: include parameters
-    return Function(ret_type=fn.type)
+    params: List[Param] = []
+    variadic = False
+    has_void = False
+    if fn.args:
+        for arg in fn.args.params:
+            if isinstance(arg, ca.EllipsisParam):
+                variadic = True
+            elif isinstance(arg, ca.Decl):
+                params.append(Param(type=arg.type, name=arg.name))
+            elif isinstance(arg, ca.ID):
+                raise DecompFailure(
+                    "K&R-style function header is not supported: " + to_c(fn)
+                )
+            else:
+                assert isinstance(arg, ca.Typename)
+                if (
+                    isinstance(arg.type, ca.TypeDecl)
+                    and isinstance(arg.type.type, ca.IdentifierType)
+                    and arg.type.type.names == ["void"]
+                ):
+                    has_void = True
+                else:
+                    params.append(Param(type=arg.type, name=None))
+    if not params and not has_void:
+        variadic = True
+    return Function(ret_type=fn.type, params=params, variadic=variadic)
 
 
 def parse_constant_int(expr: "ca.Expression") -> int:
