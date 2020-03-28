@@ -325,3 +325,44 @@ def build_typemap(source: str, filename: str = "") -> TypeMap:
 
     Visitor().visit(ast)
     return ret
+
+
+def set_decl_name(decl: ca.Decl) -> None:
+    name = decl.name
+    type = decl.type
+    while not isinstance(type, TypeDecl):
+        type = type.type
+    type.declname = name
+
+
+def type_to_string(type: Type) -> str:
+    if isinstance(type, TypeDecl) and isinstance(type.type, (ca.Struct, ca.Union)):
+        su = "struct" if isinstance(type.type, ca.Struct) else "union"
+        return type.type.name or f"anon {su}"
+    else:
+        decl = ca.Decl("", [], [], [], type, None, None)
+        set_decl_name(decl)
+        return to_c(decl)
+
+
+def dump_typemap(typemap: TypeMap) -> None:
+    print("Variables:")
+    for var, type in typemap.var_types.items():
+        print(f"{var}:", type_to_string(type))
+    print()
+    print("Functions:")
+    for name, fn in typemap.functions.items():
+        params = [type_to_string(arg.type) for arg in fn.params]
+        if fn.variadic:
+            params.append("...")
+        print(f"{name}: {type_to_string(fn.ret_type)}({', '.join(params)})")
+    print()
+    print("Structs:")
+    for name, struct in typemap.struct_defs.items():
+        print(f"{name}: size {struct.size}, align {struct.align}")
+        for offset, fields in struct.fields.items():
+            print(f"  {offset}:", end="")
+            for field in fields:
+                print(f" {field.name} ({type_to_string(field.type)})", end="")
+            print()
+    print()

@@ -23,5 +23,6 @@ class Options:
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()
     c_context: str = attr.ib()
+    dump_typemap: bool = attr.ib()
     preproc_defines: Dict[str, int] = attr.ib()
     coding_style: CodingStyle = attr.ib()

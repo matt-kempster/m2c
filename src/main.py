@@ -8,7 +8,7 @@ from .if_statements import write_function
 from .options import Options, CodingStyle
 from .parse_file import Function, MIPSFile, Rodata, parse_file
 from .translate import translate_to_ast
-from .c_types import TypeMap, build_typemap
+from .c_types import TypeMap, build_typemap, dump_typemap
 
 
 def decompile_function(
@@ -46,6 +46,11 @@ def run(options: Options, function_index_or_name: str) -> int:
     except (OSError, DecompFailure) as e:
         print(e)
         return 1
+
+    if options.dump_typemap:
+        assert typemap
+        dump_typemap(typemap)
+        return 0
 
     if function_index_or_name == "all":
         options.stop_on_error = True
@@ -171,6 +176,12 @@ def main() -> int:
         help="read variable types/function signatures/structs from an existing C file. "
         "The file must already have been processed by the C preprocessor.",
     )
+    parser.add_argument(
+        "--dump-typemap",
+        dest="dump_typemap",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     preproc_defines = {
         **{d: 0 for d in args.undefined},
@@ -193,6 +204,7 @@ def main() -> int:
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
         c_context=args.c_context,
+        dump_typemap=args.dump_typemap,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )
