@@ -39,6 +39,7 @@ from .parse_instruction import (
     Macro,
     Register,
 )
+from .c_types import TypeMap, Function as CFunction
 
 ARGUMENT_REGS = list(map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"]))
 
@@ -337,6 +338,7 @@ class StackInfo:
     function: Function = attr.ib()
     allocated_stack_size: int = attr.ib(default=0)
     is_leaf: bool = attr.ib(default=True)
+    is_variadic: bool = attr.ib(default=False)
     uses_framepointer: bool = attr.ib(default=False)
     local_vars_region_bottom: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
@@ -2201,7 +2203,7 @@ class FunctionInfo:
 
 
 def translate_to_ast(
-    function: Function, options: Options, rodata: Rodata
+    function: Function, options: Options, rodata: Rodata, typemap: Optional[TypeMap]
 ) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
@@ -2224,6 +2226,13 @@ def translate_to_ast(
         Register("gp"): GlobalSymbol("GP", type=Type.ptr()),
         **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
     }
+
+    c_fn: Optional[CFunction] = None
+    variadic = False
+    if typemap and function.name in typemap.functions:
+        c_fn = typemap.functions[function.name]
+        if c_fn.is_variadic and c_fn.params:
+            stack_info.is_variadic = True
 
     if options.debug:
         print(stack_info)
@@ -2248,6 +2257,11 @@ def translate_to_ast(
 
     if options.void:
         has_return = False
+    elif c_fn is not None:
+        if c_fn.ret_type is None:
+            has_return = False
+        else:
+            has_return = True
 
     for b in return_blocks:
         if not has_return:

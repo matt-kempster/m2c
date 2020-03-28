@@ -39,9 +39,9 @@ class Param:
 
 @attr.s
 class Function:
-    ret_type: Type = attr.ib()
+    ret_type: Optional[Type] = attr.ib()
     params: List[Param] = attr.ib()
-    variadic: bool = attr.ib()
+    is_variadic: bool = attr.ib()
 
 
 @attr.s
@@ -96,14 +96,22 @@ def deref_type(type: Type, typemap: TypeMap) -> Type:
     return type.type
 
 
+def is_void(type: Type) -> bool:
+    return (
+        isinstance(type, ca.TypeDecl)
+        and isinstance(type.type, ca.IdentifierType)
+        and type.type.names == ["void"]
+    )
+
+
 def parse_function(fn: FuncDecl) -> Function:
     params: List[Param] = []
-    variadic = False
+    is_variadic = False
     has_void = False
     if fn.args:
         for arg in fn.args.params:
             if isinstance(arg, ca.EllipsisParam):
-                variadic = True
+                is_variadic = True
             elif isinstance(arg, ca.Decl):
                 params.append(Param(type=arg.type, name=arg.name))
             elif isinstance(arg, ca.ID):
@@ -112,17 +120,14 @@ def parse_function(fn: FuncDecl) -> Function:
                 )
             else:
                 assert isinstance(arg, ca.Typename)
-                if (
-                    isinstance(arg.type, ca.TypeDecl)
-                    and isinstance(arg.type.type, ca.IdentifierType)
-                    and arg.type.type.names == ["void"]
-                ):
+                if is_void(arg.type):
                     has_void = True
                 else:
                     params.append(Param(type=arg.type, name=None))
     if not params and not has_void:
-        variadic = True
-    return Function(ret_type=fn.type, params=params, variadic=variadic)
+        is_variadic = True
+    ret_type = None if is_void(fn.type) else fn.type
+    return Function(ret_type=ret_type, params=params, is_variadic=is_variadic)
 
 
 def parse_constant_int(expr: "ca.Expression") -> int:
@@ -353,9 +358,10 @@ def dump_typemap(typemap: TypeMap) -> None:
     print("Functions:")
     for name, fn in typemap.functions.items():
         params = [type_to_string(arg.type) for arg in fn.params]
-        if fn.variadic:
+        if fn.is_variadic:
             params.append("...")
-        print(f"{name}: {type_to_string(fn.ret_type)}({', '.join(params)})")
+        ret_str = "void" if fn.ret_type is None else type_to_string(fn.ret_type)
+        print(f"{name}: {ret_str}({', '.join(params)})")
     print()
     print("Structs:")
     for name, struct in typemap.struct_defs.items():

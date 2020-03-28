@@ -22,7 +22,7 @@ def decompile_function(
         visualize_flowgraph(build_flowgraph(function, rodata))
         return
 
-    function_info = translate_to_ast(function, options, rodata)
+    function_info = translate_to_ast(function, options, rodata, typemap)
     write_function(function_info, options)
 
 
