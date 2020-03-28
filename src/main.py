@@ -23,54 +23,54 @@ def decompile_function(options: Options, function: Function, rodata: Rodata) -> 
 
 
 def run(options: Options, function_index_or_name: str) -> int:
-    with open(options.filename, "r") as f:
-        try:
+    try:
+        with open(options.filename, "r") as f:
             mips_file = parse_file(f, options)
 
-            # Move over jtbl rodata from files given by --rodata
-            for rodata_file in options.rodata_files:
-                with open(rodata_file, "r") as f2:
-                    sub_file = parse_file(f2, options)
-                    for (sym, value) in sub_file.rodata.values.items():
-                        mips_file.rodata.values[sym] = value
-        except DecompFailure as e:
-            print(e)
+        # Move over jtbl rodata from files given by --rodata
+        for rodata_file in options.rodata_files:
+            with open(rodata_file, "r") as f:
+                sub_file = parse_file(f, options)
+                for (sym, value) in sub_file.rodata.values.items():
+                    mips_file.rodata.values[sym] = value
+    except DecompFailure as e:
+        print(e)
+        return 1
+
+    if function_index_or_name == "all":
+        options.stop_on_error = True
+        for fn in mips_file.functions:
+            try:
+                decompile_function(options, fn, mips_file.rodata)
+            except Exception:
+                print(f"{fn.name}: ERROR")
+            print()
+    else:
+        try:
+            index = int(function_index_or_name)
+            function = mips_file.functions[index]
+        except ValueError:
+            name = function_index_or_name
+            try:
+                function = next(fn for fn in mips_file.functions if fn.name == name)
+            except StopIteration:
+                print(f"Function {name} not found.", file=sys.stderr)
+                return 1
+        except IndexError:
+            count = len(mips_file.functions)
+            print(
+                f"Function index {index} is out of bounds (must be between "
+                f"0 and {count - 1}).",
+                file=sys.stderr,
+            )
             return 1
 
-        if function_index_or_name == "all":
-            options.stop_on_error = True
-            for fn in mips_file.functions:
-                try:
-                    decompile_function(options, fn, mips_file.rodata)
-                except Exception:
-                    print(f"{fn.name}: ERROR")
-                print()
-        else:
-            try:
-                index = int(function_index_or_name)
-                function = mips_file.functions[index]
-            except ValueError:
-                name = function_index_or_name
-                try:
-                    function = next(f for f in mips_file.functions if f.name == name)
-                except StopIteration:
-                    print(f"Function {name} not found.", file=sys.stderr)
-                    return 1
-            except IndexError:
-                count = len(mips_file.functions)
-                print(
-                    f"Function index {index} is out of bounds (must be between "
-                    f"0 and {count - 1}).",
-                    file=sys.stderr,
-                )
-                return 1
-
-            try:
-                decompile_function(options, function, mips_file.rodata)
-            except DecompFailure as e:
-                print(f"Failed to decompile function {function.name}:\n\n{e}")
-                return 1
-        return 0
+        try:
+            decompile_function(options, function, mips_file.rodata)
+        except DecompFailure as e:
+            print(f"Failed to decompile function {function.name}:\n\n{e}")
+            return 1
+    return 0
 
 
 def main() -> int:
