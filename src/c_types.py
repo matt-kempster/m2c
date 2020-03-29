@@ -104,6 +104,61 @@ def is_void(type: Type) -> bool:
     )
 
 
+def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
+    if isinstance(type, ca.Enum):
+        return 4
+    names = type.names
+    if "double" in names:
+        return 8
+    if "float" in names:
+        return 4
+    if "short" in names:
+        return 2
+    if "char" in names:
+        return 1
+    if names.count("long") == 2:
+        return 8
+    return 4
+
+
+def function_arg_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
+    type = resolve_typedefs(type, typemap)
+    if isinstance(type, PtrDecl) or isinstance(type, ArrayDecl):
+        return 4, 4
+    assert not isinstance(type, FuncDecl), "Function argument can not be a function"
+    inner_type = type.type
+    if isinstance(inner_type, (ca.Struct, ca.Union)):
+        assert (
+            inner_type.name is not None
+        ), "Function argument cannot be of anonymous struct type"
+        struct = typemap.struct_defs.get(inner_type.name)
+        assert (
+            struct is not None
+        ), "Function argument can not be of an incomplete struct"
+        return struct.size, struct.align
+    size = primitive_size(inner_type)
+    return size, size
+
+
+def is_struct_type(type: Type, typemap: TypeMap) -> bool:
+    type = resolve_typedefs(type, typemap)
+    if not isinstance(type, TypeDecl):
+        return False
+    return isinstance(type.type, (ca.Struct, ca.Union))
+
+
+def get_primitive_list(type: Type, typemap: TypeMap) -> Optional[List[str]]:
+    type = resolve_typedefs(type, typemap)
+    if not isinstance(type, TypeDecl):
+        return None
+    inner_type = type.type
+    if isinstance(inner_type, ca.Enum):
+        return ["int"]
+    if isinstance(inner_type, ca.IdentifierType):
+        return inner_type.names
+    return None
+
+
 def parse_function(fn: FuncDecl) -> Function:
     params: List[Param] = []
     is_variadic = False
@@ -189,20 +244,9 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
             raise DecompFailure(
                 f"Field {field_name} is of undefined struct type {inner_type.name}"
             )
-        if isinstance(inner_type, ca.Enum):
-            return 4, 4, None
-        # Otherwise it has to be of type IdentifierType
-        if "double" in inner_type.names:
-            return 8, 8, None
-        if "float" in inner_type.names:
-            return 4, 4, None
-        if "short" in inner_type.names:
-            return 2, 2, None
-        if "char" in inner_type.names:
-            return 1, 1, None
-        if inner_type.names.count("long") == 2:
-            return 8, 8, None
-        return 4, 4, None
+        # Otherwise it has to be of type Enum or IdentifierType
+        size = primitive_size(inner_type)
+        return size, size, None
 
     fields: Dict[int, List[StructField]] = defaultdict(list)
     union_size = 0

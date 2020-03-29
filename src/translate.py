@@ -39,7 +39,13 @@ from .parse_instruction import (
     Macro,
     Register,
 )
-from .c_types import TypeMap, Function as CFunction
+from .c_types import (
+    TypeMap,
+    Function as CFunction,
+    function_arg_size_align,
+    get_primitive_list,
+    is_struct_type,
+)
 
 ARGUMENT_REGS = list(map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"]))
 
@@ -1533,6 +1539,48 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
+def regs_for_calling_c_function(
+    fn: CFunction, typemap: TypeMap
+) -> Tuple[List[Register], List[Register]]:
+    """Compute which registers are *definitely* used for passing arguments to a given
+    C function, which registers *may* be used (for variadic functions).
+
+    Additional registers may be passed on the stack. We could compute whether those
+    should be included or not, but for now we trust the asm on that point.
+
+    Similarly, we could compute where the return value goes, but for now we are liberal
+    and put the return value in all possible return registers. This works well for
+    everything except 64-bit integers, which are rare anyway."""
+    assert fn.params is not None, "checked by caller"
+    offset = 0
+    definite: List[Register] = []
+    possible: List[Register] = []
+    if fn.ret_type is not None and is_struct_type(fn.ret_type, typemap):
+        # The ABI for struct returns is to pass a pointer to where it should be written
+        # as the first argument.
+        definite.append(Register("a0"))
+        offset = 4
+
+    for ind, param in enumerate(fn.params):
+        size, align = function_arg_size_align(param.type, typemap)
+        size = max(size, 4)
+        primitive_list = get_primitive_list(param.type, typemap)
+        is_float = primitive_list in [["float"], ["double"]]
+        offset = (offset + align - 1) & -align
+        if ind < 2 and is_float and (definite == [] or definite == [Register("f12")]):
+            definite.append(Register("f12" if ind == 0 else "f14"))
+        else:
+            for i in range(offset // 4, min((offset + size) // 4, 4)):
+                definite.append(Register(f"a{i}"))
+        offset += size
+
+    if fn.is_variadic:
+        for i in range(offset // 4, 4):
+            possible.append(Register(f"a{i}"))
+
+    return definite, possible
+
+
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], BinaryOp]]
@@ -1830,7 +1878,9 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             stack_info.phi_vars.append(phi)
 
 
-def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
+def translate_node_body(
+    node: Node, regs: RegInfo, stack_info: StackInfo, typemap: Optional[TypeMap]
+) -> BlockInfo:
     """
     Given a node and current register contents, return a BlockInfo containing
     the translated AST for that node.
@@ -1950,8 +2000,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Store a value in a permanent place.
             to_store = CASES_STORE[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
-                # About to call a subroutine with this argument.
-                subroutine_args.append((to_store.source, to_store.dest))
+                # About to call a subroutine with this argument. Skip arguments for the
+                # first four stack slots; they are also passed in registers.
+                if to_store.dest.value >= 0x10:
+                    subroutine_args.append((to_store.source, to_store.dest))
             elif to_store is not None:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
@@ -2034,7 +2086,24 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # the function call at the point where a register is empty, but
             # for now we'll leave that for manual fixup.
             func_args: List[Expression] = []
-            for register in map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"]):
+            if (
+                typemap
+                and isinstance(fn_target, GlobalSymbol)
+                and fn_target.symbol_name in typemap.functions
+                and typemap.functions[fn_target.symbol_name].params is not None
+            ):
+                c_fn = typemap.functions[fn_target.symbol_name]
+                definite_regs, possible_regs = regs_for_calling_c_function(
+                    c_fn, typemap
+                )
+                for register in definite_regs:
+                    func_args.append(regs[register])
+            else:
+                possible_regs = list(
+                    map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"])
+                )
+
+            for register in possible_regs:
                 # The latter check verifies that the register is not just
                 # meant for us. This might give false positives for the
                 # first function call if an argument passed in the same
@@ -2045,10 +2114,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     not isinstance(expr, PassedInArg) or expr.copied
                 ):
                     func_args.append(expr)
+
             # Add the arguments after a3.
             subroutine_args.sort(key=lambda a: a[1].value)
             for arg in subroutine_args:
                 func_args.append(arg[0])
+
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
@@ -2059,7 +2130,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             regs.clear_caller_save_regs()
             # We don't know what this function's return register is,
             # be it $v0, $f0, or something else, so this hack will have
-            # to do. (TODO: handle it...)
+            # to do. It's fine to be liberal here, the variable will only
+            # be created if it's actually used anyway.
             regs[Register("f0")] = Cast(
                 expr=call, reinterpret=True, silent=True, type=Type.f32()
             )
@@ -2129,6 +2201,7 @@ def translate_graph_from_block(
     used_phis: List[PhiExpr],
     return_blocks: List[BlockInfo],
     options: Options,
+    typemap: Optional[TypeMap],
 ) -> None:
     """
     Given a FlowGraph node and a dictionary of register contents, give that node
@@ -2140,7 +2213,7 @@ def translate_graph_from_block(
 
     # Translate the given node and discover final register states.
     try:
-        block_info = translate_node_body(node, regs, stack_info)
+        block_info = translate_node_body(node, regs, stack_info, typemap)
         if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
@@ -2192,7 +2265,7 @@ def translate_graph_from_block(
             has_custom_return=regs.has_custom_return,
         )
         translate_graph_from_block(
-            child, new_regs, stack_info, used_phis, return_blocks, options
+            child, new_regs, stack_info, used_phis, return_blocks, options, typemap
         )
 
 
@@ -2244,7 +2317,7 @@ def translate_to_ast(
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
-        start_node, start_reg, stack_info, used_phis, return_blocks, options
+        start_node, start_reg, stack_info, used_phis, return_blocks, options, typemap
     )
 
     # We mark the function as having a return type if all return nodes have
