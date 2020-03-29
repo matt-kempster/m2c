@@ -2231,7 +2231,7 @@ def translate_to_ast(
     variadic = False
     if typemap and function.name in typemap.functions:
         c_fn = typemap.functions[function.name]
-        if c_fn.is_variadic and c_fn.params:
+        if c_fn.is_variadic:
             stack_info.is_variadic = True
 
     if options.debug:

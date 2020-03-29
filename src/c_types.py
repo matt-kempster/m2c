@@ -40,7 +40,7 @@ class Param:
 @attr.s
 class Function:
     ret_type: Optional[Type] = attr.ib()
-    params: List[Param] = attr.ib()
+    params: Optional[List[Param]] = attr.ib()
     is_variadic: bool = attr.ib()
 
 
@@ -124,10 +124,12 @@ def parse_function(fn: FuncDecl) -> Function:
                     has_void = True
                 else:
                     params.append(Param(type=arg.type, name=None))
-    if not params and not has_void:
-        is_variadic = True
+    maybe_params: Optional[List[Param]] = params
+    if not params and not has_void and not is_variadic:
+        # Function declaration without a parameter list
+        maybe_params = None
     ret_type = None if is_void(fn.type) else fn.type
-    return Function(ret_type=ret_type, params=params, is_variadic=is_variadic)
+    return Function(ret_type=ret_type, params=maybe_params, is_variadic=is_variadic)
 
 
 def parse_constant_int(expr: "ca.Expression") -> int:
@@ -357,11 +359,15 @@ def dump_typemap(typemap: TypeMap) -> None:
     print()
     print("Functions:")
     for name, fn in typemap.functions.items():
-        params = [type_to_string(arg.type) for arg in fn.params]
-        if fn.is_variadic:
-            params.append("...")
+        if fn.params is None:
+            params_str = ""
+        else:
+            params = [type_to_string(arg.type) for arg in fn.params]
+            if fn.is_variadic:
+                params.append("...")
+            params_str = ", ".join(params) or "void"
         ret_str = "void" if fn.ret_type is None else type_to_string(fn.ret_type)
-        print(f"{name}: {ret_str}({', '.join(params)})")
+        print(f"{name}: {ret_str}({params_str})")
     print()
     print("Structs:")
     for name, struct in typemap.struct_defs.items():
