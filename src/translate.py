@@ -1539,46 +1539,60 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
-def regs_for_calling_c_function(
-    fn: CFunction, typemap: TypeMap
-) -> Tuple[List[Register], List[Register]]:
-    """Compute which registers are *definitely* used for passing arguments to a given
-    C function, which registers *may* be used (for variadic functions).
+@attr.s
+class AbiStackSlot:
+    offset: int = attr.ib()
+    reg: Optional[Register] = attr.ib()
+    name: Optional[str] = attr.ib()
 
-    Additional registers may be passed on the stack. We could compute whether those
-    should be included or not, but for now we trust the asm on that point.
 
-    Similarly, we could compute where the return value goes, but for now we are liberal
-    and put the return value in all possible return registers. This works well for
-    everything except 64-bit integers, which are rare anyway."""
+def function_abi(
+    fn: CFunction, typemap: TypeMap, *, for_call: bool
+) -> Tuple[List[AbiStackSlot], List[Register]]:
+    """Compute stack positions/registers used by a function according to the o32 ABI,
+    based on C type information. Additionally computes a list of registers that might
+    contain arguments, if the function is a varargs function. (Additional varargs
+    arguments may be passed on the stack; we could compute the offset at which that
+    would start but right now don't care -- we just slurp up everything.)"""
     assert fn.params is not None, "checked by caller"
     offset = 0
-    definite: List[Register] = []
+    only_floats = True
+    slots: List[AbiStackSlot] = []
     possible: List[Register] = []
     if fn.ret_type is not None and is_struct_type(fn.ret_type, typemap):
         # The ABI for struct returns is to pass a pointer to where it should be written
         # as the first argument.
-        definite.append(Register("a0"))
+        slots.append(AbiStackSlot(offset=0, reg=Register("a0"), name="__return__"))
         offset = 4
+        only_floats = False
 
     for ind, param in enumerate(fn.params):
         size, align = function_arg_size_align(param.type, typemap)
         size = max(size, 4)
         primitive_list = get_primitive_list(param.type, typemap)
-        is_float = primitive_list in [["float"], ["double"]]
+        only_floats = only_floats and (primitive_list in [["float"], ["double"]])
         offset = (offset + align - 1) & -align
-        if ind < 2 and is_float and (definite == [] or definite == [Register("f12")]):
-            definite.append(Register("f12" if ind == 0 else "f14"))
+        name = param.name
+        if ind < 2 and only_floats:
+            reg = Register("f12" if ind == 0 else "f14")
+            slots.append(AbiStackSlot(offset=offset, reg=reg, name=name))
+            if primitive_list == ["double"] and not for_call:
+                name2 = f"{name}_lo" if name else None
+                reg2 = Register("f13" if ind == 0 else "f15")
+                slots.append(AbiStackSlot(offset=offset + 4, reg=reg2, name=name2))
         else:
             for i in range(offset // 4, min((offset + size) // 4, 4)):
-                definite.append(Register(f"a{i}"))
+                unk_offset = 4 * i - offset
+                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else None
+                reg2 = Register(f"a{i}")
+                slots.append(AbiStackSlot(offset=4 * i, reg=reg2, name=name2))
         offset += size
 
     if fn.is_variadic:
         for i in range(offset // 4, 4):
             possible.append(Register(f"a{i}"))
 
-    return definite, possible
+    return slots, possible
 
 
 InstrSet = Set[str]
@@ -2093,11 +2107,10 @@ def translate_node_body(
                 and typemap.functions[fn_target.symbol_name].params is not None
             ):
                 c_fn = typemap.functions[fn_target.symbol_name]
-                definite_regs, possible_regs = regs_for_calling_c_function(
-                    c_fn, typemap
-                )
-                for register in definite_regs:
-                    func_args.append(regs[register])
+                abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=True)
+                for slot in abi_slots:
+                    if slot.reg:
+                        func_args.append(regs[slot.reg])
             else:
                 possible_regs = list(
                     map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"])
@@ -2128,10 +2141,11 @@ def translate_node_body(
             # Clear out caller-save registers, for clarity and to ensure
             # that argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
-            # We don't know what this function's return register is,
-            # be it $v0, $f0, or something else, so this hack will have
-            # to do. It's fine to be liberal here, the variable will only
-            # be created if it's actually used anyway.
+
+            # We may not know what this function's return registers are --
+            # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
+            # it's fine to be liberal here and put the return value in all
+            # of them. (It's not perfect for u64's, but that's rare anyway.)
             regs[Register("f0")] = Cast(
                 expr=call, reinterpret=True, silent=True, type=Type.f32()
             )
