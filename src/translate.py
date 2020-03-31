@@ -190,6 +190,7 @@ class StackInfo:
     arguments: List["PassedInArg"] = attr.ib(factory=list)
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
     nonzero_accesses: Set["Expression"] = attr.ib(factory=set)
+    param_names: Dict[int, str] = attr.ib(factory=dict)
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -213,6 +214,12 @@ class StackInfo:
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
 
+    def set_param_name(self, offset: int, name: str) -> None:
+        self.param_names[offset] = name
+
+    def get_param_name(self, offset: int) -> Optional[str]:
+        return self.param_names.get(offset)
+
     def add_local_var(self, var: "LocalVar") -> None:
         if any(v.value == var.value for v in self.local_vars):
             return
@@ -229,7 +236,10 @@ class StackInfo:
     def get_argument(self, location: int) -> Tuple["Expression", "PassedInArg"]:
         real_location = location & -4
         ret = PassedInArg(
-            real_location, copied=True, type=self.unique_type_for("arg", real_location)
+            real_location,
+            copied=True,
+            stack_info=self,
+            type=self.unique_type_for("arg", real_location),
         )
         if real_location == location - 3:
             return as_type(ret, Type.of_size(8), True), ret
@@ -598,6 +608,7 @@ class LocalVar:
 class PassedInArg:
     value: int = attr.ib()
     copied: bool = attr.ib(cmp=False)
+    stack_info: StackInfo = attr.ib(cmp=False)
     type: Type = attr.ib(cmp=False)
 
     def dependencies(self) -> List["Expression"]:
@@ -605,7 +616,8 @@ class PassedInArg:
 
     def __str__(self) -> str:
         assert self.value % 4 == 0
-        return f"arg{format_hex(self.value // 4)}"
+        name = self.stack_info.get_param_name(self.value)
+        return name or f"arg{format_hex(self.value // 4)}"
 
 
 @attr.s(frozen=True, cmp=True)
@@ -1428,7 +1440,7 @@ def function_abi(
         else:
             for i in range(offset // 4, min((offset + size) // 4, 4)):
                 unk_offset = 4 * i - offset
-                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else None
+                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}")
                 type2 = type_from_ctype(param.type, typemap)
                 slots.append(
@@ -2206,6 +2218,9 @@ def translate_to_ast(
         **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
     }
 
+    def make_arg(offset: int, type: Type) -> PassedInArg:
+        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
+
     c_fn: Optional[CFunction] = None
     known_params = False
     variadic = False
@@ -2216,24 +2231,24 @@ def translate_to_ast(
         if c_fn.params is not None:
             abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=False)
             for slot in abi_slots:
+                if slot.name is not None:
+                    stack_info.set_param_name(slot.offset, slot.name)
                 if slot.reg is not None:
-                    initial_regs[slot.reg] = PassedInArg(
-                        slot.offset, copied=False, type=slot.type
-                    )
+                    initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
             for reg in possible_regs:
                 offset = 4 * int(reg.register_name[1])
-                initial_regs[reg] = PassedInArg(offset, copied=False, type=Type.any())
+                initial_regs[reg] = make_arg(offset, Type.any())
             known_params = True
 
     if not known_params:
         initial_regs.update(
             {
-                Register("a0"): PassedInArg(0, copied=False, type=Type.intptr()),
-                Register("a1"): PassedInArg(4, copied=False, type=Type.any()),
-                Register("a2"): PassedInArg(8, copied=False, type=Type.any()),
-                Register("a3"): PassedInArg(12, copied=False, type=Type.any()),
-                Register("f12"): PassedInArg(0, copied=False, type=Type.f32()),
-                Register("f14"): PassedInArg(4, copied=False, type=Type.f32()),
+                Register("a0"): make_arg(0, Type.intptr()),
+                Register("a1"): make_arg(4, Type.any()),
+                Register("a2"): make_arg(8, Type.any()),
+                Register("a3"): make_arg(12, Type.any()),
+                Register("f12"): make_arg(0, Type.f32()),
+                Register("f14"): make_arg(4, Type.f32()),
             }
         )
 
