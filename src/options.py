@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import attr
 
@@ -22,7 +22,7 @@ class Options:
     stop_on_error: bool = attr.ib()
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()
-    c_context: str = attr.ib()
+    c_context: Optional[str] = attr.ib()
     dump_typemap: bool = attr.ib()
     preproc_defines: Dict[str, int] = attr.ib()
     coding_style: CodingStyle = attr.ib()

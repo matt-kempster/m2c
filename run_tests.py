@@ -67,6 +67,8 @@ def decompile_and_capture_output(output_path: Path, asm_file_path: Path) -> str:
                 stop_on_error=True,
                 print_assembly=False,
                 visualize_flowgraph=False,
+                c_context=None,
+                dump_typemap=False,
                 preproc_defines={},
                 coding_style=CodingStyle(
                     newline_after_function=True,
