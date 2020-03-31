@@ -1063,7 +1063,6 @@ Statement = Union[StoreStmt, EvalOnceStmt, SetPhiStmt, ExprStmt, CommentStmt]
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib()
     stack_info: StackInfo = attr.ib(repr=False)
-    has_custom_return: bool = attr.ib()
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register("zero"):
@@ -1092,10 +1091,8 @@ class RegInfo:
         return key in self.contents
 
     def __setitem__(self, key: Register, value: Expression) -> None:
-        self.set_raw(key, value)
-        if key.register_name in ["f0", "v0"]:
-            self[Register("return")] = value
-            self.has_custom_return = True
+        assert key != Register("zero")
+        self.contents[key] = value
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register("zero")
@@ -1103,10 +1100,6 @@ class RegInfo:
 
     def get_raw(self, key: Register) -> Optional[Expression]:
         return self.contents.get(key, None)
-
-    def set_raw(self, key: Register, value: Expression) -> None:
-        assert key != Register("zero")
-        self.contents[key] = value
 
     def clear_caller_save_regs(self) -> None:
         for reg in TEMP_REGS:
@@ -1134,6 +1127,8 @@ class BlockInfo:
     switch_value: Optional[Expression] = attr.ib()
     branch_condition: Optional[Condition] = attr.ib()
     final_register_states: RegInfo = attr.ib()
+    has_custom_return: bool = attr.ib()
+    has_function_call: bool = attr.ib()
 
     def __str__(self) -> str:
         newline = "\n\t"
@@ -1828,6 +1823,24 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             stack_info.phi_vars.append(phi)
 
 
+def compute_has_custom_return(nodes: List[Node]) -> None:
+    """Propagate the "has_custom_return" property using fixed-point iteration."""
+    changed = True
+    while changed:
+        changed = False
+        for n in nodes:
+            block_info = n.block.block_info
+            assert isinstance(block_info, BlockInfo)
+            if block_info.has_custom_return or block_info.has_function_call:
+                continue
+            for p in n.parents:
+                block_info2 = p.block.block_info
+                assert isinstance(block_info2, BlockInfo)
+                if block_info2.has_custom_return:
+                    block_info.has_custom_return = True
+                    changed = True
+
+
 def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
     """
     Given a node and current register contents, return a BlockInfo containing
@@ -1839,6 +1852,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
     branch_condition: Optional[Condition] = None
     switch_value: Optional[Expression] = None
+    has_custom_return: bool = False
+    has_function_call: bool = False
 
     def eval_once(
         expr: Expression,
@@ -1881,7 +1896,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     e = eval_once(
                         e, always_emit=False, trivial=False, prefix=r.register_name
                     )
-                regs.set_raw(r, ForceVarExpr(e, type=e.type))
+                regs[r] = ForceVarExpr(e, type=e.type)
+
+    def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
+        nonlocal has_custom_return
+        regs[reg] = expr
+        if reg.register_name in ["f0", "v0"]:
+            regs[Register("return")] = expr
+            has_custom_return = True
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is None:
@@ -1907,7 +1929,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             mark_used(expr)
             to_write.append(ExprStmt(expr))
         else:
-            regs[reg] = expr
+            set_reg_maybe_return(reg, expr)
 
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)
@@ -1927,11 +1949,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # involve tracking "time" for uses, and sometimes moving timestamps
             # backwards when EvalOnceExpr's get emitted as vars.
             prevent_later_uses(prev)
-            regs[reg] = eval_once(
-                expr,
-                always_emit=False,
-                trivial=is_repeatable_expression(expr),
-                reuse_var=prev.var,
+            set_reg_maybe_return(
+                reg,
+                eval_once(
+                    expr,
+                    always_emit=False,
+                    trivial=is_repeatable_expression(expr),
+                    reuse_var=prev.var,
+                ),
             )
 
     def process_instr(instr: Instruction) -> None:
@@ -2068,7 +2093,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
             )
             regs[Register("return")] = call
-            regs.has_custom_return = False
+            has_custom_return = False
+            has_function_call = True
 
         elif mnemonic in CASES_FLOAT_COMP:
             expr = CASES_FLOAT_COMP[mnemonic](args)
@@ -2102,7 +2128,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     expr, always_emit=True, trivial=False, prefix=reg.register_name
                 )
                 if reg != Register("zero"):
-                    regs[reg] = expr
+                    set_reg_maybe_return(reg, expr)
             else:
                 to_write.append(ExprStmt(expr))
 
@@ -2117,7 +2143,15 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     return_value: Optional[Expression] = None
     if isinstance(node, ReturnNode):
         return_value = regs.get_raw(Register("return"))
-    return BlockInfo(to_write, return_value, switch_value, branch_condition, regs)
+    return BlockInfo(
+        to_write,
+        return_value,
+        switch_value,
+        branch_condition,
+        regs,
+        has_custom_return=has_custom_return,
+        has_function_call=has_function_call,
+    )
 
 
 def translate_graph_from_block(
@@ -2166,7 +2200,15 @@ def translate_graph_from_block(
             )
             error_stmts.append(CommentStmt(f"At instruction: {instr}"))
         print(file=sys.stderr)
-        block_info = BlockInfo(error_stmts, None, None, ErrorExpr(), regs)
+        block_info = BlockInfo(
+            error_stmts,
+            None,
+            None,
+            ErrorExpr(),
+            regs,
+            has_custom_return=False,
+            has_function_call=False,
+        )
 
     node.block.add_block_info(block_info)
     if isinstance(node, ReturnNode):
@@ -2184,11 +2226,7 @@ def translate_graph_from_block(
                 )
             elif reg in new_contents:
                 del new_contents[reg]
-        new_regs = RegInfo(
-            contents=new_contents,
-            stack_info=stack_info,
-            has_custom_return=regs.has_custom_return,
-        )
+        new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
         translate_graph_from_block(
             child, new_regs, stack_info, used_phis, return_blocks, options
         )
@@ -2229,9 +2267,7 @@ def translate_to_ast(
         print(stack_info)
         print("\nNow, we attempt to translate:")
 
-    start_reg: RegInfo = RegInfo(
-        contents=initial_regs, stack_info=stack_info, has_custom_return=False
-    )
+    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
@@ -2240,10 +2276,10 @@ def translate_to_ast(
 
     # We mark the function as having a return type if all return nodes have
     # return values, and not all those values are trivial (e.g. from function
-    # calls). TODO: improve this analysis to go though phi nodes, and also
-    # to check that the values aren't read from for some other purpose.
+    # calls). TODO: check that the values aren't read from for some other purpose.
+    compute_has_custom_return(flow_graph.nodes)
     has_return = all(b.return_value is not None for b in return_blocks) and any(
-        b.final_register_states.has_custom_return for b in return_blocks
+        b.has_custom_return for b in return_blocks
     )
 
     if options.void:
