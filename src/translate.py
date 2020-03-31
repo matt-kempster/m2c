@@ -226,10 +226,16 @@ class StackInfo:
         self.arguments.append(arg)
         self.arguments.sort(key=lambda a: a.value)
 
-    def get_argument(self, location: int) -> "PassedInArg":
-        return PassedInArg(
-            location, copied=True, type=self.unique_type_for("arg", location)
+    def get_argument(self, location: int) -> Tuple["Expression", "PassedInArg"]:
+        real_location = location & -4
+        ret = PassedInArg(
+            real_location, copied=True, type=self.unique_type_for("arg", real_location)
         )
+        if real_location == location - 3:
+            return as_type(ret, Type.of_size(8), True), ret
+        if real_location == location - 2:
+            return as_type(ret, Type.of_size(16), True), ret
+        return ret, ret
 
     def record_struct_access(self, ptr: "Expression", location: int) -> None:
         if location:
@@ -261,13 +267,13 @@ class StackInfo:
             return True
         return False
 
-    def get_stack_var(self, location: int, store: bool) -> "Expression":
+    def get_stack_var(self, location: int, *, store: bool) -> "Expression":
         if self.in_local_var_region(location):
             return LocalVar(location, type=self.unique_type_for("stack", location))
         elif self.location_above_stack(location):
-            ret = self.get_argument(location - self.allocated_stack_size)
+            ret, arg = self.get_argument(location - self.allocated_stack_size)
             if not store:
-                self.add_argument(ret)
+                self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any())
@@ -598,10 +604,8 @@ class PassedInArg:
         return []
 
     def __str__(self) -> str:
-        if self.value % 4 == 0:
-            return f"arg{format_hex(self.value // 4)}"
-        else:
-            return f"arg_unaligned{format_hex(self.value)}"
+        assert self.value % 4 == 0
+        return f"arg{format_hex(self.value // 4)}"
 
 
 @attr.s(frozen=True, cmp=True)
@@ -917,10 +921,10 @@ class RegInfo:
             # Create a new argument object to better distinguish arguments we
             # are called with from arguments passed to subroutines. Also, unify
             # the argument's type with what we can guess from the register used.
-            arg = self.stack_info.get_argument(ret.value)
+            val, arg = self.stack_info.get_argument(ret.value)
             self.stack_info.add_argument(arg)
-            arg.type.unify(ret.type)
-            return arg
+            val.type.unify(ret.type)
+            return val
         if isinstance(ret, ForceVarExpr):
             # Some of the logic in this file is unprepared to deal with
             # ForceVarExpr transparent wrappers... so for simplicity, we mark
@@ -1050,6 +1054,7 @@ def deref(
     arg: Union[AddressMode, GlobalSymbol],
     regs: RegInfo,
     stack_info: StackInfo,
+    *,
     store: bool = False,
 ) -> Expression:
     if isinstance(arg, AddressMode):
@@ -1756,6 +1761,7 @@ def translate_node_body(
 
     def eval_once(
         expr: Expression,
+        *,
         always_emit: bool,
         trivial: bool,
         prefix: str = "",
