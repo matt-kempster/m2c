@@ -28,6 +28,7 @@ from .flow_graph import (
 )
 from .options import Options
 from .error import DecompFailure
+from .types import Type, type_from_ctype
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -134,173 +135,6 @@ def current_instr(instr: Instruction) -> Iterator[None]:
         yield
     except Exception as e:
         raise InstrProcessingFailure(instr) from e
-
-
-@attr.s(cmp=False, repr=False)
-class Type:
-    """
-    Type information for an expression, which may improve over time. The least
-    specific type is any (initially the case for e.g. arguments); this might
-    get refined into intish if the value gets used for e.g. an integer add
-    operation, or into u32 if it participates in a logical right shift.
-    Types cannot change except for improvements of this kind -- thus concrete
-    types like u32 can never change into anything else, and e.g. ints can't
-    become floats.
-    """
-
-    K_INT = 1
-    K_PTR = 2
-    K_FLOAT = 4
-    K_INTPTR = 3
-    K_ANY = 7
-    SIGNED = 1
-    UNSIGNED = 2
-    ANY_SIGN = 3
-
-    kind: int = attr.ib()
-    size: Optional[int] = attr.ib()
-    sign: int = attr.ib()
-    uf_parent: Optional["Type"] = attr.ib(default=None)
-
-    def unify(self, other: "Type") -> bool:
-        """
-        Try to set this type equal to another. Returns true on success.
-        Once set equal, the types will always be equal (we use a union-find
-        structure to ensure this).
-        """
-        x = self.get_representative()
-        y = other.get_representative()
-        if x is y:
-            return True
-        if x.size is not None and y.size is not None and x.size != y.size:
-            return False
-        size = x.size if x.size is not None else y.size
-        kind = x.kind & y.kind
-        sign = x.sign & y.sign
-        if size in [8, 16]:
-            kind &= ~Type.K_FLOAT
-        if size in [8, 16, 64]:
-            kind &= ~Type.K_PTR
-        if kind == 0 or sign == 0:
-            return False
-        if kind == Type.K_PTR:
-            size = 32
-        if sign != Type.ANY_SIGN:
-            assert kind == Type.K_INT
-        x.kind = kind
-        x.size = size
-        x.sign = sign
-        y.uf_parent = x
-        return True
-
-    def get_representative(self) -> "Type":
-        if self.uf_parent is None:
-            return self
-        self.uf_parent = self.uf_parent.get_representative()
-        return self.uf_parent
-
-    def is_float(self) -> bool:
-        return self.get_representative().kind == Type.K_FLOAT
-
-    def is_pointer(self) -> bool:
-        return self.get_representative().kind == Type.K_PTR
-
-    def is_unsigned(self) -> bool:
-        return self.get_representative().sign == Type.UNSIGNED
-
-    def get_size(self) -> int:
-        return self.get_representative().size or 32
-
-    def to_decl(self) -> str:
-        ret = str(self)
-        return ret if ret.endswith("*") else ret + " "
-
-    def __str__(self) -> str:
-        type = self.get_representative()
-        size = type.size or 32
-        sign = "s" if type.sign & Type.SIGNED else "u"
-        if type.kind == Type.K_ANY:
-            if type.size is not None:
-                return f"?{size}"
-            return "?"
-        if type.kind == Type.K_PTR:
-            return "void *"
-        if type.kind == Type.K_FLOAT:
-            return f"f{size}"
-        return f"{sign}{size}"
-
-    def __repr__(self) -> str:
-        type = self.get_representative()
-        signstr = ("+" if type.sign & Type.SIGNED else "") + (
-            "-" if type.sign & Type.UNSIGNED else ""
-        )
-        kindstr = (
-            ("I" if type.kind & Type.K_INT else "")
-            + ("P" if type.kind & Type.K_PTR else "")
-            + ("F" if type.kind & Type.K_FLOAT else "")
-        )
-        sizestr = str(type.size) if type.size is not None else "?"
-        return f"Type({signstr + kindstr + sizestr})"
-
-    @staticmethod
-    def any() -> "Type":
-        return Type(kind=Type.K_ANY, size=None, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def intish() -> "Type":
-        return Type(kind=Type.K_INT, size=None, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def intptr() -> "Type":
-        return Type(kind=Type.K_INTPTR, size=None, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def ptr() -> "Type":
-        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def f32() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=32, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def f64() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=64, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def s8() -> "Type":
-        return Type(kind=Type.K_INT, size=8, sign=Type.SIGNED)
-
-    @staticmethod
-    def u8() -> "Type":
-        return Type(kind=Type.K_INT, size=8, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def s16() -> "Type":
-        return Type(kind=Type.K_INT, size=16, sign=Type.SIGNED)
-
-    @staticmethod
-    def u16() -> "Type":
-        return Type(kind=Type.K_INT, size=16, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def s32() -> "Type":
-        return Type(kind=Type.K_INT, size=32, sign=Type.SIGNED)
-
-    @staticmethod
-    def u32() -> "Type":
-        return Type(kind=Type.K_INT, size=32, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def u64() -> "Type":
-        return Type(kind=Type.K_INT, size=64, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def of_size(size: int) -> "Type":
-        return Type(kind=Type.K_ANY, size=size, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def bool() -> "Type":
-        return Type.intish()
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
@@ -1544,6 +1378,7 @@ class AbiStackSlot:
     offset: int = attr.ib()
     reg: Optional[Register] = attr.ib()
     name: Optional[str] = attr.ib()
+    type: Type = attr.ib()
 
 
 def function_abi(
@@ -1562,7 +1397,11 @@ def function_abi(
     if fn.ret_type is not None and is_struct_type(fn.ret_type, typemap):
         # The ABI for struct returns is to pass a pointer to where it should be written
         # as the first argument.
-        slots.append(AbiStackSlot(offset=0, reg=Register("a0"), name="__return__"))
+        slots.append(
+            AbiStackSlot(
+                offset=0, reg=Register("a0"), name="__return__", type=Type.ptr()
+            )
+        )
         offset = 4
         only_floats = False
 
@@ -1575,17 +1414,26 @@ def function_abi(
         name = param.name
         if ind < 2 and only_floats:
             reg = Register("f12" if ind == 0 else "f14")
-            slots.append(AbiStackSlot(offset=offset, reg=reg, name=name))
-            if primitive_list == ["double"] and not for_call:
+            is_double = primitive_list == ["double"]
+            type = Type.f64() if is_double else Type.f32()
+            slots.append(AbiStackSlot(offset=offset, reg=reg, name=name, type=type))
+            if is_double and not for_call:
                 name2 = f"{name}_lo" if name else None
                 reg2 = Register("f13" if ind == 0 else "f15")
-                slots.append(AbiStackSlot(offset=offset + 4, reg=reg2, name=name2))
+                slots.append(
+                    AbiStackSlot(
+                        offset=offset + 4, reg=reg2, name=name2, type=Type.any()
+                    )
+                )
         else:
             for i in range(offset // 4, min((offset + size) // 4, 4)):
                 unk_offset = 4 * i - offset
                 name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else None
                 reg2 = Register(f"a{i}")
-                slots.append(AbiStackSlot(offset=4 * i, reg=reg2, name=name2))
+                type2 = type_from_ctype(param.type, typemap)
+                slots.append(
+                    AbiStackSlot(offset=4 * i, reg=reg2, name=name2, type=type2)
+                )
         offset += size
 
     if fn.is_variadic:
@@ -2303,23 +2151,41 @@ def translate_to_ast(
     stack_info = get_stack_info(function, start_node)
 
     initial_regs: Dict[Register, Expression] = {
-        Register("a0"): PassedInArg(0, copied=False, type=Type.intptr()),
-        Register("a1"): PassedInArg(4, copied=False, type=Type.intptr()),
-        Register("a2"): PassedInArg(8, copied=False, type=Type.any()),
-        Register("a3"): PassedInArg(12, copied=False, type=Type.any()),
-        Register("f12"): PassedInArg(0, copied=False, type=Type.f32()),
-        Register("f14"): PassedInArg(4, copied=False, type=Type.f32()),
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
         Register("gp"): GlobalSymbol("GP", type=Type.ptr()),
         **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
     }
 
     c_fn: Optional[CFunction] = None
+    known_params = False
     variadic = False
     if typemap and function.name in typemap.functions:
         c_fn = typemap.functions[function.name]
         if c_fn.is_variadic:
             stack_info.is_variadic = True
+        if c_fn.params is not None:
+            abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=False)
+            for slot in abi_slots:
+                if slot.reg is not None:
+                    initial_regs[slot.reg] = PassedInArg(
+                        slot.offset, copied=False, type=slot.type
+                    )
+            for reg in possible_regs:
+                offset = 4 * int(reg.register_name[1])
+                initial_regs[reg] = PassedInArg(offset, copied=False, type=Type.any())
+            known_params = True
+
+    if not known_params:
+        initial_regs.update(
+            {
+                Register("a0"): PassedInArg(0, copied=False, type=Type.intptr()),
+                Register("a1"): PassedInArg(4, copied=False, type=Type.any()),
+                Register("a2"): PassedInArg(8, copied=False, type=Type.any()),
+                Register("a3"): PassedInArg(12, copied=False, type=Type.any()),
+                Register("f12"): PassedInArg(0, copied=False, type=Type.f32()),
+                Register("f14"): PassedInArg(4, copied=False, type=Type.f32()),
+            }
+        )
 
     if options.debug:
         print(stack_info)
