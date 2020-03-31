@@ -1979,6 +1979,7 @@ def translate_node_body(
             # the function call at the point where a register is empty, but
             # for now we'll leave that for manual fixup.
             func_args: List[Expression] = []
+            c_fn: Optional[CFunction] = None
             if (
                 typemap
                 and isinstance(fn_target, GlobalSymbol)
@@ -2025,16 +2026,21 @@ def translate_node_body(
             # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
             # it's fine to be liberal here and put the return value in all
             # of them. (It's not perfect for u64's, but that's rare anyway.)
-            regs[Register("f0")] = Cast(
-                expr=call, reinterpret=True, silent=True, type=Type.f32()
-            )
-            regs[Register("v0")] = Cast(
-                expr=call, reinterpret=True, silent=True, type=Type.intish()
-            )
-            regs[Register("v1")] = as_u32(
-                Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
-            )
-            regs[Register("return")] = call
+            # However, if we have type information that says the function is
+            # void, then don't set any of these -- it might cause us to
+            # believe the function we're decompiling is non-void.
+            if not c_fn or c_fn.ret_type:
+                regs[Register("f0")] = Cast(
+                    expr=call, reinterpret=True, silent=True, type=Type.f32()
+                )
+                regs[Register("v0")] = Cast(
+                    expr=call, reinterpret=True, silent=True, type=Type.intish()
+                )
+                regs[Register("v1")] = as_u32(
+                    Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
+                )
+                regs[Register("return")] = call
+
             has_custom_return = False
             has_function_call = True
 
