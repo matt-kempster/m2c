@@ -1285,6 +1285,8 @@ def handle_addi(args: InstrArgs) -> Expression:
         return AddressOf(var)
     else:
         # Regular binary addition.
+        if source.type.is_pointer():
+            return BinaryOp(left=source, op="+", right=imm, type=source.type)
         return BinaryOp.intptr(left=source, op="+", right=imm)
 
 
@@ -1368,6 +1370,27 @@ def fold_mul_chains(expr: Expression) -> Expression:
     if num == 1:
         return expr
     return BinaryOp.int(left=base, op="*", right=Literal(num))
+
+
+def handle_add(lhs: Expression, rhs: Expression) -> Expression:
+    type = Type.intptr()
+    if lhs.type.is_pointer():
+        type = lhs.type
+    elif rhs.type.is_pointer():
+        type = rhs.type
+    expr = BinaryOp(left=lhs, op="+", right=rhs, type=type)
+    return fold_mul_chains(expr)
+
+
+def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
+    type = Type.intptr()
+    if lhs.type.is_pointer() and not rhs.type.is_pointer():
+        # If the lhs is known to be a pointer and the rhs is not known, then
+        # it's reasonable to assume that the return is also a pointer (though
+        # it could be a pointer subtraction).
+        type = lhs.type
+    expr = BinaryOp(left=lhs, op="-", right=rhs, type=type)
+    return fold_mul_chains(expr)
 
 
 def strip_macros(arg: Argument) -> Argument:
@@ -1540,8 +1563,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Integer arithmetic
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
-    "addu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "+", a.reg(2))),
-    "subu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
+    "addu": lambda a: handle_add(a.reg(1), a.reg(2)),
+    "subu": lambda a: handle_sub(a.reg(1), a.reg(2)),
     "negu": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
     ),
