@@ -1,9 +1,15 @@
-from typing import Optional
+from typing import Optional, Union
 
 import attr
 import pycparser.c_ast as ca
 
-from .c_types import Type as CType, TypeMap, primitive_size, resolve_typedefs
+from .c_types import (
+    Type as CType,
+    TypeMap,
+    primitive_size,
+    resolve_typedefs,
+    type_to_string,
+)
 
 
 @attr.s(cmp=False, repr=False)
@@ -31,6 +37,7 @@ class Type:
     size: Optional[int] = attr.ib()
     sign: int = attr.ib()
     uf_parent: Optional["Type"] = attr.ib(default=None)
+    ptr_to: Optional[Union["Type", CType]] = attr.ib(default=None)
 
     def unify(self, other: "Type") -> bool:
         """
@@ -44,7 +51,10 @@ class Type:
             return True
         if x.size is not None and y.size is not None and x.size != y.size:
             return False
+        if x.ptr_to is not None and y.ptr_to is not None and x.ptr_to != y.ptr_to:
+            return False
         size = x.size if x.size is not None else y.size
+        ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
         kind = x.kind & y.kind
         sign = x.sign & y.sign
         if size in [8, 16]:
@@ -60,6 +70,7 @@ class Type:
         x.kind = kind
         x.size = size
         x.sign = sign
+        x.ptr_to = ptr_to
         y.uf_parent = x
         return True
 
@@ -94,6 +105,10 @@ class Type:
                 return f"?{size}"
             return "?"
         if type.kind == Type.K_PTR:
+            if type.ptr_to is not None:
+                if isinstance(type.ptr_to, Type):
+                    return (str(type.ptr_to) + " *").replace("* *", "**")
+                return type_to_string(ca.PtrDecl([], type.ptr_to))
             return "void *"
         if type.kind == Type.K_FLOAT:
             return f"f{size}"
@@ -125,8 +140,8 @@ class Type:
         return Type(kind=Type.K_INTPTR, size=None, sign=Type.ANY_SIGN)
 
     @staticmethod
-    def ptr() -> "Type":
-        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN)
+    def ptr(type: Optional[Union["Type", CType]] = None) -> "Type":
+        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=type)
 
     @staticmethod
     def f32() -> "Type":
@@ -175,8 +190,10 @@ class Type:
 
 def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(ctype, (ca.PtrDecl, ca.ArrayDecl, ca.FuncDecl)):
-        return Type.ptr()
+    if isinstance(ctype, (ca.PtrDecl, ca.ArrayDecl)):
+        return Type.ptr(ctype.type)
+    if isinstance(ctype, ca.FuncDecl):
+        return Type.ptr(ctype)
     if isinstance(ctype, ca.TypeDecl):
         if isinstance(ctype.type, (ca.Struct, ca.Union)):
             return Type.any()
