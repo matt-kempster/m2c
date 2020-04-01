@@ -185,5 +185,6 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
             return Type.f64()
         if "float" in names:
             return Type.f32()
+        size = 8 * primitive_size(ctype.type)
         sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
-        return Type(kind=Type.K_INT, size=primitive_size(ctype.type), sign=sign)
+        return Type(kind=Type.K_INT, size=size, sign=sign)
