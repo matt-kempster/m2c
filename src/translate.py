@@ -28,7 +28,7 @@ from .flow_graph import (
 )
 from .options import Options
 from .error import DecompFailure
-from .types import Type, type_from_ctype
+from .types import Type, type_from_ctype, get_field_name
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -176,6 +176,7 @@ def as_ptr(expr: "Expression") -> "Expression":
 @attr.s
 class StackInfo:
     function: Function = attr.ib()
+    typemap: Optional[TypeMap] = attr.ib()
     allocated_stack_size: int = attr.ib(default=0)
     is_leaf: bool = attr.ib(default=True)
     is_variadic: bool = attr.ib(default=False)
@@ -312,8 +313,10 @@ class StackInfo:
         )
 
 
-def get_stack_info(function: Function, start_node: Node) -> StackInfo:
-    info = StackInfo(function)
+def get_stack_info(
+    function: Function, start_node: Node, typemap: Optional[TypeMap]
+) -> StackInfo:
+    info = StackInfo(function, typemap)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -655,16 +658,29 @@ class StructAccess:
 
         var = unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
+
+        real_field_name: Optional[str] = None
+        if self.stack_info.typemap:
+            real_field_name = get_field_name(
+                var.type, self.offset, self.stack_info.typemap
+            )
+
+        if real_field_name:
+            field_name = real_field_name
+            has_nonzero_access = True
+        else:
+            field_name = "unk" + format_hex(self.offset)
+
         if isinstance(var, AddressOf):
             if self.offset == 0 and not has_nonzero_access:
                 return f"{var.expr}"
             else:
-                return f"{p(var.expr)}.unk{format_hex(self.offset)}"
+                return f"{p(var.expr)}.{field_name}"
         else:
             if self.offset == 0 and not has_nonzero_access:
                 return f"*{var}"
             else:
-                return f"{p(var)}->unk{format_hex(self.offset)}"
+                return f"{p(var)}->{field_name}"
 
 
 @attr.s(frozen=True, cmp=True)
@@ -1069,8 +1085,8 @@ def deref(
         if stack_info.is_stack_reg(arg.rhs):
             return stack_info.get_stack_var(location, store=store)
         else:
-            var = regs[arg.rhs]
             # Struct member is being dereferenced.
+            var = regs[arg.rhs]
             if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
                 # Cope slightly better with raw pointers.
                 var = Literal(var.value + location, type=var.type)
@@ -1793,9 +1809,7 @@ def compute_has_custom_return(nodes: List[Node]) -> None:
                     changed = True
 
 
-def translate_node_body(
-    node: Node, regs: RegInfo, stack_info: StackInfo, typemap: Optional[TypeMap]
-) -> BlockInfo:
+def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
     """
     Given a node and current register contents, return a BlockInfo containing
     the translated AST for that node.
@@ -2014,6 +2028,7 @@ def translate_node_body(
             # the function call at the point where a register is empty, but
             # for now we'll leave that for manual fixup.
             func_args: List[Expression] = []
+            typemap = stack_info.typemap
             c_fn: Optional[CFunction] = None
             if (
                 typemap
@@ -2144,7 +2159,6 @@ def translate_graph_from_block(
     used_phis: List[PhiExpr],
     return_blocks: List[BlockInfo],
     options: Options,
-    typemap: Optional[TypeMap],
 ) -> None:
     """
     Given a FlowGraph node and a dictionary of register contents, give that node
@@ -2156,7 +2170,7 @@ def translate_graph_from_block(
 
     # Translate the given node and discover final register states.
     try:
-        block_info = translate_node_body(node, regs, stack_info, typemap)
+        block_info = translate_node_body(node, regs, stack_info)
         if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
@@ -2212,7 +2226,7 @@ def translate_graph_from_block(
                 del new_contents[reg]
         new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
         translate_graph_from_block(
-            child, new_regs, stack_info, used_phis, return_blocks, options, typemap
+            child, new_regs, stack_info, used_phis, return_blocks, options
         )
 
 
@@ -2233,7 +2247,7 @@ def translate_to_ast(
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, rodata)
     start_node = flow_graph.entry_node()
-    stack_info = get_stack_info(function, start_node)
+    stack_info = get_stack_info(function, start_node, typemap)
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
@@ -2283,7 +2297,7 @@ def translate_to_ast(
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
-        start_node, start_reg, stack_info, used_phis, return_blocks, options, typemap
+        start_node, start_reg, stack_info, used_phis, return_blocks, options
     )
 
     # We mark the function as having a return type if all return nodes have

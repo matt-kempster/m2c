@@ -205,3 +205,24 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         size = 8 * primitive_size(ctype.type)
         sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
         return Type(kind=Type.K_INT, size=size, sign=sign)
+
+
+def get_field_name(type: Type, offset: int, typemap: TypeMap) -> Optional[str]:
+    type = type.get_representative()
+    if not type.ptr_to or isinstance(type.ptr_to, Type):
+        return None
+    ctype = type.ptr_to
+    ctype = resolve_typedefs(ctype, typemap)
+    if (
+        isinstance(ctype, ca.TypeDecl)
+        and isinstance(ctype.type, (ca.Struct, ca.Union))
+        and ctype.type.name
+    ):
+        struct = typemap.struct_defs.get(ctype.type.name)
+        if struct:
+            fields = struct.fields.get(offset)
+            if fields:
+                # TODO: in case of unions, pick the field name that best corresponds
+                # to the extracted type
+                return fields[-1].name
+    return None

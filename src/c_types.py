@@ -128,6 +128,7 @@ def function_arg_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
     assert not isinstance(type, FuncDecl), "Function argument can not be a function"
     inner_type = type.type
     if isinstance(inner_type, (ca.Struct, ca.Union)):
+        # TODO: This is wrong, we can have a typedef that leads to a anonymous struct
         assert (
             inner_type.name is not None
         ), "Function argument cannot be of anonymous struct type"
