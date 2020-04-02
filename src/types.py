@@ -6,6 +6,7 @@ import pycparser.c_ast as ca
 from .c_types import (
     Type as CType,
     TypeMap,
+    get_struct,
     primitive_size,
     resolve_typedefs,
     type_to_string,
@@ -213,12 +214,8 @@ def get_field_name(type: Type, offset: int, typemap: TypeMap) -> Optional[str]:
         return None
     ctype = type.ptr_to
     ctype = resolve_typedefs(ctype, typemap)
-    if (
-        isinstance(ctype, ca.TypeDecl)
-        and isinstance(ctype.type, (ca.Struct, ca.Union))
-        and ctype.type.name
-    ):
-        struct = typemap.named_structs.get(ctype.type.name)
+    if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
+        struct = get_struct(ctype.type, typemap)
         if struct:
             fields = struct.fields.get(offset)
             if fields:
