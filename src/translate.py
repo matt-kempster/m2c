@@ -28,7 +28,7 @@ from .flow_graph import (
 )
 from .options import Options
 from .error import DecompFailure
-from .types import Type, type_from_ctype, get_field_name
+from .types import Type, type_from_ctype, type_from_global_ctype, get_field_name
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -1044,11 +1044,20 @@ class InstrArgs:
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
+    def address_of_gsym(self, sym: GlobalSymbol) -> AddressOf:
+        type = Type.ptr()
+        typemap = self.stack_info.typemap
+        if typemap:
+            ctype = typemap.var_types.get(sym.symbol_name)
+            if ctype:
+                type = type_from_global_ctype(ctype, typemap)
+        return AddressOf(sym, type=type)
+
     def imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_args[index])
         ret = literal_expr(arg, self.stack_info)
         if isinstance(ret, GlobalSymbol):
-            return AddressOf(ret)
+            return self.address_of_gsym(ret)
         return ret
 
     def hi_imm(self, index: int) -> Expression:
@@ -1056,7 +1065,7 @@ class InstrArgs:
         assert isinstance(arg, Macro) and arg.macro_name == "hi"
         ret = literal_expr(arg.argument, self.stack_info)
         if isinstance(ret, GlobalSymbol):
-            return AddressOf(ret)
+            return self.address_of_gsym(ret)
         return ret
 
     def memory_ref(self, index: int) -> Union[AddressMode, GlobalSymbol]:

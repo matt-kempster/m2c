@@ -208,6 +208,13 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         return Type(kind=Type.K_INT, size=size, sign=sign)
 
 
+def type_from_global_ctype(ctype: CType, typemap: TypeMap) -> Type:
+    real_ctype = resolve_typedefs(ctype, typemap)
+    if isinstance(real_ctype, (ca.ArrayDecl)):
+        return Type.ptr(real_ctype.type)
+    return Type.ptr(ctype)
+
+
 def get_field_name(type: Type, offset: int, typemap: TypeMap) -> Optional[str]:
     type = type.get_representative()
     if not type.ptr_to or isinstance(type.ptr_to, Type):
