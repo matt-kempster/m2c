@@ -359,15 +359,19 @@ def parse_c(source: str) -> ca.FileAST:
         msg = str(e)
         position, msg = msg.split(": ", 1)
         parts = position.split(":")
-        lineno = int(parts[1])
-        posstr = f"line {lineno}" + (f", column {parts[2]}" if len(parts) >= 3 else "")
-        try:
-            line = source.split("\n")[lineno - 1].rstrip()
-        except IndexError:
-            line = "<?>"
-        raise DecompFailure(
-            f"Syntax error when parsing C context.\n{msg} at {posstr}\n\n{line}"
-        )
+        if len(parts) >= 2:
+            lineno = int(parts[1])
+            posstr = f" at line {lineno}"
+            if len(parts) >= 3:
+                posstr += f", column {parts[2]}"
+            try:
+                line = source.split("\n")[lineno - 1].rstrip()
+                posstr += "\n\n" + line
+            except IndexError:
+                posstr += "(out of bounds?)"
+        else:
+            posstr = ""
+        raise DecompFailure(f"Syntax error when parsing C context.\n{msg}{posstr}")
 
 
 def build_typemap(source: str) -> TypeMap:
