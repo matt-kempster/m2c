@@ -1553,6 +1553,7 @@ CASES_HI_LO: PairInstrMap = {
         BinaryOp.u32(a.reg(0), "/", a.reg(1)),
     ),
     # The high part of multiplication cannot be directly represented in C
+    "mult": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
     "multu": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
 }
 CASES_SOURCE_FIRST: InstrMap = {
