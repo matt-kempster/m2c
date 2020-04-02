@@ -49,7 +49,7 @@ class TypeMap:
     typedefs: Dict[str, Type] = attr.ib(factory=dict)
     var_types: Dict[str, Type] = attr.ib(factory=dict)
     functions: Dict[str, Function] = attr.ib(factory=dict)
-    struct_defs: Dict[str, Struct] = attr.ib(factory=dict)
+    named_structs: Dict[str, Struct] = attr.ib(factory=dict)
 
 
 def to_c(node: ca.Node) -> str:
@@ -132,7 +132,7 @@ def function_arg_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
         assert (
             inner_type.name is not None
         ), "Function argument cannot be of anonymous struct type"
-        struct = typemap.struct_defs.get(inner_type.name)
+        struct = typemap.named_structs.get(inner_type.name)
         assert (
             struct is not None
         ), "Function argument can not be of an incomplete struct"
@@ -234,13 +234,13 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
         assert not isinstance(type, FuncDecl), "Struct can not contain a function"
         inner_type = type.type
         if isinstance(inner_type, (ca.Struct, ca.Union)):
-            if inner_type.name is not None and inner_type.name in typemap.struct_defs:
-                substr = typemap.struct_defs[inner_type.name]
+            if inner_type.name is not None and inner_type.name in typemap.named_structs:
+                substr = typemap.named_structs[inner_type.name]
                 return substr.size, substr.align, substr
             if inner_type.decls is not None:
                 substr = parse_struct(inner_type, typemap)
                 if inner_type.name is not None:
-                    typemap.struct_defs[inner_type.name] = substr
+                    typemap.named_structs[inner_type.name] = substr
                 return substr.size, substr.align, substr
             raise DecompFailure(
                 f"Field {field_name} is of undefined struct type {inner_type.name}"
@@ -326,7 +326,7 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
             else:
                 # Struct defined within another. Silly but valid C.
                 substr = parse_struct(type, typemap)
-                typemap.struct_defs[type.name] = substr
+                typemap.named_structs[type.name] = substr
 
     if not is_union and bit_offset != 0:
         bit_offset = 0
@@ -355,11 +355,11 @@ def build_typemap(source: str, filename: str = "") -> TypeMap:
     class Visitor(ca.NodeVisitor):
         def visit_Struct(self, struct: ca.Struct) -> None:
             if struct.decls and struct.name is not None and struct.decls is not None:
-                ret.struct_defs[struct.name] = parse_struct(struct, ret)
+                ret.named_structs[struct.name] = parse_struct(struct, ret)
 
         def visit_Union(self, union: ca.Union) -> None:
             if union.decls and union.name is not None and union.decls is not None:
-                ret.struct_defs[union.name] = parse_struct(union, ret)
+                ret.named_structs[union.name] = parse_struct(union, ret)
 
         def visit_Decl(self, decl: ca.Decl) -> None:
             if decl.name is not None:
@@ -415,7 +415,7 @@ def dump_typemap(typemap: TypeMap) -> None:
         print(f"{name}: {ret_str}({params_str})")
     print()
     print("Structs:")
-    for name, struct in typemap.struct_defs.items():
+    for name, struct in typemap.named_structs.items():
         print(f"{name}: size {struct.size}, align {struct.align}")
         for offset, fields in struct.fields.items():
             print(f"  {offset}:", end="")

@@ -218,7 +218,7 @@ def get_field_name(type: Type, offset: int, typemap: TypeMap) -> Optional[str]:
         and isinstance(ctype.type, (ca.Struct, ca.Union))
         and ctype.type.name
     ):
-        struct = typemap.struct_defs.get(ctype.type.name)
+        struct = typemap.named_structs.get(ctype.type.name)
         if struct:
             fields = struct.fields.get(offset)
             if fields:
