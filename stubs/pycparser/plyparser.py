@@ -21,3 +21,7 @@ class Coord:
 
     def __str__(self) -> str:
         ...
+
+
+class ParseError(Exception):
+    pass

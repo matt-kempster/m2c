@@ -10,6 +10,7 @@ from pycparser import c_ast as ca
 from pycparser.c_ast import ArrayDecl, TypeDecl, PtrDecl, FuncDecl, IdentifierType
 from pycparser.c_generator import CGenerator
 from pycparser.c_parser import CParser
+from pycparser.plyparser import ParseError
 
 from .error import DecompFailure
 
@@ -351,8 +352,26 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     return Struct(fields=fields, size=size, align=align)
 
 
-def build_typemap(source: str, filename: str = "") -> TypeMap:
-    ast: ca.FileAST = CParser().parse(source, filename)
+def parse_c(source: str) -> ca.FileAST:
+    try:
+        return CParser().parse(source, "<source>")
+    except ParseError as e:
+        msg = str(e)
+        position, msg = msg.split(": ", 1)
+        parts = position.split(":")
+        lineno = int(parts[1])
+        posstr = f"line {lineno}" + (f", column {parts[2]}" if len(parts) >= 3 else "")
+        try:
+            line = source.split("\n")[lineno - 1].rstrip()
+        except IndexError:
+            line = "<?>"
+        raise DecompFailure(
+            f"Syntax error when parsing C context.\n{msg} at {posstr}\n\n{line}"
+        )
+
+
+def build_typemap(source: str) -> TypeMap:
+    ast: ca.FileAST = parse_c(source)
     ret = TypeMap()
     for item in ast.ext:
         if isinstance(item, ca.Typedef):
