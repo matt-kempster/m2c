@@ -1,15 +1,19 @@
 import argparse
 import sys
+from typing import Optional
 
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import write_function
 from .options import Options, CodingStyle
-from .parse_file import Function, Rodata, parse_file
+from .parse_file import Function, MIPSFile, Rodata, parse_file
 from .translate import translate_to_ast
+from .c_types import TypeMap, build_typemap, dump_typemap
 
 
-def decompile_function(options: Options, function: Function, rodata: Rodata) -> None:
+def decompile_function(
+    options: Options, function: Function, rodata: Rodata, typemap: Optional[TypeMap]
+) -> None:
     if options.print_assembly:
         print(function)
         print()
@@ -18,59 +22,70 @@ def decompile_function(options: Options, function: Function, rodata: Rodata) -> 
         visualize_flowgraph(build_flowgraph(function, rodata))
         return
 
-    function_info = translate_to_ast(function, options, rodata)
+    function_info = translate_to_ast(function, options, rodata, typemap)
     write_function(function_info, options)
 
 
 def run(options: Options, function_index_or_name: str) -> int:
-    with open(options.filename, "r") as f:
-        try:
+    mips_file: MIPSFile
+    typemap: Optional[TypeMap] = None
+    try:
+        with open(options.filename, "r") as f:
             mips_file = parse_file(f, options)
 
-            # Move over jtbl rodata from files given by --rodata
-            for rodata_file in options.rodata_files:
-                with open(rodata_file, "r") as f2:
-                    sub_file = parse_file(f2, options)
-                    for (sym, value) in sub_file.rodata.values.items():
-                        mips_file.rodata.values[sym] = value
-        except DecompFailure as e:
-            print(e)
+        # Move over jtbl rodata from files given by --rodata
+        for rodata_file in options.rodata_files:
+            with open(rodata_file, "r") as f:
+                sub_file = parse_file(f, options)
+                for (sym, value) in sub_file.rodata.values.items():
+                    mips_file.rodata.values[sym] = value
+
+        if options.c_context is not None:
+            with open(options.c_context, "r") as f:
+                typemap = build_typemap(f.read())
+    except (OSError, DecompFailure) as e:
+        print(e)
+        return 1
+
+    if options.dump_typemap:
+        assert typemap
+        dump_typemap(typemap)
+        return 0
+
+    if function_index_or_name == "all":
+        options.stop_on_error = True
+        for fn in mips_file.functions:
+            try:
+                decompile_function(options, fn, mips_file.rodata, typemap)
+            except Exception:
+                print(f"{fn.name}: ERROR")
+            print()
+    else:
+        try:
+            index = int(function_index_or_name)
+            function = mips_file.functions[index]
+        except ValueError:
+            name = function_index_or_name
+            try:
+                function = next(fn for fn in mips_file.functions if fn.name == name)
+            except StopIteration:
+                print(f"Function {name} not found.", file=sys.stderr)
+                return 1
+        except IndexError:
+            count = len(mips_file.functions)
+            print(
+                f"Function index {index} is out of bounds (must be between "
+                f"0 and {count - 1}).",
+                file=sys.stderr,
+            )
             return 1
 
-        if function_index_or_name == "all":
-            options.stop_on_error = True
-            for fn in mips_file.functions:
-                try:
-                    decompile_function(options, fn, mips_file.rodata)
-                except Exception:
-                    print(f"{fn.name}: ERROR")
-                print()
-        else:
-            try:
-                index = int(function_index_or_name)
-                function = mips_file.functions[index]
-            except ValueError:
-                name = function_index_or_name
-                try:
-                    function = next(f for f in mips_file.functions if f.name == name)
-                except StopIteration:
-                    print(f"Function {name} not found.", file=sys.stderr)
-                    return 1
-            except IndexError:
-                count = len(mips_file.functions)
-                print(
-                    f"Function index {index} is out of bounds (must be between "
-                    f"0 and {count - 1}).",
-                    file=sys.stderr,
-                )
-                return 1
-
-            try:
-                decompile_function(options, function, mips_file.rodata)
-            except DecompFailure as e:
-                print(f"Failed to decompile function {function.name}:\n\n{e}")
-                return 1
-        return 0
+        try:
+            decompile_function(options, function, mips_file.rodata, typemap)
+        except DecompFailure as e:
+            print(f"Failed to decompile function {function.name}:\n\n{e}")
+            return 1
+    return 0
 
 
 def main() -> int:
@@ -154,6 +169,19 @@ def main() -> int:
         default=[],
         help="mark preprocessor constant as undefined",
     )
+    parser.add_argument(
+        "--context",
+        metavar="C_FILE",
+        dest="c_context",
+        help="read variable types/function signatures/structs from an existing C file. "
+        "The file must already have been processed by the C preprocessor.",
+    )
+    parser.add_argument(
+        "--dump-typemap",
+        dest="dump_typemap",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     preproc_defines = {
         **{d: 0 for d in args.undefined},
@@ -175,6 +203,8 @@ def main() -> int:
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
+        c_context=args.c_context,
+        dump_typemap=args.dump_typemap,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )

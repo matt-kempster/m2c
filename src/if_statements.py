@@ -696,6 +696,8 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     arg_strs = []
     for arg in function_info.stack_info.arguments:
         arg_strs.append(f"{arg.type.to_decl()}{arg}")
+    if function_info.stack_info.is_variadic:
+        arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
     whitespace = "\n" if options.coding_style.newline_after_function else " "
     print(f"{ret_type}{fn_name}({arg_str}){whitespace}{{")

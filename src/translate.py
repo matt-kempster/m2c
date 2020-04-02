@@ -28,6 +28,7 @@ from .flow_graph import (
 )
 from .options import Options
 from .error import DecompFailure
+from .types import Type, type_from_ctype, get_field_name
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -38,6 +39,13 @@ from .parse_instruction import (
     Instruction,
     Macro,
     Register,
+)
+from .c_types import (
+    TypeMap,
+    Function as CFunction,
+    function_arg_size_align,
+    get_primitive_list,
+    is_struct_type,
 )
 
 ARGUMENT_REGS = list(map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"]))
@@ -129,173 +137,6 @@ def current_instr(instr: Instruction) -> Iterator[None]:
         raise InstrProcessingFailure(instr) from e
 
 
-@attr.s(cmp=False, repr=False)
-class Type:
-    """
-    Type information for an expression, which may improve over time. The least
-    specific type is any (initially the case for e.g. arguments); this might
-    get refined into intish if the value gets used for e.g. an integer add
-    operation, or into u32 if it participates in a logical right shift.
-    Types cannot change except for improvements of this kind -- thus concrete
-    types like u32 can never change into anything else, and e.g. ints can't
-    become floats.
-    """
-
-    K_INT = 1
-    K_PTR = 2
-    K_FLOAT = 4
-    K_INTPTR = 3
-    K_ANY = 7
-    SIGNED = 1
-    UNSIGNED = 2
-    ANY_SIGN = 3
-
-    kind: int = attr.ib()
-    size: Optional[int] = attr.ib()
-    sign: int = attr.ib()
-    uf_parent: Optional["Type"] = attr.ib(default=None)
-
-    def unify(self, other: "Type") -> bool:
-        """
-        Try to set this type equal to another. Returns true on success.
-        Once set equal, the types will always be equal (we use a union-find
-        structure to ensure this).
-        """
-        x = self.get_representative()
-        y = other.get_representative()
-        if x is y:
-            return True
-        if x.size is not None and y.size is not None and x.size != y.size:
-            return False
-        size = x.size if x.size is not None else y.size
-        kind = x.kind & y.kind
-        sign = x.sign & y.sign
-        if size in [8, 16]:
-            kind &= ~Type.K_FLOAT
-        if size in [8, 16, 64]:
-            kind &= ~Type.K_PTR
-        if kind == 0 or sign == 0:
-            return False
-        if kind == Type.K_PTR:
-            size = 32
-        if sign != Type.ANY_SIGN:
-            assert kind == Type.K_INT
-        x.kind = kind
-        x.size = size
-        x.sign = sign
-        y.uf_parent = x
-        return True
-
-    def get_representative(self) -> "Type":
-        if self.uf_parent is None:
-            return self
-        self.uf_parent = self.uf_parent.get_representative()
-        return self.uf_parent
-
-    def is_float(self) -> bool:
-        return self.get_representative().kind == Type.K_FLOAT
-
-    def is_pointer(self) -> bool:
-        return self.get_representative().kind == Type.K_PTR
-
-    def is_unsigned(self) -> bool:
-        return self.get_representative().sign == Type.UNSIGNED
-
-    def get_size(self) -> int:
-        return self.get_representative().size or 32
-
-    def to_decl(self) -> str:
-        ret = str(self)
-        return ret if ret.endswith("*") else ret + " "
-
-    def __str__(self) -> str:
-        type = self.get_representative()
-        size = type.size or 32
-        sign = "s" if type.sign & Type.SIGNED else "u"
-        if type.kind == Type.K_ANY:
-            if type.size is not None:
-                return f"?{size}"
-            return "?"
-        if type.kind == Type.K_PTR:
-            return "void *"
-        if type.kind == Type.K_FLOAT:
-            return f"f{size}"
-        return f"{sign}{size}"
-
-    def __repr__(self) -> str:
-        type = self.get_representative()
-        signstr = ("+" if type.sign & Type.SIGNED else "") + (
-            "-" if type.sign & Type.UNSIGNED else ""
-        )
-        kindstr = (
-            ("I" if type.kind & Type.K_INT else "")
-            + ("P" if type.kind & Type.K_PTR else "")
-            + ("F" if type.kind & Type.K_FLOAT else "")
-        )
-        sizestr = str(type.size) if type.size is not None else "?"
-        return f"Type({signstr + kindstr + sizestr})"
-
-    @staticmethod
-    def any() -> "Type":
-        return Type(kind=Type.K_ANY, size=None, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def intish() -> "Type":
-        return Type(kind=Type.K_INT, size=None, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def intptr() -> "Type":
-        return Type(kind=Type.K_INTPTR, size=None, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def ptr() -> "Type":
-        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def f32() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=32, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def f64() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=64, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def s8() -> "Type":
-        return Type(kind=Type.K_INT, size=8, sign=Type.SIGNED)
-
-    @staticmethod
-    def u8() -> "Type":
-        return Type(kind=Type.K_INT, size=8, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def s16() -> "Type":
-        return Type(kind=Type.K_INT, size=16, sign=Type.SIGNED)
-
-    @staticmethod
-    def u16() -> "Type":
-        return Type(kind=Type.K_INT, size=16, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def s32() -> "Type":
-        return Type(kind=Type.K_INT, size=32, sign=Type.SIGNED)
-
-    @staticmethod
-    def u32() -> "Type":
-        return Type(kind=Type.K_INT, size=32, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def u64() -> "Type":
-        return Type(kind=Type.K_INT, size=64, sign=Type.UNSIGNED)
-
-    @staticmethod
-    def of_size(size: int) -> "Type":
-        return Type(kind=Type.K_ANY, size=size, sign=Type.ANY_SIGN)
-
-    @staticmethod
-    def bool() -> "Type":
-        return Type.intish()
-
-
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     if expr.type.unify(type):
         if not silent:
@@ -335,8 +176,10 @@ def as_ptr(expr: "Expression") -> "Expression":
 @attr.s
 class StackInfo:
     function: Function = attr.ib()
+    typemap: Optional[TypeMap] = attr.ib()
     allocated_stack_size: int = attr.ib(default=0)
     is_leaf: bool = attr.ib(default=True)
+    is_variadic: bool = attr.ib(default=False)
     uses_framepointer: bool = attr.ib(default=False)
     local_vars_region_bottom: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
@@ -348,6 +191,7 @@ class StackInfo:
     arguments: List["PassedInArg"] = attr.ib(factory=list)
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
     nonzero_accesses: Set["Expression"] = attr.ib(factory=set)
+    param_names: Dict[int, str] = attr.ib(factory=dict)
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -371,6 +215,12 @@ class StackInfo:
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
 
+    def set_param_name(self, offset: int, name: str) -> None:
+        self.param_names[offset] = name
+
+    def get_param_name(self, offset: int) -> Optional[str]:
+        return self.param_names.get(offset)
+
     def add_local_var(self, var: "LocalVar") -> None:
         if any(v.value == var.value for v in self.local_vars):
             return
@@ -384,10 +234,19 @@ class StackInfo:
         self.arguments.append(arg)
         self.arguments.sort(key=lambda a: a.value)
 
-    def get_argument(self, location: int) -> "PassedInArg":
-        return PassedInArg(
-            location, copied=True, type=self.unique_type_for("arg", location)
+    def get_argument(self, location: int) -> Tuple["Expression", "PassedInArg"]:
+        real_location = location & -4
+        ret = PassedInArg(
+            real_location,
+            copied=True,
+            stack_info=self,
+            type=self.unique_type_for("arg", real_location),
         )
+        if real_location == location - 3:
+            return as_type(ret, Type.of_size(8), True), ret
+        if real_location == location - 2:
+            return as_type(ret, Type.of_size(16), True), ret
+        return ret, ret
 
     def record_struct_access(self, ptr: "Expression", location: int) -> None:
         if location:
@@ -419,13 +278,13 @@ class StackInfo:
             return True
         return False
 
-    def get_stack_var(self, location: int, store: bool) -> "Expression":
+    def get_stack_var(self, location: int, *, store: bool) -> "Expression":
         if self.in_local_var_region(location):
             return LocalVar(location, type=self.unique_type_for("stack", location))
         elif self.location_above_stack(location):
-            ret = self.get_argument(location - self.allocated_stack_size)
+            ret, arg = self.get_argument(location - self.allocated_stack_size)
             if not store:
-                self.add_argument(ret)
+                self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any())
@@ -454,8 +313,10 @@ class StackInfo:
         )
 
 
-def get_stack_info(function: Function, start_node: Node) -> StackInfo:
-    info = StackInfo(function)
+def get_stack_info(
+    function: Function, start_node: Node, typemap: Optional[TypeMap]
+) -> StackInfo:
+    info = StackInfo(function, typemap)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -750,16 +611,16 @@ class LocalVar:
 class PassedInArg:
     value: int = attr.ib()
     copied: bool = attr.ib(cmp=False)
+    stack_info: StackInfo = attr.ib(cmp=False)
     type: Type = attr.ib(cmp=False)
 
     def dependencies(self) -> List["Expression"]:
         return []
 
     def __str__(self) -> str:
-        if self.value % 4 == 0:
-            return f"arg{format_hex(self.value // 4)}"
-        else:
-            return f"arg_unaligned{format_hex(self.value)}"
+        assert self.value % 4 == 0
+        name = self.stack_info.get_param_name(self.value)
+        return name or f"arg{format_hex(self.value // 4)}"
 
 
 @attr.s(frozen=True, cmp=True)
@@ -797,16 +658,29 @@ class StructAccess:
 
         var = unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
+
+        real_field_name: Optional[str] = None
+        if self.stack_info.typemap:
+            real_field_name = get_field_name(
+                var.type, self.offset, self.stack_info.typemap
+            )
+
+        if real_field_name:
+            field_name = real_field_name
+            has_nonzero_access = True
+        else:
+            field_name = "unk" + format_hex(self.offset)
+
         if isinstance(var, AddressOf):
             if self.offset == 0 and not has_nonzero_access:
                 return f"{var.expr}"
             else:
-                return f"{p(var.expr)}.unk{format_hex(self.offset)}"
+                return f"{p(var.expr)}.{field_name}"
         else:
             if self.offset == 0 and not has_nonzero_access:
                 return f"*{var}"
             else:
-                return f"{p(var)}->unk{format_hex(self.offset)}"
+                return f"{p(var)}->{field_name}"
 
 
 @attr.s(frozen=True, cmp=True)
@@ -1074,10 +948,10 @@ class RegInfo:
             # Create a new argument object to better distinguish arguments we
             # are called with from arguments passed to subroutines. Also, unify
             # the argument's type with what we can guess from the register used.
-            arg = self.stack_info.get_argument(ret.value)
+            val, arg = self.stack_info.get_argument(ret.value)
             self.stack_info.add_argument(arg)
-            arg.type.unify(ret.type)
-            return arg
+            val.type.unify(ret.type)
+            return val
         if isinstance(ret, ForceVarExpr):
             # Some of the logic in this file is unprepared to deal with
             # ForceVarExpr transparent wrappers... so for simplicity, we mark
@@ -1203,6 +1077,7 @@ def deref(
     arg: Union[AddressMode, GlobalSymbol],
     regs: RegInfo,
     stack_info: StackInfo,
+    *,
     store: bool = False,
 ) -> Expression:
     if isinstance(arg, AddressMode):
@@ -1210,8 +1085,8 @@ def deref(
         if stack_info.is_stack_reg(arg.rhs):
             return stack_info.get_stack_var(location, store=store)
         else:
-            var = regs[arg.rhs]
             # Struct member is being dereferenced.
+            var = regs[arg.rhs]
             if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
                 # Cope slightly better with raw pointers.
                 var = Literal(var.value + location, type=var.type)
@@ -1426,6 +1301,8 @@ def handle_addi(args: InstrArgs) -> Expression:
         return AddressOf(var)
     else:
         # Regular binary addition.
+        if source.type.is_pointer():
+            return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
         return BinaryOp.intptr(left=source, op="+", right=imm)
 
 
@@ -1511,6 +1388,16 @@ def fold_mul_chains(expr: Expression) -> Expression:
     return BinaryOp.int(left=base, op="*", right=Literal(num))
 
 
+def handle_add(lhs: Expression, rhs: Expression) -> Expression:
+    type = Type.intptr()
+    if lhs.type.is_pointer():
+        type = Type.ptr()
+    elif rhs.type.is_pointer():
+        type = Type.ptr()
+    expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
+    return fold_mul_chains(expr)
+
+
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume
     that %hi's only ever occur in lui, where we expand them to an entire value,
@@ -1524,6 +1411,76 @@ def strip_macros(arg: Argument) -> Argument:
         return AsmAddressMode(lhs=None, rhs=arg.rhs)
     else:
         return arg
+
+
+@attr.s
+class AbiStackSlot:
+    offset: int = attr.ib()
+    reg: Optional[Register] = attr.ib()
+    name: Optional[str] = attr.ib()
+    type: Type = attr.ib()
+
+
+def function_abi(
+    fn: CFunction, typemap: TypeMap, *, for_call: bool
+) -> Tuple[List[AbiStackSlot], List[Register]]:
+    """Compute stack positions/registers used by a function according to the o32 ABI,
+    based on C type information. Additionally computes a list of registers that might
+    contain arguments, if the function is a varargs function. (Additional varargs
+    arguments may be passed on the stack; we could compute the offset at which that
+    would start but right now don't care -- we just slurp up everything.)"""
+    assert fn.params is not None, "checked by caller"
+    offset = 0
+    only_floats = True
+    slots: List[AbiStackSlot] = []
+    possible: List[Register] = []
+    if fn.ret_type is not None and is_struct_type(fn.ret_type, typemap):
+        # The ABI for struct returns is to pass a pointer to where it should be written
+        # as the first argument.
+        slots.append(
+            AbiStackSlot(
+                offset=0, reg=Register("a0"), name="__return__", type=Type.ptr()
+            )
+        )
+        offset = 4
+        only_floats = False
+
+    for ind, param in enumerate(fn.params):
+        size, align = function_arg_size_align(param.type, typemap)
+        size = max(size, 4)
+        primitive_list = get_primitive_list(param.type, typemap)
+        only_floats = only_floats and (primitive_list in [["float"], ["double"]])
+        offset = (offset + align - 1) & -align
+        name = param.name
+        if ind < 2 and only_floats:
+            reg = Register("f12" if ind == 0 else "f14")
+            is_double = primitive_list == ["double"]
+            type = Type.f64() if is_double else Type.f32()
+            slots.append(AbiStackSlot(offset=offset, reg=reg, name=name, type=type))
+            if is_double and not for_call:
+                name2 = f"{name}_lo" if name else None
+                reg2 = Register("f13" if ind == 0 else "f15")
+                slots.append(
+                    AbiStackSlot(
+                        offset=offset + 4, reg=reg2, name=name2, type=Type.any()
+                    )
+                )
+        else:
+            for i in range(offset // 4, min((offset + size) // 4, 4)):
+                unk_offset = 4 * i - offset
+                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
+                reg2 = Register(f"a{i}")
+                type2 = type_from_ctype(param.type, typemap)
+                slots.append(
+                    AbiStackSlot(offset=4 * i, reg=reg2, name=name2, type=type2)
+                )
+        offset += size
+
+    if fn.is_variadic:
+        for i in range(offset // 4, 4):
+            possible.append(Register(f"a{i}"))
+
+    return slots, possible
 
 
 InstrSet = Set[str]
@@ -1611,7 +1568,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Integer arithmetic
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
-    "addu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "+", a.reg(2))),
+    "addu": lambda a: handle_add(a.reg(1), a.reg(2)),
     "subu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
     "negu": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
@@ -1857,6 +1814,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     def eval_once(
         expr: Expression,
+        *,
         always_emit: bool,
         trivial: bool,
         prefix: str = "",
@@ -1973,8 +1931,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Store a value in a permanent place.
             to_store = CASES_STORE[mnemonic](args)
             if to_store is not None and isinstance(to_store.dest, SubroutineArg):
-                # About to call a subroutine with this argument.
-                subroutine_args.append((to_store.source, to_store.dest))
+                # About to call a subroutine with this argument. Skip arguments for the
+                # first four stack slots; they are also passed in registers.
+                if to_store.dest.value >= 0x10:
+                    subroutine_args.append((to_store.source, to_store.dest))
             elif to_store is not None:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
@@ -2057,7 +2017,25 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # the function call at the point where a register is empty, but
             # for now we'll leave that for manual fixup.
             func_args: List[Expression] = []
-            for register in map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"]):
+            typemap = stack_info.typemap
+            c_fn: Optional[CFunction] = None
+            if (
+                typemap
+                and isinstance(fn_target, GlobalSymbol)
+                and fn_target.symbol_name in typemap.functions
+                and typemap.functions[fn_target.symbol_name].params is not None
+            ):
+                c_fn = typemap.functions[fn_target.symbol_name]
+                abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=True)
+                for slot in abi_slots:
+                    if slot.reg:
+                        func_args.append(regs[slot.reg])
+            else:
+                possible_regs = list(
+                    map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"])
+                )
+
+            for register in possible_regs:
                 # The latter check verifies that the register is not just
                 # meant for us. This might give false positives for the
                 # first function call if an argument passed in the same
@@ -2068,10 +2046,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     not isinstance(expr, PassedInArg) or expr.copied
                 ):
                     func_args.append(expr)
+
             # Add the arguments after a3.
             subroutine_args.sort(key=lambda a: a[1].value)
             for arg in subroutine_args:
                 func_args.append(arg[0])
+
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
@@ -2080,19 +2060,26 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Clear out caller-save registers, for clarity and to ensure
             # that argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
-            # We don't know what this function's return register is,
-            # be it $v0, $f0, or something else, so this hack will have
-            # to do. (TODO: handle it...)
-            regs[Register("f0")] = Cast(
-                expr=call, reinterpret=True, silent=True, type=Type.f32()
-            )
-            regs[Register("v0")] = Cast(
-                expr=call, reinterpret=True, silent=True, type=Type.intish()
-            )
-            regs[Register("v1")] = as_u32(
-                Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
-            )
-            regs[Register("return")] = call
+
+            # We may not know what this function's return registers are --
+            # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
+            # it's fine to be liberal here and put the return value in all
+            # of them. (It's not perfect for u64's, but that's rare anyway.)
+            # However, if we have type information that says the function is
+            # void, then don't set any of these -- it might cause us to
+            # believe the function we're decompiling is non-void.
+            if not c_fn or c_fn.ret_type:
+                regs[Register("f0")] = Cast(
+                    expr=call, reinterpret=True, silent=True, type=Type.f32()
+                )
+                regs[Register("v0")] = Cast(
+                    expr=call, reinterpret=True, silent=True, type=Type.intish()
+                )
+                regs[Register("v1")] = as_u32(
+                    Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
+                )
+                regs[Register("return")] = call
+
             has_custom_return = False
             has_function_call = True
 
@@ -2239,7 +2226,7 @@ class FunctionInfo:
 
 
 def translate_to_ast(
-    function: Function, options: Options, rodata: Rodata
+    function: Function, options: Options, rodata: Rodata, typemap: Optional[TypeMap]
 ) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
@@ -2249,19 +2236,47 @@ def translate_to_ast(
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, rodata)
     start_node = flow_graph.entry_node()
-    stack_info = get_stack_info(function, start_node)
+    stack_info = get_stack_info(function, start_node, typemap)
 
     initial_regs: Dict[Register, Expression] = {
-        Register("a0"): PassedInArg(0, copied=False, type=Type.intptr()),
-        Register("a1"): PassedInArg(4, copied=False, type=Type.intptr()),
-        Register("a2"): PassedInArg(8, copied=False, type=Type.any()),
-        Register("a3"): PassedInArg(12, copied=False, type=Type.any()),
-        Register("f12"): PassedInArg(0, copied=False, type=Type.f32()),
-        Register("f14"): PassedInArg(4, copied=False, type=Type.f32()),
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
         Register("gp"): GlobalSymbol("GP", type=Type.ptr()),
         **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
     }
+
+    def make_arg(offset: int, type: Type) -> PassedInArg:
+        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
+
+    c_fn: Optional[CFunction] = None
+    known_params = False
+    variadic = False
+    if typemap and function.name in typemap.functions:
+        c_fn = typemap.functions[function.name]
+        if c_fn.is_variadic:
+            stack_info.is_variadic = True
+        if c_fn.params is not None:
+            abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=False)
+            for slot in abi_slots:
+                if slot.name is not None:
+                    stack_info.set_param_name(slot.offset, slot.name)
+                if slot.reg is not None:
+                    initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
+            for reg in possible_regs:
+                offset = 4 * int(reg.register_name[1])
+                initial_regs[reg] = make_arg(offset, Type.any())
+            known_params = True
+
+    if not known_params:
+        initial_regs.update(
+            {
+                Register("a0"): make_arg(0, Type.intptr()),
+                Register("a1"): make_arg(4, Type.any()),
+                Register("a2"): make_arg(8, Type.any()),
+                Register("a3"): make_arg(12, Type.any()),
+                Register("f12"): make_arg(0, Type.f32()),
+                Register("f14"): make_arg(4, Type.f32()),
+            }
+        )
 
     if options.debug:
         print(stack_info)
@@ -2284,6 +2299,11 @@ def translate_to_ast(
 
     if options.void:
         has_return = False
+    elif c_fn is not None:
+        if c_fn.ret_type is None:
+            has_return = False
+        else:
+            has_return = True
 
     for b in return_blocks:
         if not has_return:
