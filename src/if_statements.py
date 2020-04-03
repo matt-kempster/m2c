@@ -687,36 +687,38 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if return_node.index != -1:
         write_return(context, body, return_node, 4, last=True)
 
-    ret_type = "void "
-    if not context.is_void:
-        ret_type = function_info.return_type.to_decl()
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
-        arg_strs.append(f"{arg.type.to_decl()}{arg}")
+        arg_strs.append(arg.type.to_decl(str(arg)))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
+    fn_header = f"{fn_name}({arg_str})"
+    if context.is_void:
+        fn_header = f"void {fn_header}"
+    else:
+        fn_header = function_info.return_type.to_decl(fn_header)
     whitespace = "\n" if options.coding_style.newline_after_function else " "
-    print(f"{ret_type}{fn_name}({arg_str}){whitespace}{{")
+    print(f"{fn_header}{whitespace}{{")
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:
-        type_decl = local_var.type.to_decl()
-        print(SimpleStatement(4, f"{type_decl}{local_var};"))
+        type_decl = local_var.type.to_decl(str(local_var))
+        print(SimpleStatement(4, f"{type_decl};"))
         any_decl = True
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
             expr = temp_var.expr
-            type_decl = expr.type.to_decl()
-            temp_decls.add(f"{type_decl}{expr.var};")
+            type_decl = expr.type.to_decl(str(expr.var))
+            temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(list(temp_decls)):
         print(SimpleStatement(4, decl))
     for phi_var in function_info.stack_info.phi_vars:
-        type_decl = phi_var.type.to_decl()
-        print(SimpleStatement(4, f"{type_decl}{phi_var.get_var_name()};"))
+        type_decl = phi_var.type.to_decl(phi_var.get_var_name())
+        print(SimpleStatement(4, f"{type_decl};"))
         any_decl = True
     if any_decl:
         print()

@@ -93,9 +93,10 @@ class Type:
     def get_size(self) -> int:
         return self.get_representative().size or 32
 
-    def to_decl(self) -> str:
+    def to_decl(self, var: str) -> str:
         ret = str(self)
-        return ret if ret.endswith("*") else ret + " "
+        prefix = ret if ret.endswith("*") else ret + " "
+        return prefix + var
 
     def __str__(self) -> str:
         type = self.get_representative()
