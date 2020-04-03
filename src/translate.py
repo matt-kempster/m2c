@@ -2233,6 +2233,7 @@ def translate_graph_from_block(
 class FunctionInfo:
     stack_info: StackInfo = attr.ib()
     flow_graph: FlowGraph = attr.ib()
+    return_type: Type = attr.ib()
 
 
 def translate_to_ast(
@@ -2260,8 +2261,11 @@ def translate_to_ast(
     c_fn: Optional[CFunction] = None
     known_params = False
     variadic = False
+    return_type = Type.any()
     if typemap and function.name in typemap.functions:
         c_fn = typemap.functions[function.name]
+        if c_fn.ret_type is not None:
+            return_type = type_from_ctype(c_fn.ret_type, typemap)
         if c_fn.is_variadic:
             stack_info.is_variadic = True
         if c_fn.params is not None:
@@ -2315,11 +2319,15 @@ def translate_to_ast(
         else:
             has_return = True
 
-    for b in return_blocks:
-        if not has_return:
+    if has_return:
+        for b in return_blocks:
+            if b.return_value is not None:
+                ret_val = as_type(b.return_value, return_type, True)
+                b.return_value = ret_val
+                mark_used(ret_val)
+    else:
+        for b in return_blocks:
             b.return_value = None
-        elif b.return_value is not None:
-            mark_used(b.return_value)
 
     assign_phis(used_phis, stack_info)
-    return FunctionInfo(stack_info, flow_graph)
+    return FunctionInfo(stack_info, flow_graph, return_type)

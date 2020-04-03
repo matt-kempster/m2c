@@ -22,7 +22,6 @@ from .translate import (
     Expression,
     FunctionInfo,
     Type,
-    as_type,
     simplify_condition,
     stringify_expr,
 )
@@ -33,7 +32,6 @@ class Context:
     flow_graph: FlowGraph = attr.ib()
     options: Options = attr.ib()
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
-    return_type: Type = attr.ib(factory=Type.any)
     is_void: bool = attr.ib(default=True)
     case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(factory=dict)
     goto_nodes: Set[Node] = attr.ib(factory=set)
@@ -490,7 +488,7 @@ def write_return(
 
     ret = ret_info.return_value
     if ret is not None:
-        ret_str = stringify_expr(as_type(ret, context.return_type, True))
+        ret_str = stringify_expr(ret)
         body.add_statement(SimpleStatement(indent, f"return {ret_str};"))
         context.is_void = False
     elif not last:
@@ -691,7 +689,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
 
     ret_type = "void "
     if not context.is_void:
-        ret_type = context.return_type.to_decl()
+        ret_type = function_info.return_type.to_decl()
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
