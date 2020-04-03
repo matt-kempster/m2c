@@ -59,8 +59,8 @@ def to_c(node: ca.Node) -> str:
     return CGenerator().visit(node)
 
 
-def basic_type(name: str) -> TypeDecl:
-    idtype = IdentifierType(names=[name])
+def basic_type(names: List[str]) -> TypeDecl:
+    idtype = IdentifierType(names=names)
     return TypeDecl(declname=None, quals=[], type=idtype)
 
 
@@ -86,7 +86,7 @@ def pointer_decay(type: Type, typemap: TypeMap) -> SimpleType:
     if isinstance(real_type, FuncDecl):
         return PtrDecl(quals=[], type=type)
     if isinstance(real_type, TypeDecl) and isinstance(real_type.type, ca.Enum):
-        return basic_type("int")
+        return basic_type(["int"])
     assert not isinstance(
         type, (ArrayDecl, FuncDecl)
     ), "resolve_typedefs can't hide arrays/functions"
@@ -352,6 +352,25 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     return Struct(fields=fields, size=size, align=align)
 
 
+def add_builtin_typedefs(source: str) -> str:
+    """Add built-in typedefs to the source code (mips_to_c emits those, so it makes
+    sense to pre-define them to simplify hand-written C contexts)."""
+    typedefs = {
+        "u8": "unsigned char",
+        "s8": "char",
+        "u16": "unsigned short",
+        "s16": "short",
+        "u32": "unsigned int",
+        "s32": "int",
+        "u64": "unsigned long long",
+        "s64": "long long",
+        "f32": "float",
+        "f64": "double",
+    }
+    line = " ".join(f"typedef {v} {k};" for k, v in typedefs.items())
+    return line + "\n" + source
+
+
 def parse_c(source: str) -> ca.FileAST:
     try:
         return CParser().parse(source, "<source>")
@@ -360,7 +379,8 @@ def parse_c(source: str) -> ca.FileAST:
         position, msg = msg.split(": ", 1)
         parts = position.split(":")
         if len(parts) >= 2:
-            lineno = int(parts[1])
+            # Adjust the line number by 1 to correct for the added typedefs
+            lineno = int(parts[1]) - 1
             posstr = f" at line {lineno}"
             if len(parts) >= 3:
                 posstr += f", column {parts[2]}"
@@ -375,8 +395,10 @@ def parse_c(source: str) -> ca.FileAST:
 
 
 def build_typemap(source: str) -> TypeMap:
+    source = add_builtin_typedefs(source)
     ast: ca.FileAST = parse_c(source)
     ret = TypeMap()
+
     for item in ast.ext:
         if isinstance(item, ca.Typedef):
             ret.typedefs[item.name] = item.type
@@ -407,7 +429,7 @@ def build_typemap(source: str) -> TypeMap:
 
         def visit_Enum(self, enum: ca.Enum) -> None:
             if enum.name is not None:
-                ret.typedefs[enum.name] = basic_type("int")
+                ret.typedefs[enum.name] = basic_type(["int"])
 
         def visit_FuncDef(self, fn: ca.FuncDef) -> None:
             if fn.decl.name is not None:
