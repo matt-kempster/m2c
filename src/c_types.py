@@ -2,8 +2,9 @@
 based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
-from typing import Dict, Set, List, Tuple, Optional, Union
+from typing import Dict, Match, Set, List, Tuple, Optional, Union
 import sys
+import re
 
 import attr
 from pycparser import c_ast as ca
@@ -371,6 +372,22 @@ def add_builtin_typedefs(source: str) -> str:
     return line + "\n" + source
 
 
+def strip_comments(text: str) -> str:
+    # https://stackoverflow.com/a/241506
+    def replacer(match: Match[str]) -> str:
+        s = match.group(0)
+        if s.startswith("/"):
+            return " " + "\n" * s.count("\n")
+        else:
+            return s
+
+    pattern = re.compile(
+        r'//.*?$|/\*.*?\*/|\'(?:\\.|[^\\\'])*\'|"(?:\\.|[^\\"])*"',
+        re.DOTALL | re.MULTILINE,
+    )
+    return re.sub(pattern, replacer, text)
+
+
 def parse_c(source: str) -> ca.FileAST:
     try:
         return CParser().parse(source, "<source>")
@@ -396,6 +413,7 @@ def parse_c(source: str) -> ca.FileAST:
 
 def build_typemap(source: str) -> TypeMap:
     source = add_builtin_typedefs(source)
+    source = strip_comments(source)
     ast: ca.FileAST = parse_c(source)
     ret = TypeMap()
 
