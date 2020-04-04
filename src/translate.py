@@ -28,7 +28,13 @@ from .flow_graph import (
 )
 from .options import Options
 from .error import DecompFailure
-from .types import Type, type_from_ctype, type_from_global_ctype, get_field
+from .types import (
+    Type,
+    type_from_ctype,
+    type_from_global_ctype,
+    get_field,
+    get_pointer_target_size,
+)
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -1325,7 +1331,9 @@ def handle_addi(args: InstrArgs) -> Expression:
         # Regular binary addition.
         if source.type.is_pointer():
             if stack_info.typemap and isinstance(imm, Literal):
-                field_name, type = get_field(source.type, imm.value, stack_info.typemap)
+                field_name, subtype = get_field(
+                    source.type, imm.value, stack_info.typemap
+                )
                 if field_name is not None:
                     return AddressOf(
                         StructAccess(
@@ -1335,7 +1343,14 @@ def handle_addi(args: InstrArgs) -> Expression:
                             stack_info=stack_info,
                             type=Type.any(),
                         ),
-                        type=Type.ptr(type),
+                        type=Type.ptr(subtype),
+                    )
+            if isinstance(imm, Literal):
+                target_size = get_pointer_target_size(source.type, stack_info.typemap)
+                if target_size and imm.value % target_size == 0:
+                    # Pointer addition.
+                    return BinaryOp(
+                        left=source, op="+", right=as_intish(imm), type=source.type
                     )
             return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
         return BinaryOp.intptr(left=source, op="+", right=imm)

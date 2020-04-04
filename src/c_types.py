@@ -145,6 +145,11 @@ def function_arg_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
     return size, size
 
 
+def var_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
+    size, align, _ = parse_struct_member(type, "", typemap)
+    return size, align
+
+
 def is_struct_type(type: Type, typemap: TypeMap) -> bool:
     type = resolve_typedefs(type, typemap)
     if not isinstance(type, TypeDecl):
@@ -239,31 +244,32 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
     return ret
 
 
+def parse_struct_member(
+    type: Type, field_name: str, typemap: TypeMap
+) -> Tuple[int, int, Optional[Struct]]:
+    type = resolve_typedefs(type, typemap)
+    if isinstance(type, PtrDecl):
+        return 4, 4, None
+    if isinstance(type, ArrayDecl):
+        if type.dim is None:
+            raise DecompFailure(f"Array field {field_name} must have a size")
+        dim = parse_constant_int(type.dim)
+        size, align, _ = parse_struct_member(type.type, field_name, typemap)
+        return size * dim, align, None
+    assert not isinstance(type, FuncDecl), "Struct can not contain a function"
+    inner_type = type.type
+    if isinstance(inner_type, (ca.Struct, ca.Union)):
+        substr = parse_struct(inner_type, typemap)
+        return substr.size, substr.align, substr
+    # Otherwise it has to be of type Enum or IdentifierType
+    size = primitive_size(inner_type)
+    return size, size, None
+
+
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
     is_union = isinstance(struct, ca.Union)
     assert struct.decls is not None, "enforced by caller"
     assert struct.decls, "Empty structs are not valid C"
-
-    def parse_struct_member(
-        type: Type, field_name: str
-    ) -> Tuple[int, int, Optional[Struct]]:
-        type = resolve_typedefs(type, typemap)
-        if isinstance(type, PtrDecl):
-            return 4, 4, None
-        if isinstance(type, ArrayDecl):
-            if type.dim is None:
-                raise DecompFailure(f"Array field {field_name} must have a size")
-            dim = parse_constant_int(type.dim)
-            size, align, _ = parse_struct_member(type.type, field_name)
-            return size * dim, align, None
-        assert not isinstance(type, FuncDecl), "Struct can not contain a function"
-        inner_type = type.type
-        if isinstance(inner_type, (ca.Struct, ca.Union)):
-            substr = parse_struct(inner_type, typemap)
-            return substr.size, substr.align, substr
-        # Otherwise it has to be of type Enum or IdentifierType
-        size = primitive_size(inner_type)
-        return size, size, None
 
     fields: Dict[int, List[StructField]] = defaultdict(list)
     union_size = 0
@@ -286,7 +292,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             #   alignment boundary, skip all bits up to that boundary and then use the
             #   next 'b' bits from there instead.
             width = parse_constant_int(decl.bitsize)
-            ssize, salign, substr = parse_struct_member(type, field_name)
+            ssize, salign, substr = parse_struct_member(type, field_name, typemap)
             align = max(align, salign)
             if width == 0:
                 continue
@@ -310,7 +316,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             offset += 1
 
         if decl.name is not None:
-            ssize, salign, substr = parse_struct_member(type, field_name)
+            ssize, salign, substr = parse_struct_member(type, field_name, typemap)
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
             fields[offset].append(StructField(type=type, name=decl.name))

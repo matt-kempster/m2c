@@ -10,6 +10,7 @@ from .c_types import (
     primitive_size,
     resolve_typedefs,
     type_to_string,
+    var_size_align,
 )
 
 
@@ -232,3 +233,15 @@ def get_field(type: Type, offset: int, typemap: TypeMap) -> Tuple[Optional[str],
                 field = fields[-1]
                 return field.name, type_from_ctype(field.type, typemap)
     return None, Type.any()
+
+
+def get_pointer_target_size(type: Type, typemap: Optional[TypeMap]) -> Optional[int]:
+    type = type.get_representative()
+    if not type.ptr_to:
+        return None
+    target = type.ptr_to
+    if isinstance(target, Type):
+        return target.size // 8 if target.size is not None else None
+    if typemap is not None:
+        return var_size_align(target, typemap)[0]
+    return None
