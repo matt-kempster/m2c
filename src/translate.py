@@ -1319,7 +1319,7 @@ def handle_addi(args: InstrArgs) -> Expression:
         var = stack_info.get_stack_var(imm.value, store=False)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
-        return AddressOf(var)
+        return AddressOf(var, type=Type.ptr(var.type))
     else:
         # Regular binary addition.
         if source.type.is_pointer():
