@@ -28,7 +28,7 @@ from .flow_graph import (
 )
 from .options import Options
 from .error import DecompFailure
-from .types import Type, type_from_ctype, type_from_global_ctype, get_field_name
+from .types import Type, type_from_ctype, type_from_global_ctype, get_field
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -642,6 +642,7 @@ class StructAccess:
     # Really it should represent the latter, but making that so is hard.
     struct_var: "Expression" = attr.ib()
     offset: int = attr.ib()
+    field_name: Optional[str] = attr.ib(cmp=False)
     stack_info: StackInfo = attr.ib(cmp=False, repr=False)
     type: Type = attr.ib(cmp=False)
 
@@ -660,8 +661,12 @@ class StructAccess:
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
         field_name: Optional[str] = None
-        if self.stack_info.typemap:
-            field_name = get_field_name(var.type, self.offset, self.stack_info.typemap)
+        if self.field_name is not None:
+            field_name = self.field_name
+        elif self.stack_info.typemap:
+            # If we didn't have a type at the struct access was constructed,
+            # but now we do, compute field name late.
+            field_name = get_field(var.type, self.offset, self.stack_info.typemap)[0]
 
         if field_name:
             has_nonzero_access = True
@@ -1099,11 +1104,21 @@ def deref(
                 location = 0
             var.type.unify(Type.ptr())
             stack_info.record_struct_access(var, location)
+            field_name: Optional[str] = None
+            type: Type = stack_info.unique_type_for("struct", (var, location))
+
+            if stack_info.typemap:
+                field_name, new_type = get_field(var.type, location, stack_info.typemap)
+                if field_name is not None:
+                    new_type.unify(type)
+                    type = new_type
+
             return StructAccess(
                 struct_var=var,
                 offset=location,
+                field_name=field_name,
                 stack_info=stack_info,
-                type=stack_info.unique_type_for("struct", (var, location)),
+                type=type,
             )
     else:
         # Keep GlobalSymbol's as-is.

@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Tuple, Union
 
 import attr
 import pycparser.c_ast as ca
@@ -216,10 +216,10 @@ def type_from_global_ctype(ctype: CType, typemap: TypeMap) -> Type:
     return Type.ptr(ctype)
 
 
-def get_field_name(type: Type, offset: int, typemap: TypeMap) -> Optional[str]:
+def get_field(type: Type, offset: int, typemap: TypeMap) -> Tuple[Optional[str], Type]:
     type = type.get_representative()
     if not type.ptr_to or isinstance(type.ptr_to, Type):
-        return None
+        return None, Type.any()
     ctype = type.ptr_to
     ctype = resolve_typedefs(ctype, typemap)
     if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
@@ -229,5 +229,6 @@ def get_field_name(type: Type, offset: int, typemap: TypeMap) -> Optional[str]:
             if fields:
                 # TODO: in case of unions, pick the field name that best corresponds
                 # to the extracted type
-                return fields[-1].name
-    return None
+                field = fields[-1]
+                return field.name, type_from_ctype(field.type, typemap)
+    return None, Type.any()
