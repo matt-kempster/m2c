@@ -1332,7 +1332,7 @@ def handle_addi(args: InstrArgs) -> Expression:
         if source.type.is_pointer():
             if stack_info.typemap and isinstance(imm, Literal):
                 field_name, subtype = get_field(
-                    source.type, imm.value, stack_info.typemap
+                    source.type, imm.value, stack_info.typemap, prefer_struct=True
                 )
                 if field_name is not None:
                     return AddressOf(

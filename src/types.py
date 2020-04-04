@@ -217,7 +217,9 @@ def type_from_global_ctype(ctype: CType, typemap: TypeMap) -> Type:
     return Type.ptr(ctype)
 
 
-def get_field(type: Type, offset: int, typemap: TypeMap) -> Tuple[Optional[str], Type]:
+def get_field(
+    type: Type, offset: int, typemap: TypeMap, prefer_struct: bool = False
+) -> Tuple[Optional[str], Type]:
     type = type.get_representative()
     if not type.ptr_to or isinstance(type.ptr_to, Type):
         return None, Type.any()
@@ -228,9 +230,16 @@ def get_field(type: Type, offset: int, typemap: TypeMap) -> Tuple[Optional[str],
         if struct:
             fields = struct.fields.get(offset)
             if fields:
-                # TODO: in case of unions, pick the field name that best corresponds
-                # to the extracted type
-                field = fields[-1]
+                if prefer_struct:
+                    # If a field is a struct, it will be placed first in the list, and
+                    # the struct subfields will be placed afterwards. Pick the struct.
+                    # (We do this when taking pointers to fields since it's more common
+                    # and more flexible.)
+                    field = fields[0]
+                else:
+                    # In the same scenario, avoid the struct. TODO: in case of unions,
+                    # pick the field name that best corresponds to the extracted type.
+                    field = fields[-1]
                 return field.name, type_from_ctype(field.type, typemap)
     return None, Type.any()
 
