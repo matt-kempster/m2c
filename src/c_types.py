@@ -402,7 +402,7 @@ def parse_c(source: str) -> ca.FileAST:
             if len(parts) >= 3:
                 posstr += f", column {parts[2]}"
             try:
-                line = source.split("\n")[lineno - 1].rstrip()
+                line = source.split("\n")[lineno].rstrip()
                 posstr += "\n\n" + line
             except IndexError:
                 posstr += "(out of bounds?)"
