@@ -637,6 +637,7 @@ class SubroutineArg:
 
 @attr.s(frozen=True, cmp=True)
 class StructAccess:
+    # Represents struct_var->offset.
     # This has cmp=True since it represents a live expression and not an access
     # at a certain point in time -- this sometimes helps get rid of phi nodes.
     # Really it should represent the latter, but making that so is hard.
@@ -1323,6 +1324,19 @@ def handle_addi(args: InstrArgs) -> Expression:
     else:
         # Regular binary addition.
         if source.type.is_pointer():
+            if stack_info.typemap and isinstance(imm, Literal):
+                field_name, type = get_field(source.type, imm.value, stack_info.typemap)
+                if field_name is not None:
+                    return AddressOf(
+                        StructAccess(
+                            struct_var=source,
+                            offset=imm.value,
+                            field_name=field_name,
+                            stack_info=stack_info,
+                            type=Type.any(),
+                        ),
+                        type=Type.ptr(type),
+                    )
             return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
         return BinaryOp.intptr(left=source, op="+", right=imm)
 
