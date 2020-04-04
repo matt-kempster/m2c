@@ -659,14 +659,11 @@ class StructAccess:
         var = unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
-        real_field_name: Optional[str] = None
+        field_name: Optional[str] = None
         if self.stack_info.typemap:
-            real_field_name = get_field_name(
-                var.type, self.offset, self.stack_info.typemap
-            )
+            field_name = get_field_name(var.type, self.offset, self.stack_info.typemap)
 
-        if real_field_name:
-            field_name = real_field_name
+        if field_name:
             has_nonzero_access = True
         else:
             field_name = "unk" + format_hex(self.offset)
