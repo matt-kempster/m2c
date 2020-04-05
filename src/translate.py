@@ -277,10 +277,14 @@ class StackInfo:
         sym_name = "saved_reg_" + reg_name
         return self.global_symbol(AsmGlobalSymbol(sym_name))
 
-    def should_save(self, expr: "Expression") -> bool:
+    def should_save(self, expr: "Expression", offset: Optional[int]) -> bool:
         if isinstance(expr, GlobalSymbol) and expr.symbol_name.startswith("saved_reg_"):
             return True
-        if isinstance(expr, PassedInArg) and not expr.copied:
+        if (
+            isinstance(expr, PassedInArg)
+            and not expr.copied
+            and (offset is None or offset == self.allocated_stack_size + expr.value)
+        ):
             return True
         return False
 
@@ -994,7 +998,7 @@ class RegInfo:
         return ", ".join(
             f"{k}: {v}"
             for k, v in sorted(self.contents.items())
-            if not self.stack_info.should_save(v)
+            if not self.stack_info.should_save(v, None)
         )
 
 
@@ -1370,16 +1374,13 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     source_val = args.reg(0)
     source_raw = args.regs.get_raw(source_reg)
     target = args.memory_ref(1)
-    # if source_reg in (SAVED_REGS + ARGUMENT_REGS)
     if (
-        source_raw is not None
-        and stack_info.should_save(source_raw)
-        and isinstance(target, AddressMode)
+        isinstance(target, AddressMode)
         and stack_info.is_stack_reg(target.rhs)
+        and source_raw is not None
+        and stack_info.should_save(source_raw, target.offset)
     ):
-        # Elide register preserval. TODO: This is wrong when arguments are
-        # stored to the stack, onto other variables than their default stack
-        # spilling locations... In that case it hides assignments.
+        # Elide register preserval.
         return None
     dest = deref(target, args.regs, stack_info, store=True)
     dest.type.unify(type)
