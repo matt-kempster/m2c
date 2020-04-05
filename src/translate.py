@@ -1081,60 +1081,49 @@ class InstrArgs:
             return self.address_of_gsym(ret)
         return ret
 
-    def memory_ref(self, index: int) -> Union[AddressMode, GlobalSymbol]:
+    def memory_ref(self, index: int) -> AddressMode:
         ret = strip_macros(self.raw_args[index])
-        if isinstance(ret, AsmAddressMode):
-            if ret.lhs is None:
-                return AddressMode(offset=0, rhs=ret.rhs)
-            assert isinstance(ret.lhs, AsmLiteral)  # macros were removed
-            return AddressMode(offset=ret.lhs.value, rhs=ret.rhs)
-        assert isinstance(ret, AsmGlobalSymbol)
-        return self.stack_info.global_symbol(ret)
+        assert isinstance(ret, AsmAddressMode)
+        if ret.lhs is None:
+            return AddressMode(offset=0, rhs=ret.rhs)
+        assert isinstance(ret.lhs, AsmLiteral)  # macros were removed
+        return AddressMode(offset=ret.lhs.value, rhs=ret.rhs)
 
     def count(self) -> int:
         return len(self.raw_args)
 
 
 def deref(
-    arg: Union[AddressMode, GlobalSymbol],
-    regs: RegInfo,
-    stack_info: StackInfo,
-    *,
-    store: bool = False,
+    arg: AddressMode, regs: RegInfo, stack_info: StackInfo, *, store: bool = False
 ) -> Expression:
-    if isinstance(arg, AddressMode):
-        location = arg.offset
-        if stack_info.is_stack_reg(arg.rhs):
-            return stack_info.get_stack_var(location, store=store)
-        else:
-            # Struct member is being dereferenced.
-            var = regs[arg.rhs]
-            if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
-                # Cope slightly better with raw pointers.
-                var = Literal(var.value + location, type=var.type)
-                location = 0
-            var.type.unify(Type.ptr())
-            stack_info.record_struct_access(var, location)
-            field_name: Optional[str] = None
-            type: Type = stack_info.unique_type_for("struct", (var, location))
+    location = arg.offset
+    if stack_info.is_stack_reg(arg.rhs):
+        return stack_info.get_stack_var(location, store=store)
 
-            if stack_info.typemap:
-                field_name, new_type = get_field(var.type, location, stack_info.typemap)
-                if field_name is not None:
-                    new_type.unify(type)
-                    type = new_type
+    # Struct member is being dereferenced.
+    var = regs[arg.rhs]
+    if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
+        # Cope slightly better with raw pointers.
+        var = Literal(var.value + location, type=var.type)
+        location = 0
+    var.type.unify(Type.ptr())
+    stack_info.record_struct_access(var, location)
+    field_name: Optional[str] = None
+    type: Type = stack_info.unique_type_for("struct", (var, location))
 
-            return StructAccess(
-                struct_var=var,
-                offset=location,
-                field_name=field_name,
-                stack_info=stack_info,
-                type=type,
-            )
-    else:
-        # Keep GlobalSymbol's as-is.
-        assert isinstance(arg, GlobalSymbol)
-        return arg
+    if stack_info.typemap:
+        field_name, new_type = get_field(var.type, location, stack_info.typemap)
+        if field_name is not None:
+            new_type.unify(type)
+            type = new_type
+
+    return StructAccess(
+        struct_var=var,
+        offset=location,
+        field_name=field_name,
+        stack_info=stack_info,
+        type=type,
+    )
 
 
 def is_repeatable_expression(expr: Expression) -> bool:
@@ -1375,8 +1364,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     source_raw = args.regs.get_raw(source_reg)
     target = args.memory_ref(1)
     if (
-        isinstance(target, AddressMode)
-        and stack_info.is_stack_reg(target.rhs)
+        stack_info.is_stack_reg(target.rhs)
         and source_raw is not None
         and stack_info.should_save(source_raw, target.offset)
     ):
