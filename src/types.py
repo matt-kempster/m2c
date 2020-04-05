@@ -237,9 +237,15 @@ def get_field(
                     # and more flexible.)
                     field = fields[0]
                 else:
-                    # In the same scenario, avoid the struct. TODO: in case of unions,
-                    # pick the field name that best corresponds to the extracted type.
-                    field = fields[-1]
+                    # In the same scenario, avoid the struct. The first subfield seems
+                    # to be a decent choice in case of unions. TODO: for unions, pick
+                    # the field name that best corresponds to the accessed type.
+                    ind = 0
+                    while ind + 1 < len(fields) and fields[ind + 1].name.startswith(
+                        fields[ind].name + "."
+                    ):
+                        ind += 1
+                    field = fields[ind]
                 return field.name, type_from_ctype(field.type, typemap)
     return None, Type.any()
 
