@@ -13,14 +13,14 @@ loop_1:
         if (sp4 < arg0)
         {
 loop_2:
-            sp8 = (s32) (sp8 + (spC * sp4));
-            sp4 = (s32) (sp4 + 1);
+            sp8 = sp8 + (spC * sp4);
+            sp4 = sp4 + 1;
             if (sp4 < arg0)
             {
                 goto loop_2;
             }
         }
-        spC = (s32) (spC + 1);
+        spC = spC + 1;
         if (spC < arg0)
         {
             goto loop_1;

@@ -9,7 +9,7 @@ f32 test(f32 arg0)
     sp4 = arg0;
     temp_t6 = (bitwise s32) sp4;
     spC = temp_t6;
-    spC = (s32) (0x5F3759DF - (temp_t6 >> 1));
+    spC = 0x5F3759DF - (temp_t6 >> 1);
     temp_f4 = (bitwise f32) spC;
     sp4 = temp_f4;
     temp_f0 = (1.5f - (((arg0 * 0.5f) * temp_f4) * temp_f4)) * temp_f4;

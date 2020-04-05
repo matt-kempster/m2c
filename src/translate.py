@@ -1372,7 +1372,8 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
         return None
     dest = deref(target, args.regs, stack_info, store=True)
     dest.type.unify(type)
-    return StoreStmt(source=as_type(source_val, type, silent=False), dest=dest)
+    silent = stack_info.is_stack_reg(target.rhs)
+    return StoreStmt(source=as_type(source_val, type, silent=silent), dest=dest)
 
 
 def parse_f32_imm(num: int) -> float:
@@ -1970,20 +1971,24 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_STORE:
             # Store a value in a permanent place.
             to_store = CASES_STORE[mnemonic](args)
-            if to_store is not None and isinstance(to_store.dest, SubroutineArg):
+            if to_store is None:
+                # Elided register preserval.
+                pass
+            elif isinstance(to_store.dest, SubroutineArg):
                 # About to call a subroutine with this argument. Skip arguments for the
                 # first four stack slots; they are also passed in registers.
                 if to_store.dest.value >= 0x10:
                     subroutine_args.append((to_store.source, to_store.dest))
-            elif to_store is not None:
+            else:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
-                    assert isinstance(to_store.source, Cast)
-                    assert to_store.source.reinterpret
-                    local_var_writes[to_store.dest] = (
-                        args.reg_ref(0),
-                        to_store.source.expr,
-                    )
+                    raw_value = to_store.source
+                    if isinstance(raw_value, Cast) and raw_value.reinterpret:
+                        # When preserving values on the stack across function calls,
+                        # ignore the type of the stack variable. The same stack slot
+                        # might be used to preserve values of different types.
+                        raw_value = raw_value.expr
+                    local_var_writes[to_store.dest] = (args.reg_ref(0), raw_value)
                 # Emit a write. This includes four steps:
                 # - mark the expression as used (since writes are always emitted)
                 # - mark the dest used (if it's a struct access it needs to be

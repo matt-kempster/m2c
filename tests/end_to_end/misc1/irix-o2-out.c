@@ -11,7 +11,7 @@ s32 test(s32 arg0, ? arg1)
     temp_v0 = D_410170 + (arg0 * 8);
     temp_a2 = temp_v0->unk4 + 1;
     sp2C = temp_a2;
-    sp24 = (s32) temp_v0->unk8;
+    sp24 = temp_v0->unk8;
     temp_ret = func_00400140(1, 2, temp_a2, arg1, arg0);
     temp_a1 = temp_ret;
     if (temp_ret == 0)
