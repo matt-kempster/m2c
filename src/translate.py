@@ -1353,8 +1353,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     # For now, make the cast silent so that output doesn't become cluttered.
     # Though really, it would be great to expose the load types somehow...
     expr = deref(args.memory_ref(1), args.regs, args.stack_info)
-    # (mypy bug...)
-    return typing.cast(Expression, as_type(expr, type, silent=True))
+    return as_type(expr, type, silent=True)
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
@@ -1677,8 +1676,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Floating point moving instructions
     "mfc1": lambda a: a.reg(1),
     "mov.s": lambda a: a.reg(1),
-    # (I don't know why this typing.cast is needed... mypy bug?)
-    "mov.d": lambda a: typing.cast(Expression, as_f64(a.dreg(1))),
+    "mov.d": lambda a: as_f64(a.dreg(1)),
     # FCSR get
     "cfc1": lambda a: ErrorExpr("cfc1"),
     # Immediates
