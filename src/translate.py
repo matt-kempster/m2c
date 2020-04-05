@@ -661,13 +661,6 @@ class StructAccess:
         return [self.struct_var]
 
     def __str__(self) -> str:
-        def p(expr: Expression) -> str:
-            # Nested dereferences may need to be parenthesized. All other
-            # expressions will already have adequate parentheses added to them.
-            # (Except Cast's, TODO...)
-            s = str(expr)
-            return f"({s})" if s.startswith("*") else s
-
         var = late_unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
@@ -688,12 +681,12 @@ class StructAccess:
             if self.offset == 0 and not has_nonzero_access:
                 return f"{var.expr}"
             else:
-                return f"{p(var.expr)}.{field_name}"
+                return f"{parenthesize_for_struct_access(var.expr)}.{field_name}"
         else:
             if self.offset == 0 and not has_nonzero_access:
                 return f"*{var}"
             else:
-                return f"{p(var)}->{field_name}"
+                return f"{parenthesize_for_struct_access(var)}->{field_name}"
 
 
 @attr.s(frozen=True, cmp=True)
@@ -1230,6 +1223,14 @@ def stringify_expr(expr: Expression) -> str:
     if ret.startswith("(") and balanced_parentheses(ret[1:-1]):
         return ret[1:-1]
     return ret
+
+
+def parenthesize_for_struct_access(expr: Expression) -> str:
+    # Nested dereferences may need to be parenthesized. All other
+    # expressions will already have adequate parentheses added to them.
+    # (Except Cast's, TODO...)
+    s = str(expr)
+    return f"({s})" if s.startswith("*") else s
 
 
 def mark_used(expr: Expression) -> None:
