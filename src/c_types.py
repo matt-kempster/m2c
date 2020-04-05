@@ -2,7 +2,7 @@
 based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
-from typing import Dict, Match, Set, List, Tuple, Optional, Union
+from typing import Any, Dict, Match, Set, List, Tuple, Optional, Union
 import sys
 import re
 
@@ -106,6 +106,31 @@ def is_void(type: Type) -> bool:
         and isinstance(type.type, ca.IdentifierType)
         and type.type.names == ["void"]
     )
+
+
+def equal_types(a: Type, b: Type) -> bool:
+    def equal(a: Any, b: Any) -> bool:
+        if type(a) != type(b):
+            return False
+        if a is None:
+            return b is None
+        if isinstance(a, list):
+            assert isinstance(b, list)
+            if len(a) != len(b):
+                return False
+            for i in range(len(a)):
+                if not equal(a[i], b[i]):
+                    return False
+            return True
+        if isinstance(a, (int, str)):
+            return bool(a == b)
+        assert isinstance(a, ca.Node)
+        for name in a.__slots__[:-2]:  # type: ignore
+            if not equal(getattr(a, name), getattr(b, name)):
+                return False
+        return True
+
+    return equal(a, b)
 
 
 def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:

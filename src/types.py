@@ -6,6 +6,7 @@ import pycparser.c_ast as ca
 from .c_types import (
     Type as CType,
     TypeMap,
+    equal_types,
     get_struct,
     primitive_size,
     resolve_typedefs,
@@ -53,8 +54,6 @@ class Type:
             return True
         if x.size is not None and y.size is not None and x.size != y.size:
             return False
-        if x.ptr_to is not None and y.ptr_to is not None and x.ptr_to != y.ptr_to:
-            return False
         size = x.size if x.size is not None else y.size
         ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
         kind = x.kind & y.kind
@@ -69,6 +68,17 @@ class Type:
             size = 32
         if sign != Type.ANY_SIGN:
             assert kind == Type.K_INT
+        if x.ptr_to is not None and y.ptr_to is not None:
+            if isinstance(x.ptr_to, Type) and isinstance(y.ptr_to, Type):
+                if not x.ptr_to.unify(y.ptr_to):
+                    return False
+            elif not isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
+                # TODO: deep resolve_typedefs (needs a typemap)
+                if not equal_types(x.ptr_to, y.ptr_to):
+                    return False
+            else:
+                # TODO: unify Type and CType (needs a typemap)
+                return False
         x.kind = kind
         x.size = size
         x.sign = sign
