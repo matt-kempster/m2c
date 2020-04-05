@@ -260,13 +260,17 @@ def get_field(
     return None, Type.any()
 
 
-def get_pointer_target_size(type: Type, typemap: Optional[TypeMap]) -> Optional[int]:
+def get_pointer_target(
+    type: Type, typemap: Optional[TypeMap]
+) -> Optional[Tuple[int, Type]]:
     type = type.get_representative()
-    if not type.ptr_to:
-        return None
     target = type.ptr_to
+    if target is None:
+        return None
     if isinstance(target, Type):
-        return target.size // 8 if target.size is not None else None
+        if target.size is None:
+            return None
+        return target.size // 8, target
     if typemap is not None:
-        return var_size_align(target, typemap)[0]
+        return var_size_align(target, typemap)[0], type_from_ctype(target, typemap)
     return None

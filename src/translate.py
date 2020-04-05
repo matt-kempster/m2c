@@ -33,7 +33,7 @@ from .types import (
     type_from_ctype,
     type_from_global_ctype,
     get_field,
-    get_pointer_target_size,
+    get_pointer_target,
 )
 from .parse_file import Rodata
 from .parse_instruction import (
@@ -690,6 +690,20 @@ class StructAccess:
 
 
 @attr.s(frozen=True, cmp=True)
+class ArrayAccess:
+    # Represents ptr[index]. cmp=True for symmetry with StructAccess.
+    ptr: "Expression" = attr.ib()
+    index: "Expression" = attr.ib()
+    type: Type = attr.ib(cmp=False)
+
+    def dependencies(self) -> List["Expression"]:
+        return [self.ptr, self.index]
+
+    def __str__(self) -> str:
+        return f"{parenthesize_for_struct_access(self.ptr)}[{self.index}]"
+
+
+@attr.s(frozen=True, cmp=True)
 class GlobalSymbol:
     symbol_name: str = attr.ib()
     type: Type = attr.ib(cmp=False)
@@ -937,6 +951,7 @@ Expression = Union[
     LocalVar,
     PassedInArg,
     StructAccess,
+    ArrayAccess,
     SubroutineArg,
     EvalOnceExpr,
     ForceVarExpr,
@@ -1120,6 +1135,7 @@ def deref(
         if field_name is not None:
             new_type.unify(type)
             type = new_type
+        # TODO: detect a->b[i].c
 
     return StructAccess(
         struct_var=var,
@@ -1155,6 +1171,8 @@ def is_trivial_expression(expr: Expression) -> bool:
         return is_trivial_expression(expr.expr)
     if isinstance(expr, StructAccess):
         return is_trivial_expression(expr.struct_var)
+    if isinstance(expr, ArrayAccess):
+        return is_trivial_expression(expr.ptr) and is_trivial_expression(expr.index)
     return False
 
 
@@ -1264,6 +1282,18 @@ def late_unwrap(expr: Expression) -> Expression:
     return expr
 
 
+def early_unwrap(expr: Expression) -> Expression:
+    """
+    Unwrap EvalOnceExpr's, even past variable boundaries.
+
+    This is fine to use even while code is being generated, but disrespects decisions
+    to use a temp for a value, so use with care.
+    """
+    if isinstance(expr, EvalOnceExpr) and not expr.always_emit:
+        return early_unwrap(expr.wrapped_expr)
+    return expr
+
+
 def unwrap_deep(expr: Expression) -> Expression:
     """
     Unwrap EvalOnceExpr's and ForceVarExpr's, even past variable boundaries.
@@ -1355,9 +1385,11 @@ def handle_addi(args: InstrArgs) -> Expression:
                     ),
                     type=Type.ptr(subtype),
                 )
+            # TODO: detect (x + A * i) + B and turn it into (x + B1 + A * i) + B2
+            # with minimal B2 if that can give us &x->B1[i].B2
         if isinstance(imm, Literal):
-            target_size = get_pointer_target_size(source.type, stack_info.typemap)
-            if target_size and imm.value % target_size == 0:
+            target = get_pointer_target(source.type, stack_info.typemap)
+            if target and imm.value % target[0] == 0:
                 # Pointer addition.
                 return BinaryOp(
                     left=source, op="+", right=as_intish(imm), type=source.type
@@ -1446,14 +1478,47 @@ def fold_mul_chains(expr: Expression) -> Expression:
     return BinaryOp.int(left=base, op="*", right=Literal(num))
 
 
-def handle_add(lhs: Expression, rhs: Expression) -> Expression:
+def array_access_from_add(
+    ptr: Expression, addend: Expression, typemap: TypeMap
+) -> Optional[Expression]:
+    target = get_pointer_target(ptr.type, typemap)
+    if target is None:
+        return None
+    uw_addend = early_unwrap(addend)
+    if (
+        isinstance(uw_addend, BinaryOp)
+        and uw_addend.op == "*"
+        and isinstance(uw_addend.right, Literal)
+    ):
+        index = uw_addend.left
+        scale = uw_addend.right.value
+    else:
+        index = addend
+        scale = 1
+    target_size, target_type = target
+    if scale != target_size:
+        return None
+    return AddressOf(ArrayAccess(ptr, index, type=target_type), type=ptr.type)
+
+
+def handle_add(lhs: Expression, rhs: Expression, stack_info: StackInfo) -> Expression:
     type = Type.intptr()
     if lhs.type.is_pointer():
         type = Type.ptr()
     elif rhs.type.is_pointer():
         type = Type.ptr()
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
-    return fold_mul_chains(expr)
+    folded_expr = fold_mul_chains(expr)
+    if folded_expr is not expr:
+        return folded_expr
+    if stack_info.typemap is not None:
+        array_expr = array_access_from_add(lhs, rhs, stack_info.typemap)
+        if array_expr is not None:
+            return array_expr
+        array_expr = array_access_from_add(rhs, lhs, stack_info.typemap)
+        if array_expr is not None:
+            return array_expr
+    return expr
 
 
 def strip_macros(arg: Argument) -> Argument:
@@ -1627,7 +1692,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Integer arithmetic
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
-    "addu": lambda a: handle_add(a.reg(1), a.reg(2)),
+    "addu": lambda a: handle_add(a.reg(1), a.reg(2), a.stack_info),
     "subu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
     "negu": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
