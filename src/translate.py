@@ -1320,32 +1320,35 @@ def handle_addi(args: InstrArgs) -> Expression:
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
         return AddressOf(var, type=Type.ptr(var.type))
+    elif source.type.is_pointer():
+        # Pointer addition (this may miss some pointers that get detected later;
+        # unfortunately that's hard to do anything about with mips_to_c's single-pass
+        # architecture.
+        if stack_info.typemap and isinstance(imm, Literal):
+            field_name, subtype = get_field(
+                source.type, imm.value, stack_info.typemap, prefer_struct=True
+            )
+            if field_name is not None:
+                return AddressOf(
+                    StructAccess(
+                        struct_var=source,
+                        offset=imm.value,
+                        field_name=field_name,
+                        stack_info=stack_info,
+                        type=Type.any(),
+                    ),
+                    type=Type.ptr(subtype),
+                )
+        if isinstance(imm, Literal):
+            target_size = get_pointer_target_size(source.type, stack_info.typemap)
+            if target_size and imm.value % target_size == 0:
+                # Pointer addition.
+                return BinaryOp(
+                    left=source, op="+", right=as_intish(imm), type=source.type
+                )
+        return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
     else:
         # Regular binary addition.
-        if source.type.is_pointer():
-            if stack_info.typemap and isinstance(imm, Literal):
-                field_name, subtype = get_field(
-                    source.type, imm.value, stack_info.typemap, prefer_struct=True
-                )
-                if field_name is not None:
-                    return AddressOf(
-                        StructAccess(
-                            struct_var=source,
-                            offset=imm.value,
-                            field_name=field_name,
-                            stack_info=stack_info,
-                            type=Type.any(),
-                        ),
-                        type=Type.ptr(subtype),
-                    )
-            if isinstance(imm, Literal):
-                target_size = get_pointer_target_size(source.type, stack_info.typemap)
-                if target_size and imm.value % target_size == 0:
-                    # Pointer addition.
-                    return BinaryOp(
-                        left=source, op="+", right=as_intish(imm), type=source.type
-                    )
-            return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
         return BinaryOp.intptr(left=source, op="+", right=imm)
 
 
