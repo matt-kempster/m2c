@@ -668,7 +668,7 @@ class StructAccess:
             s = str(expr)
             return f"({s})" if s.startswith("*") else s
 
-        var = unwrap(self.struct_var)
+        var = late_unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
         field_name: Optional[str] = None
@@ -769,9 +769,20 @@ class AddressMode:
 class EvalOnceExpr:
     wrapped_expr: "Expression" = attr.ib()
     var: Var = attr.ib()
-    always_emit: bool = attr.ib()
-    trivial: bool = attr.ib()
     type: Type = attr.ib()
+
+    # True for function calls/errors
+    always_emit: bool = attr.ib()
+
+    # Mutable state:
+
+    # True if this EvalOnceExpr should be totally transparent and not emit a variable,
+    # It may dynamically change from true to false due to forced emissions.
+    # Initially, it is based on is_trivial_expression.
+    trivial: bool = attr.ib()
+
+    # The number of expressions that depend on this EvalOnceExpr; we emit a variable
+    # if this is > 1.
     num_usages: int = attr.ib(default=0)
 
     def dependencies(self) -> List["Expression"]:
@@ -1126,7 +1137,7 @@ def deref(
     )
 
 
-def is_repeatable_expression(expr: Expression) -> bool:
+def is_trivial_expression(expr: Expression) -> bool:
     # Determine whether an expression should be evaluated only once or not.
     # TODO: Some of this logic is sketchy, saying that it's fine to repeat e.g.
     # reads even though there might have been e.g. sets or function calls in
@@ -1148,9 +1159,9 @@ def is_repeatable_expression(expr: Expression) -> bool:
     ):
         return True
     if isinstance(expr, AddressOf):
-        return is_repeatable_expression(expr.expr)
+        return is_trivial_expression(expr.expr)
     if isinstance(expr, StructAccess):
-        return is_repeatable_expression(expr.struct_var)
+        return is_trivial_expression(expr.struct_var)
     return False
 
 
@@ -1238,7 +1249,7 @@ def uses_expr(expr: Expression, sub_expr: Expression) -> bool:
     return False
 
 
-def unwrap(expr: Expression) -> Expression:
+def late_unwrap(expr: Expression) -> Expression:
     """
     Unwrap EvalOnceExpr's and ForceVarExpr's, stopping at variable boundaries.
 
@@ -1246,9 +1257,9 @@ def unwrap(expr: Expression) -> Expression:
     since at that point we don't know the final status of EvalOnceExpr's.
     """
     if isinstance(expr, ForceVarExpr):
-        return unwrap(expr.wrapped_expr)
+        return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
-        return unwrap(expr.wrapped_expr)
+        return late_unwrap(expr.wrapped_expr)
     return expr
 
 
@@ -1256,7 +1267,11 @@ def unwrap_deep(expr: Expression) -> Expression:
     """
     Unwrap EvalOnceExpr's and ForceVarExpr's, even past variable boundaries.
 
-    This should generally only be used for deep equality checks.
+    This is generally a sketchy thing to do, try to avoid it. In particular:
+    - the returned expression is not usable for emission, because it may contain
+      accesses at an earlier point in time or an expression that should not be repeated.
+    - just because unwrap_deep(a) == unwrap_deep(b) doesn't mean a and b are
+      interchangable, because they may be computed in different places.
     """
     if isinstance(expr, (EvalOnceExpr, ForceVarExpr)):
         return unwrap_deep(expr.wrapped_expr)
@@ -1420,7 +1435,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             return (base, -num)
         if isinstance(expr, EvalOnceExpr):
             base, num = fold(expr.wrapped_expr, False)
-            if num != 1 and is_repeatable_expression(base):
+            if num != 1 and is_trivial_expression(base):
                 return (base, num)
         return (expr, 1)
 
@@ -1794,6 +1809,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
+            # TODO: this is buggy: https://github.com/matt-kempster/mips_to_c/issues/46
             phi.replacement_expr = as_type(exprs[0], phi.type, silent=True)
             for _ in range(phi.num_usages):
                 mark_used(exprs[0])
@@ -1869,10 +1885,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         var = reuse_var or Var(stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
             wrapped_expr=expr,
-            always_emit=always_emit,
-            trivial=trivial,
             var=var,
             type=expr.type,
+            always_emit=always_emit,
+            trivial=trivial,
         )
         var.num_usages += 1
         stmt = EvalOnceStmt(expr)
@@ -1921,7 +1937,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             expr = eval_once(
                 expr,
                 always_emit=False,
-                trivial=is_repeatable_expression(expr),
+                trivial=is_trivial_expression(expr),
                 prefix=reg.register_name,
             )
         if reg == Register("zero"):
@@ -1954,7 +1970,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 eval_once(
                     expr,
                     always_emit=False,
-                    trivial=is_repeatable_expression(expr),
+                    trivial=is_trivial_expression(expr),
                     reuse_var=prev.var,
                 ),
             )
