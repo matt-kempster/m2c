@@ -101,7 +101,7 @@ class Type:
     def is_unsigned(self) -> bool:
         return self.get_representative().sign == Type.UNSIGNED
 
-    def get_size(self) -> int:
+    def get_size_bits(self) -> int:
         return self.get_representative().size or 32
 
     def to_decl(self, var: str) -> str:
@@ -151,6 +151,10 @@ class Type:
     @staticmethod
     def intptr() -> "Type":
         return Type(kind=Type.K_INTPTR, size=None, sign=Type.ANY_SIGN)
+
+    @staticmethod
+    def intptr32() -> "Type":
+        return Type(kind=Type.K_INTPTR, size=32, sign=Type.ANY_SIGN)
 
     @staticmethod
     def ptr(type: Optional[Union["Type", CType]] = None) -> "Type":
@@ -220,7 +224,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         return Type(kind=Type.K_INT, size=size, sign=sign)
 
 
-def type_from_global_ctype(ctype: CType, typemap: TypeMap) -> Type:
+def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, (ca.ArrayDecl)):
         return Type.ptr(real_ctype.type)
@@ -228,36 +232,74 @@ def type_from_global_ctype(ctype: CType, typemap: TypeMap) -> Type:
 
 
 def get_field(
-    type: Type, offset: int, typemap: TypeMap, prefer_struct: bool = False
-) -> Tuple[Optional[str], Type]:
+    type: Type, offset: int, typemap: TypeMap, *, target_size: Optional[int]
+) -> Tuple[Optional[str], Type, Type]:
+    if target_size is None and offset == 0:
+        # We might as well take a pointer to the whole struct
+        target = get_pointer_target(type, typemap)
+        target_type = target[1] if target else Type.any()
+        return None, target_type, type
     type = type.get_representative()
     if not type.ptr_to or isinstance(type.ptr_to, Type):
-        return None, Type.any()
-    ctype = type.ptr_to
-    ctype = resolve_typedefs(ctype, typemap)
+        return None, Type.any(), Type.ptr()
+    ctype = resolve_typedefs(type.ptr_to, typemap)
     if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
         struct = get_struct(ctype.type, typemap)
         if struct:
             fields = struct.fields.get(offset)
             if fields:
-                if prefer_struct:
-                    # If a field is a struct, it will be placed first in the list, and
-                    # the struct subfields will be placed afterwards. Pick the struct.
-                    # (We do this when taking pointers to fields since it's more common
-                    # and more flexible.)
+                # Ideally, we should use target_size and the target pointer type to
+                # determine which struct field to use if there are multiple at the
+                # same offset (e.g. if a struct starts here, or we have a union).
+                # For now though, we just use target_size as a boolean signal -- if
+                # it's known we take an arbitrary subfield that's as concrete as
+                # possible, if unknown we prefer a whole substruct. (The latter case
+                # happens when taking pointers to fields -- pointers to substructs are
+                # more common and can later be converted to concrete field pointers.)
+                if target_size is None:
+                    # Structs will be placed first in the field list.
                     field = fields[0]
                 else:
-                    # In the same scenario, avoid the struct. The first subfield seems
-                    # to be a decent choice in case of unions. TODO: for unions, pick
-                    # the field name that best corresponds to the accessed type.
+                    # Pick the first subfield in case of unions.
                     ind = 0
                     while ind + 1 < len(fields) and fields[ind + 1].name.startswith(
                         fields[ind].name + "."
                     ):
                         ind += 1
                     field = fields[ind]
-                return field.name, type_from_ctype(field.type, typemap)
-    return None, Type.any()
+                return (
+                    field.name,
+                    type_from_ctype(field.type, typemap),
+                    ptr_type_from_ctype(field.type, typemap),
+                )
+    return None, Type.any(), Type.ptr()
+
+
+def find_substruct_array(
+    type: Type, offset: int, scale: int, typemap: TypeMap
+) -> Optional[Tuple[str, int, CType]]:
+    type = type.get_representative()
+    if not type.ptr_to or isinstance(type.ptr_to, Type):
+        return None
+    ctype = resolve_typedefs(type.ptr_to, typemap)
+    if not isinstance(ctype, ca.TypeDecl):
+        return None
+    if not isinstance(ctype.type, (ca.Struct, ca.Union)):
+        return None
+    struct = get_struct(ctype.type, typemap)
+    if not struct:
+        return None
+    try:
+        sub_offset = max(off for off in struct.fields.keys() if off <= offset)
+    except ValueError:
+        return None
+    for field in struct.fields[sub_offset]:
+        field_type = resolve_typedefs(field.type, typemap)
+        if isinstance(field_type, ca.ArrayDecl):
+            size = var_size_align(field_type.type, typemap)[0]
+            if size == scale:
+                return field.name, sub_offset, field_type.type
+    return None
 
 
 def get_pointer_target(
@@ -271,6 +313,7 @@ def get_pointer_target(
         if target.size is None:
             return None
         return target.size // 8, target
-    if typemap is not None:
-        return var_size_align(target, typemap)[0], type_from_ctype(target, typemap)
-    return None
+    if typemap is None:
+        # (shouldn't happen, but might as well handle it)
+        return None
+    return var_size_align(target, typemap)[0], type_from_ctype(target, typemap)

@@ -31,9 +31,10 @@ from .error import DecompFailure
 from .types import (
     Type,
     type_from_ctype,
-    type_from_global_ctype,
+    ptr_type_from_ctype,
     get_field,
     get_pointer_target,
+    find_substruct_array,
 )
 from .parse_file import Rodata
 from .parse_instruction import (
@@ -653,6 +654,7 @@ class StructAccess:
     # Really it should represent the latter, but making that so is hard.
     struct_var: "Expression" = attr.ib()
     offset: int = attr.ib()
+    target_size: Optional[int] = attr.ib()
     field_name: Optional[str] = attr.ib(cmp=False)
     stack_info: StackInfo = attr.ib(cmp=False, repr=False)
     type: Type = attr.ib(cmp=False)
@@ -670,7 +672,12 @@ class StructAccess:
         elif self.stack_info.typemap:
             # If we didn't have a type at the struct access was constructed,
             # but now we do, compute field name late.
-            field_name = get_field(var.type, self.offset, self.stack_info.typemap)[0]
+            field_name = get_field(
+                var.type,
+                self.offset,
+                self.stack_info.typemap,
+                target_size=self.target_size,
+            )[0]
 
         if field_name:
             has_nonzero_access = True
@@ -725,7 +732,7 @@ class Literal:
 
     def __str__(self) -> str:
         if self.type.is_float():
-            if self.type.get_size() == 32:
+            if self.type.get_size_bits() == 32:
                 return f"{parse_f32_imm(self.value)}f"
             else:
                 return f"{parse_f64_imm(self.value)}"
@@ -735,9 +742,9 @@ class Literal:
                 return "NULL"
             else:
                 prefix = "(void *)"
-        elif self.type.get_size() == 8:
+        elif self.type.get_size_bits() == 8:
             prefix = "(u8)"
-        elif self.type.get_size() == 16:
+        elif self.type.get_size_bits() == 16:
             prefix = "(u16)"
         suffix = "U" if self.type.is_unsigned() else ""
         mid = (
@@ -1067,12 +1074,12 @@ class InstrArgs:
         reg = self.reg_ref(index)
         assert reg.is_float()
         ret = self.regs[reg]
-        if not isinstance(ret, Literal) or ret.type.get_size() == 64:
+        if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
             return ret
         reg_num = int(reg.register_name[1:])
         assert reg_num % 2 == 0
         other = self.regs[Register(f"f{reg_num+1}")]
-        assert isinstance(other, Literal) and other.type.get_size() != 64
+        assert isinstance(other, Literal) and other.type.get_size_bits() != 64
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
@@ -1082,7 +1089,7 @@ class InstrArgs:
         if typemap:
             ctype = typemap.var_types.get(sym.symbol_name)
             if ctype:
-                type = type_from_global_ctype(ctype, typemap)
+                type = ptr_type_from_ctype(ctype, typemap)
         return AddressOf(sym, type=type)
 
     def imm(self, index: int) -> Expression:
@@ -1113,33 +1120,45 @@ class InstrArgs:
 
 
 def deref(
-    arg: AddressMode, regs: RegInfo, stack_info: StackInfo, *, store: bool = False
+    arg: AddressMode,
+    regs: RegInfo,
+    stack_info: StackInfo,
+    *,
+    size: int,
+    store: bool = False,
 ) -> Expression:
-    location = arg.offset
+    offset = arg.offset
     if stack_info.is_stack_reg(arg.rhs):
-        return stack_info.get_stack_var(location, store=store)
+        return stack_info.get_stack_var(offset, store=store)
 
     # Struct member is being dereferenced.
     var = regs[arg.rhs]
     if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
         # Cope slightly better with raw pointers.
-        var = Literal(var.value + location, type=var.type)
-        location = 0
-    var.type.unify(Type.ptr())
-    stack_info.record_struct_access(var, location)
-    field_name: Optional[str] = None
-    type: Type = stack_info.unique_type_for("struct", (var, location))
+        var = Literal(var.value + offset, type=var.type)
+        offset = 0
 
-    if stack_info.typemap:
-        field_name, new_type = get_field(var.type, location, stack_info.typemap)
+    var.type.unify(Type.ptr())
+    stack_info.record_struct_access(var, offset)
+    field_name: Optional[str] = None
+    type: Type = stack_info.unique_type_for("struct", (var, offset))
+
+    typemap = stack_info.typemap
+    if typemap:
+        array_expr = array_access_from_add(
+            var, offset, stack_info, typemap, target_size=size, ptr=False
+        )
+        if array_expr is not None:
+            return array_expr
+        field_name, new_type, _ = get_field(var.type, offset, typemap, target_size=size)
         if field_name is not None:
             new_type.unify(type)
             type = new_type
-        # TODO: detect a->b[i].c
 
     return StructAccess(
         struct_var=var,
-        offset=location,
+        offset=offset,
+        target_size=size,
         field_name=field_name,
         stack_info=stack_info,
         type=type,
@@ -1288,6 +1307,9 @@ def early_unwrap(expr: Expression) -> Expression:
 
     This is fine to use even while code is being generated, but disrespects decisions
     to use a temp for a value, so use with care.
+
+    TODO: unwrap ForceVarExpr as well when safe, pushing the forces down into the
+    expression tree.
     """
     if isinstance(expr, EvalOnceExpr) and not expr.always_emit:
         return early_unwrap(expr.wrapped_expr)
@@ -1370,25 +1392,31 @@ def handle_addi(args: InstrArgs) -> Expression:
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
         # architecture.
-        if stack_info.typemap and isinstance(imm, Literal):
-            field_name, subtype = get_field(
-                source.type, imm.value, stack_info.typemap, prefer_struct=True
+        typemap = stack_info.typemap
+        if typemap and isinstance(imm, Literal):
+            array_access = array_access_from_add(
+                source, imm.value, stack_info, typemap, target_size=None, ptr=True
+            )
+            if array_access is not None:
+                return array_access
+
+            field_name, subtype, ptr_type = get_field(
+                source.type, imm.value, typemap, target_size=None
             )
             if field_name is not None:
                 return AddressOf(
                     StructAccess(
                         struct_var=source,
                         offset=imm.value,
+                        target_size=None,
                         field_name=field_name,
                         stack_info=stack_info,
-                        type=Type.any(),
+                        type=subtype,
                     ),
-                    type=Type.ptr(subtype),
+                    type=ptr_type,
                 )
-            # TODO: detect (x + A * i) + B and turn it into (x + B1 + A * i) + B2
-            # with minimal B2 if that can give us &x->B1[i].B2
         if isinstance(imm, Literal):
-            target = get_pointer_target(source.type, stack_info.typemap)
+            target = get_pointer_target(source.type, typemap)
             if target and imm.value % target[0] == 0:
                 # Pointer addition.
                 return BinaryOp(
@@ -1403,11 +1431,13 @@ def handle_addi(args: InstrArgs) -> Expression:
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     # For now, make the cast silent so that output doesn't become cluttered.
     # Though really, it would be great to expose the load types somehow...
-    expr = deref(args.memory_ref(1), args.regs, args.stack_info)
+    size = type.get_size_bits() // 8
+    expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
     return as_type(expr, type, silent=True)
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
+    size = type.get_size_bits() // 8
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
@@ -1420,7 +1450,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     ):
         # Elide register preserval.
         return None
-    dest = deref(target, args.regs, stack_info, store=True)
+    dest = deref(target, args.regs, stack_info, size=size, store=True)
     dest.type.unify(type)
     silent = stack_info.is_stack_reg(target.rhs)
     return StoreStmt(source=as_type(source_val, type, silent=silent), dest=dest)
@@ -1479,11 +1509,24 @@ def fold_mul_chains(expr: Expression) -> Expression:
 
 
 def array_access_from_add(
-    ptr: Expression, addend: Expression, typemap: TypeMap
+    expr: Expression,
+    offset: int,
+    stack_info: StackInfo,
+    typemap: TypeMap,
+    *,
+    target_size: Optional[int],
+    ptr: bool,
 ) -> Optional[Expression]:
-    target = get_pointer_target(ptr.type, typemap)
-    if target is None:
+    expr = early_unwrap(expr)
+    if not isinstance(expr, BinaryOp) or expr.op != "+":
         return None
+    base = expr.left
+    addend = expr.right
+    if addend.type.is_pointer() and not base.type.is_pointer():
+        base, addend = addend, base
+
+    index: Expression
+    scale: int
     uw_addend = early_unwrap(addend)
     if (
         isinstance(uw_addend, BinaryOp)
@@ -1492,13 +1535,59 @@ def array_access_from_add(
     ):
         index = uw_addend.left
         scale = uw_addend.right.value
+    elif (
+        isinstance(uw_addend, BinaryOp)
+        and uw_addend.op == "<<"
+        and isinstance(uw_addend.right, Literal)
+    ):
+        index = uw_addend.left
+        scale = 1 << uw_addend.right.value
     else:
         index = addend
         scale = 1
-    target_size, target_type = target
-    if scale != target_size:
+
+    target = get_pointer_target(base.type, typemap)
+    if target is None:
         return None
-    return AddressOf(ArrayAccess(ptr, index, type=target_type), type=ptr.type)
+
+    if target[0] == scale:
+        # base[index]
+        target_type = target[1]
+    else:
+        # base->subarray[index]
+        substr_array = find_substruct_array(base.type, offset, scale, typemap)
+        if substr_array is None:
+            return None
+        sub_field_name, sub_offset, elem_type = substr_array
+        base = StructAccess(
+            struct_var=base,
+            offset=sub_offset,
+            target_size=None,
+            field_name=sub_field_name,
+            stack_info=stack_info,
+            type=Type.ptr(elem_type),
+        )
+        offset -= sub_offset
+        target_type = type_from_ctype(elem_type, typemap)
+
+    # Add .field if necessary
+    ret: Expression = ArrayAccess(base, index, type=target_type)
+    field_name, new_type, ptr_type = get_field(
+        base.type, offset, typemap, target_size=target_size
+    )
+    if offset != 0 or (target_size is not None and target_size != scale):
+        ret = StructAccess(
+            struct_var=ret,
+            offset=offset,
+            target_size=target_size,
+            field_name=field_name,
+            stack_info=stack_info,
+            type=new_type,
+        )
+
+    if ptr:
+        ret = AddressOf(ret, type=ptr_type)
+    return ret
 
 
 def handle_add(lhs: Expression, rhs: Expression, stack_info: StackInfo) -> Expression:
@@ -1511,11 +1600,11 @@ def handle_add(lhs: Expression, rhs: Expression, stack_info: StackInfo) -> Expre
     folded_expr = fold_mul_chains(expr)
     if folded_expr is not expr:
         return folded_expr
-    if stack_info.typemap is not None:
-        array_expr = array_access_from_add(lhs, rhs, stack_info.typemap)
-        if array_expr is not None:
-            return array_expr
-        array_expr = array_access_from_add(rhs, lhs, stack_info.typemap)
+    typemap = stack_info.typemap
+    if typemap is not None:
+        array_expr = array_access_from_add(
+            expr, 0, stack_info, typemap, target_size=None, ptr=True
+        )
         if array_expr is not None:
             return array_expr
     return expr
@@ -1771,7 +1860,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lbu": lambda a: handle_load(a, type=Type.u8()),
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
-    "lw": lambda a: handle_load(a, type=Type.intptr()),
+    "lw": lambda a: handle_load(a, type=Type.intptr32()),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.f32()),
     "ldc1": lambda a: handle_load(a, type=Type.f64()),
