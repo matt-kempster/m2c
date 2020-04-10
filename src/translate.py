@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import struct
 import sys
 import traceback
 import typing
@@ -183,6 +184,7 @@ def as_ptr(expr: "Expression") -> "Expression":
 @attr.s
 class StackInfo:
     function: Function = attr.ib()
+    rodata: Rodata = attr.ib()
     typemap: Optional[TypeMap] = attr.ib()
     allocated_stack_size: int = attr.ib(default=0)
     is_leaf: bool = attr.ib(default=True)
@@ -325,9 +327,9 @@ class StackInfo:
 
 
 def get_stack_info(
-    function: Function, start_node: Node, typemap: Optional[TypeMap]
+    function: Function, rodata: Rodata, start_node: Node, typemap: Optional[TypeMap]
 ) -> StackInfo:
-    info = StackInfo(function, typemap)
+    info = StackInfo(function, rodata, typemap)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -1446,6 +1448,23 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     # Though really, it would be great to expose the load types somehow...
     size = type.get_size_bits() // 8
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
+    if isinstance(expr, StructAccess):
+        target = early_unwrap(expr.struct_var)
+        if (
+            isinstance(target, AddressOf)
+            and isinstance(target.expr, GlobalSymbol)
+            and type.is_float()
+        ):
+            sym_name = target.expr.symbol_name
+            dlist = args.stack_info.rodata.values.get(sym_name)
+            if dlist and isinstance(dlist[0], bytes) and len(dlist[0]) >= size:
+                data = dlist[0][:size]
+                val: int
+                if size == 4:
+                    val, = struct.unpack(">I", data)
+                else:
+                    val, = struct.unpack(">Q", data)
+                return Literal(value=val, type=type)
     return as_type(expr, type, silent=True)
 
 
@@ -2467,7 +2486,7 @@ def translate_to_ast(
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, rodata)
     start_node = flow_graph.entry_node()
-    stack_info = get_stack_info(function, start_node, typemap)
+    stack_info = get_stack_info(function, rodata, start_node, typemap)
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
