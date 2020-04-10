@@ -1133,10 +1133,23 @@ def deref(
 
     # Struct member is being dereferenced.
     var = regs[arg.rhs]
+
+    # Cope slightly better with raw pointers.
     if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
-        # Cope slightly better with raw pointers.
         var = Literal(var.value + offset, type=var.type)
         offset = 0
+
+    # Handle large struct offsets.
+    uw_var = early_unwrap(var)
+    if (
+        isinstance(uw_var, BinaryOp)
+        and uw_var.op == "+"
+        and isinstance(uw_var.left, Literal)
+        and uw_var.left.value % 2 ** 16 == 0
+        and uw_var.left.value < 0x1000000
+    ):
+        offset += uw_var.left.value
+        var = uw_var.right
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
