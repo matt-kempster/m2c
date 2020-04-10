@@ -1,9 +1,11 @@
 import re
+import struct
 import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union, TypeVar
 
 import attr
 
+from .error import DecompFailure
 from .options import Options
 from .parse_instruction import Instruction, Register, parse_instruction
 
@@ -42,7 +44,7 @@ class Function:
 
 @attr.s
 class Rodata:
-    values: Dict[str, List[str]] = attr.ib(factory=dict)
+    values: Dict[str, List[Union[str, bytes]]] = attr.ib(factory=dict)
 
 
 @attr.s
@@ -51,7 +53,7 @@ class MIPSFile:
     functions: List[Function] = attr.ib(factory=list)
     rodata: Rodata = attr.ib(factory=Rodata)
     current_function: Optional[Function] = attr.ib(default=None, repr=False)
-    current_rodata: List[str] = attr.ib(factory=list)
+    current_rodata: List[Union[str, bytes]] = attr.ib(factory=list)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
@@ -73,12 +75,87 @@ class MIPSFile:
         self.current_rodata = []
         self.rodata.values[symbol_name] = self.current_rodata
 
-    def new_rodata_word(self, word: str) -> None:
-        self.current_rodata.append(word)
+    def new_rodata_sym(self, sym: str) -> None:
+        self.current_rodata.append(sym)
+
+    def new_rodata_bytes(self, data: bytes) -> None:
+        if self.current_rodata and isinstance(self.current_rodata[-1], bytes):
+            self.current_rodata[-1] += data
+        else:
+            self.current_rodata.append(data)
 
     def __str__(self) -> str:
         functions_str = "\n\n".join(str(function) for function in self.functions)
         return f"# {self.filename}\n{functions_str}"
+
+
+def parse_ascii_directive(line: str, z: bool) -> bytes:
+    # This is wrong wrt encodings; the assembler really operates on bytes and
+    # not chars. But for our purposes it should be good enough.
+    in_quote = False
+    num_parts = 0
+    ret: List[bytes] = []
+    i = 0
+    digits = "0123456789"
+    while i < len(line):
+        c = line[i]
+        i += 1
+        if not in_quote:
+            if c == "," and z:
+                ret.append(b"\0")
+            if c == '"':
+                in_quote = True
+                num_parts += 1
+        else:
+            if c == '"':
+                in_quote = False
+                continue
+            if c != "\\":
+                ret.append(c.encode("utf-8"))
+                continue
+            if i == len(line):
+                raise DecompFailure(
+                    "backslash at end of .ascii line not supported: " + line
+                )
+            c = line[i]
+            i += 1
+            char_escapes = {
+                "b": b"\b",
+                "f": b"\f",
+                "n": b"\n",
+                "r": b"\r",
+                "t": b"\t",
+                "v": b"\v",
+            }
+            if c in char_escapes:
+                ret.append(char_escapes[c])
+            elif c == "x":
+                # hex literal, consume any number of hex chars, possibly none
+                value = 0
+                while i < len(line) and line[i] in digits + "abcdefABCDEF":
+                    value = value * 16 + int(line[i], 16)
+                    i += 1
+                ret.append(bytes([value & 0xFF]))
+            elif c in digits:
+                # Octal literal, consume up to two more digits.
+                # Using just the digits 0-7 would be more sane, but this matches GNU as.
+                it = 0
+                value = 0
+                while i < len(line) and line[i] in digits and it < 2:
+                    value = value * 8 + int(line[i])
+                    i += 1
+                    it += 1
+                ret.append(bytes([value & 0xFF]))
+            else:
+                ret.append(c.encode("utf-8"))
+
+    if in_quote:
+        raise DecompFailure("unterminated string literal: " + line)
+    if num_parts == 0:
+        raise DecompFailure(".ascii with no string: " + line)
+    if z:
+        ret.append(b"\0")
+    return b"".join(ret)
 
 
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
@@ -140,9 +217,40 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     curr_section = ".rodata"
                 elif line.startswith(".text"):
                     curr_section = ".text"
-                elif line.startswith(".word") and curr_section == ".rodata":
-                    for w in line[5:].split(","):
-                        mips_file.new_rodata_word(w.strip())
+                elif curr_section == ".rodata":
+                    T = TypeVar("T")
+
+                    def try_parse(parser: Callable[[], T], directive: str) -> T:
+                        try:
+                            return parser()
+                        except ValueError:
+                            raise DecompFailure(
+                                f"Could not parse rodata {directive}: {line}"
+                            )
+
+                    if line.startswith(".word"):
+                        for w in line[5:].split(","):
+                            w = w.strip()
+                            if not w or w[0].isdigit():
+                                ival = try_parse(lambda: int(w, 0), ".word")
+                                mips_file.new_rodata_bytes(struct.pack(">I", ival))
+                            else:
+                                mips_file.new_rodata_sym(w)
+                    elif line.startswith(".byte"):
+                        for w in line[5:].split(","):
+                            ival = try_parse(lambda: int(w.strip(), 0), ".byte")
+                            mips_file.new_rodata_bytes(bytes([ival]))
+                    elif line.startswith(".float"):
+                        for w in line[6:].split(","):
+                            fval = try_parse(lambda: float(w.strip()), ".float")
+                            mips_file.new_rodata_bytes(struct.pack(">f", fval))
+                    elif line.startswith(".double"):
+                        for w in line[7:].split(","):
+                            fval = try_parse(lambda: float(w.strip()), ".double")
+                            mips_file.new_rodata_bytes(struct.pack(">d", fval))
+                    elif line.startswith(".asci"):
+                        z = line.startswith(".asciz") or line.startswith(".asciiz")
+                        mips_file.new_rodata_bytes(parse_ascii_directive(line, z))
         elif ifdef_level == 0:
             if curr_section == ".rodata":
                 if line.startswith("glabel"):

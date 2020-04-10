@@ -659,7 +659,7 @@ def build_graph_from_block(
 
             jtbl_entries = rodata.values[jtbl_name]
             for entry in jtbl_entries:
-                if entry == "0":
+                if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
                     break
                 case_block = find_block_by_label(entry)
