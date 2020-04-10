@@ -12,6 +12,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict, List, Mapping, NamedTuple, Optional, Tuple
 
+COMMON_IRIX_FLAGS = ["-woff", "826"]
+
 OUT_FILES_TO_IRIX_FLAGS: Mapping[str, List[str]] = {
     "irix-g": ["-g", "-mips2"],
     "irix-o2": ["-O2", "-mips2"],
@@ -206,7 +208,9 @@ def add_test_from_file(orig_file: Path, env_vars: PathsToBinaries) -> None:
     test_dir = orig_file.parent
     for asm_filename, flags in OUT_FILES_TO_IRIX_FLAGS.items():
         asm_file_path = Path(str(test_dir / asm_filename) + ".s")
-        irix_compile_with_flag(orig_file, asm_file_path, flags, env_vars)
+        irix_compile_with_flag(
+            orig_file, asm_file_path, flags + COMMON_IRIX_FLAGS, env_vars
+        )
 
 
 def main() -> int:
