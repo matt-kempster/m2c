@@ -735,9 +735,9 @@ class Literal:
     def __str__(self) -> str:
         if self.type.is_float():
             if self.type.get_size_bits() == 32:
-                return f"{parse_f32_imm(self.value)}f"
+                return format_f32_imm(self.value) + "f"
             else:
-                return f"{parse_f64_imm(self.value)}"
+                return format_f64_imm(self.value)
         prefix = ""
         if self.type.is_pointer():
             if self.value == 0:
@@ -1488,24 +1488,14 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     return StoreStmt(source=as_type(source_val, type, silent=silent), dest=dest)
 
 
-def parse_f32_imm(num: int) -> float:
-    rep = f"{num:032b}"  # zero-padded binary representation of num
-    sign = [1, -1][int(rep[0], 2)]
-    expo = int(rep[1:9], 2)
-    frac = int(rep[9:], 2)
-    if expo == 0:
-        return float(sign * (2 ** (1 - 127)) * (frac / (2 ** 23)))
-    return float(sign * (2 ** (expo - 127)) * (frac / (2 ** 23) + 1))
+def format_f32_imm(num: int) -> str:
+    num, = struct.unpack(">f", struct.pack(">I", num & (2 ** 32 - 1)))
+    return str(num)
 
 
-def parse_f64_imm(num: int) -> float:
-    rep = f"{num:064b}"  # zero-padded binary representation of num
-    sign = [1, -1][int(rep[0], 2)]
-    expo = int(rep[1:12], 2)
-    frac = int(rep[12:], 2)
-    if expo == 0:
-        return float(sign * (2 ** (1 - 1023)) * (frac / (2 ** 52)))
-    return float(sign * (2 ** (expo - 1023)) * (frac / (2 ** 52) + 1))
+def format_f64_imm(num: int) -> str:
+    num, = struct.unpack(">d", struct.pack(">Q", num & (2 ** 64 - 1)))
+    return str(num)
 
 
 def fold_mul_chains(expr: Expression) -> Expression:
