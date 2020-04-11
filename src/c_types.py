@@ -3,7 +3,6 @@ based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
 from typing import Any, Dict, Match, Set, List, Tuple, Optional, Union
-import sys
 import re
 
 import attr

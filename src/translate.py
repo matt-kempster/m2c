@@ -1,25 +1,21 @@
-from contextlib import contextmanager
 import struct
 import sys
 import traceback
 import typing
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterator,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
 
+from .c_types import Function as CFunction
+from .c_types import (
+    TypeMap,
+    function_arg_size_align,
+    get_primitive_list,
+    is_struct_type,
+)
+from .error import DecompFailure
 from .flow_graph import (
-    Block,
     FlowGraph,
     Function,
     Node,
@@ -28,15 +24,6 @@ from .flow_graph import (
     build_flowgraph,
 )
 from .options import Options
-from .error import DecompFailure
-from .types import (
-    Type,
-    type_from_ctype,
-    ptr_type_from_ctype,
-    get_field,
-    get_pointer_target,
-    find_substruct_array,
-)
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -48,12 +35,13 @@ from .parse_instruction import (
     Macro,
     Register,
 )
-from .c_types import (
-    TypeMap,
-    Function as CFunction,
-    function_arg_size_align,
-    get_primitive_list,
-    is_struct_type,
+from .types import (
+    Type,
+    find_substruct_array,
+    get_field,
+    get_pointer_target,
+    ptr_type_from_ctype,
+    type_from_ctype,
 )
 
 ARGUMENT_REGS = list(map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"]))
@@ -1489,9 +1477,9 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 data = dlist[0][:size]
                 val: int
                 if size == 4:
-                    val, = struct.unpack(">I", data)
+                    (val,) = struct.unpack(">I", data)
                 else:
-                    val, = struct.unpack(">Q", data)
+                    (val,) = struct.unpack(">Q", data)
                 return Literal(value=val, type=type)
 
     return as_type(expr, type, silent=True)
@@ -1518,12 +1506,12 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
 
 
 def format_f32_imm(num: int) -> str:
-    num, = struct.unpack(">f", struct.pack(">I", num & (2 ** 32 - 1)))
+    (num,) = struct.unpack(">f", struct.pack(">I", num & (2 ** 32 - 1)))
     return str(num)
 
 
 def format_f64_imm(num: int) -> str:
-    num, = struct.unpack(">d", struct.pack(">Q", num & (2 ** 64 - 1)))
+    (num,) = struct.unpack(">d", struct.pack(">Q", num & (2 ** 64 - 1)))
     return str(num)
 
 

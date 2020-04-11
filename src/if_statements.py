@@ -1,6 +1,4 @@
-import queue
-import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
@@ -14,7 +12,7 @@ from .flow_graph import (
     ReturnNode,
     SwitchNode,
 )
-from .options import Options, CodingStyle
+from .options import CodingStyle, Options
 from .translate import (
     BinaryOp,
     BlockInfo,

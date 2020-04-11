@@ -3,8 +3,7 @@
 import re
 import string
 import sys
-import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union
+from typing import List, Optional, Set, Union
 
 import attr
 

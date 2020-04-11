@@ -1,13 +1,13 @@
 import re
 import struct
 import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Union, TypeVar
+from typing import Callable, Dict, List, Optional, TypeVar, Union
 
 import attr
 
 from .error import DecompFailure
 from .options import Options
-from .parse_instruction import Instruction, Register, parse_instruction
+from .parse_instruction import Instruction, parse_instruction
 
 
 @attr.s(frozen=True)

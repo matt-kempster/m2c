@@ -1,6 +1,6 @@
 import copy
 import typing
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
 
@@ -343,7 +343,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         return ([new_instr], i + consumed)
 
     def try_replace_mips1_double_load_store(
-        i: int
+        i: int,
     ) -> Optional[Tuple[List[BodyPart], int]]:
         # TODO: sometimes the instructions aren't consecutive.
         actual = function.body[i : i + 2]
