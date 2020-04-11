@@ -1989,6 +1989,8 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # call). Just use that value instead of introducing a phi node.
             # TODO: this is buggy: https://github.com/matt-kempster/mips_to_c/issues/46
             phi.replacement_expr = as_type(exprs[0], phi.type, silent=True)
+            for e in exprs[1:]:
+                e.type.unify(phi.type)
             for _ in range(phi.num_usages):
                 mark_used(exprs[0])
         else:
