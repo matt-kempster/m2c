@@ -23,6 +23,7 @@ SimpleType = Union[PtrDecl, TypeDecl]
 @attr.s
 class StructField:
     type: Type = attr.ib()
+    size: int = attr.ib()
     name: str = attr.ib()
 
 
@@ -340,13 +341,15 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             ssize, salign, substr = parse_struct_member(type, field_name, typemap)
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
-            fields[offset].append(StructField(type=type, name=decl.name))
+            fields[offset].append(StructField(type=type, size=ssize, name=decl.name))
             if substr is not None:
                 for off, sfields in substr.fields.items():
                     for field in sfields:
                         fields[offset + off].append(
                             StructField(
-                                type=field.type, name=decl.name + "." + field.name
+                                type=field.type,
+                                size=field.size,
+                                name=decl.name + "." + field.name,
                             )
                         )
             if is_union:

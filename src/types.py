@@ -296,10 +296,8 @@ def find_substruct_array(
         return None
     for field in struct.fields[sub_offset]:
         field_type = resolve_typedefs(field.type, typemap)
-        if isinstance(field_type, ca.ArrayDecl):
-            size = var_size_align(field_type.type, typemap)[0]
-            if size == scale:
-                return field.name, sub_offset, field_type.type
+        if field.size == scale and isinstance(field_type, ca.ArrayDecl):
+            return field.name, sub_offset, field_type.type
     return None
 
 
