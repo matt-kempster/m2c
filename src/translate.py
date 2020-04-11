@@ -1614,7 +1614,7 @@ def array_access_from_add(
     )
     if offset != 0 or (target_size is not None and target_size != scale):
         ret = StructAccess(
-            struct_var=ret,
+            struct_var=AddressOf(ret, type=Type.ptr()),
             offset=offset,
             target_size=target_size,
             field_name=field_name,
