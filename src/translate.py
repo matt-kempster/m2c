@@ -1159,6 +1159,7 @@ def deref(
     field_name: Optional[str] = None
     type: Type = stack_info.unique_type_for("struct", (var, offset))
 
+    # Struct access with type information.
     typemap = stack_info.typemap
     if typemap:
         array_expr = array_access_from_add(
@@ -1170,6 +1171,16 @@ def deref(
         if field_name is not None:
             new_type.unify(type)
             type = new_type
+
+    # Dereferencing pointers of known types
+    target = get_pointer_target(var.type, typemap)
+    if field_name is None and target is not None:
+        sub_size, sub_type = target
+        if sub_size == size and offset % size == 0:
+            if offset != 0:
+                index = Literal(value=offset // size, type=Type.s32())
+                return ArrayAccess(var, index, type=sub_type)
+            type = sub_type
 
     return StructAccess(
         struct_var=var,
@@ -1449,6 +1460,8 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     # Though really, it would be great to expose the load types somehow...
     size = type.get_size_bits() // 8
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
+
+    # Detect rodata constants
     if isinstance(expr, StructAccess):
         target = early_unwrap(expr.struct_var)
         if (
@@ -1466,6 +1479,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 else:
                     val, = struct.unpack(">Q", data)
                 return Literal(value=val, type=type)
+
     return as_type(expr, type, silent=True)
 
 
