@@ -101,14 +101,13 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
         c = line[i]
         i += 1
         if not in_quote:
-            if c == "," and z:
-                ret.append(b"\0")
             if c == '"':
                 in_quote = True
                 num_parts += 1
         else:
             if c == '"':
                 in_quote = False
+                ret.append(b"\0")
                 continue
             if c != "\\":
                 ret.append(c.encode("utf-8"))
