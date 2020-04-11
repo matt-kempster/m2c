@@ -1143,15 +1143,16 @@ def deref(
 
     # Handle large struct offsets.
     uw_var = early_unwrap(var)
-    if (
-        isinstance(uw_var, BinaryOp)
-        and uw_var.op == "+"
-        and isinstance(uw_var.left, Literal)
-        and uw_var.left.value % 2 ** 16 == 0
-        and uw_var.left.value < 0x1000000
-    ):
-        offset += uw_var.left.value
-        var = uw_var.right
+    if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
+        for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
+            if (
+                isinstance(addend, Literal)
+                and addend.value % 2 ** 16 == 0
+                and addend.value < 0x1000000
+            ):
+                offset += addend.value
+                var = base
+                break
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
