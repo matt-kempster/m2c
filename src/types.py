@@ -224,24 +224,25 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         return Type(kind=Type.K_INT, size=size, sign=sign)
 
 
-def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
+def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, (ca.ArrayDecl)):
-        return Type.ptr(real_ctype.type)
-    return Type.ptr(ctype)
+        return Type.ptr(real_ctype.type), True
+    return Type.ptr(ctype), False
 
 
 def get_field(
     type: Type, offset: int, typemap: TypeMap, *, target_size: Optional[int]
-) -> Tuple[Optional[str], Type, Type]:
+) -> Tuple[Optional[str], Type, Type, bool]:
+    """Returns field name, target type, target pointer type, and whether the field is an array."""
     if target_size is None and offset == 0:
         # We might as well take a pointer to the whole struct
         target = get_pointer_target(type, typemap)
         target_type = target[1] if target else Type.any()
-        return None, target_type, type
+        return None, target_type, type, False
     type = type.get_representative()
     if not type.ptr_to or isinstance(type.ptr_to, Type):
-        return None, Type.any(), Type.ptr()
+        return None, Type.any(), Type.ptr(), False
     ctype = resolve_typedefs(type.ptr_to, typemap)
     if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
         struct = get_struct(ctype.type, typemap)
@@ -270,9 +271,9 @@ def get_field(
                 return (
                     field.name,
                     type_from_ctype(field.type, typemap),
-                    ptr_type_from_ctype(field.type, typemap),
+                    *ptr_type_from_ctype(field.type, typemap),
                 )
-    return None, Type.any(), Type.ptr()
+    return None, Type.any(), Type.ptr(), False
 
 
 def find_substruct_array(

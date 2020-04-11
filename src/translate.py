@@ -1085,13 +1085,15 @@ class InstrArgs:
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
-    def address_of_gsym(self, sym: GlobalSymbol) -> AddressOf:
+    def address_of_gsym(self, sym: GlobalSymbol) -> Expression:
         type = Type.ptr()
         typemap = self.stack_info.typemap
         if typemap:
             ctype = typemap.var_types.get(sym.symbol_name)
             if ctype:
-                type = ptr_type_from_ctype(ctype, typemap)
+                type, is_ptr = ptr_type_from_ctype(ctype, typemap)
+                if is_ptr:
+                    return as_type(sym, type, True)
         return AddressOf(sym, type=type)
 
     def imm(self, index: int) -> Expression:
@@ -1167,7 +1169,9 @@ def deref(
         )
         if array_expr is not None:
             return array_expr
-        field_name, new_type, _ = get_field(var.type, offset, typemap, target_size=size)
+        field_name, new_type, _, _ = get_field(
+            var.type, offset, typemap, target_size=size
+        )
         if field_name is not None:
             new_type.unify(type)
             type = new_type
@@ -1427,21 +1431,31 @@ def handle_addi(args: InstrArgs) -> Expression:
             if array_access is not None:
                 return array_access
 
-            field_name, subtype, ptr_type = get_field(
+            field_name, subtype, ptr_type, is_array = get_field(
                 source.type, imm.value, typemap, target_size=None
             )
             if field_name is not None:
-                return AddressOf(
-                    StructAccess(
+                if is_array:
+                    return StructAccess(
                         struct_var=source,
                         offset=imm.value,
                         target_size=None,
                         field_name=field_name,
                         stack_info=stack_info,
-                        type=subtype,
-                    ),
-                    type=ptr_type,
-                )
+                        type=ptr_type,
+                    )
+                else:
+                    return AddressOf(
+                        StructAccess(
+                            struct_var=source,
+                            offset=imm.value,
+                            target_size=None,
+                            field_name=field_name,
+                            stack_info=stack_info,
+                            type=subtype,
+                        ),
+                        type=ptr_type,
+                    )
         if isinstance(imm, Literal):
             target = get_pointer_target(source.type, typemap)
             if target and imm.value % target[0] == 0:
@@ -1609,7 +1623,7 @@ def array_access_from_add(
 
     # Add .field if necessary
     ret: Expression = ArrayAccess(base, index, type=target_type)
-    field_name, new_type, ptr_type = get_field(
+    field_name, new_type, ptr_type, is_array = get_field(
         base.type, offset, typemap, target_size=target_size
     )
     if offset != 0 or (target_size is not None and target_size != scale):
@@ -1619,10 +1633,10 @@ def array_access_from_add(
             target_size=target_size,
             field_name=field_name,
             stack_info=stack_info,
-            type=new_type,
+            type=ptr_type if is_array else new_type,
         )
 
-    if ptr:
+    if ptr and not is_array:
         ret = AddressOf(ret, type=ptr_type)
     return ret
 
