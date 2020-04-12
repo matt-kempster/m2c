@@ -108,6 +108,8 @@ class BlockBuilder:
 # the label one step back and replacing the delay slot by a nop.
 #
 # Branch-likely instructions that do not appear in this pattern are kept.
+#
+# We also do this for b instructions, which sometimes occur in the same pattern.
 def normalize_likely_branches(function: Function) -> Function:
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
@@ -124,12 +126,15 @@ def normalize_likely_branches(function: Function) -> Function:
             prev_label = item
 
     insert_label_before: Dict[int, str] = {}
+    noped_instructions: Set[int] = set()
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
     for item in body_iter:
         orig_item = item
-        if isinstance(item, Instruction) and item.is_branch_likely_instruction():
+        if isinstance(item, Instruction) and (
+            item.is_branch_likely_instruction() or item.mnemonic == "b"
+        ):
             old_label = item.get_branch_target().target
             before_target = label_prev_instr[old_label]
             next_item = next(body_iter)
@@ -137,17 +142,22 @@ def normalize_likely_branches(function: Function) -> Function:
             if (
                 isinstance(next_item, Instruction)
                 and before_target is not None
+                and before_target is not next_item
                 and str(before_target) == str(next_item)
+                and id(before_target) not in noped_instructions
+                and next_item.mnemonic != "nop"
             ):
                 if id(before_target) not in label_before_instr:
                     new_label = old_label + "_before"
                     label_before_instr[id(before_target)] = new_label
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
+                mn_unlikely = item.mnemonic[:-1] or "b"
                 item = Instruction(
-                    item.mnemonic[:-1], item.args[:-1] + [new_target], item.emit_goto
+                    mn_unlikely, item.args[:-1] + [new_target], item.emit_goto
                 )
                 next_item = Instruction("nop", [])
+                noped_instructions.add(id(next_item))
             new_body.append((orig_item, item))
             new_body.append((orig_next_item, next_item))
         else:
