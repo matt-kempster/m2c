@@ -1999,12 +1999,12 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             assert isinstance(block_info, BlockInfo)
             exprs.append(block_info.final_register_states[phi.reg])
 
-        if all(unwrap_deep(e) == unwrap_deep(exprs[0]) for e in exprs[1:]):
+        first_uw = early_unwrap(exprs[0])
+        if all(early_unwrap(e) == first_uw for e in exprs[1:]):
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
-            # TODO: this is buggy: https://github.com/matt-kempster/mips_to_c/issues/46
-            phi.replacement_expr = as_type(exprs[0], phi.type, silent=True)
+            phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
             for e in exprs[1:]:
                 e.type.unify(phi.type)
             for _ in range(phi.num_usages):
