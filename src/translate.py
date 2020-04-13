@@ -110,6 +110,7 @@ SAVED_REGS = list(
             "ra",
             "31",
             "fp",
+            "gp",
         ],
     )
 )
@@ -2499,7 +2500,6 @@ def translate_to_ast(
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
-        Register("gp"): GlobalSymbol("GP", type=Type.ptr()),
         **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
     }
 
