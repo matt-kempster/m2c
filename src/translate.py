@@ -293,7 +293,7 @@ class StackInfo:
         else:
             # Some annoying bookkeeping instruction. To avoid
             # further special-casing, just return whatever - it won't matter.
-            return LocalVar(location, type=self.unique_type_for("stack", location))
+            return LocalVar(location, type=Type.any())
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg.register_name == "sp":
