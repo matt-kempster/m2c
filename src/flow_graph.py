@@ -667,7 +667,7 @@ def build_graph_from_block(
                     "to get correct control flow for non-jtbl switch jumps.)"
                 )
 
-            jtbl_entries = rodata.values[jtbl_name]
+            jtbl_entries = rodata.values[jtbl_name].data
             for entry in jtbl_entries:
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.

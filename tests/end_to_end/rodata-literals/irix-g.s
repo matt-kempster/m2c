@@ -3,7 +3,7 @@
 
 .rdata
 glabel D_400110
-.ascii "hello world\0"
+.ascii "\x22hello\x22\n\1\0world\0"
 
 .late_rodata
 glabel D_40011C

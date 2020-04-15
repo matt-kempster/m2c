@@ -43,8 +43,14 @@ class Function:
 
 
 @attr.s
+class RodataEntry:
+    data: List[Union[str, bytes]] = attr.ib(factory=list)
+    is_string: bool = attr.ib(default=False)
+
+
+@attr.s
 class Rodata:
-    values: Dict[str, List[Union[str, bytes]]] = attr.ib(factory=dict)
+    values: Dict[str, RodataEntry] = attr.ib(factory=dict)
 
 
 @attr.s
@@ -53,7 +59,7 @@ class MIPSFile:
     functions: List[Function] = attr.ib(factory=list)
     rodata: Rodata = attr.ib(factory=Rodata)
     current_function: Optional[Function] = attr.ib(default=None, repr=False)
-    current_rodata: List[Union[str, bytes]] = attr.ib(factory=list)
+    current_rodata: RodataEntry = attr.ib(factory=RodataEntry)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
@@ -72,17 +78,19 @@ class MIPSFile:
         self.current_function.new_jumptable_label(label_name)
 
     def new_rodata_symbol(self, symbol_name: str) -> None:
-        self.current_rodata = []
+        self.current_rodata = RodataEntry()
         self.rodata.values[symbol_name] = self.current_rodata
 
     def new_rodata_sym(self, sym: str) -> None:
-        self.current_rodata.append(sym)
+        self.current_rodata.data.append(sym)
 
-    def new_rodata_bytes(self, data: bytes) -> None:
-        if self.current_rodata and isinstance(self.current_rodata[-1], bytes):
-            self.current_rodata[-1] += data
+    def new_rodata_bytes(self, data: bytes, *, is_string: bool = False) -> None:
+        if not self.current_rodata.data and is_string:
+            self.current_rodata.is_string = True
+        if self.current_rodata.data and isinstance(self.current_rodata.data[-1], bytes):
+            self.current_rodata.data[-1] += data
         else:
-            self.current_rodata.append(data)
+            self.current_rodata.data.append(data)
 
     def __str__(self) -> str:
         functions_str = "\n\n".join(str(function) for function in self.functions)
@@ -107,7 +115,8 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
         else:
             if c == '"':
                 in_quote = False
-                ret.append(b"\0")
+                if z:
+                    ret.append(b"\0")
                 continue
             if c != "\\":
                 ret.append(c.encode("utf-8"))
@@ -139,7 +148,7 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
                 # Octal literal, consume up to two more digits.
                 # Using just the digits 0-7 would be more sane, but this matches GNU as.
                 it = 0
-                value = 0
+                value = int(c)
                 while i < len(line) and line[i] in digits and it < 2:
                     value = value * 8 + int(line[i])
                     i += 1
@@ -152,8 +161,6 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
         raise DecompFailure("unterminated string literal: " + line)
     if num_parts == 0:
         raise DecompFailure(".ascii with no string: " + line)
-    if z:
-        ret.append(b"\0")
     return b"".join(ret)
 
 
@@ -249,7 +256,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                             mips_file.new_rodata_bytes(struct.pack(">d", fval))
                     elif line.startswith(".asci"):
                         z = line.startswith(".asciz") or line.startswith(".asciiz")
-                        mips_file.new_rodata_bytes(parse_ascii_directive(line, z))
+                        mips_file.new_rodata_bytes(
+                            parse_ascii_directive(line, z), is_string=True
+                        )
         elif ifdef_level == 0:
             if curr_section == ".rodata":
                 if line.startswith("glabel"):

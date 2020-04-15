@@ -389,6 +389,25 @@ def format_hex(val: int) -> str:
     return format(val, "x").upper()
 
 
+def escape_char(ch: str) -> str:
+    table = {
+        "\0": "\\0",
+        "\b": "\\b",
+        "\f": "\\f",
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "\v": "\\v",
+        "\\": "\\\\",
+        '"': '\\"',
+    }
+    if ch in table:
+        return table[ch]
+    if ord(ch) < 0x20 or ord(ch) in [0xFF, 0x7F]:
+        return "\\x{:02x}".format(ord(ch))
+    return ch
+
+
 @attr.s(cmp=False)
 class Var:
     stack_info: StackInfo = attr.ib(repr=False)
@@ -746,6 +765,30 @@ class Literal:
         return prefix + mid + suffix
 
 
+@attr.s(frozen=True)
+class StringLiteral:
+    data: bytes = attr.ib()
+    type: Type = attr.ib()
+
+    def dependencies(self) -> List["Expression"]:
+        return []
+
+    def __str__(self) -> str:
+        has_trailing_null = False
+        strdata: str
+        try:
+            strdata = self.data.decode("utf-8")
+        except UnicodeDecodeError:
+            strdata = self.data.decode("latin1")
+        while strdata and strdata[-1] == "\0":
+            strdata = strdata[:-1]
+            has_trailing_null = True
+        ret = '"' + "".join(map(escape_char, strdata)) + '"'
+        if not has_trailing_null:
+            ret += " /* not null-terminated */"
+        return ret
+
+
 @attr.s(frozen=True, cmp=True)
 class AddressOf:
     expr: "Expression" = attr.ib()
@@ -945,6 +988,7 @@ Expression = Union[
     FuncCall,
     GlobalSymbol,
     Literal,
+    StringLiteral,
     AddressOf,
     LocalVar,
     PassedInArg,
@@ -1075,6 +1119,9 @@ class InstrArgs:
         return Literal(value, type=Type.f64())
 
     def address_of_gsym(self, sym: GlobalSymbol) -> Expression:
+        ent = self.stack_info.rodata.values.get(sym.symbol_name)
+        if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
+            return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
         type = Type.ptr()
         typemap = self.stack_info.typemap
         if typemap:
@@ -1217,14 +1264,16 @@ def is_trivial_expression(expr: Expression) -> bool:
 
 def is_type_obvious(expr: Expression) -> bool:
     """
-    Determine whether an expression's is "obvious", e.g. because the expression
-    refers to a variable which has a declaration. With perfect type information
-    this function would not be needed.
+    Determine whether an expression's type is "obvious", e.g. because the
+    expression refers to a variable which has a declaration. With perfect type
+    information this this function would not be needed.
 
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, (Cast, Literal, AddressOf, LocalVar, PassedInArg, FuncCall)):
+    if isinstance(
+        expr, (Cast, Literal, StringLiteral, AddressOf, LocalVar, PassedInArg, FuncCall)
+    ):
         return True
     if isinstance(expr, ForceVarExpr):
         return is_type_obvious(expr.wrapped_expr)
@@ -1473,9 +1522,9 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             and type.is_float()
         ):
             sym_name = target.expr.symbol_name
-            dlist = args.stack_info.rodata.values.get(sym_name)
-            if dlist and isinstance(dlist[0], bytes) and len(dlist[0]) >= size:
-                data = dlist[0][:size]
+            ent = args.stack_info.rodata.values.get(sym_name)
+            if ent and isinstance(ent.data[0], bytes) and len(ent.data[0]) >= size:
+                data = ent.data[0][:size]
                 val: int
                 if size == 4:
                     (val,) = struct.unpack(">I", data)

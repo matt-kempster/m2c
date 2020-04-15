@@ -3,7 +3,8 @@
 
 .rdata
 glabel D_400100
-.asciz "hello world"
+.asciz "\"hello\"\n\x01"
+.asciz "world"
 
 .late_rodata
 glabel D_40010C
