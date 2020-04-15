@@ -1,7 +1,7 @@
 import re
 import struct
 import typing
-from typing import Callable, Dict, List, Optional, TypeVar, Union
+from typing import Callable, Dict, List, Match, Optional, TypeVar, Union
 
 import attr
 
@@ -171,14 +171,25 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     ifdef_levels: List[int] = []
     curr_section = ".text"
 
+    # https://stackoverflow.com/a/241506
+    def re_comment_replacer(match: Match[str]) -> str:
+        s = match.group(0)
+        if s[0] in "/# \t":
+            return " "
+        else:
+            return s
+
+    re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
+
+    re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
+
     for line in f:
         # Check for goto markers before stripping comments
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
 
-        # Strip comments and whitespace
-        line = re.sub(r"/\*.*?\*/", "", line)
-        line = re.sub(r"#.*$", "", line)
-        line = re.sub(r"\s+", " ", line)
+        # Strip comments and whitespace (but not within strings)
+        line = re.sub(re_comment_or_string, re_comment_replacer, line)
+        line = re.sub(re_whitespace_or_string, re_comment_replacer, line)
         line = line.strip()
 
         if line == "":

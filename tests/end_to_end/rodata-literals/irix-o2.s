@@ -3,8 +3,8 @@
 
 .rdata
 glabel D_400100
-.asciz "\"hello\"\n\x01"
-.asciz "world"
+.asciz /* "before */ "\"hello\"\n\x01" /* after" */ # more"
+.asciz "world  /* comment */ #"
 
 .late_rodata
 glabel D_40010C

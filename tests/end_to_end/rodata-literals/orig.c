@@ -7,5 +7,5 @@ void test(void) {
     b = 13.0;
     c = 1.4e10;
     d = "\"hello\"\n\x01";
-    "world";
+    "world  /* comment */ #";
 }
