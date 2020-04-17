@@ -1523,7 +1523,12 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
         ):
             sym_name = target.expr.symbol_name
             ent = args.stack_info.rodata.values.get(sym_name)
-            if ent and isinstance(ent.data[0], bytes) and len(ent.data[0]) >= size:
+            if (
+                ent
+                and ent.data
+                and isinstance(ent.data[0], bytes)
+                and len(ent.data[0]) >= size
+            ):
                 data = ent.data[0][:size]
                 val: int
                 if size == 4:
