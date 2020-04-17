@@ -416,83 +416,82 @@ def build_blocks(function: Function) -> List[Block]:
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
 
     def process(item: Union[Instruction, Label]) -> None:
-        process_after: List[Union[Instruction, Label]] = []
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
             block_builder.set_label(item)
-        elif isinstance(item, Instruction):
-            process_after = []
-            if item.is_delay_slot_instruction():
-                next_item = next(body_iter)
-                if isinstance(next_item, Label):
-                    # Delay slot is a jump target, so we need the delay slot
-                    # instruction to be in two blocks at once... In most cases,
-                    # we can just duplicate it. (This happens from time to time
-                    # in -O2-compiled code.)
-                    label = next_item
-                    next_item = next(body_iter)
+            return
 
-                    assert isinstance(
-                        next_item, Instruction
-                    ), "Cannot have two labels in a row"
+        if not item.is_delay_slot_instruction():
+            block_builder.add_instruction(item)
+            return
 
-                    # (Best-effort check for whether the instruction can be
-                    # executed twice in a row.)
-                    r = next_item.args[0] if next_item.args else None
-                    if all(a != r for a in next_item.args[1:]):
-                        process_after.append(label)
-                        process_after.append(next_item)
-                    else:
-                        msg = [
-                            f"Label {label.name} refers to a delay slot; this is currently not supported.",
-                            "Please modify the assembly to work around it (e.g. copy the instruction",
-                            "to all jump sources and move the label, or add a nop to the delay slot).",
-                        ]
-                        if "_before" in label.name:
-                            msg += [
-                                "",
-                                "This label was auto-generated as the target for a branch-likely",
-                                "instruction (e.g. beql); you can also try to turn that into a non-likely",
-                                "branch if that's equivalent in this context, i.e., if it's okay to",
-                                "execute its delay slot unconditionally.",
-                            ]
-                        raise DecompFailure("\n".join(msg))
+        process_after: List[Union[Instruction, Label]] = []
+        next_item = next(body_iter)
+        if isinstance(next_item, Label):
+            # Delay slot is a jump target, so we need the delay slot
+            # instruction to be in two blocks at once... In most cases,
+            # we can just duplicate it. (This happens from time to time
+            # in -O2-compiled code.)
+            label = next_item
+            next_item = next(body_iter)
 
-                if next_item.is_delay_slot_instruction():
-                    raise DecompFailure(
-                        f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
-                    )
+            assert isinstance(next_item, Instruction), "Cannot have two labels in a row"
 
-                if item.is_branch_likely_instruction():
-                    raise DecompFailure(
-                        "Not yet able to handle general branch-likely instruction:\n"
-                        f"{item}\n\n"
-                        "Only branch-likely instructions which can be turned into non-likely\n"
-                        "versions pointing one step up are currently supported. Try rewriting\n"
-                        "the assembly using non-branch-likely instructions."
-                    )
-
-                if item.mnemonic in ["jal", "jalr"]:
-                    # Move the delay slot instruction to before the call so it
-                    # passes correct arguments.
-                    if next_item.args and next_item.args[0] == item.args[0]:
-                        raise DecompFailure(
-                            f"Instruction after {item.mnemonic} clobbers its source\n"
-                            "register, which is currently not supported.\n\n"
-                            "Try rewriting the assembly to avoid that."
-                        )
-                    block_builder.add_instruction(next_item)
-                    block_builder.add_instruction(item)
-                else:
-                    block_builder.add_instruction(item)
-                    block_builder.add_instruction(next_item)
-
-                if item.is_jump_instruction():
-                    # Split blocks at jumps, after the next instruction.
-                    block_builder.new_block()
+            # (Best-effort check for whether the instruction can be
+            # executed twice in a row.)
+            r = next_item.args[0] if next_item.args else None
+            if all(a != r for a in next_item.args[1:]):
+                process_after.append(label)
+                process_after.append(next_item)
             else:
-                block_builder.add_instruction(item)
+                msg = [
+                    f"Label {label.name} refers to a delay slot; this is currently not supported.",
+                    "Please modify the assembly to work around it (e.g. copy the instruction",
+                    "to all jump sources and move the label, or add a nop to the delay slot).",
+                ]
+                if "_before" in label.name:
+                    msg += [
+                        "",
+                        "This label was auto-generated as the target for a branch-likely",
+                        "instruction (e.g. beql); you can also try to turn that into a non-likely",
+                        "branch if that's equivalent in this context, i.e., if it's okay to",
+                        "execute its delay slot unconditionally.",
+                    ]
+                raise DecompFailure("\n".join(msg))
+
+        if next_item.is_delay_slot_instruction():
+            raise DecompFailure(
+                f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
+            )
+
+        if item.is_branch_likely_instruction():
+            raise DecompFailure(
+                "Not yet able to handle general branch-likely instruction:\n"
+                f"{item}\n\n"
+                "Only branch-likely instructions which can be turned into non-likely\n"
+                "versions pointing one step up are currently supported. Try rewriting\n"
+                "the assembly using non-branch-likely instructions."
+            )
+
+        if item.mnemonic in ["jal", "jalr"]:
+            # Move the delay slot instruction to before the call so it
+            # passes correct arguments.
+            if next_item.args and next_item.args[0] == item.args[0]:
+                raise DecompFailure(
+                    f"Instruction after {item.mnemonic} clobbers its source\n"
+                    "register, which is currently not supported.\n\n"
+                    "Try rewriting the assembly to avoid that."
+                )
+            block_builder.add_instruction(next_item)
+            block_builder.add_instruction(item)
+        else:
+            block_builder.add_instruction(item)
+            block_builder.add_instruction(next_item)
+
+        if item.is_jump_instruction():
+            # Split blocks at jumps, after the next instruction.
+            block_builder.new_block()
 
         for item in process_after:
             process(item)
