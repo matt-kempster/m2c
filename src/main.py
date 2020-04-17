@@ -30,18 +30,18 @@ def run(options: Options, function_index_or_name: str) -> int:
     mips_file: MIPSFile
     typemap: Optional[TypeMap] = None
     try:
-        with open(options.filename, "r") as f:
+        with open(options.filename, "r", encoding="utf-8-sig") as f:
             mips_file = parse_file(f, options)
 
         # Move over jtbl rodata from files given by --rodata
         for rodata_file in options.rodata_files:
-            with open(rodata_file, "r") as f:
+            with open(rodata_file, "r", encoding="utf-8-sig") as f:
                 sub_file = parse_file(f, options)
                 for (sym, value) in sub_file.rodata.values.items():
                     mips_file.rodata.values[sym] = value
 
         if options.c_context is not None:
-            with open(options.c_context, "r") as f:
+            with open(options.c_context, "r", encoding="utf-8-sig") as f:
                 typemap = build_typemap(f.read())
     except (OSError, DecompFailure) as e:
         print(e)
