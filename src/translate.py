@@ -429,7 +429,7 @@ class ErrorExpr:
     def dependencies(self) -> List["Expression"]:
         return []
 
-    def negated(self) -> "Condition":
+    def negated(self) -> "ErrorExpr":
         return self
 
     def __str__(self) -> str:
@@ -530,7 +530,7 @@ class BinaryOp:
     def is_boolean(self) -> bool:
         return self.op in ["==", "!=", ">", "<", ">=", "<="]
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Union["BinaryOp", "UnaryOp"]:
         assert self.is_boolean()
         if self.floating and self.op in ["<", ">", "<=", ">="]:
             # Floating-point comparisons cannot be negated in any nice way,
@@ -570,13 +570,34 @@ class UnaryOp:
     def dependencies(self) -> List["Expression"]:
         return [self.expr]
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Union["UnaryOp", BinaryOp]:
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
             return self.expr
         return UnaryOp("!", self, type=Type.bool())
 
     def __str__(self) -> str:
         return f"{self.op}{self.expr}"
+
+
+@attr.s(frozen=True, cmp=False)
+class CommaConditionExpr:
+    statements: List["Statement"] = attr.ib()
+    condition: Union[BinaryOp, UnaryOp, ErrorExpr] = attr.ib()
+    type: Type = Type.bool()
+
+    def dependencies(self) -> List["Expression"]:
+        assert False, "CommaConditionExpr should not be used within translate.py"
+        return []
+
+    def negated(self) -> "CommaConditionExpr":
+        return CommaConditionExpr(self.statements, self.condition.negated())
+
+    def __str__(self) -> str:
+        str_statements: List[str] = []
+        for statement in self.statements:
+            str_statements.append(str(statement).rstrip(";"))
+        comma_joined = ", ".join(str_statements)
+        return f"{comma_joined}, {self.condition}"
 
 
 @attr.s(frozen=True, cmp=False)
@@ -984,6 +1005,7 @@ class CommentStmt:
 Expression = Union[
     BinaryOp,
     UnaryOp,
+    CommaConditionExpr,
     Cast,
     FuncCall,
     GlobalSymbol,
@@ -1002,7 +1024,7 @@ Expression = Union[
     SecondF64Half,
 ]
 
-Condition = Union[BinaryOp, UnaryOp, ErrorExpr]
+Condition = Union[BinaryOp, UnaryOp, ErrorExpr, CommaConditionExpr]
 
 Statement = Union[StoreStmt, EvalOnceStmt, SetPhiStmt, ExprStmt, CommentStmt]
 
@@ -2437,6 +2459,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             process_instr(instr)
 
     if branch_condition is not None:
+        assert not isinstance(branch_condition, CommaConditionExpr)
         mark_used(branch_condition)
     if switch_value is not None:
         mark_used(switch_value)

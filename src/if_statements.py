@@ -16,6 +16,7 @@ from .options import CodingStyle, Options
 from .translate import (
     BinaryOp,
     BlockInfo,
+    CommaConditionExpr,
     Condition,
     Expression,
     FunctionInfo,
@@ -427,7 +428,7 @@ def get_full_if_condition(
     prev_node: Optional[ConditionalNode] = None
     conditions: List[Condition] = []
     # Get every condition.
-    while count > 0:
+    for i in range(count):
         if not isinstance(curr_node, ConditionalNode):
             raise DecompFailure(
                 "Complex control flow; node assumed to be "
@@ -436,11 +437,31 @@ def get_full_if_condition(
             )
         block_info = curr_node.block.block_info
         assert isinstance(block_info, BlockInfo)
-        assert block_info.branch_condition is not None
-        conditions.append(block_info.branch_condition)
+        branch_condition = block_info.branch_condition
+        assert branch_condition is not None
+
+        # Make sure to write down each block's statement list,
+        # even inside an and/or group.
+        if i == 0:
+            # The first condition in an if-statement will have
+            # unrelated statements in its to_write list. Circumvent
+            # emitting them twice by just using branch_condition:
+            conditions.append(branch_condition)
+        else:
+            comma_statements = [
+                statement
+                for statement in block_info.to_write
+                if statement.should_write()
+            ]
+            if comma_statements:
+                assert not isinstance(branch_condition, CommaConditionExpr)
+                comma_condition = CommaConditionExpr(comma_statements, branch_condition)
+                conditions.append(comma_condition)
+            else:
+                conditions.append(branch_condition)
         prev_node = curr_node
         curr_node = curr_node.fallthrough_edge
-        count -= 1
+
     # At the end, if we end up at the conditional-edge after the very start,
     # then we know this was an || statement - if the start condition were true,
     # we would have skipped ahead to the body.
