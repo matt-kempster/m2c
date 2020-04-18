@@ -2227,7 +2227,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_value
+        nonlocal branch_condition, switch_value, has_custom_return, has_function_call
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
