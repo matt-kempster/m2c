@@ -580,6 +580,24 @@ class UnaryOp:
 
 
 @attr.s(frozen=True, cmp=False)
+class CommaConditionExpr:
+    statements: List["Statement"] = attr.ib()
+    condition: "Condition" = attr.ib()
+    type: Type = Type.bool()
+
+    def dependencies(self) -> List["Expression"]:
+        assert False, "CommaConditionExpr should not be used within translate.py"
+        return []
+
+    def negated(self) -> "Condition":
+        return CommaConditionExpr(self.statements, self.condition.negated())
+
+    def __str__(self) -> str:
+        comma_joined = ", ".join(str(stmt).rstrip(";") for stmt in self.statements)
+        return f"({comma_joined}, {self.condition})"
+
+
+@attr.s(frozen=True, cmp=False)
 class Cast:
     expr: "Expression" = attr.ib()
     type: Type = attr.ib()
@@ -984,6 +1002,7 @@ class CommentStmt:
 Expression = Union[
     BinaryOp,
     UnaryOp,
+    CommaConditionExpr,
     Cast,
     FuncCall,
     GlobalSymbol,
@@ -1002,7 +1021,7 @@ Expression = Union[
     SecondF64Half,
 ]
 
-Condition = Union[BinaryOp, UnaryOp, ErrorExpr]
+Condition = Union[BinaryOp, UnaryOp, ErrorExpr, CommaConditionExpr]
 
 Statement = Union[StoreStmt, EvalOnceStmt, SetPhiStmt, ExprStmt, CommentStmt]
 
