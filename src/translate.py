@@ -429,7 +429,7 @@ class ErrorExpr:
     def dependencies(self) -> List["Expression"]:
         return []
 
-    def negated(self) -> "ErrorExpr":
+    def negated(self) -> "Condition":
         return self
 
     def __str__(self) -> str:
@@ -530,7 +530,7 @@ class BinaryOp:
     def is_boolean(self) -> bool:
         return self.op in ["==", "!=", ">", "<", ">=", "<="]
 
-    def negated(self) -> Union["BinaryOp", "UnaryOp"]:
+    def negated(self) -> "Condition":
         assert self.is_boolean()
         if self.floating and self.op in ["<", ">", "<=", ">="]:
             # Floating-point comparisons cannot be negated in any nice way,
@@ -570,7 +570,7 @@ class UnaryOp:
     def dependencies(self) -> List["Expression"]:
         return [self.expr]
 
-    def negated(self) -> Union["UnaryOp", BinaryOp]:
+    def negated(self) -> "Condition":
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
             return self.expr
         return UnaryOp("!", self, type=Type.bool())
@@ -582,22 +582,19 @@ class UnaryOp:
 @attr.s(frozen=True, cmp=False)
 class CommaConditionExpr:
     statements: List["Statement"] = attr.ib()
-    condition: Union[BinaryOp, UnaryOp, ErrorExpr] = attr.ib()
+    condition: "Condition" = attr.ib()
     type: Type = Type.bool()
 
     def dependencies(self) -> List["Expression"]:
         assert False, "CommaConditionExpr should not be used within translate.py"
         return []
 
-    def negated(self) -> "CommaConditionExpr":
+    def negated(self) -> "Condition":
         return CommaConditionExpr(self.statements, self.condition.negated())
 
     def __str__(self) -> str:
-        str_statements: List[str] = []
-        for statement in self.statements:
-            str_statements.append(str(statement).rstrip(";"))
-        comma_joined = ", ".join(str_statements)
-        return f"{comma_joined}, {self.condition}"
+        comma_joined = ", ".join(str(stmt).rstrip(";") for stmt in self.statements)
+        return f"({comma_joined}, {self.condition})"
 
 
 @attr.s(frozen=True, cmp=False)
@@ -2459,7 +2456,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             process_instr(instr)
 
     if branch_condition is not None:
-        assert not isinstance(branch_condition, CommaConditionExpr)
         mark_used(branch_condition)
     if switch_value is not None:
         mark_used(switch_value)
