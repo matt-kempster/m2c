@@ -14,14 +14,14 @@ from pycparser.plyparser import ParseError
 
 from .error import DecompFailure
 
-Type = Union[PtrDecl, ArrayDecl, TypeDecl, FuncDecl]
+CType = Union[PtrDecl, ArrayDecl, TypeDecl, FuncDecl]
 StructUnion = Union[ca.Struct, ca.Union]
 SimpleType = Union[PtrDecl, TypeDecl]
 
 
 @attr.s
 class StructField:
-    type: Type = attr.ib()
+    type: CType = attr.ib()
     size: int = attr.ib()
     name: str = attr.ib()
 
@@ -36,21 +36,21 @@ class Struct:
 
 @attr.s
 class Param:
-    type: Type = attr.ib()
+    type: CType = attr.ib()
     name: Optional[str] = attr.ib()
 
 
 @attr.s
 class Function:
-    ret_type: Optional[Type] = attr.ib()
+    ret_type: Optional[CType] = attr.ib()
     params: Optional[List[Param]] = attr.ib()
     is_variadic: bool = attr.ib()
 
 
 @attr.s
 class TypeMap:
-    typedefs: Dict[str, Type] = attr.ib(factory=dict)
-    var_types: Dict[str, Type] = attr.ib(factory=dict)
+    typedefs: Dict[str, CType] = attr.ib(factory=dict)
+    var_types: Dict[str, CType] = attr.ib(factory=dict)
     functions: Dict[str, Function] = attr.ib(factory=dict)
     named_structs: Dict[str, Struct] = attr.ib(factory=dict)
     anon_structs: Dict[int, Struct] = attr.ib(factory=dict)
@@ -65,11 +65,11 @@ def basic_type(names: List[str]) -> TypeDecl:
     return TypeDecl(declname=None, quals=[], type=idtype)
 
 
-def pointer(type: Type) -> Type:
+def pointer(type: CType) -> CType:
     return PtrDecl(quals=[], type=type)
 
 
-def resolve_typedefs(type: Type, typemap: TypeMap) -> Type:
+def resolve_typedefs(type: CType, typemap: TypeMap) -> CType:
     while (
         isinstance(type, TypeDecl)
         and isinstance(type.type, IdentifierType)
@@ -80,7 +80,7 @@ def resolve_typedefs(type: Type, typemap: TypeMap) -> Type:
     return type
 
 
-def pointer_decay(type: Type, typemap: TypeMap) -> SimpleType:
+def pointer_decay(type: CType, typemap: TypeMap) -> SimpleType:
     real_type = resolve_typedefs(type, typemap)
     if isinstance(real_type, ArrayDecl):
         return PtrDecl(quals=[], type=real_type.type)
@@ -94,13 +94,13 @@ def pointer_decay(type: Type, typemap: TypeMap) -> SimpleType:
     return type
 
 
-def deref_type(type: Type, typemap: TypeMap) -> Type:
+def deref_type(type: CType, typemap: TypeMap) -> CType:
     type = resolve_typedefs(type, typemap)
     assert isinstance(type, (ArrayDecl, PtrDecl)), "dereferencing non-pointer"
     return type.type
 
 
-def is_void(type: Type) -> bool:
+def is_void(type: CType) -> bool:
     return (
         isinstance(type, ca.TypeDecl)
         and isinstance(type.type, ca.IdentifierType)
@@ -108,7 +108,7 @@ def is_void(type: Type) -> bool:
     )
 
 
-def equal_types(a: Type, b: Type) -> bool:
+def equal_types(a: CType, b: CType) -> bool:
     def equal(a: Any, b: Any) -> bool:
         if type(a) != type(b):
             return False
@@ -150,7 +150,7 @@ def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
     return 4
 
 
-def function_arg_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
+def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
     type = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl) or isinstance(type, ArrayDecl):
         return 4, 4
@@ -166,19 +166,19 @@ def function_arg_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
     return size, size
 
 
-def var_size_align(type: Type, typemap: TypeMap) -> Tuple[int, int]:
+def var_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
     size, align, _ = parse_struct_member(type, "", typemap)
     return size, align
 
 
-def is_struct_type(type: Type, typemap: TypeMap) -> bool:
+def is_struct_type(type: CType, typemap: TypeMap) -> bool:
     type = resolve_typedefs(type, typemap)
     if not isinstance(type, TypeDecl):
         return False
     return isinstance(type.type, (ca.Struct, ca.Union))
 
 
-def get_primitive_list(type: Type, typemap: TypeMap) -> Optional[List[str]]:
+def get_primitive_list(type: CType, typemap: TypeMap) -> Optional[List[str]]:
     type = resolve_typedefs(type, typemap)
     if not isinstance(type, TypeDecl):
         return None
@@ -266,7 +266,7 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
 
 
 def parse_struct_member(
-    type: Type, field_name: str, typemap: TypeMap
+    type: CType, field_name: str, typemap: TypeMap
 ) -> Tuple[int, int, Optional[Struct]]:
     type = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl):
@@ -494,7 +494,7 @@ def set_decl_name(decl: ca.Decl) -> None:
     type.declname = name
 
 
-def type_to_string(type: Type) -> str:
+def type_to_string(type: CType) -> str:
     if isinstance(type, TypeDecl) and isinstance(type.type, (ca.Struct, ca.Union)):
         su = "struct" if isinstance(type.type, ca.Struct) else "union"
         return type.type.name or f"anon {su}"

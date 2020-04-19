@@ -4,7 +4,7 @@ import attr
 import pycparser.c_ast as ca
 
 from .c_types import (
-    Type as CType,
+    CType,
     TypeMap,
     equal_types,
     get_struct,
