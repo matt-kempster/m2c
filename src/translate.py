@@ -650,7 +650,7 @@ class LocalVar:
 class PassedInArg:
     value: int = attr.ib()
     copied: bool = attr.ib(eq=False)
-    stack_info: StackInfo = attr.ib(eq=False)
+    stack_info: StackInfo = attr.ib(eq=False, repr=False)
     type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
