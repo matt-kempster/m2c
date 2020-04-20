@@ -18,7 +18,7 @@ from .parse_instruction import (
 )
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class Block:
     index: int = attr.ib()
     label: Optional[Label] = attr.ib()
@@ -41,7 +41,7 @@ class Block:
         return f"# {name}\n{inst_str}\n"
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class BlockBuilder:
     curr_index: int = attr.ib(default=0)
     curr_label: Optional[Label] = attr.ib(default=None)
@@ -508,7 +508,7 @@ def is_loop_edge(node: "Node", edge: "Node") -> bool:
     return edge.block.index <= node.block.index
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class BaseNode:
     block: Block = attr.ib()
     emit_goto: bool = attr.ib()
@@ -524,7 +524,7 @@ class BaseNode:
         return str(self.block.index)
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class BasicNode(BaseNode):
     successor: "Node" = attr.ib()
 
@@ -541,7 +541,7 @@ class BasicNode(BaseNode):
         )
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class ConditionalNode(BaseNode):
     conditional_edge: "Node" = attr.ib()
     fallthrough_edge: "Node" = attr.ib()
@@ -562,7 +562,7 @@ class ConditionalNode(BaseNode):
         )
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class ReturnNode(BaseNode):
     index: int = attr.ib()
 
@@ -577,7 +577,7 @@ class ReturnNode(BaseNode):
         return f"{self.block}\n# {self.block.index} -> ret"
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class SwitchNode(BaseNode):
     cases: List["Node"] = attr.ib()
 

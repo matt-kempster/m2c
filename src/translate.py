@@ -408,7 +408,7 @@ def escape_char(ch: str) -> str:
     return ch
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class Var:
     stack_info: StackInfo = attr.ib(repr=False)
     prefix: str = attr.ib()
@@ -421,7 +421,7 @@ class Var:
         return self.name
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class ErrorExpr:
     desc: Optional[str] = attr.ib(default=None)
     type: Type = attr.ib(factory=Type.any)
@@ -438,7 +438,7 @@ class ErrorExpr:
         return "ERROR"
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class SecondF64Half:
     type: Type = attr.ib(factory=Type.any)
 
@@ -449,7 +449,7 @@ class SecondF64Half:
         return "(second half of f64)"
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class BinaryOp:
     left: "Expression" = attr.ib()
     op: str = attr.ib()
@@ -561,7 +561,7 @@ class BinaryOp:
         return f"({self.left} {self.op} {self.right})"
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class UnaryOp:
     op: str = attr.ib()
     expr: "Expression" = attr.ib()
@@ -579,7 +579,7 @@ class UnaryOp:
         return f"{self.op}{self.expr}"
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class CommaConditionExpr:
     statements: List["Statement"] = attr.ib()
     condition: "Condition" = attr.ib()
@@ -597,7 +597,7 @@ class CommaConditionExpr:
         return f"({comma_joined}, {self.condition})"
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class Cast:
     expr: "Expression" = attr.ib()
     type: Type = attr.ib()
@@ -620,7 +620,7 @@ class Cast:
         return f"({self.type}) {self.expr}"
 
 
-@attr.s(frozen=True, cmp=False)
+@attr.s(frozen=True, eq=False)
 class FuncCall:
     function: "Expression" = attr.ib()
     args: List["Expression"] = attr.ib()
@@ -634,10 +634,10 @@ class FuncCall:
         return f"{self.function}({args})"
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class LocalVar:
     value: int = attr.ib()
-    type: Type = attr.ib(cmp=False)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
         return []
@@ -646,12 +646,12 @@ class LocalVar:
         return f"sp{format_hex(self.value)}"
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class PassedInArg:
     value: int = attr.ib()
-    copied: bool = attr.ib(cmp=False)
-    stack_info: StackInfo = attr.ib(cmp=False)
-    type: Type = attr.ib(cmp=False)
+    copied: bool = attr.ib(eq=False)
+    stack_info: StackInfo = attr.ib(eq=False)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
         return []
@@ -662,10 +662,10 @@ class PassedInArg:
         return name or f"arg{format_hex(self.value // 4)}"
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class SubroutineArg:
     value: int = attr.ib()
-    type: Type = attr.ib(cmp=False)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
         return []
@@ -674,18 +674,18 @@ class SubroutineArg:
         return f"subroutine_arg{format_hex(self.value // 4)}"
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class StructAccess:
     # Represents struct_var->offset.
-    # This has cmp=True since it represents a live expression and not an access
-    # at a certain point in time -- this sometimes helps get rid of phi nodes.
+    # This has eq=True since it represents a live expression and not
+    # an access at a certain point in time -- this sometimes helps get rid of phi nodes.
     # Really it should represent the latter, but making that so is hard.
     struct_var: "Expression" = attr.ib()
     offset: int = attr.ib()
     target_size: Optional[int] = attr.ib()
-    field_name: Optional[str] = attr.ib(cmp=False)
-    stack_info: StackInfo = attr.ib(cmp=False, repr=False)
-    type: Type = attr.ib(cmp=False)
+    field_name: Optional[str] = attr.ib(eq=False)
+    stack_info: StackInfo = attr.ib(eq=False, repr=False)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
         return [self.struct_var]
@@ -724,12 +724,12 @@ class StructAccess:
                 return f"{parenthesize_for_struct_access(var)}->{field_name}"
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class ArrayAccess:
-    # Represents ptr[index]. cmp=True for symmetry with StructAccess.
+    # Represents ptr[index]. eq=True for symmetry with StructAccess.
     ptr: "Expression" = attr.ib()
     index: "Expression" = attr.ib()
-    type: Type = attr.ib(cmp=False)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
         return [self.ptr, self.index]
@@ -738,10 +738,10 @@ class ArrayAccess:
         return f"{parenthesize_for_struct_access(self.ptr)}[{self.index}]"
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class GlobalSymbol:
     symbol_name: str = attr.ib()
-    type: Type = attr.ib(cmp=False)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List["Expression"]:
         return []
@@ -750,10 +750,10 @@ class GlobalSymbol:
         return self.symbol_name
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class Literal:
     value: int = attr.ib()
-    type: Type = attr.ib(cmp=False, factory=Type.any)
+    type: Type = attr.ib(eq=False, factory=Type.any)
 
     def dependencies(self) -> List["Expression"]:
         return []
@@ -807,10 +807,10 @@ class StringLiteral:
         return ret
 
 
-@attr.s(frozen=True, cmp=True)
+@attr.s(frozen=True, eq=True)
 class AddressOf:
     expr: "Expression" = attr.ib()
-    type: Type = attr.ib(cmp=False, factory=Type.ptr)
+    type: Type = attr.ib(eq=False, factory=Type.ptr)
 
     def dependencies(self) -> List["Expression"]:
         return [self.expr]
@@ -831,7 +831,7 @@ class AddressMode:
             return f"({self.rhs})"
 
 
-@attr.s(frozen=False, cmp=False)
+@attr.s(frozen=False, eq=False)
 class EvalOnceExpr:
     wrapped_expr: "Expression" = attr.ib()
     var: Var = attr.ib()
@@ -869,7 +869,7 @@ class EvalOnceExpr:
             return str(self.var)
 
 
-@attr.s(cmp=False)
+@attr.s(eq=False)
 class ForceVarExpr:
     wrapped_expr: EvalOnceExpr = attr.ib()
     type: Type = attr.ib()
@@ -894,7 +894,7 @@ class ForceVarExpr:
         return str(self.wrapped_expr)
 
 
-@attr.s(frozen=False, cmp=False)
+@attr.s(frozen=False, eq=False)
 class PhiExpr:
     reg: Register = attr.ib()
     node: Node = attr.ib()
