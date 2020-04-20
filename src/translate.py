@@ -837,10 +837,12 @@ class EvalOnceExpr:
     var: Var = attr.ib()
     type: Type = attr.ib()
 
-    # True for function calls/errors
-    always_emit: bool = attr.ib()
-
     # Mutable state:
+
+    # True for function calls/errors, and may be set to true dynamically by the hack
+    # in RegInfo.__getitem__ that deals with code that does not understand ForceVarExpr.
+    # This is a mess, sorry. :(
+    always_emit: bool = attr.ib()
 
     # True if this EvalOnceExpr should be totally transparent and not emit a variable,
     # It may dynamically change from true to false due to forced emissions.
@@ -1052,6 +1054,7 @@ class RegInfo:
             # isn't used after all?), but it works decently well.
             ret.use()
             ret = ret.wrapped_expr
+            ret.always_emit = True
         return ret
 
     def __contains__(self, key: Register) -> bool:
