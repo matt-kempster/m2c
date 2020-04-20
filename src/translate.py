@@ -2166,8 +2166,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         stack_info.temp_vars.append(stmt)
         return expr
 
-    def prevent_later_uses(sub_expr: Expression) -> None:
+    def prevent_later_uses(sub_expr: Expression, avoid_reg: Optional[Register]) -> None:
         for r in regs.contents.keys():
+            if r == avoid_reg:
+                # For debugging sanity, don't modify registers that we're just about
+                # to overwrite.
+                continue
             e = regs.get_raw(r)
             assert e is not None
             if not isinstance(e, ForceVarExpr) and uses_expr(e, sub_expr):
@@ -2234,7 +2238,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # overwrite. Doing this properly is hard, however -- it would
             # involve tracking "time" for uses, and sometimes moving timestamps
             # backwards when EvalOnceExpr's get emitted as vars.
-            prevent_later_uses(prev)
+            prevent_later_uses(prev, avoid_reg=reg)
             set_reg_maybe_return(
                 reg,
                 eval_once(
@@ -2293,7 +2297,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # I'm not 100% certain that that's always the case and will remain so.
                 mark_used(to_store.source)
                 mark_used(to_store.dest)
-                prevent_later_uses(to_store.dest)
+                prevent_later_uses(to_store.dest, avoid_reg=None)
                 to_write.append(to_store)
 
         elif mnemonic in CASES_SOURCE_FIRST:
