@@ -373,6 +373,8 @@ def normalize_instruction(instr: Instruction) -> Instruction:
     if len(args) == 3:
         if instr.mnemonic == "or" and args[2] == Register("zero"):
             return Instruction("move", args[:2], instr.emit_goto)
+        if instr.mnemonic == "addu" and args[2] == Register("zero"):
+            return Instruction("move", args[:2], instr.emit_goto)
         if instr.mnemonic == "nor" and args[1] == Register("zero"):
             return Instruction("not", [args[0], args[2]])
         if instr.mnemonic == "nor" and args[2] == Register("zero"):
