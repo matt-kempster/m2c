@@ -1,14 +1,24 @@
 import argparse
+import logging
 import sys
 from typing import Optional
 
+from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import write_function
-from .options import Options, CodingStyle
+from .options import CodingStyle, Options
 from .parse_file import Function, MIPSFile, Rodata, parse_file
 from .translate import translate_to_ast
-from .c_types import TypeMap, build_typemap, dump_typemap
+
+logger = logging.getLogger(__name__)
+
+
+def set_up_logging(debug: bool) -> None:
+    logging.basicConfig(
+        format="[%(levelname)s] %(message)s",
+        level=logging.DEBUG if debug else logging.INFO,
+    )
 
 
 def decompile_function(
@@ -43,8 +53,8 @@ def run(options: Options, function_index_or_name: str) -> int:
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
                 typemap = build_typemap(f.read())
-    except (OSError, DecompFailure) as e:
-        print(e)
+    except (OSError, DecompFailure):
+        logger.exception("Encountered exception during parse phase:")
         return 1
 
     if options.dump_typemap:
@@ -69,21 +79,20 @@ def run(options: Options, function_index_or_name: str) -> int:
             try:
                 function = next(fn for fn in mips_file.functions if fn.name == name)
             except StopIteration:
-                print(f"Function {name} not found.", file=sys.stderr)
+                logger.error(f"Function {name} not found.")
                 return 1
         except IndexError:
             count = len(mips_file.functions)
-            print(
+            logger.error(
                 f"Function index {index} is out of bounds (must be between "
                 f"0 and {count - 1}).",
-                file=sys.stderr,
             )
             return 1
 
         try:
             decompile_function(options, function, mips_file.rodata, typemap)
-        except DecompFailure as e:
-            print(f"Failed to decompile function {function.name}:\n\n{e}")
+        except DecompFailure:
+            logger.exception(f"Failed to decompile function {function.name}:")
             return 1
     return 0
 
@@ -208,6 +217,7 @@ def main() -> int:
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )
+    set_up_logging(args.debug)
     return run(options, args.function)
 
 
