@@ -1,3 +1,4 @@
+import logging
 import re
 import struct
 import typing
@@ -8,6 +9,8 @@ import attr
 from .error import DecompFailure
 from .options import Options
 from .parse_instruction import Instruction, parse_instruction
+
+logger = logging.getLogger(__name__)
 
 
 @attr.s(frozen=True)
@@ -200,7 +203,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 macro_name = line.split()[1]
                 if macro_name not in defines:
                     defines[macro_name] = 0
-                    print(
+                    logger.info(
                         f"Note: assuming {macro_name} is unset for .ifdef, "
                         f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly."
                     )

@@ -1,5 +1,6 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
+import logging
 import re
 import string
 import sys
@@ -8,6 +9,8 @@ from typing import List, Optional, Set, Union
 import attr
 
 from .error import DecompFailure
+
+logger = logging.getLogger(__name__)
 
 LENGTH_TWO: Set[str] = {
     "negu",
@@ -430,5 +433,5 @@ def parse_instruction(line: str, emit_goto: bool) -> Instruction:
         instr = Instruction(mnemonic, args, emit_goto)
         return normalize_instruction(instr)
     except Exception as e:
-        print(f"Failed to parse instruction: {line}\n", file=sys.stderr)
+        logger.error(f"Failed to parse instruction: {line}")
         raise e
