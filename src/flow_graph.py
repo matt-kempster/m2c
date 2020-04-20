@@ -1,4 +1,5 @@
 import copy
+import logging
 import typing
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
@@ -16,6 +17,8 @@ from .parse_instruction import (
     Register,
     parse_instruction,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @attr.s(eq=False)
@@ -913,5 +916,7 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> None:
         else:
             pass
     dot.render("graphviz_render.gv")
-    print("Rendered to graphviz_render.gv.pdf")
-    print("Key: green = successor, red = conditional edge, blue = fallthrough edge")
+    logger.info("Rendered to graphviz_render.gv.pdf")
+    logger.info(
+        "Key: green = successor, red = conditional edge, blue = fallthrough edge"
+    )
