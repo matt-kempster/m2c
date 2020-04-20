@@ -15,7 +15,7 @@ from .c_types import (
 )
 
 
-@attr.s(eq=False, order=False, repr=False)
+@attr.s(eq=False, repr=False)
 class Type:
     """
     Type information for an expression, which may improve over time. The least
