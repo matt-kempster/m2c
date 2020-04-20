@@ -1,3 +1,4 @@
+import logging
 import struct
 import sys
 import traceback
@@ -43,6 +44,8 @@ from .types import (
     ptr_type_from_ctype,
     type_from_ctype,
 )
+
+logger = logging.getLogger(__name__)
 
 ARGUMENT_REGS = list(map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"]))
 
@@ -2486,14 +2489,12 @@ def translate_graph_from_block(
     its appropriate BlockInfo (which contains the AST of its code).
     """
 
-    if options.debug:
-        print(f"\nNode in question: {node.block}")
+    logger.debug(f"Node in question: {node.block}")
 
     # Translate the given node and discover final register states.
     try:
         block_info = translate_node_body(node, regs, stack_info)
-        if options.debug:
-            print(block_info)
+        logger.debug(block_info)
     except Exception as e:  # TODO: handle issues better
         if options.stop_on_error:
             raise e
@@ -2505,7 +2506,7 @@ def translate_graph_from_block(
 
         if isinstance(e, DecompFailure):
             emsg = str(e)
-            print(emsg)
+            logger.error(emsg)
         else:
             tb = e.__traceback__
             traceback.print_exception(None, e, tb)
@@ -2514,11 +2515,9 @@ def translate_graph_from_block(
 
         error_stmts: List[Statement] = [CommentStmt(f"Error: {emsg}")]
         if instr is not None:
-            print(
-                f"Error occurred while processing instruction: {instr}", file=sys.stderr
-            )
+            logger.error(f"Error occurred while processing instruction: {instr}")
             error_stmts.append(CommentStmt(f"At instruction: {instr}"))
-        print(file=sys.stderr)
+
         block_info = BlockInfo(
             error_stmts,
             None,
@@ -2613,9 +2612,8 @@ def translate_to_ast(
             }
         )
 
-    if options.debug:
-        print(stack_info)
-        print("\nNow, we attempt to translate:")
+    logger.debug(stack_info)
+    logger.debug("\nNow, we attempt to translate:")
 
     start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
     used_phis: List[PhiExpr] = []
