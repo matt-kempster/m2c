@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
@@ -24,6 +25,8 @@ from .translate import (
     simplify_condition,
     stringify_expr,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @attr.s
@@ -371,7 +374,7 @@ def count_non_postdominated_parents(
     # output of && and || may not be correct.
     if count not in [0, len(child.parents)] and not context.has_warned:
         context.has_warned = True
-        print(
+        logger.warning(
             "Warning: confusing control flow, output may have incorrect && "
             "and || detection. Run with --no-andor to disable detection and "
             "print gotos instead.\n"
@@ -695,8 +698,7 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         elif isinstance(node, BasicNode) and node.is_loop():
             context.loop_nodes.add(node.successor)
 
-    if options.debug:
-        print("Here's the whole function!\n")
+    logger.debug("Here's the whole function!")
     body: Body
     if options.ifs:
         body = build_flowgraph_between(context, start_node, return_node, 4)
