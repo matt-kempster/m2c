@@ -1,6 +1,6 @@
 import argparse
 import sys
-from typing import Optional
+from typing import List, Optional
 
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
@@ -26,7 +26,7 @@ def decompile_function(
     write_function(function_info, options)
 
 
-def run(options: Options, function_index_or_name: str) -> int:
+def run(options: Options) -> int:
     mips_file: MIPSFile
     typemap: Optional[TypeMap] = None
     try:
@@ -52,7 +52,7 @@ def run(options: Options, function_index_or_name: str) -> int:
         dump_typemap(typemap)
         return 0
 
-    if function_index_or_name == "all":
+    if options.function_index_or_name == "all":
         options.stop_on_error = True
         for fn in mips_file.functions:
             try:
@@ -62,10 +62,10 @@ def run(options: Options, function_index_or_name: str) -> int:
             print()
     else:
         try:
-            index = int(function_index_or_name)
+            index = int(options.function_index_or_name)
             function = mips_file.functions[index]
         except ValueError:
-            name = function_index_or_name
+            name = options.function_index_or_name
             try:
                 function = next(fn for fn in mips_file.functions if fn.name == name)
             except StopIteration:
@@ -88,7 +88,7 @@ def run(options: Options, function_index_or_name: str) -> int:
     return 0
 
 
-def main() -> int:
+def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
     parser.add_argument("filename", help="input filename")
     parser.add_argument("function", help="function index or name (or 'all')", type=str)
@@ -182,7 +182,7 @@ def main() -> int:
         action="store_true",
         help=argparse.SUPPRESS,
     )
-    args = parser.parse_args()
+    args = parser.parse_args(flags)
     preproc_defines = {
         **{d: 0 for d in args.undefined},
         **{d.split("=")[0]: 1 for d in args.defined},
@@ -192,8 +192,9 @@ def main() -> int:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
     )
-    options = Options(
+    return Options(
         filename=args.filename,
+        function_index_or_name=args.function,
         debug=args.debug,
         void=args.void,
         ifs=args.ifs,
@@ -208,8 +209,12 @@ def main() -> int:
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )
-    return run(options, args.function)
+
+
+def main() -> int:
+    options = parse_flags(sys.argv)
+    sys.exit(run(options))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

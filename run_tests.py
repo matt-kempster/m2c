@@ -4,10 +4,11 @@ import contextlib
 import difflib
 import io
 import logging
+import shlex
 import sys
 from pathlib import Path
 
-from src.main import run as decompile
+from src.main import parse_flags, run as decompile
 from src.options import Options, CodingStyle
 
 CRASH_STRING = "CRASHED\n"
@@ -21,7 +22,7 @@ def set_up_logging(debug: bool) -> None:
 
 
 def decompile_and_compare(
-    asm_file_path: Path, output_path: Path, should_overwrite: bool
+    asm_file_path: Path, output_path: Path, flags_path: Path, should_overwrite: bool
 ) -> None:
     logging.debug(
         f"Decompiling {asm_file_path}"
@@ -33,7 +34,15 @@ def decompile_and_compare(
         logging.info(f"{output_path} does not exist. Creating...")
         original_contents = "(file did not exist)"
 
-    final_contents = decompile_and_capture_output(output_path, asm_file_path)
+    flags = [str(asm_file_path), "test", "--allman", "--stop-on-error"]
+    try:
+        flags_str = flags_path.read_text()
+        flags.extend(shlex.split(flags_str))
+    except FileNotFoundError:
+        pass
+
+    options = parse_flags(flags)
+    final_contents = decompile_and_capture_output(options)
 
     if should_overwrite:
         output_path.write_text(final_contents)
@@ -52,32 +61,10 @@ def decompile_and_compare(
         )
 
 
-def decompile_and_capture_output(output_path: Path, asm_file_path: Path) -> str:
+def decompile_and_capture_output(options: Options) -> str:
     out_string = io.StringIO()
     with contextlib.redirect_stdout(out_string):
-        returncode = decompile(
-            Options(
-                filename=str(asm_file_path),
-                debug=False,
-                void=False,
-                ifs=True,
-                andor_detection=True,
-                goto_patterns=["GOTO"],
-                rodata_files=[],
-                stop_on_error=True,
-                print_assembly=False,
-                visualize_flowgraph=False,
-                c_context=None,
-                dump_typemap=False,
-                preproc_defines={},
-                coding_style=CodingStyle(
-                    newline_after_function=True,
-                    newline_after_if=True,
-                    newline_before_else=True,
-                ),
-            ),
-            "test",
-        )
+        returncode = decompile(options)
     if returncode == 0:
         return out_string.getvalue()
     else:
@@ -89,7 +76,10 @@ def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> None:
 
     for asm_file_path in e2e_test_path.glob("*.s"):
         old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
-        decompile_and_compare(asm_file_path, old_output_path, should_overwrite)
+        flags_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-flags.txt")
+        decompile_and_compare(
+            asm_file_path, old_output_path, flags_path, should_overwrite
+        )
 
 
 def main(should_overwrite: bool) -> int:
