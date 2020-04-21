@@ -212,7 +212,7 @@ def parse_flags(flags: List[str]) -> Options:
 
 
 def main() -> int:
-    options = parse_flags(sys.argv)
+    options = parse_flags(sys.argv[1:])
     sys.exit(run(options))
 
 
