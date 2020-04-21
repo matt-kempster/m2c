@@ -331,7 +331,7 @@ def get_stack_info(
         if inst.mnemonic == "addiu" and destination.register_name == "sp":
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
-            info.allocated_stack_size = abs(inst.args[2].value)
+            info.allocated_stack_size = abs(inst.args[2].signed_value())
         elif (
             inst.mnemonic == "move"
             and destination.register_name == "fp"
@@ -348,7 +348,7 @@ def get_stack_info(
             info.is_leaf = False
             if inst.args[1].lhs:
                 assert isinstance(inst.args[1].lhs, AsmLiteral)
-                info.return_addr_location = inst.args[1].lhs.value
+                info.return_addr_location = inst.args[1].lhs.signed_value()
             else:
                 # Note that this should only happen in the rare case that
                 # this function only calls subroutines with no arguments.
@@ -363,7 +363,9 @@ def get_stack_info(
             assert isinstance(inst.args[1].rhs, Register)
             if inst.args[1].lhs:
                 assert isinstance(inst.args[1].lhs, AsmLiteral)
-                info.callee_save_reg_locations[destination] = inst.args[1].lhs.value
+                info.callee_save_reg_locations[destination] = inst.args[
+                    1
+                ].lhs.signed_value()
             else:
                 info.callee_save_reg_locations[destination] = 0
 
@@ -1175,7 +1177,7 @@ class InstrArgs:
         if ret.lhs is None:
             return AddressMode(offset=0, rhs=ret.rhs)
         assert isinstance(ret.lhs, AsmLiteral)  # macros were removed
-        return AddressMode(offset=ret.lhs.value, rhs=ret.rhs)
+        return AddressMode(offset=ret.lhs.signed_value(), rhs=ret.rhs)
 
     def count(self) -> int:
         return len(self.raw_args)

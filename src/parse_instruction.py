@@ -109,6 +109,9 @@ class Macro:
 class AsmLiteral:
     value: int = attr.ib()
 
+    def signed_value(self) -> int:
+        return ((self.value + 0x8000) & 0xFFFF) - 0x8000
+
     def __str__(self) -> str:
         return hex(self.value)
 
