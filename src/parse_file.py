@@ -1,7 +1,7 @@
 import re
 import struct
 import typing
-from typing import Callable, Dict, List, Match, Optional, TypeVar, Union
+from typing import Callable, Dict, List, Match, Optional, Set, TypeVar, Union
 
 import attr
 
@@ -22,20 +22,15 @@ class Label:
 class Function:
     name: str = attr.ib()
     body: List[Union[Instruction, Label]] = attr.ib(factory=list)
-    jumptable_labels: List[Label] = attr.ib(factory=list)
 
     def new_label(self, name: str) -> None:
         self.body.append(Label(name))
-
-    def new_jumptable_label(self, name: str) -> None:
-        self.body.append(Label(name))
-        self.jumptable_labels.append(Label(name))
 
     def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
 
     def bodyless_copy(self) -> "Function":
-        return Function(name=self.name, jumptable_labels=self.jumptable_labels)
+        return Function(name=self.name)
 
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
@@ -51,6 +46,7 @@ class RodataEntry:
 @attr.s
 class Rodata:
     values: Dict[str, RodataEntry] = attr.ib(factory=dict)
+    mentioned_labels: Set[str] = attr.ib(factory=set)
 
 
 @attr.s
@@ -73,16 +69,13 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_jumptable_label(self, label_name: str) -> None:
-        assert self.current_function is not None
-        self.current_function.new_jumptable_label(label_name)
-
     def new_rodata_symbol(self, symbol_name: str) -> None:
         self.current_rodata = RodataEntry()
         self.rodata.values[symbol_name] = self.current_rodata
 
     def new_rodata_sym(self, sym: str) -> None:
         self.current_rodata.data.append(sym)
+        self.rodata.mentioned_labels.add(sym.lstrip("."))
 
     def new_rodata_bytes(self, data: bytes, *, is_string: bool = False) -> None:
         if not self.current_rodata.data and is_string:
@@ -284,7 +277,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     # Function label.
                     function_name: str = line.split(" ")[1]
                     if re.match("L(_U_)?[0-9A-F]{8}", function_name):
-                        mips_file.new_jumptable_label(function_name)
+                        # Also accept jump table targets that use "glabel", if they
+                        # follow a specific naming pattern. In the future it would be
+                        # good to switch to allowing any label that has a branch that
+                        # goes across.
+                        mips_file.new_label(function_name)
                     else:
                         mips_file.new_function(function_name)
                 elif line.startswith("func") and line.endswith(":"):

@@ -172,8 +172,12 @@ def normalize_likely_branches(function: Function) -> Function:
     return new_function
 
 
-def prune_unreferenced_labels(function: Function) -> Function:
-    labels_used: Set[str] = set(l.name for l in function.jumptable_labels)
+def prune_unreferenced_labels(function: Function, rodata: Rodata) -> Function:
+    labels_used: Set[str] = {
+        label.name
+        for label in function.body
+        if isinstance(label, Label) and label.name in rodata.mentioned_labels
+    }
     for item in function.body:
         if isinstance(item, Instruction) and item.is_branch_instruction():
             labels_used.add(item.get_branch_target().target)
@@ -405,11 +409,11 @@ def simplify_standard_patterns(function: Function) -> Function:
     return new_function
 
 
-def build_blocks(function: Function) -> List[Block]:
+def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
     function = normalize_likely_branches(function)
-    function = prune_unreferenced_labels(function)
+    function = prune_unreferenced_labels(function, rodata)
     function = simplify_standard_patterns(function)
-    function = prune_unreferenced_labels(function)
+    function = prune_unreferenced_labels(function, rodata)
 
     block_builder = BlockBuilder()
 
@@ -669,6 +673,7 @@ def build_graph_from_block(
 
             jtbl_entries = rodata.values[jtbl_name].data
             for entry in jtbl_entries:
+                entry = entry.lstrip(".")
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
                     break
@@ -891,7 +896,7 @@ class FlowGraph:
 
 
 def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
-    blocks = build_blocks(function)
+    blocks = build_blocks(function, rodata)
     nodes = build_nodes(function, blocks, rodata)
     nodes = duplicate_premature_returns(nodes)
     ensure_fallthrough(nodes)
