@@ -177,7 +177,7 @@ def emit_goto_or_early_return(
     """Emit a goto to a node, *unless* that node is an early return, which we
     can't goto to since it's not a real node and won't ever be emitted."""
     if isinstance(target, ReturnNode) and not target.is_real():
-        write_return(context, body, target, indent, last=False)
+        add_return_statement(context, body, target, indent, last=False)
     else:
         emit_goto(context, target, body, indent)
 
@@ -497,7 +497,7 @@ def get_full_if_condition(
         )
 
 
-def write_return(
+def add_return_statement(
     context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
     emit_node(context, node, body, indent)
@@ -574,7 +574,7 @@ def build_flowgraph_between(
                 assert block_info.switch_value is not None
                 emit_switch_jump(context, block_info.switch_value, body, indent)
             else:  # ReturnNode
-                write_return(context, body, curr_start, indent, last=False)
+                add_return_statement(context, body, curr_start, indent, last=False)
 
             # Advance to the next node in block order. This may skip over
             # unreachable blocks -- hopefully none too important.
@@ -608,7 +608,7 @@ def build_flowgraph_between(
         else:  # ReturnNode
             # Write the return node, and break, because there is nothing more
             # to process.
-            write_return(context, body, curr_start, indent, last=False)
+            add_return_statement(context, body, curr_start, indent, last=False)
             break
 
     return body
@@ -665,8 +665,9 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
     return body
 
 
-def write_function(function_info: FunctionInfo, options: Options) -> None:
-    context = Context(flow_graph=function_info.flow_graph, options=options)
+def build_body(
+    context: Context, function_info: FunctionInfo, options: Options,
+) -> Body:
     start_node: Node = context.flow_graph.entry_node()
     return_node: Optional[ReturnNode] = context.flow_graph.return_node()
     if return_node is None:
@@ -704,7 +705,16 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
         body = build_naive(context, context.flow_graph.nodes)
 
     if return_node.index != -1:
-        write_return(context, body, return_node, 4, last=True)
+        add_return_statement(context, body, return_node, 4, last=True)
+
+    return body
+
+
+def get_function_text(function_info: FunctionInfo, options: Options) -> str:
+    context = Context(flow_graph=function_info.flow_graph, options=options)
+    body: Body = build_body(context, function_info, options)
+
+    function_lines: List[str] = []
 
     fn_name = function_info.stack_info.function.name
     arg_strs = []
@@ -713,18 +723,20 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
+
     fn_header = f"{fn_name}({arg_str})"
+
     if context.is_void:
         fn_header = f"void {fn_header}"
     else:
         fn_header = function_info.return_type.to_decl(fn_header)
     whitespace = "\n" if options.coding_style.newline_after_function else " "
-    print(f"{fn_header}{whitespace}{{")
+    function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:
         type_decl = local_var.type.to_decl(str(local_var))
-        print(SimpleStatement(4, f"{type_decl};"))
+        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
         any_decl = True
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
@@ -734,13 +746,15 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
             temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(list(temp_decls)):
-        print(SimpleStatement(4, decl))
+        function_lines.append(str(SimpleStatement(4, decl)))
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl(phi_var.get_var_name())
-        print(SimpleStatement(4, f"{type_decl};"))
+        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
         any_decl = True
     if any_decl:
-        print()
+        function_lines.append("")
 
-    print(body)
-    print("}")
+    function_lines.append(str(body))
+    function_lines.append("}")
+    full_function_text: str = "\n".join(function_lines)
+    return full_function_text
