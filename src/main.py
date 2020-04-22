@@ -30,8 +30,11 @@ def run(options: Options) -> int:
     mips_file: MIPSFile
     typemap: Optional[TypeMap] = None
     try:
-        with open(options.filename, "r", encoding="utf-8-sig") as f:
-            mips_file = parse_file(f, options)
+        if options.filename == "-":
+            mips_file = parse_file(sys.stdin, options)
+        else:
+            with open(options.filename, "r", encoding="utf-8-sig") as f:
+                mips_file = parse_file(f, options)
 
         # Move over jtbl rodata from files given by --rodata
         for rodata_file in options.rodata_files:
