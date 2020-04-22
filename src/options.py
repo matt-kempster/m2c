@@ -13,7 +13,7 @@ class CodingStyle:
 @attr.s
 class Options:
     filename: str = attr.ib()
-    function_index_or_name: List[str] = attr.ib()
+    function_index_or_name: str = attr.ib()
     debug: bool = attr.ib()
     void: bool = attr.ib()
     ifs: bool = attr.ib()
