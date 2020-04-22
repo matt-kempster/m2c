@@ -665,8 +665,9 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
     return body
 
 
-def write_function(function_info: FunctionInfo, options: Options) -> None:
-    context = Context(flow_graph=function_info.flow_graph, options=options)
+def build_body(
+    context: Context, function_info: FunctionInfo, options: Options,
+) -> Body:
     start_node: Node = context.flow_graph.entry_node()
     return_node: Optional[ReturnNode] = context.flow_graph.return_node()
     if return_node is None:
@@ -706,6 +707,15 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if return_node.index != -1:
         write_return(context, body, return_node, 4, last=True)
 
+    return body
+
+
+def write_function(function_info: FunctionInfo, options: Options) -> None:
+    context = Context(flow_graph=function_info.flow_graph, options=options)
+    body: Body = build_body(context, function_info, options)
+
+    full_function_text: str = ""
+
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
@@ -713,18 +723,20 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
+
     fn_header = f"{fn_name}({arg_str})"
+
     if context.is_void:
         fn_header = f"void {fn_header}"
     else:
         fn_header = function_info.return_type.to_decl(fn_header)
     whitespace = "\n" if options.coding_style.newline_after_function else " "
-    print(f"{fn_header}{whitespace}{{")
+    full_function_text += f"{fn_header}{whitespace}{{\n"
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:
         type_decl = local_var.type.to_decl(str(local_var))
-        print(SimpleStatement(4, f"{type_decl};"))
+        full_function_text += str(SimpleStatement(4, f"{type_decl};")) + "\n"
         any_decl = True
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
@@ -734,13 +746,14 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
             temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(list(temp_decls)):
-        print(SimpleStatement(4, decl))
+        full_function_text += str(SimpleStatement(4, decl)) + "\n"
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl(phi_var.get_var_name())
-        print(SimpleStatement(4, f"{type_decl};"))
+        full_function_text += str(SimpleStatement(4, f"{type_decl};")) + "\n"
         any_decl = True
     if any_decl:
-        print()
+        full_function_text += "\n"
 
-    print(body)
-    print("}")
+    full_function_text += str(body) + "\n"
+    full_function_text += "}"
+    print(full_function_text)
