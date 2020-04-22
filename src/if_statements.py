@@ -710,11 +710,11 @@ def build_body(
     return body
 
 
-def write_function(function_info: FunctionInfo, options: Options) -> None:
+def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     context = Context(flow_graph=function_info.flow_graph, options=options)
     body: Body = build_body(context, function_info, options)
 
-    full_function_text: str = ""
+    function_lines: List[str] = []
 
     fn_name = function_info.stack_info.function.name
     arg_strs = []
@@ -731,12 +731,12 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
     else:
         fn_header = function_info.return_type.to_decl(fn_header)
     whitespace = "\n" if options.coding_style.newline_after_function else " "
-    full_function_text += f"{fn_header}{whitespace}{{\n"
+    function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:
         type_decl = local_var.type.to_decl(str(local_var))
-        full_function_text += str(SimpleStatement(4, f"{type_decl};")) + "\n"
+        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
         any_decl = True
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
@@ -746,14 +746,15 @@ def write_function(function_info: FunctionInfo, options: Options) -> None:
             temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(list(temp_decls)):
-        full_function_text += str(SimpleStatement(4, decl)) + "\n"
+        function_lines.append(str(SimpleStatement(4, decl)))
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl(phi_var.get_var_name())
-        full_function_text += str(SimpleStatement(4, f"{type_decl};")) + "\n"
+        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
         any_decl = True
     if any_decl:
-        full_function_text += "\n"
+        function_lines.append("")
 
-    full_function_text += str(body) + "\n"
-    full_function_text += "}"
-    print(full_function_text)
+    function_lines.append(str(body))
+    function_lines.append("}")
+    full_function_text: str = "\n".join(function_lines)
+    return full_function_text

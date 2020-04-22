@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
-from .if_statements import write_function
+from .if_statements import get_function_text
 from .options import Options, CodingStyle
 from .parse_file import Function, MIPSFile, Rodata, parse_file
 from .translate import translate_to_ast
@@ -23,7 +23,8 @@ def decompile_function(
         return
 
     function_info = translate_to_ast(function, options, rodata, typemap)
-    write_function(function_info, options)
+    function_text = get_function_text(function_info, options)
+    print(function_text)
 
 
 def run(options: Options) -> int:
