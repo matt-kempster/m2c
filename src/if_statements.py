@@ -177,7 +177,7 @@ def emit_goto_or_early_return(
     """Emit a goto to a node, *unless* that node is an early return, which we
     can't goto to since it's not a real node and won't ever be emitted."""
     if isinstance(target, ReturnNode) and not target.is_real():
-        write_return(context, body, target, indent, last=False)
+        add_return_statement(context, body, target, indent, last=False)
     else:
         emit_goto(context, target, body, indent)
 
@@ -497,7 +497,7 @@ def get_full_if_condition(
         )
 
 
-def write_return(
+def add_return_statement(
     context: Context, body: Body, node: ReturnNode, indent: int, last: bool
 ) -> None:
     emit_node(context, node, body, indent)
@@ -574,7 +574,7 @@ def build_flowgraph_between(
                 assert block_info.switch_value is not None
                 emit_switch_jump(context, block_info.switch_value, body, indent)
             else:  # ReturnNode
-                write_return(context, body, curr_start, indent, last=False)
+                add_return_statement(context, body, curr_start, indent, last=False)
 
             # Advance to the next node in block order. This may skip over
             # unreachable blocks -- hopefully none too important.
@@ -608,7 +608,7 @@ def build_flowgraph_between(
         else:  # ReturnNode
             # Write the return node, and break, because there is nothing more
             # to process.
-            write_return(context, body, curr_start, indent, last=False)
+            add_return_statement(context, body, curr_start, indent, last=False)
             break
 
     return body
@@ -705,7 +705,7 @@ def build_body(
         body = build_naive(context, context.flow_graph.nodes)
 
     if return_node.index != -1:
-        write_return(context, body, return_node, 4, last=True)
+        add_return_statement(context, body, return_node, 4, last=True)
 
     return body
 
