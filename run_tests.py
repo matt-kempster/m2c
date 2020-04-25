@@ -7,9 +7,11 @@ import logging
 import shlex
 import sys
 from pathlib import Path
+from typing import List
 
-from src.main import parse_flags, run as decompile
-from src.options import Options, CodingStyle
+from src.main import parse_flags
+from src.main import run as decompile
+from src.options import CodingStyle, Options
 
 CRASH_STRING = "CRASHED\n"
 
@@ -19,6 +21,25 @@ def set_up_logging(debug: bool) -> None:
         format="[%(levelname)s] %(message)s",
         level=logging.DEBUG if debug else logging.INFO,
     )
+
+
+def get_test_flags(flags_path: Path) -> List[str]:
+    if not flags_path.is_file():
+        return []
+
+    flags_str = flags_path.read_text()
+    flags_list = shlex.split(flags_str)
+    try:
+        context_index = flags_list.index("--context")
+        relative_context_path: str = flags_list[context_index + 1]
+        absolute_context_path: Path = flags_path.parent / relative_context_path
+        flags_list[context_index + 1] = str(absolute_context_path)
+    except ValueError:
+        pass  # doesn't have --context flag
+    except IndexError:
+        raise Exception(f"{flags_path} contains --context without argument")
+
+    return flags_list
 
 
 def decompile_and_compare(
@@ -35,11 +56,8 @@ def decompile_and_compare(
         original_contents = "(file did not exist)"
 
     flags = [str(asm_file_path), "test", "--allman", "--stop-on-error"]
-    try:
-        flags_str = flags_path.read_text()
-        flags.extend(shlex.split(flags_str))
-    except FileNotFoundError:
-        pass
+    flags_list = get_test_flags(flags_path)
+    flags.extend(flags_list)
 
     options = parse_flags(flags)
     final_contents = decompile_and_capture_output(options)
