@@ -2360,16 +2360,13 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # $f14 and $a1. We could try to figure out which ones, and cap
             # the function call at the point where a register is empty, but
             # for now we'll leave that for manual fixup.
-            func_args: List[Expression] = []
             typemap = stack_info.typemap
             c_fn: Optional[CFunction] = None
-            if (
-                typemap
-                and isinstance(fn_target, GlobalSymbol)
-                and fn_target.symbol_name in typemap.functions
-                and typemap.functions[fn_target.symbol_name].params is not None
-            ):
-                c_fn = typemap.functions[fn_target.symbol_name]
+            if typemap and isinstance(fn_target, GlobalSymbol):
+                c_fn = typemap.functions.get(fn_target.symbol_name)
+
+            func_args: List[Expression] = []
+            if typemap and c_fn and c_fn.params is not None:
                 abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=True)
                 for slot in abi_slots:
                     if slot.reg:
