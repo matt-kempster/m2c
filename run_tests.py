@@ -37,7 +37,7 @@ def get_test_flags(flags_path: Path) -> List[str]:
     except ValueError:
         pass  # doesn't have --context flag
     except IndexError:
-        raise Exception(f"{flags_path} contains --context without argument")
+        raise Exception(f"{flags_path} contains --context without argument") from None
 
     return flags_list
 
