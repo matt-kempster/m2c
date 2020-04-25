@@ -1904,6 +1904,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "negu": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
     ),
+    "neg": lambda a: fold_mul_chains(
+        UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+    ),
     # Hi/lo register uses (used after division/multiplication)
     "mfhi": lambda a: a.regs[Register("hi")],
     "mflo": lambda a: a.regs[Register("lo")],
