@@ -1988,7 +1988,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
 }
 
 
-def output_regs_for_instr(instr: Instruction) -> List[Register]:
+def output_regs_for_instr(
+    instr: Instruction, typemap: Optional[TypeMap]
+) -> List[Register]:
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
         assert isinstance(reg, Register)
@@ -2006,6 +2008,12 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
         or mnemonic in CASES_IGNORE
     ):
         return []
+    if mnemonic == "jal" and typemap:
+        fn_target = instr.args[0]
+        if isinstance(fn_target, AsmGlobalSymbol):
+            c_fn = typemap.functions.get(fn_target.symbol_name)
+            if c_fn and c_fn.ret_type is None:
+                return []
     if mnemonic in CASES_FN_CALL:
         return list(map(Register, ["return", "f0", "v0", "v1"]))
     if mnemonic in CASES_SOURCE_FIRST:
@@ -2021,7 +2029,9 @@ def output_regs_for_instr(instr: Instruction) -> List[Register]:
     return []
 
 
-def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
+def regs_clobbered_until_dominator(
+    node: Node, typemap: Optional[TypeMap]
+) -> Set[Register]:
     if node.immediate_dominator is None:
         return set()
     seen = set([node.immediate_dominator])
@@ -2034,14 +2044,16 @@ def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
         seen.add(n)
         for instr in n.block.instructions:
             with current_instr(instr):
-                clobbered.update(output_regs_for_instr(instr))
+                clobbered.update(output_regs_for_instr(instr, typemap))
                 if instr.mnemonic in CASES_FN_CALL:
                     clobbered.update(TEMP_REGS)
         stack.extend(n.parents)
     return clobbered
 
 
-def reg_always_set(node: Node, reg: Register, dom_set: bool) -> bool:
+def reg_always_set(
+    node: Node, reg: Register, typemap: Optional[TypeMap], *, dom_set: bool
+) -> bool:
     if node.immediate_dominator is None:
         return False
     seen = set([node.immediate_dominator])
@@ -2058,7 +2070,7 @@ def reg_always_set(node: Node, reg: Register, dom_set: bool) -> bool:
             with current_instr(instr):
                 if instr.mnemonic in CASES_FN_CALL and reg in TEMP_REGS:
                     clobbered = True
-                if reg in output_regs_for_instr(instr):
+                if reg in output_regs_for_instr(instr, typemap):
                     clobbered = False
         if clobbered == True:
             return False
@@ -2544,11 +2556,12 @@ def translate_graph_from_block(
 
     # Translate everything dominated by this node, now that we know our own
     # final register state. This will eventually reach every node.
+    typemap = stack_info.typemap
     for child in node.immediately_dominates:
         new_contents = regs.contents.copy()
-        phi_regs = regs_clobbered_until_dominator(child)
+        phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:
-            if reg_always_set(child, reg, (reg in regs)):
+            if reg_always_set(child, reg, typemap, dom_set=(reg in regs)):
                 new_contents[reg] = PhiExpr(
                     reg=reg, node=child, used_phis=used_phis, type=Type.any()
                 )
