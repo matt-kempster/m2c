@@ -110,6 +110,8 @@ def is_void(type: CType) -> bool:
 
 def equal_types(a: CType, b: CType) -> bool:
     def equal(a: Any, b: Any) -> bool:
+        if a is b:
+            return True
         if type(a) != type(b):
             return False
         if a is None:
@@ -126,6 +128,8 @@ def equal_types(a: CType, b: CType) -> bool:
             return bool(a == b)
         assert isinstance(a, ca.Node)
         for name in a.__slots__[:-2]:  # type: ignore
+            if name == "declname":
+                continue
             if not equal(getattr(a, name), getattr(b, name)):
                 return False
         return True
