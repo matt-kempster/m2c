@@ -150,8 +150,8 @@ def as_f64(expr: "Expression") -> "Expression":
     return as_type(expr, Type.f64(), True)
 
 
-def as_s32(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.s32(), False)
+def as_s32(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.s32(), silent)
 
 
 def as_u32(expr: "Expression") -> "Expression":
@@ -475,6 +475,15 @@ class BinaryOp:
     def icmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.bool()
+        )
+
+    @staticmethod
+    def scmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+        return BinaryOp(
+            left=as_s32(left, silent=True),
+            op=op,
+            right=as_s32(right, silent=True),
+            type=Type.bool(),
         )
 
     @staticmethod
@@ -1854,10 +1863,10 @@ CASES_BRANCHES: CmpInstrMap = {
     "bne": lambda a: BinaryOp.icmp(a.reg(0), "!=", a.reg(1)),
     "beqz": lambda a: BinaryOp.icmp(a.reg(0), "==", Literal(0)),
     "bnez": lambda a: BinaryOp.icmp(a.reg(0), "!=", Literal(0)),
-    "blez": lambda a: BinaryOp.icmp(a.reg(0), "<=", Literal(0)),
-    "bgtz": lambda a: BinaryOp.icmp(a.reg(0), ">", Literal(0)),
-    "bltz": lambda a: BinaryOp.icmp(a.reg(0), "<", Literal(0)),
-    "bgez": lambda a: BinaryOp.icmp(a.reg(0), ">=", Literal(0)),
+    "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
+    "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
+    "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
+    "bgez": lambda a: BinaryOp.scmp(a.reg(0), ">=", Literal(0)),
 }
 CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
@@ -1902,8 +1911,8 @@ CASES_SOURCE_FIRST: InstrMap = {
 }
 CASES_DESTINATION_FIRST: InstrMap = {
     # Flag-setting instructions
-    "slt": lambda a: BinaryOp.icmp(a.reg(1), "<", a.reg(2)),
-    "slti": lambda a: BinaryOp.icmp(a.reg(1), "<", a.imm(2)),
+    "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
+    "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
     "sltu": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.reg(2)),
     "sltiu": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.imm(2)),
     # Integer arithmetic
