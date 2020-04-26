@@ -2408,8 +2408,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
-            call: Expression = FuncCall(fn_target, func_args, Type.any())
+            if c_fn and c_fn.ret_type and typemap:
+                known_ret_type = type_from_ctype(c_fn.ret_type, typemap)
+            else:
+                known_ret_type = Type.any()
+
+            call: Expression = FuncCall(fn_target, func_args, known_ret_type)
             call = eval_once(call, always_emit=True, trivial=False, prefix="ret")
+
             # Clear out caller-save registers, for clarity and to ensure
             # that argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
@@ -2421,12 +2427,13 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # However, if we have type information that says the function is
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
+            # Note that this logic is duplicated in output_regs_for_instr.
             if not c_fn or c_fn.ret_type:
                 regs[Register("f0")] = Cast(
                     expr=call, reinterpret=True, silent=True, type=Type.f32()
                 )
                 regs[Register("v0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.intish()
+                    expr=call, reinterpret=True, silent=True, type=Type.intptr()
                 )
                 regs[Register("v1")] = as_u32(
                     Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
