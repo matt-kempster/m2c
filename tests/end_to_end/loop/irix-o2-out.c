@@ -12,7 +12,7 @@ s32 test(void *arg0, s32 arg1)
     s32 phi_v0_3;
 
     phi_return = 0;
-    if (arg1 <= 0)
+    if (arg1 > 0)
     {
         temp_a3 = arg1 & 3;
         phi_v0_3 = 0;

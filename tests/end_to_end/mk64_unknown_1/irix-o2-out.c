@@ -19,7 +19,7 @@ s32 test(u32 arg0, s32 arg1, s32 arg2)
 
     temp_v0 = ((0x80150000 + ((arg0 >> 0x18) * 4))->unk258 + (arg0 & 0xFFFFFF)) + 0x80000000;
     phi_return = temp_v0;
-    if (arg1 == 0)
+    if (arg1 != 0)
     {
         temp_t0 = arg1 & 3;
         phi_v0_2 = temp_v0;

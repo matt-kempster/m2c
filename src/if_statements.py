@@ -753,7 +753,7 @@ def pattern_match_against_unrolled_while_loop(
     )
 
     should_loop = IfElseStatement(
-        start.block.block_info.branch_condition,
+        start.block.block_info.branch_condition.negated(),
         indent,
         context.options.coding_style,
         main_body,

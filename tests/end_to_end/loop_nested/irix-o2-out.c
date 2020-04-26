@@ -28,7 +28,7 @@ s32 test(s32 arg0)
     {
 loop_1:
         phi_v1_2 = phi_v1_5;
-        if (arg0 <= 0)
+        if (arg0 > 0)
         {
             temp_t1 = arg0 & 3;
             phi_a1_2 = 0;
