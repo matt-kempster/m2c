@@ -1,3 +1,4 @@
+import abc
 import struct
 import sys
 import traceback
@@ -423,12 +424,24 @@ class Var:
         return self.name
 
 
+class Expression(abc.ABC):
+    type: Type
+
+    @abc.abstractmethod
+    def dependencies(self) -> List["Expression"]:
+        ...
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        ...
+
+
 @attr.s(frozen=True, eq=False)
-class ErrorExpr:
+class ErrorExpr(Expression):
     desc: Optional[str] = attr.ib(default=None)
     type: Type = attr.ib(factory=Type.any)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def negated(self) -> "Condition":
@@ -441,10 +454,10 @@ class ErrorExpr:
 
 
 @attr.s(frozen=True, eq=False)
-class SecondF64Half:
+class SecondF64Half(Expression):
     type: Type = attr.ib(factory=Type.any)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -452,33 +465,33 @@ class SecondF64Half:
 
 
 @attr.s(frozen=True, eq=False)
-class BinaryOp:
-    left: "Expression" = attr.ib()
+class BinaryOp(Expression):
+    left: Expression = attr.ib()
     op: str = attr.ib()
-    right: "Expression" = attr.ib()
+    right: Expression = attr.ib()
     type: Type = attr.ib()
     floating: bool = attr.ib(default=False)
 
     @staticmethod
-    def int(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intish(left), op=op, right=as_intish(right), type=Type.intish()
         )
 
     @staticmethod
-    def intptr(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def intptr(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.intptr()
         )
 
     @staticmethod
-    def icmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def icmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.bool()
         )
 
     @staticmethod
-    def scmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_s32(left, silent=True),
             op=op,
@@ -487,11 +500,11 @@ class BinaryOp:
         )
 
     @staticmethod
-    def ucmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
 
     @staticmethod
-    def fcmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f32(left),
             op=op,
@@ -501,7 +514,7 @@ class BinaryOp:
         )
 
     @staticmethod
-    def dcmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def dcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f64(left),
             op=op,
@@ -511,15 +524,15 @@ class BinaryOp:
         )
 
     @staticmethod
-    def s32(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def s32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_s32(left), op=op, right=as_s32(right), type=Type.s32())
 
     @staticmethod
-    def u32(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.u32())
 
     @staticmethod
-    def f32(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f32(left),
             op=op,
@@ -529,7 +542,7 @@ class BinaryOp:
         )
 
     @staticmethod
-    def f64(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def f64(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f64(left),
             op=op,
@@ -556,7 +569,7 @@ class BinaryOp:
             type=Type.bool(),
         )
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
     def __str__(self) -> str:
@@ -573,12 +586,12 @@ class BinaryOp:
 
 
 @attr.s(frozen=True, eq=False)
-class UnaryOp:
+class UnaryOp(Expression):
     op: str = attr.ib()
-    expr: "Expression" = attr.ib()
+    expr: Expression = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.expr]
 
     def negated(self) -> "Condition":
@@ -591,12 +604,12 @@ class UnaryOp:
 
 
 @attr.s(frozen=True, eq=False)
-class CommaConditionExpr:
+class CommaConditionExpr(Expression):
     statements: List["Statement"] = attr.ib()
     condition: "Condition" = attr.ib()
     type: Type = Type.bool()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         assert False, "CommaConditionExpr should not be used within translate.py"
         return []
 
@@ -609,13 +622,13 @@ class CommaConditionExpr:
 
 
 @attr.s(frozen=True, eq=False)
-class Cast:
-    expr: "Expression" = attr.ib()
+class Cast(Expression):
+    expr: Expression = attr.ib()
     type: Type = attr.ib()
     reinterpret: bool = attr.ib(default=False)
     silent: bool = attr.ib(default=True)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.expr]
 
     def use(self) -> None:
@@ -635,12 +648,12 @@ class Cast:
 
 
 @attr.s(frozen=True, eq=False)
-class FuncCall:
-    function: "Expression" = attr.ib()
-    args: List["Expression"] = attr.ib()
+class FuncCall(Expression):
+    function: Expression = attr.ib()
+    args: List[Expression] = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
 
     def __str__(self) -> str:
@@ -649,11 +662,11 @@ class FuncCall:
 
 
 @attr.s(frozen=True, eq=True)
-class LocalVar:
+class LocalVar(Expression):
     value: int = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -661,13 +674,13 @@ class LocalVar:
 
 
 @attr.s(frozen=True, eq=True)
-class PassedInArg:
+class PassedInArg(Expression):
     value: int = attr.ib()
     copied: bool = attr.ib(eq=False)
     stack_info: StackInfo = attr.ib(eq=False, repr=False)
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -677,11 +690,11 @@ class PassedInArg:
 
 
 @attr.s(frozen=True, eq=True)
-class SubroutineArg:
+class SubroutineArg(Expression):
     value: int = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -689,19 +702,19 @@ class SubroutineArg:
 
 
 @attr.s(frozen=True, eq=True)
-class StructAccess:
+class StructAccess(Expression):
     # Represents struct_var->offset.
     # This has eq=True since it represents a live expression and not
     # an access at a certain point in time -- this sometimes helps get rid of phi nodes.
     # Really it should represent the latter, but making that so is hard.
-    struct_var: "Expression" = attr.ib()
+    struct_var: Expression = attr.ib()
     offset: int = attr.ib()
     target_size: Optional[int] = attr.ib()
     field_name: Optional[str] = attr.ib(eq=False)
     stack_info: StackInfo = attr.ib(eq=False, repr=False)
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
     def __str__(self) -> str:
@@ -739,13 +752,13 @@ class StructAccess:
 
 
 @attr.s(frozen=True, eq=True)
-class ArrayAccess:
+class ArrayAccess(Expression):
     # Represents ptr[index]. eq=True for symmetry with StructAccess.
-    ptr: "Expression" = attr.ib()
-    index: "Expression" = attr.ib()
+    ptr: Expression = attr.ib()
+    index: Expression = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.ptr, self.index]
 
     def __str__(self) -> str:
@@ -753,11 +766,11 @@ class ArrayAccess:
 
 
 @attr.s(frozen=True, eq=True)
-class GlobalSymbol:
+class GlobalSymbol(Expression):
     symbol_name: str = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -765,11 +778,11 @@ class GlobalSymbol:
 
 
 @attr.s(frozen=True, eq=True)
-class Literal:
+class Literal(Expression):
     value: int = attr.ib()
     type: Type = attr.ib(eq=False, factory=Type.any)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -798,11 +811,11 @@ class Literal:
 
 
 @attr.s(frozen=True)
-class StringLiteral:
+class StringLiteral(Expression):
     data: bytes = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -822,32 +835,20 @@ class StringLiteral:
 
 
 @attr.s(frozen=True, eq=True)
-class AddressOf:
-    expr: "Expression" = attr.ib()
+class AddressOf(Expression):
+    expr: Expression = attr.ib()
     type: Type = attr.ib(eq=False, factory=Type.ptr)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.expr]
 
     def __str__(self) -> str:
         return f"&{self.expr}"
 
 
-@attr.s(frozen=True)
-class AddressMode:
-    offset: int = attr.ib()
-    rhs: Register = attr.ib()
-
-    def __str__(self) -> str:
-        if self.offset:
-            return f"{self.offset}({self.rhs})"
-        else:
-            return f"({self.rhs})"
-
-
 @attr.s(frozen=False, eq=False)
-class EvalOnceExpr:
-    wrapped_expr: "Expression" = attr.ib()
+class EvalOnceExpr(Expression):
+    wrapped_expr: Expression = attr.ib()
     var: Var = attr.ib()
     type: Type = attr.ib()
 
@@ -867,7 +868,7 @@ class EvalOnceExpr:
     # if this is > 1.
     num_usages: int = attr.ib(default=0)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.wrapped_expr]
 
     def use(self) -> None:
@@ -886,11 +887,11 @@ class EvalOnceExpr:
 
 
 @attr.s(eq=False)
-class ForceVarExpr:
+class ForceVarExpr(Expression):
     wrapped_expr: EvalOnceExpr = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.wrapped_expr]
 
     def use(self) -> None:
@@ -911,17 +912,17 @@ class ForceVarExpr:
 
 
 @attr.s(frozen=False, eq=False)
-class PhiExpr:
+class PhiExpr(Expression):
     reg: Register = attr.ib()
     node: Node = attr.ib()
     type: Type = attr.ib()
     used_phis: List["PhiExpr"] = attr.ib()
     name: Optional[str] = attr.ib(default=None)
     num_usages: int = attr.ib(default=0)
-    replacement_expr: Optional["Expression"] = attr.ib(default=None)
+    replacement_expr: Optional[Expression] = attr.ib(default=None)
     used_by: Optional["PhiExpr"] = attr.ib(default=None)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def get_var_name(self) -> str:
@@ -967,7 +968,7 @@ class EvalOnceStmt:
 @attr.s
 class SetPhiStmt:
     phi: PhiExpr = attr.ib()
-    expr: "Expression" = attr.ib()
+    expr: Expression = attr.ib()
 
     def should_write(self) -> bool:
         expr = self.expr
@@ -983,7 +984,7 @@ class SetPhiStmt:
 
 @attr.s
 class ExprStmt:
-    expr: "Expression" = attr.ib()
+    expr: Expression = attr.ib()
 
     def should_write(self) -> bool:
         return True
@@ -994,8 +995,8 @@ class ExprStmt:
 
 @attr.s
 class StoreStmt:
-    source: "Expression" = attr.ib()
-    dest: "Expression" = attr.ib()
+    source: Expression = attr.ib()
+    dest: Expression = attr.ib()
 
     def should_write(self) -> bool:
         return True
@@ -1015,31 +1016,21 @@ class CommentStmt:
         return f"// {self.contents}"
 
 
-Expression = Union[
-    BinaryOp,
-    UnaryOp,
-    CommaConditionExpr,
-    Cast,
-    FuncCall,
-    GlobalSymbol,
-    Literal,
-    StringLiteral,
-    AddressOf,
-    LocalVar,
-    PassedInArg,
-    StructAccess,
-    ArrayAccess,
-    SubroutineArg,
-    EvalOnceExpr,
-    ForceVarExpr,
-    PhiExpr,
-    ErrorExpr,
-    SecondF64Half,
-]
-
 Condition = Union[BinaryOp, UnaryOp, ErrorExpr, CommaConditionExpr]
 
 Statement = Union[StoreStmt, EvalOnceStmt, SetPhiStmt, ExprStmt, CommentStmt]
+
+
+@attr.s(frozen=True)
+class AddressMode:
+    offset: int = attr.ib()
+    rhs: Register = attr.ib()
+
+    def __str__(self) -> str:
+        if self.offset:
+            return f"{self.offset}({self.rhs})"
+        else:
+            return f"({self.rhs})"
 
 
 @attr.s
