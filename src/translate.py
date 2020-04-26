@@ -2401,7 +2401,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=True)
                 for slot in abi_slots:
                     if slot.reg:
-                        func_args.append(regs[slot.reg])
+                        func_args.append(as_type(regs[slot.reg], slot.type, True))
             else:
                 possible_regs = list(
                     map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"])
@@ -2420,6 +2420,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     func_args.append(expr)
 
             # Add the arguments after a3.
+            # TODO: limit this and unify types based on abi_slots
             subroutine_args.sort(key=lambda a: a[1].value)
             for arg in subroutine_args:
                 func_args.append(arg[0])

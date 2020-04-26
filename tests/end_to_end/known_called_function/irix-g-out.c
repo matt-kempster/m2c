@@ -1,9 +1,9 @@
-void test(s32 arg0, s32 arg1, ? arg2)
+void test(s32 x, short *y, s32 z)
 {
-    s32 sp1C;
+    int *sp1C;
 
-    sp1C = 0;
+    sp1C = NULL;
 loop_1:
-    sp1C = foo(sp1C, arg1);
+    sp1C = foo(sp1C, y);
     goto loop_1;
 }

@@ -1,4 +1,4 @@
-void test(s32 x, s32 y, s32 z)
+void test(s32 x, short *y, s32 z)
 {
     int *phi_s0;
 
