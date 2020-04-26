@@ -2455,6 +2455,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 regs[Register("f0")] = Cast(
                     expr=call, reinterpret=True, silent=True, type=Type.f32()
                 )
+                regs[Register("f1")] = SecondF64Half()
                 regs[Register("v0")] = Cast(
                     expr=call, reinterpret=True, silent=True, type=Type.intptr()
                 )
