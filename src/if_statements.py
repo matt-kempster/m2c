@@ -108,45 +108,46 @@ class LabelStatement:
 
 
 @attr.s
-class ForLoop:
+class DoWhileLoop:
     indent: int = attr.ib()
     coding_style: CodingStyle = attr.ib()
 
     end_node: Node = attr.ib()
     body: "Body" = attr.ib()
 
-    initialization: Optional[List[TranslateStatement]] = attr.ib(default=None)
+    initialization: List[TranslateStatement] = attr.ib(factory=list)
     condition: Optional[Condition] = attr.ib(default=None)
-    afterthought: Optional[List[TranslateStatement]] = attr.ib(default=None)
 
     def should_write(self) -> bool:
         return True
 
     def __str__(self) -> str:
         space = " " * self.indent
-
         brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
+        brace_after_do = (
+            f"\n{space * 2}{{" if self.coding_style.newline_after_if else " {"
+        )
 
-        init = (
-            ", ".join(str(stmt).rstrip(";") for stmt in self.initialization)
-            if self.initialization
-            else ""
-        )
+        init = "\n".join(str(stmt) for stmt in self.initialization)
         cond = str(self.condition).rstrip(";") if self.condition else ""
-        after = (
-            ", ".join(str(stmt).rstrip(";") for stmt in self.afterthought)
-            if self.afterthought
-            else ""
-        )
         string_components = [
-            f"{space}for ({init}; {cond}; {after}){brace_after_if}",
-            str(self.body),  # has its own indentation
+            f"{space}{init}",
+            f"{space}if ({cond}){brace_after_if}",
+            f"{space * 2}do{brace_after_do}",
+            "\n".join(f"{space * 3}{stmt}" for stmt in self.body.statements),
+            f"{space * 2}}} while ({cond})",
             f"{space}}}",
         ]
+        # Remnant of for-loops, will eventually resurrect
+        # string_components = [
+        #     f"{space}for ({init}; {cond}; {after}){brace_after_if}",
+        #     str(self.body),  # has its own indentation
+        #     f"{space}}}",
+        # ]
         return "\n".join(string_components)
 
 
-Statement = Union[SimpleStatement, IfElseStatement, LabelStatement, ForLoop]
+Statement = Union[SimpleStatement, IfElseStatement, LabelStatement, DoWhileLoop]
 
 
 @attr.s
@@ -176,8 +177,8 @@ class Body:
     def add_if_else(self, if_else: IfElseStatement) -> None:
         self.statements.append(if_else)
 
-    def add_for_loop(self, for_loop: ForLoop) -> None:
-        self.statements.append(for_loop)
+    def add_do_while_loop(self, do_while_loop: DoWhileLoop) -> None:
+        self.statements.append(do_while_loop)
 
     def __str__(self) -> str:
         return "\n".join(
@@ -557,9 +558,9 @@ def add_return_statement(
         body.add_statement(SimpleStatement(indent, "return;"))
 
 
-def pattern_match_against_for_loop(
+def pattern_match_against_do_while_loop(
     context: Context, start: ConditionalNode, indent: int
-) -> Optional[ForLoop]:
+) -> Optional[DoWhileLoop]:
     node_1 = start.fallthrough_edge
     node_2 = start.conditional_edge
 
@@ -572,39 +573,25 @@ def pattern_match_against_for_loop(
     ):
         return None
 
-    # indent: int = attr.ib()
-    # coding_style: CodingStyle = attr.ib()
-
-    # initialization: Expression = attr.ib()
-    # condition: Condition = attr.ib()  # TODO: can this be an expression too?
-    # afterthought: Expression = attr.ib()
-    # body: "Body" = attr.ib()
-
-    # end_node: Node = attr.ib()
-
     initialization_statements = [
         statement
         for statement in start.block.block_info.to_write
         if statement.should_write()
     ]
 
-    condition_statements = [
+    body_statements = [
         statement
         for statement in node_1.block.block_info.to_write
         if statement.should_write()
     ]
-    condition = CommaConditionExpr(
-        condition_statements, node_1.block.block_info.branch_condition
-    )
 
-    return ForLoop(
+    return DoWhileLoop(
         indent,
         context.options.coding_style,
         node_2,
-        Body(False, []),
+        Body(False, body_statements),
         initialization_statements,
-        condition,
-        None,
+        node_1.block.block_info.branch_condition,
     )
 
 
@@ -688,11 +675,13 @@ def build_flowgraph_between(
         elif isinstance(curr_start, ConditionalNode):
             # Before we do anything else, we pattern-match the subgraph
             # rooted at curr_start against certain predefined subgraphs
-            # that emit for-loops:
-            for_loop = pattern_match_against_for_loop(context, curr_start, indent)
-            if for_loop:
-                body.add_for_loop(for_loop)
-                curr_start = for_loop.end_node
+            # that emit do-while-loops:
+            do_while_loop = pattern_match_against_do_while_loop(
+                context, curr_start, indent
+            )
+            if do_while_loop:
+                body.add_do_while_loop(do_while_loop)
+                curr_start = do_while_loop.end_node
                 continue
 
             # A ConditionalNode means we need to find the next articulation
