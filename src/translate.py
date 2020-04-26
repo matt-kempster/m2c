@@ -626,7 +626,10 @@ class Cast:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
             return f"(bitwise {self.type}) {self.expr}"
-        if self.reinterpret and (self.silent or is_type_obvious(self.expr)):
+        if self.reinterpret and (
+            self.silent
+            or (is_type_obvious(self.expr) and self.expr.type.unify(self.type))
+        ):
             return str(self.expr)
         return f"({self.type}) {self.expr}"
 
