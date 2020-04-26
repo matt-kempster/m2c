@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
@@ -24,6 +24,7 @@ from .translate import (
     simplify_condition,
     stringify_expr,
 )
+from .translate import Statement as TranslateStatement
 
 
 @attr.s
@@ -106,7 +107,46 @@ class LabelStatement:
         return "\n".join(lines)
 
 
-Statement = Union[SimpleStatement, IfElseStatement, LabelStatement]
+@attr.s
+class ForLoop:
+    indent: int = attr.ib()
+    coding_style: CodingStyle = attr.ib()
+
+    end_node: Node = attr.ib()
+    body: "Body" = attr.ib()
+
+    initialization: Optional[List[TranslateStatement]] = attr.ib(default=None)
+    condition: Optional[Condition] = attr.ib(default=None)
+    afterthought: Optional[List[TranslateStatement]] = attr.ib(default=None)
+
+    def should_write(self) -> bool:
+        return True
+
+    def __str__(self) -> str:
+        space = " " * self.indent
+
+        brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
+
+        init = (
+            ", ".join(str(stmt).rstrip(";") for stmt in self.initialization)
+            if self.initialization
+            else ""
+        )
+        cond = str(self.condition).rstrip(";") if self.condition else ""
+        after = (
+            ", ".join(str(stmt).rstrip(";") for stmt in self.afterthought)
+            if self.afterthought
+            else ""
+        )
+        string_components = [
+            f"{space}for ({init}; {cond}; {after}){brace_after_if}",
+            str(self.body),  # has its own indentation
+            f"{space}}}",
+        ]
+        return "\n".join(string_components)
+
+
+Statement = Union[SimpleStatement, IfElseStatement, LabelStatement, ForLoop]
 
 
 @attr.s
@@ -135,6 +175,9 @@ class Body:
 
     def add_if_else(self, if_else: IfElseStatement) -> None:
         self.statements.append(if_else)
+
+    def add_for_loop(self, for_loop: ForLoop) -> None:
+        self.statements.append(for_loop)
 
     def __str__(self) -> str:
         return "\n".join(
@@ -514,6 +557,57 @@ def add_return_statement(
         body.add_statement(SimpleStatement(indent, "return;"))
 
 
+def pattern_match_against_for_loop(
+    context: Context, start: ConditionalNode, indent: int
+) -> Optional[ForLoop]:
+    node_1 = start.fallthrough_edge
+    node_2 = start.conditional_edge
+
+    if not (
+        isinstance(node_1, ConditionalNode)
+        and node_1.is_loop()
+        # TODO: could also use id() here?:
+        and node_1.conditional_edge.block.index == node_1.block.index
+        and node_1.fallthrough_edge.block.index == node_2.block.index
+    ):
+        return None
+
+    # indent: int = attr.ib()
+    # coding_style: CodingStyle = attr.ib()
+
+    # initialization: Expression = attr.ib()
+    # condition: Condition = attr.ib()  # TODO: can this be an expression too?
+    # afterthought: Expression = attr.ib()
+    # body: "Body" = attr.ib()
+
+    # end_node: Node = attr.ib()
+
+    initialization_statements = [
+        statement
+        for statement in start.block.block_info.to_write
+        if statement.should_write()
+    ]
+
+    condition_statements = [
+        statement
+        for statement in node_1.block.block_info.to_write
+        if statement.should_write()
+    ]
+    condition = CommaConditionExpr(
+        condition_statements, node_1.block.block_info.branch_condition
+    )
+
+    return ForLoop(
+        indent,
+        context.options.coding_style,
+        node_2,
+        Body(False, []),
+        initialization_statements,
+        condition,
+        None,
+    )
+
+
 def build_flowgraph_between(
     context: Context, start: Node, end: Node, indent: int
 ) -> Body:
@@ -592,6 +686,15 @@ def build_flowgraph_between(
             # In a BasicNode, the successor is the next articulation node.
             curr_start = curr_start.successor
         elif isinstance(curr_start, ConditionalNode):
+            # Before we do anything else, we pattern-match the subgraph
+            # rooted at curr_start against certain predefined subgraphs
+            # that emit for-loops:
+            for_loop = pattern_match_against_for_loop(context, curr_start, indent)
+            if for_loop:
+                body.add_for_loop(for_loop)
+                curr_start = for_loop.end_node
+                continue
+
             # A ConditionalNode means we need to find the next articulation
             # node. This means we need to find the "immediate postdominator"
             # of the current node, where "postdominator" means we have to go

@@ -10,15 +10,9 @@ s32 test(s32 arg0)
     {
 loop_1:
         sp4 = 0;
-        if (sp4 < arg0)
+        for (sp4 = 0; (sp8 = sp8 + (spC * sp4), sp4 = sp4 + 1, ((sp4 < arg0) != 0)); )
         {
-loop_2:
-            sp8 = sp8 + (spC * sp4);
-            sp4 = sp4 + 1;
-            if (sp4 < arg0)
-            {
-                goto loop_2;
-            }
+
         }
         spC = spC + 1;
         if (spC < arg0)
