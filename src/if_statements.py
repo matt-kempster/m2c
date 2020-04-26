@@ -20,11 +20,9 @@ from .translate import (
     Condition,
     Expression,
     FunctionInfo,
-    Type,
-    simplify_condition,
-    stringify_expr,
 )
 from .translate import Statement as TranslateStatement
+from .translate import Type, simplify_condition, stringify_expr
 
 
 @attr.s
@@ -132,11 +130,11 @@ class DoWhileLoop:
 
         init = "\n".join(str(stmt) for stmt in self.initialization)
         cond = str(self.condition).rstrip(";") if self.condition else ""
+        body = f"\n".join(f"{stmt}" for stmt in self.body.statements)
         string_components = [
             f"{space}{init}",
             f"{space}if ({cond}){brace_after_if}",
-            f"{space_2}do{brace_after_do}",
-            "\n".join(f"{space_3}{stmt}" for stmt in self.body.statements),
+            f"{space_2}do{brace_after_do}{body}",
             f"{space_2}}} while ({cond})",
             f"{space}}}",
         ]
@@ -147,6 +145,18 @@ class DoWhileLoop:
         #     f"{space}}}",
         # ]
         return "\n".join(string_components)
+
+
+@attr.s
+class UnrolledLoop:
+    indent: int = attr.ib()
+    coding_style: CodingStyle = attr.ib()
+
+    end_node: Node = attr.ib()
+    body: "Body" = attr.ib()
+
+    initialization: List[TranslateStatement] = attr.ib(factory=list)
+    condition: Optional[Condition] = attr.ib(default=None)
 
 
 Statement = Union[SimpleStatement, IfElseStatement, LabelStatement, DoWhileLoop]
@@ -209,6 +219,12 @@ def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
     label = label_for_node(context, target)
     context.goto_nodes.add(target)
     body.add_statement(SimpleStatement(indent, f"goto {label};"))
+
+
+def create_goto(context: Context, target: Node, indent: int) -> SimpleStatement:
+    label = label_for_node(context, target)
+    context.goto_nodes.add(target)
+    return SimpleStatement(indent, f"goto {label};")
 
 
 def emit_switch_jump(
@@ -560,7 +576,7 @@ def add_return_statement(
         body.add_statement(SimpleStatement(indent, "return;"))
 
 
-def pattern_match_against_do_while_loop(
+def pattern_match_against_simple_do_while_loop(
     context: Context, start: ConditionalNode, indent: int
 ) -> Optional[DoWhileLoop]:
     node_1 = start.fallthrough_edge
@@ -595,6 +611,155 @@ def pattern_match_against_do_while_loop(
         initialization_statements,
         node_1.block.block_info.branch_condition,
     )
+
+
+def pattern_match_against_unrolled_while_loop(
+    context: Context, start: ConditionalNode, indent: int
+) -> Optional[Tuple[Node, IfElseStatement, Node]]:
+    node_1 = start.fallthrough_edge
+    node_7 = start.conditional_edge
+
+    if not isinstance(node_1, ConditionalNode):
+        return None
+    node_2 = node_1.fallthrough_edge
+    node_5 = node_1.conditional_edge
+
+    if not isinstance(node_2, BasicNode):
+        return None
+    node_3 = node_2.successor
+
+    if not (
+        isinstance(node_3, ConditionalNode)
+        and node_3.is_loop()
+        and node_3.conditional_edge.block.index == node_3.block.index
+    ):
+        return None
+    node_4 = node_3.fallthrough_edge
+
+    if not (
+        isinstance(node_4, ConditionalNode)
+        and node_4.fallthrough_edge.block.index == node_5.block.index
+        and node_4.conditional_edge.block.index == node_7.block.index
+    ):
+        return None
+
+    if not isinstance(node_5, BasicNode):
+        return None
+    node_6 = node_5.successor
+
+    if not (
+        isinstance(node_6, ConditionalNode)
+        and node_6.is_loop()
+        and node_6.conditional_edge.block.index == node_6.block.index
+        and node_6.fallthrough_edge.block.index == node_7.block.index
+    ):
+        return None
+
+    # for (i = 0; i < length; i++) {
+    #    // code
+    # }
+    #
+    # becomes
+    #
+    # for (i = 0; i < (length % 4); i++) {
+    #    // code in node 3
+    # }
+    # for (i = (length % 4); i < length; i += 4) {
+    #    // code, repeated for i through i + 3
+    #    // aka code in node 6
+    # }
+    #
+    # which, much futzing later, becomes
+    #
+    # [node_0]
+    # if ([node_0.condition])
+    # {
+    #     [node_1]
+    #     if (![node_1.condition])
+    #     {
+    #         [node_2]
+    #         while ([node_3.condition]) {
+    #             [node_3]
+    #         }
+    #         [node_4]
+    #         if ([node_4.condition]) {
+    #             goto label_7
+    #         }
+    #     }
+    #     [node_5]
+    #     while ([node_6.condition]) {
+    #         [node_6]
+    #     }
+    # }
+    # label_7:
+    # [node_7]
+
+    assert isinstance(start.block.block_info, BlockInfo)
+    assert isinstance(node_1.block.block_info, BlockInfo)
+    assert isinstance(node_3.block.block_info, BlockInfo)
+    assert isinstance(node_4.block.block_info, BlockInfo)
+    assert isinstance(node_6.block.block_info, BlockInfo)
+    assert start.block.block_info.branch_condition
+    assert node_1.block.block_info.branch_condition
+    assert node_3.block.block_info.branch_condition
+    assert node_4.block.block_info.branch_condition
+    assert node_6.block.block_info.branch_condition
+
+    main_body = Body(False, [])
+    emit_node(context, node_1, main_body, indent + 4)
+
+    first_loop_metabody = Body(False, [])
+    emit_node(context, node_2, first_loop_metabody, indent + 8)
+    first_loop_body = Body(False, [])
+    emit_node(context, node_3, first_loop_body, indent + 16)
+    first_loop_metabody.add_statement(
+        DoWhileLoop(
+            indent + 8,
+            context.options.coding_style,
+            node_4,
+            first_loop_body,
+            [],
+            node_3.block.block_info.branch_condition,
+        )
+    )
+    emit_node(context, node_4, first_loop_metabody, indent + 8)
+    first_loop_metabody.add_statement(
+        IfElseStatement(
+            node_4.block.block_info.branch_condition,
+            indent + 8,
+            context.options.coding_style,
+            Body(False, [create_goto(context, node_7, indent + 12)]),
+        )
+    )
+
+    first_loop_if = IfElseStatement(
+        node_1.block.block_info.branch_condition.negated(),
+        indent + 4,
+        context.options.coding_style,
+        first_loop_metabody,
+    )
+    main_body.add_statement(first_loop_if)
+    emit_node(context, node_5, main_body, indent + 4)
+    second_loop_body = Body(False, [])
+    emit_node(context, node_6, second_loop_body, indent + 12)
+    main_body.add_statement(
+        DoWhileLoop(
+            indent + 4,
+            context.options.coding_style,
+            node_7,
+            second_loop_body,
+            [],
+            node_6.block.block_info.branch_condition,
+        ),
+    )
+
+    should_loop = IfElseStatement(
+        start.block.block_info.branch_condition,
+        indent,
+        context.options.coding_style,
+        main_body,
+    )
+    return (start, should_loop, node_7)
 
 
 def build_flowgraph_between(
@@ -678,12 +843,22 @@ def build_flowgraph_between(
             # Before we do anything else, we pattern-match the subgraph
             # rooted at curr_start against certain predefined subgraphs
             # that emit do-while-loops:
-            do_while_loop = pattern_match_against_do_while_loop(
+            do_while_loop = pattern_match_against_simple_do_while_loop(
                 context, curr_start, indent
             )
             if do_while_loop:
                 body.add_do_while_loop(do_while_loop)
                 curr_start = do_while_loop.end_node
+                continue
+
+            # Same thing for giant unrolled loops:
+            unrolled_loop = pattern_match_against_unrolled_while_loop(
+                context, curr_start, indent
+            )
+            if unrolled_loop:
+                (_, loop_if_statement, curr_end) = unrolled_loop
+                body.add_if_else(loop_if_statement)
+                curr_start = curr_end
                 continue
 
             # A ConditionalNode means we need to find the next articulation
