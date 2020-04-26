@@ -1489,6 +1489,29 @@ def handle_ori(args: InstrArgs) -> Expression:
     return BinaryOp.int(left=r, op="|", right=imm)
 
 
+def handle_sltu(args: InstrArgs) -> Expression:
+    right = args.reg(2)
+    if args.reg_ref(1) == Register("zero"):
+        # (0U < x) is equivalent to (x != 0)
+        return BinaryOp.icmp(right, "!=", Literal(0))
+    else:
+        left = args.reg(1)
+        return BinaryOp.ucmp(left, "<", right)
+
+
+def handle_sltiu(args: InstrArgs) -> Expression:
+    left = args.reg(1)
+    right = args.imm(2)
+    if isinstance(right, Literal):
+        value = right.value & 0xFFFFFFFF
+        if value == 1:
+            # (x < 1U) is equivalent to (x == 0)
+            return BinaryOp.icmp(left, "==", Literal(0))
+        else:
+            right = Literal(value)
+    return BinaryOp.ucmp(left, "<", right)
+
+
 def handle_addi(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
     source_reg = args.reg_ref(1)
@@ -1922,8 +1945,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Flag-setting instructions
     "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
     "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
-    "sltu": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.reg(2)),
-    "sltiu": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.imm(2)),
+    "sltu": lambda a: handle_sltu(a),
+    "sltiu": lambda a: handle_sltiu(a),
     # Integer arithmetic
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
