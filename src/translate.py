@@ -1175,6 +1175,12 @@ class InstrArgs:
             return self.address_of_gsym(ret)
         return ret
 
+    def unsigned_imm(self, index: int) -> Expression:
+        ret = self.imm(index)
+        if isinstance(ret, Literal):
+            return Literal(ret.value & 0xFFFF)
+        return ret
+
     def hi_imm(self, index: int) -> Expression:
         arg = self.raw_args[index]
         assert isinstance(arg, Macro) and arg.macro_name == "hi"
@@ -1475,7 +1481,7 @@ def load_upper(args: InstrArgs) -> Expression:
 
 
 def handle_ori(args: InstrArgs) -> Expression:
-    imm = args.imm(2)
+    imm = args.unsigned_imm(2)
     r = args.reg(1)
     if isinstance(r, Literal) and isinstance(imm, Literal):
         return Literal(value=(r.value | imm.value))
@@ -1969,8 +1975,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
         "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
     ),
     "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
-    "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.imm(2)),
-    "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.imm(2)),
+    "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
+    "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
     "sll": lambda a: fold_mul_chains(
         BinaryOp.int(left=a.reg(1), op="<<", right=a.imm(2))
     ),
