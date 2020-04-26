@@ -597,17 +597,16 @@ def pattern_match_against_simple_do_while_loop(
         if statement.should_write()
     ]
 
-    body_statements = [
-        statement
-        for statement in node_1.block.block_info.to_write
-        if statement.should_write()
-    ]
+    do_while_body = Body(False, [])
+    emit_node(context, node_1, do_while_body, indent + 8)
 
+    assert isinstance(node_1.block.block_info, BlockInfo)
+    assert node_1.block.block_info.branch_condition
     return DoWhileLoop(
         indent,
         context.options.coding_style,
         node_2,
-        Body(False, body_statements),
+        do_while_body,
         initialization_statements,
         node_1.block.block_info.branch_condition,
     )
