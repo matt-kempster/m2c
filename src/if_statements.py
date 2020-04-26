@@ -123,9 +123,11 @@ class DoWhileLoop:
 
     def __str__(self) -> str:
         space = " " * self.indent
+        space_2 = " " * (self.indent + 4)
+        space_3 = " " * (self.indent + 8)
         brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
         brace_after_do = (
-            f"\n{space * 2}{{" if self.coding_style.newline_after_if else " {"
+            f"\n{space_2}{{" if self.coding_style.newline_after_if else " {"
         )
 
         init = "\n".join(str(stmt) for stmt in self.initialization)
@@ -133,9 +135,9 @@ class DoWhileLoop:
         string_components = [
             f"{space}{init}",
             f"{space}if ({cond}){brace_after_if}",
-            f"{space * 2}do{brace_after_do}",
-            "\n".join(f"{space * 3}{stmt}" for stmt in self.body.statements),
-            f"{space * 2}}} while ({cond})",
+            f"{space_2}do{brace_after_do}",
+            "\n".join(f"{space_3}{stmt}" for stmt in self.body.statements),
+            f"{space_2}}} while ({cond})",
             f"{space}}}",
         ]
         # Remnant of for-loops, will eventually resurrect
