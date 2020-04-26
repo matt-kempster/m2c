@@ -2453,7 +2453,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Note that this logic is duplicated in output_regs_for_instr.
             if not c_fn or c_fn.ret_type:
                 regs[Register("f0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.f32()
+                    expr=call, reinterpret=True, silent=True, type=Type.floatish()
                 )
                 regs[Register("f1")] = SecondF64Half()
                 regs[Register("v0")] = Cast(
