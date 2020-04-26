@@ -1296,7 +1296,17 @@ def is_type_obvious(expr: Expression) -> bool:
     since at that point we don't know the final status of EvalOnceExpr's.
     """
     if isinstance(
-        expr, (Cast, Literal, StringLiteral, AddressOf, LocalVar, PassedInArg, FuncCall)
+        expr,
+        (
+            Cast,
+            Literal,
+            StringLiteral,
+            AddressOf,
+            LocalVar,
+            PhiExpr,
+            PassedInArg,
+            FuncCall,
+        ),
     ):
         return True
     if isinstance(expr, ForceVarExpr):
