@@ -1493,6 +1493,10 @@ def handle_sltu(args: InstrArgs) -> Expression:
     right = args.reg(2)
     if args.reg_ref(1) == Register("zero"):
         # (0U < x) is equivalent to (x != 0)
+        uw_right = early_unwrap(right)
+        if isinstance(uw_right, BinaryOp) and uw_right.op == "^":
+            # ((a ^ b) != 0) is equivalent to (a != b)
+            return BinaryOp.icmp(uw_right.left, "!=", uw_right.right)
         return BinaryOp.icmp(right, "!=", Literal(0))
     else:
         left = args.reg(1)
@@ -1506,6 +1510,10 @@ def handle_sltiu(args: InstrArgs) -> Expression:
         value = right.value & 0xFFFFFFFF
         if value == 1:
             # (x < 1U) is equivalent to (x == 0)
+            uw_left = early_unwrap(left)
+            if isinstance(uw_left, BinaryOp) and uw_left.op == "^":
+                # ((a ^ b) == 0) is equivalent to (a == b)
+                return BinaryOp.icmp(uw_left.left, "==", uw_left.right)
             return BinaryOp.icmp(left, "==", Literal(0))
         else:
             right = Literal(value)
