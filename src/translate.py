@@ -436,8 +436,24 @@ class Expression(abc.ABC):
         ...
 
 
+class Condition(Expression):
+    @abc.abstractmethod
+    def negated(self) -> "Condition":
+        ...
+
+
+class Statement(abc.ABC):
+    @abc.abstractmethod
+    def should_write(self) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        ...
+
+
 @attr.s(frozen=True, eq=False)
-class ErrorExpr(Expression):
+class ErrorExpr(Condition):
     desc: Optional[str] = attr.ib(default=None)
     type: Type = attr.ib(factory=Type.any)
 
@@ -465,7 +481,7 @@ class SecondF64Half(Expression):
 
 
 @attr.s(frozen=True, eq=False)
-class BinaryOp(Expression):
+class BinaryOp(Condition):
     left: Expression = attr.ib()
     op: str = attr.ib()
     right: Expression = attr.ib()
@@ -586,7 +602,7 @@ class BinaryOp(Expression):
 
 
 @attr.s(frozen=True, eq=False)
-class UnaryOp(Expression):
+class UnaryOp(Condition):
     op: str = attr.ib()
     expr: Expression = attr.ib()
     type: Type = attr.ib()
@@ -604,7 +620,7 @@ class UnaryOp(Expression):
 
 
 @attr.s(frozen=True, eq=False)
-class CommaConditionExpr(Expression):
+class CommaConditionExpr(Condition):
     statements: List["Statement"] = attr.ib()
     condition: "Condition" = attr.ib()
     type: Type = Type.bool()
@@ -946,7 +962,7 @@ class PhiExpr(Expression):
 
 
 @attr.s
-class EvalOnceStmt:
+class EvalOnceStmt(Statement):
     expr: EvalOnceExpr = attr.ib()
 
     def need_decl(self) -> bool:
@@ -966,7 +982,7 @@ class EvalOnceStmt:
 
 
 @attr.s
-class SetPhiStmt:
+class SetPhiStmt(Statement):
     phi: PhiExpr = attr.ib()
     expr: Expression = attr.ib()
 
@@ -983,7 +999,7 @@ class SetPhiStmt:
 
 
 @attr.s
-class ExprStmt:
+class ExprStmt(Statement):
     expr: Expression = attr.ib()
 
     def should_write(self) -> bool:
@@ -994,7 +1010,7 @@ class ExprStmt:
 
 
 @attr.s
-class StoreStmt:
+class StoreStmt(Statement):
     source: Expression = attr.ib()
     dest: Expression = attr.ib()
 
@@ -1006,7 +1022,7 @@ class StoreStmt:
 
 
 @attr.s
-class CommentStmt:
+class CommentStmt(Statement):
     contents: str = attr.ib()
 
     def should_write(self) -> bool:
@@ -1014,11 +1030,6 @@ class CommentStmt:
 
     def __str__(self) -> str:
         return f"// {self.contents}"
-
-
-Condition = Union[BinaryOp, UnaryOp, ErrorExpr, CommaConditionExpr]
-
-Statement = Union[StoreStmt, EvalOnceStmt, SetPhiStmt, ExprStmt, CommentStmt]
 
 
 @attr.s(frozen=True)
