@@ -118,6 +118,12 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_false",
     )
     parser.add_argument(
+        "--no-reroll",
+        dest="loop_rerolling",
+        help="disable emitting for-loops by un-unrolling (rerolling) while-loops",
+        action="store_false",
+    )
+    parser.add_argument(
         "--goto",
         metavar="PATTERN",
         dest="goto_patterns",
@@ -203,6 +209,7 @@ def parse_flags(flags: List[str]) -> Options:
         void=args.void,
         ifs=args.ifs,
         andor_detection=args.andor_detection,
+        loop_rerolling=args.loop_rerolling,
         goto_patterns=args.goto_patterns,
         rodata_files=args.rodata_files,
         stop_on_error=args.stop_on_error,

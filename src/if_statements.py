@@ -22,7 +22,13 @@ from .translate import (
     FunctionInfo,
 )
 from .translate import Statement as TranslateStatement
-from .translate import Type, simplify_condition, stringify_expr
+from .translate import (
+    Type,
+    simplify_condition,
+    stringify_expr,
+    EvalOnceStmt,
+    EvalOnceExpr,
+)
 
 
 @attr.s
@@ -589,7 +595,79 @@ def pattern_match_against_simple_do_while_loop(
 
 def pattern_match_against_unrolled_while_loop(
     context: Context, start: ConditionalNode, indent: int
-) -> Optional[Tuple[Node, IfElseStatement, Node]]:
+) -> Optional[
+    Tuple[Node, Union[IfElseStatement, Tuple[Node, Node, DoWhileLoop]], Node]
+]:
+    """
+    A common-case for-loop is:
+
+    ```c
+    for (i = 0; i < length; i++) {
+       // code
+    }
+    ```
+
+    which, at least for IRIX -O2, is compiled roughly like:
+
+    ```c
+    for (i = 0; i < (length % 4); i++) {
+       // code in node 3
+    }
+    for (i = (length % 4); i < length; i += 4) {
+       // code, repeated for i through i + 3
+       // aka code in node 6
+    }
+    ```
+
+    which is *actually* compiled exactly like this:
+
+    ```c
+    [node_0]
+    if ([node_0.condition]) {
+        [node_1]
+        if (![node_1.condition]) {
+            [node_2]
+            while ([node_3.condition]) {
+                [node_3]
+            }
+            [node_4]
+            if ([node_4.condition]) {
+                goto label_7
+            }
+        }
+        [node_5]
+        while ([node_6.condition]) {
+            [node_6]
+        }
+    }
+    label_7:
+    [node_7]
+    ```
+
+    This function aims to detect such loops, then emit them in a useful way.
+
+    If `options.loop_rerolling` is disabled, the bottom, more literal
+    interpretation, is emitted.
+
+    Otherwise, the following is emitted:
+    ```c
+    [node_0]
+    [node_1_MODIFIED]
+    [node_2]
+    while ([node_3.condition]) {
+        [node_3]
+    }
+    [node_7]
+    ```
+    where the MODIFIED suffix indicates that we will not be using the
+    above-mentioned `length % 4`, but instead just `length`. Note that
+    this interpretation discards all of nodes 4, 5, and 6, as well as
+    several needless short-circuits.
+
+    As you can see, this drastically modified output may be incorrect,
+    and can be disabled using the --no-reroll flag.
+    """
+
     node_1 = start.fallthrough_edge
     node_7 = start.conditional_edge
 
@@ -629,45 +707,6 @@ def pattern_match_against_unrolled_while_loop(
     ):
         return None
 
-    # for (i = 0; i < length; i++) {
-    #    // code
-    # }
-    #
-    # becomes
-    #
-    # for (i = 0; i < (length % 4); i++) {
-    #    // code in node 3
-    # }
-    # for (i = (length % 4); i < length; i += 4) {
-    #    // code, repeated for i through i + 3
-    #    // aka code in node 6
-    # }
-    #
-    # which, much futzing later, becomes
-    #
-    # [node_0]
-    # if ([node_0.condition])
-    # {
-    #     [node_1]
-    #     if (![node_1.condition])
-    #     {
-    #         [node_2]
-    #         while ([node_3.condition]) {
-    #             [node_3]
-    #         }
-    #         [node_4]
-    #         if ([node_4.condition]) {
-    #             goto label_7
-    #         }
-    #     }
-    #     [node_5]
-    #     while ([node_6.condition]) {
-    #         [node_6]
-    #     }
-    # }
-    # label_7:
-    # [node_7]
-
     assert isinstance(start.block.block_info, BlockInfo)
     assert isinstance(node_1.block.block_info, BlockInfo)
     assert isinstance(node_3.block.block_info, BlockInfo)
@@ -686,14 +725,13 @@ def pattern_match_against_unrolled_while_loop(
     emit_node(context, node_2, first_loop_metabody, indent + 8)
     first_loop_body = Body(False, [])
     emit_node(context, node_3, first_loop_body, indent + 12)
-    first_loop_metabody.add_statement(
-        DoWhileLoop(
-            indent + 8,
-            context.options.coding_style,
-            first_loop_body,
-            node_3.block.block_info.branch_condition,
-        )
+    first_loop_while = DoWhileLoop(
+        indent + 8,
+        context.options.coding_style,
+        first_loop_body,
+        node_3.block.block_info.branch_condition,
     )
+    first_loop_metabody.add_statement(first_loop_while)
     emit_node(context, node_4, first_loop_metabody, indent + 8)
     first_loop_metabody.add_statement(
         IfElseStatement(
@@ -729,7 +767,38 @@ def pattern_match_against_unrolled_while_loop(
         context.options.coding_style,
         main_body,
     )
-    return (start, should_loop, node_7)
+    if not context.options.loop_rerolling:
+        return (start, should_loop, node_7)
+
+    # [node_0]
+    # [node_1_MODIFIED]
+    # [node_2]
+    # while ([node_3.condition]) {
+    #     [node_3]
+    # }
+    # [node_7]
+    to_write = node_1.block.block_info.to_write
+    original_remainder_taker = to_write[0]
+    assert isinstance(original_remainder_taker, EvalOnceStmt)
+    original_expr = original_remainder_taker.expr
+    assert isinstance(original_expr, EvalOnceExpr)
+    original_binop = original_expr.wrapped_expr
+    assert isinstance(original_binop, BinaryOp)
+    # !!! This is the only line that actually does anything !!!
+    # This is what replaces the "& 3" with nothing.
+    new_expr = attr.evolve(original_expr, wrapped_expr=original_binop.left)
+    no_taking_remainder = attr.evolve(original_remainder_taker, expr=new_expr)
+    new_to_write = [no_taking_remainder, *to_write[1:]]
+    new_block_info = attr.evolve(node_1.block.block_info, to_write=new_to_write)
+    new_block = attr.evolve(node_1.block)
+    new_block.block_info = new_block_info
+    node_1_modified = attr.evolve(node_1, block=new_block)
+    dedented_while_body = Body(False, [])
+    emit_node(context, node_3, dedented_while_body, indent + 4)
+    dedented_while = attr.evolve(
+        first_loop_while, indent=indent, body=dedented_while_body
+    )
+    return (start, (node_1_modified, node_2, dedented_while), node_7)
 
 
 def build_flowgraph_between(
@@ -828,8 +897,14 @@ def build_flowgraph_between(
                 context, curr_start, indent
             )
             if unrolled_loop:
-                (_, loop_if_statement, curr_end) = unrolled_loop
-                body.add_if_else(loop_if_statement)
+                (_, statement, curr_end) = unrolled_loop
+                if isinstance(statement, IfElseStatement):
+                    body.add_if_else(statement)
+                else:
+                    (node1, node2, do_while) = statement
+                    emit_node(context, node1, body, indent)
+                    emit_node(context, node2, body, indent)
+                    body.add_do_while_loop(do_while)
                 curr_start = curr_end
                 continue
 
