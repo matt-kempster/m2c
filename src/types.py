@@ -266,12 +266,16 @@ def get_field(
                     field = fields[0]
                 else:
                     # Pick the first subfield in case of unions.
-                    ind = 0
-                    while ind + 1 < len(fields) and fields[ind + 1].name.startswith(
-                        fields[ind].name + "."
-                    ):
-                        ind += 1
-                    field = fields[ind]
+                    correct_size_fields = [f for f in fields if f.size == target_size]
+                    if len(correct_size_fields) == 1:
+                        field = correct_size_fields[0]
+                    else:
+                        ind = 0
+                        while ind + 1 < len(fields) and fields[ind + 1].name.startswith(
+                            fields[ind].name + "."
+                        ):
+                            ind += 1
+                        field = fields[ind]
                 return (
                     field.name,
                     type_from_ctype(field.type, typemap),
