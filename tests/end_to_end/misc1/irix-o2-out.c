@@ -1,5 +1,4 @@
-s32 test(s32 arg0, ? arg1)
-{
+s32 test(s32 arg0, ? arg1) {
     s32 sp2C;
     s32 sp28;
     s32 sp24;
@@ -14,8 +13,7 @@ s32 test(s32 arg0, ? arg1)
     sp24 = temp_v0->unk8;
     temp_ret = func_00400140(1, 2, temp_a2, arg1, arg0);
     temp_a1 = temp_ret;
-    if (temp_ret == 0)
-    {
+    if (temp_ret == 0) {
         return 0;
     }
     sp28 = temp_a1;

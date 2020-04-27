@@ -1,5 +1,4 @@
-void test(s32 x, short *y, s32 z)
-{
+void test(s32 x, short *y, s32 z) {
     int *sp1C;
 
     sp1C = NULL;

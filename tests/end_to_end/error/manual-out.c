@@ -1,5 +1,4 @@
-? test(void)
-{
+? test(void) {
     s32 temp_t1;
 
     ERROR(unknown instruction: break 0x1);

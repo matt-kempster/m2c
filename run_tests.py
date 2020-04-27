@@ -55,7 +55,7 @@ def decompile_and_compare(
         logging.info(f"{output_path} does not exist. Creating...")
         original_contents = "(file did not exist)"
 
-    flags = [str(asm_file_path), "test", "--allman", "--stop-on-error"]
+    flags = [str(asm_file_path), "test", "--stop-on-error"]
     flags_list = get_test_flags(flags_path)
     flags.extend(flags_list)
 
