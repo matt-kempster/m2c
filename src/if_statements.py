@@ -110,10 +110,7 @@ class DoWhileLoop:
     indent: int = attr.ib()
     coding_style: CodingStyle = attr.ib()
 
-    end_node: Node = attr.ib()
     body: "Body" = attr.ib()
-
-    initialization: List[TranslateStatement] = attr.ib(factory=list)  # deprecated
     condition: Optional[Condition] = attr.ib(default=None)
 
     def should_write(self) -> bool:
@@ -133,18 +130,6 @@ class DoWhileLoop:
             f"{space}}} while ({cond});",
         ]
         return "\n".join(string_components)
-
-
-@attr.s
-class UnrolledLoop:
-    indent: int = attr.ib()
-    coding_style: CodingStyle = attr.ib()
-
-    end_node: Node = attr.ib()
-    body: "Body" = attr.ib()
-
-    initialization: List[TranslateStatement] = attr.ib(factory=list)
-    condition: Optional[Condition] = attr.ib(default=None)
 
 
 Statement = Union[SimpleStatement, IfElseStatement, LabelStatement, DoWhileLoop]
@@ -565,10 +550,7 @@ def add_return_statement(
 
 
 def pattern_match_against_simple_do_while_loop(
-    context: Context,
-    start: ConditionalNode,
-    indent: int
-    # ) -> Optional[DoWhileLoop]:
+    context: Context, start: ConditionalNode, indent: int
 ) -> Optional[Tuple[Node, IfElseStatement, Node]]:
     node_1 = start.fallthrough_edge
     node_2 = start.conditional_edge
@@ -582,25 +564,6 @@ def pattern_match_against_simple_do_while_loop(
     ):
         return None
 
-    # initialization_statements = [
-    #     statement
-    #     for statement in start.block.block_info.to_write
-    #     if statement.should_write()
-    # ]
-
-    # do_while_body = Body(False, [])
-    # emit_node(context, node_1, do_while_body, indent + 8)
-
-    # assert isinstance(node_1.block.block_info, BlockInfo)
-    # assert node_1.block.block_info.branch_condition
-    # return DoWhileLoop(
-    #     indent,
-    #     context.options.coding_style,
-    #     node_2,
-    #     do_while_body,
-    #     initialization_statements,
-    #     node_1.block.block_info.branch_condition,
-    # )
     assert isinstance(start.block.block_info, BlockInfo)
     assert isinstance(node_1.block.block_info, BlockInfo)
     assert start.block.block_info.branch_condition
@@ -612,9 +575,7 @@ def pattern_match_against_simple_do_while_loop(
     do_while = DoWhileLoop(
         indent + 4,
         context.options.coding_style,
-        node_2,
         loop_body,
-        [],
         node_1.block.block_info.branch_condition,
     )
     should_loop = IfElseStatement(
@@ -729,9 +690,7 @@ def pattern_match_against_unrolled_while_loop(
         DoWhileLoop(
             indent + 8,
             context.options.coding_style,
-            node_4,
             first_loop_body,
-            [],
             node_3.block.block_info.branch_condition,
         )
     )
@@ -759,9 +718,7 @@ def pattern_match_against_unrolled_while_loop(
         DoWhileLoop(
             indent + 4,
             context.options.coding_style,
-            node_7,
             second_loop_body,
-            [],
             node_6.block.block_info.branch_condition,
         ),
     )
