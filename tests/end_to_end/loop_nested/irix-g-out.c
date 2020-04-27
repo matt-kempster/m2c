@@ -10,8 +10,7 @@ s32 test(s32 arg0)
     {
 loop_1:
         sp4 = 0;
-        sp4 = 0;
-        if (((sp4 < arg0) != 0))
+        if (sp4 < arg0)
         {
             do
             {

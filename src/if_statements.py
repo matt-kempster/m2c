@@ -113,7 +113,7 @@ class DoWhileLoop:
     end_node: Node = attr.ib()
     body: "Body" = attr.ib()
 
-    initialization: List[TranslateStatement] = attr.ib(factory=list)
+    initialization: List[TranslateStatement] = attr.ib(factory=list)  # deprecated
     condition: Optional[Condition] = attr.ib(default=None)
 
     def should_write(self) -> bool:
@@ -124,26 +124,14 @@ class DoWhileLoop:
         space_2 = " " * (self.indent + 4)
         space_3 = " " * (self.indent + 8)
         brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
-        brace_after_do = (
-            f"\n{space_2}{{" if self.coding_style.newline_after_if else " {"
-        )
+        brace_after_do = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
 
-        init = "\n".join(str(stmt) for stmt in self.initialization)
         cond = str(self.condition).rstrip(";") if self.condition else ""
         body = f"\n".join(f"{stmt}" for stmt in self.body.statements)
         string_components = [
-            f"{space}{init}",
-            f"{space}if ({cond}){brace_after_if}",
-            f"{space_2}do{brace_after_do}{body}",
-            f"{space_2}}} while ({cond})",
-            f"{space}}}",
+            f"{space}do{brace_after_do}{body}",
+            f"{space}}} while ({cond})",
         ]
-        # Remnant of for-loops, will eventually resurrect
-        # string_components = [
-        #     f"{space}for ({init}; {cond}; {after}){brace_after_if}",
-        #     str(self.body),  # has its own indentation
-        #     f"{space}}}",
-        # ]
         return "\n".join(string_components)
 
 
@@ -577,8 +565,11 @@ def add_return_statement(
 
 
 def pattern_match_against_simple_do_while_loop(
-    context: Context, start: ConditionalNode, indent: int
-) -> Optional[DoWhileLoop]:
+    context: Context,
+    start: ConditionalNode,
+    indent: int
+    # ) -> Optional[DoWhileLoop]:
+) -> Optional[Tuple[Node, IfElseStatement, Node]]:
     node_1 = start.fallthrough_edge
     node_2 = start.conditional_edge
 
@@ -591,25 +582,48 @@ def pattern_match_against_simple_do_while_loop(
     ):
         return None
 
-    initialization_statements = [
-        statement
-        for statement in start.block.block_info.to_write
-        if statement.should_write()
-    ]
+    # initialization_statements = [
+    #     statement
+    #     for statement in start.block.block_info.to_write
+    #     if statement.should_write()
+    # ]
 
-    do_while_body = Body(False, [])
-    emit_node(context, node_1, do_while_body, indent + 8)
+    # do_while_body = Body(False, [])
+    # emit_node(context, node_1, do_while_body, indent + 8)
 
+    # assert isinstance(node_1.block.block_info, BlockInfo)
+    # assert node_1.block.block_info.branch_condition
+    # return DoWhileLoop(
+    #     indent,
+    #     context.options.coding_style,
+    #     node_2,
+    #     do_while_body,
+    #     initialization_statements,
+    #     node_1.block.block_info.branch_condition,
+    # )
+    assert isinstance(start.block.block_info, BlockInfo)
     assert isinstance(node_1.block.block_info, BlockInfo)
+    assert start.block.block_info.branch_condition
     assert node_1.block.block_info.branch_condition
-    return DoWhileLoop(
-        indent,
+
+    loop_body = Body(False, [])
+    emit_node(context, node_1, loop_body, indent + 8)
+
+    do_while = DoWhileLoop(
+        indent + 4,
         context.options.coding_style,
         node_2,
-        do_while_body,
-        initialization_statements,
+        loop_body,
+        [],
         node_1.block.block_info.branch_condition,
     )
+    should_loop = IfElseStatement(
+        start.block.block_info.branch_condition.negated(),
+        indent,
+        context.options.coding_style,
+        Body(False, [do_while]),
+    )
+    return (start, should_loop, node_2)
 
 
 def pattern_match_against_unrolled_while_loop(
@@ -710,7 +724,7 @@ def pattern_match_against_unrolled_while_loop(
     first_loop_metabody = Body(False, [])
     emit_node(context, node_2, first_loop_metabody, indent + 8)
     first_loop_body = Body(False, [])
-    emit_node(context, node_3, first_loop_body, indent + 16)
+    emit_node(context, node_3, first_loop_body, indent + 12)
     first_loop_metabody.add_statement(
         DoWhileLoop(
             indent + 8,
@@ -740,7 +754,7 @@ def pattern_match_against_unrolled_while_loop(
     main_body.add_statement(first_loop_if)
     emit_node(context, node_5, main_body, indent + 4)
     second_loop_body = Body(False, [])
-    emit_node(context, node_6, second_loop_body, indent + 12)
+    emit_node(context, node_6, second_loop_body, indent + 8)
     main_body.add_statement(
         DoWhileLoop(
             indent + 4,
@@ -846,8 +860,10 @@ def build_flowgraph_between(
                 context, curr_start, indent
             )
             if do_while_loop:
-                body.add_do_while_loop(do_while_loop)
-                curr_start = do_while_loop.end_node
+                (_, loop_if_statement, curr_end) = do_while_loop
+                # emit_node(context, curr_start, body, indent)
+                body.add_if_else(loop_if_statement)
+                curr_start = curr_end
                 continue
 
             # Same thing for giant unrolled loops:

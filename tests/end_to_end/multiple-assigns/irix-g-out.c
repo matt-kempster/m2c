@@ -5,8 +5,7 @@ s32 test(s32 arg0)
     s32 phi_a0;
 
     phi_a0 = arg0;
-    phi_a0 = arg0;
-    if ((temp_a0 == 5))
+    if (arg0 == 5)
     {
         do
         {

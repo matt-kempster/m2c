@@ -20,17 +20,13 @@ s32 test(void *arg0, s32 arg1)
         {
             phi_v1 = arg0;
             phi_v0 = 0;
-            
-            if ((temp_a3 != temp_v0))
+            do
             {
-                do
-                {
-                    temp_v0 = phi_v0 + 1;
-                    *phi_v1 = (u8)0;
-                    phi_v1 = phi_v1 + 1;
-                    phi_v0 = temp_v0;
-                } while ((temp_a3 != temp_v0))
-            }
+                temp_v0 = phi_v0 + 1;
+                *phi_v1 = (u8)0;
+                phi_v1 = phi_v1 + 1;
+                phi_v0 = temp_v0;
+            } while ((temp_a3 != temp_v0))
             phi_return = temp_v0;
             phi_v0_3 = temp_v0;
             if (temp_v0 == arg1)
@@ -40,22 +36,18 @@ s32 test(void *arg0, s32 arg1)
         }
         phi_v1_2 = arg0 + phi_v0_3;
         phi_v0_2 = phi_v0_3;
-        
-        if ((temp_v0_2 != arg1))
+        do
         {
-            do
-            {
-                temp_v0_2 = phi_v0_2 + 4;
-                phi_v1_2->unk1 = (u8)0;
-                phi_v1_2->unk2 = (u8)0;
-                phi_v1_2->unk3 = (u8)0;
-                temp_v1 = phi_v1_2 + 4;
-                temp_v1->unk-4 = (u8)0;
-                phi_v1_2 = temp_v1;
-                phi_v0_2 = temp_v0_2;
-                phi_return = temp_v0_2;
-            } while ((temp_v0_2 != arg1))
-        }
+            temp_v0_2 = phi_v0_2 + 4;
+            phi_v1_2->unk1 = (u8)0;
+            phi_v1_2->unk2 = (u8)0;
+            phi_v1_2->unk3 = (u8)0;
+            temp_v1 = phi_v1_2 + 4;
+            temp_v1->unk-4 = (u8)0;
+            phi_v1_2 = temp_v1;
+            phi_v0_2 = temp_v0_2;
+            phi_return = temp_v0_2;
+        } while ((temp_v0_2 != arg1))
     }
 block_7:
     return phi_return;
