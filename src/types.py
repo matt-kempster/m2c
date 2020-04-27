@@ -165,6 +165,10 @@ class Type:
         return Type(kind=Type.K_FLOAT, size=32, sign=Type.ANY_SIGN)
 
     @staticmethod
+    def floatish() -> "Type":
+        return Type(kind=Type.K_FLOAT, size=None, sign=Type.ANY_SIGN)
+
+    @staticmethod
     def f64() -> "Type":
         return Type(kind=Type.K_FLOAT, size=64, sign=Type.ANY_SIGN)
 

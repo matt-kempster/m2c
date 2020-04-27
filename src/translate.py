@@ -1,3 +1,4 @@
+import abc
 import struct
 import sys
 import traceback
@@ -150,8 +151,8 @@ def as_f64(expr: "Expression") -> "Expression":
     return as_type(expr, Type.f64(), True)
 
 
-def as_s32(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.s32(), False)
+def as_s32(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.s32(), silent)
 
 
 def as_u32(expr: "Expression") -> "Expression":
@@ -423,12 +424,40 @@ class Var:
         return self.name
 
 
+class Expression(abc.ABC):
+    type: Type
+
+    @abc.abstractmethod
+    def dependencies(self) -> List["Expression"]:
+        ...
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        ...
+
+
+class Condition(Expression):
+    @abc.abstractmethod
+    def negated(self) -> "Condition":
+        ...
+
+
+class Statement(abc.ABC):
+    @abc.abstractmethod
+    def should_write(self) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def __str__(self) -> str:
+        ...
+
+
 @attr.s(frozen=True, eq=False)
-class ErrorExpr:
+class ErrorExpr(Condition):
     desc: Optional[str] = attr.ib(default=None)
     type: Type = attr.ib(factory=Type.any)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def negated(self) -> "Condition":
@@ -441,10 +470,10 @@ class ErrorExpr:
 
 
 @attr.s(frozen=True, eq=False)
-class SecondF64Half:
+class SecondF64Half(Expression):
     type: Type = attr.ib(factory=Type.any)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -452,37 +481,46 @@ class SecondF64Half:
 
 
 @attr.s(frozen=True, eq=False)
-class BinaryOp:
-    left: "Expression" = attr.ib()
+class BinaryOp(Condition):
+    left: Expression = attr.ib()
     op: str = attr.ib()
-    right: "Expression" = attr.ib()
+    right: Expression = attr.ib()
     type: Type = attr.ib()
     floating: bool = attr.ib(default=False)
 
     @staticmethod
-    def int(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intish(left), op=op, right=as_intish(right), type=Type.intish()
         )
 
     @staticmethod
-    def intptr(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def intptr(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.intptr()
         )
 
     @staticmethod
-    def icmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def icmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.bool()
         )
 
     @staticmethod
-    def ucmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_s32(left, silent=True),
+            op=op,
+            right=as_s32(right, silent=True),
+            type=Type.bool(),
+        )
+
+    @staticmethod
+    def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
 
     @staticmethod
-    def fcmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f32(left),
             op=op,
@@ -492,7 +530,7 @@ class BinaryOp:
         )
 
     @staticmethod
-    def dcmp(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def dcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f64(left),
             op=op,
@@ -502,15 +540,15 @@ class BinaryOp:
         )
 
     @staticmethod
-    def s32(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def s32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_s32(left), op=op, right=as_s32(right), type=Type.s32())
 
     @staticmethod
-    def u32(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.u32())
 
     @staticmethod
-    def f32(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f32(left),
             op=op,
@@ -520,7 +558,7 @@ class BinaryOp:
         )
 
     @staticmethod
-    def f64(left: "Expression", op: str, right: "Expression") -> "BinaryOp":
+    def f64(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f64(left),
             op=op,
@@ -547,7 +585,7 @@ class BinaryOp:
             type=Type.bool(),
         )
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
     def __str__(self) -> str:
@@ -564,12 +602,12 @@ class BinaryOp:
 
 
 @attr.s(frozen=True, eq=False)
-class UnaryOp:
+class UnaryOp(Condition):
     op: str = attr.ib()
-    expr: "Expression" = attr.ib()
+    expr: Expression = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.expr]
 
     def negated(self) -> "Condition":
@@ -582,12 +620,12 @@ class UnaryOp:
 
 
 @attr.s(frozen=True, eq=False)
-class CommaConditionExpr:
+class CommaConditionExpr(Condition):
     statements: List["Statement"] = attr.ib()
     condition: "Condition" = attr.ib()
     type: Type = Type.bool()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         assert False, "CommaConditionExpr should not be used within translate.py"
         return []
 
@@ -600,13 +638,13 @@ class CommaConditionExpr:
 
 
 @attr.s(frozen=True, eq=False)
-class Cast:
-    expr: "Expression" = attr.ib()
+class Cast(Expression):
+    expr: Expression = attr.ib()
     type: Type = attr.ib()
     reinterpret: bool = attr.ib(default=False)
     silent: bool = attr.ib(default=True)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.expr]
 
     def use(self) -> None:
@@ -617,18 +655,21 @@ class Cast:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
             return f"(bitwise {self.type}) {self.expr}"
-        if self.reinterpret and (self.silent or is_type_obvious(self.expr)):
+        if self.reinterpret and (
+            self.silent
+            or (is_type_obvious(self.expr) and self.expr.type.unify(self.type))
+        ):
             return str(self.expr)
         return f"({self.type}) {self.expr}"
 
 
 @attr.s(frozen=True, eq=False)
-class FuncCall:
-    function: "Expression" = attr.ib()
-    args: List["Expression"] = attr.ib()
+class FuncCall(Expression):
+    function: Expression = attr.ib()
+    args: List[Expression] = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
 
     def __str__(self) -> str:
@@ -637,11 +678,11 @@ class FuncCall:
 
 
 @attr.s(frozen=True, eq=True)
-class LocalVar:
+class LocalVar(Expression):
     value: int = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -649,13 +690,13 @@ class LocalVar:
 
 
 @attr.s(frozen=True, eq=True)
-class PassedInArg:
+class PassedInArg(Expression):
     value: int = attr.ib()
     copied: bool = attr.ib(eq=False)
     stack_info: StackInfo = attr.ib(eq=False, repr=False)
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -665,11 +706,11 @@ class PassedInArg:
 
 
 @attr.s(frozen=True, eq=True)
-class SubroutineArg:
+class SubroutineArg(Expression):
     value: int = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -677,19 +718,19 @@ class SubroutineArg:
 
 
 @attr.s(frozen=True, eq=True)
-class StructAccess:
+class StructAccess(Expression):
     # Represents struct_var->offset.
     # This has eq=True since it represents a live expression and not
     # an access at a certain point in time -- this sometimes helps get rid of phi nodes.
     # Really it should represent the latter, but making that so is hard.
-    struct_var: "Expression" = attr.ib()
+    struct_var: Expression = attr.ib()
     offset: int = attr.ib()
     target_size: Optional[int] = attr.ib()
     field_name: Optional[str] = attr.ib(eq=False)
     stack_info: StackInfo = attr.ib(eq=False, repr=False)
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
     def __str__(self) -> str:
@@ -727,13 +768,13 @@ class StructAccess:
 
 
 @attr.s(frozen=True, eq=True)
-class ArrayAccess:
+class ArrayAccess(Expression):
     # Represents ptr[index]. eq=True for symmetry with StructAccess.
-    ptr: "Expression" = attr.ib()
-    index: "Expression" = attr.ib()
+    ptr: Expression = attr.ib()
+    index: Expression = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.ptr, self.index]
 
     def __str__(self) -> str:
@@ -741,11 +782,11 @@ class ArrayAccess:
 
 
 @attr.s(frozen=True, eq=True)
-class GlobalSymbol:
+class GlobalSymbol(Expression):
     symbol_name: str = attr.ib()
     type: Type = attr.ib(eq=False)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -753,11 +794,11 @@ class GlobalSymbol:
 
 
 @attr.s(frozen=True, eq=True)
-class Literal:
+class Literal(Expression):
     value: int = attr.ib()
     type: Type = attr.ib(eq=False, factory=Type.any)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -786,11 +827,11 @@ class Literal:
 
 
 @attr.s(frozen=True)
-class StringLiteral:
+class StringLiteral(Expression):
     data: bytes = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def __str__(self) -> str:
@@ -810,32 +851,20 @@ class StringLiteral:
 
 
 @attr.s(frozen=True, eq=True)
-class AddressOf:
-    expr: "Expression" = attr.ib()
+class AddressOf(Expression):
+    expr: Expression = attr.ib()
     type: Type = attr.ib(eq=False, factory=Type.ptr)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.expr]
 
     def __str__(self) -> str:
         return f"&{self.expr}"
 
 
-@attr.s(frozen=True)
-class AddressMode:
-    offset: int = attr.ib()
-    rhs: Register = attr.ib()
-
-    def __str__(self) -> str:
-        if self.offset:
-            return f"{self.offset}({self.rhs})"
-        else:
-            return f"({self.rhs})"
-
-
 @attr.s(frozen=False, eq=False)
-class EvalOnceExpr:
-    wrapped_expr: "Expression" = attr.ib()
+class EvalOnceExpr(Expression):
+    wrapped_expr: Expression = attr.ib()
     var: Var = attr.ib()
     type: Type = attr.ib()
 
@@ -855,7 +884,7 @@ class EvalOnceExpr:
     # if this is > 1.
     num_usages: int = attr.ib(default=0)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.wrapped_expr]
 
     def use(self) -> None:
@@ -874,11 +903,11 @@ class EvalOnceExpr:
 
 
 @attr.s(eq=False)
-class ForceVarExpr:
+class ForceVarExpr(Expression):
     wrapped_expr: EvalOnceExpr = attr.ib()
     type: Type = attr.ib()
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return [self.wrapped_expr]
 
     def use(self) -> None:
@@ -899,17 +928,17 @@ class ForceVarExpr:
 
 
 @attr.s(frozen=False, eq=False)
-class PhiExpr:
+class PhiExpr(Expression):
     reg: Register = attr.ib()
     node: Node = attr.ib()
     type: Type = attr.ib()
     used_phis: List["PhiExpr"] = attr.ib()
     name: Optional[str] = attr.ib(default=None)
     num_usages: int = attr.ib(default=0)
-    replacement_expr: Optional["Expression"] = attr.ib(default=None)
+    replacement_expr: Optional[Expression] = attr.ib(default=None)
     used_by: Optional["PhiExpr"] = attr.ib(default=None)
 
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         return []
 
     def get_var_name(self) -> str:
@@ -933,7 +962,7 @@ class PhiExpr:
 
 
 @attr.s
-class EvalOnceStmt:
+class EvalOnceStmt(Statement):
     expr: EvalOnceExpr = attr.ib()
 
     def need_decl(self) -> bool:
@@ -953,9 +982,9 @@ class EvalOnceStmt:
 
 
 @attr.s
-class SetPhiStmt:
+class SetPhiStmt(Statement):
     phi: PhiExpr = attr.ib()
-    expr: "Expression" = attr.ib()
+    expr: Expression = attr.ib()
 
     def should_write(self) -> bool:
         expr = self.expr
@@ -970,8 +999,8 @@ class SetPhiStmt:
 
 
 @attr.s
-class ExprStmt:
-    expr: "Expression" = attr.ib()
+class ExprStmt(Statement):
+    expr: Expression = attr.ib()
 
     def should_write(self) -> bool:
         return True
@@ -981,9 +1010,9 @@ class ExprStmt:
 
 
 @attr.s
-class StoreStmt:
-    source: "Expression" = attr.ib()
-    dest: "Expression" = attr.ib()
+class StoreStmt(Statement):
+    source: Expression = attr.ib()
+    dest: Expression = attr.ib()
 
     def should_write(self) -> bool:
         return True
@@ -993,7 +1022,7 @@ class StoreStmt:
 
 
 @attr.s
-class CommentStmt:
+class CommentStmt(Statement):
     contents: str = attr.ib()
 
     def should_write(self) -> bool:
@@ -1003,31 +1032,16 @@ class CommentStmt:
         return f"// {self.contents}"
 
 
-Expression = Union[
-    BinaryOp,
-    UnaryOp,
-    CommaConditionExpr,
-    Cast,
-    FuncCall,
-    GlobalSymbol,
-    Literal,
-    StringLiteral,
-    AddressOf,
-    LocalVar,
-    PassedInArg,
-    StructAccess,
-    ArrayAccess,
-    SubroutineArg,
-    EvalOnceExpr,
-    ForceVarExpr,
-    PhiExpr,
-    ErrorExpr,
-    SecondF64Half,
-]
+@attr.s(frozen=True)
+class AddressMode:
+    offset: int = attr.ib()
+    rhs: Register = attr.ib()
 
-Condition = Union[BinaryOp, UnaryOp, ErrorExpr, CommaConditionExpr]
-
-Statement = Union[StoreStmt, EvalOnceStmt, SetPhiStmt, ExprStmt, CommentStmt]
+    def __str__(self) -> str:
+        if self.offset:
+            return f"{self.offset}({self.rhs})"
+        else:
+            return f"({self.rhs})"
 
 
 @attr.s
@@ -1163,6 +1177,12 @@ class InstrArgs:
             return self.address_of_gsym(ret)
         return ret
 
+    def unsigned_imm(self, index: int) -> Expression:
+        ret = self.imm(index)
+        if isinstance(ret, Literal):
+            return Literal(ret.value & 0xFFFF)
+        return ret
+
     def hi_imm(self, index: int) -> Expression:
         arg = self.raw_args[index]
         assert isinstance(arg, Macro) and arg.macro_name == "hi"
@@ -1296,7 +1316,17 @@ def is_type_obvious(expr: Expression) -> bool:
     since at that point we don't know the final status of EvalOnceExpr's.
     """
     if isinstance(
-        expr, (Cast, Literal, StringLiteral, AddressOf, LocalVar, PassedInArg, FuncCall)
+        expr,
+        (
+            Cast,
+            Literal,
+            StringLiteral,
+            AddressOf,
+            LocalVar,
+            PhiExpr,
+            PassedInArg,
+            FuncCall,
+        ),
     ):
         return True
     if isinstance(expr, ForceVarExpr):
@@ -1453,12 +1483,43 @@ def load_upper(args: InstrArgs) -> Expression:
 
 
 def handle_ori(args: InstrArgs) -> Expression:
-    imm = args.imm(2)
+    imm = args.unsigned_imm(2)
     r = args.reg(1)
     if isinstance(r, Literal) and isinstance(imm, Literal):
         return Literal(value=(r.value | imm.value))
     # Regular bitwise OR.
     return BinaryOp.int(left=r, op="|", right=imm)
+
+
+def handle_sltu(args: InstrArgs) -> Expression:
+    right = args.reg(2)
+    if args.reg_ref(1) == Register("zero"):
+        # (0U < x) is equivalent to (x != 0)
+        uw_right = early_unwrap(right)
+        if isinstance(uw_right, BinaryOp) and uw_right.op == "^":
+            # ((a ^ b) != 0) is equivalent to (a != b)
+            return BinaryOp.icmp(uw_right.left, "!=", uw_right.right)
+        return BinaryOp.icmp(right, "!=", Literal(0))
+    else:
+        left = args.reg(1)
+        return BinaryOp.ucmp(left, "<", right)
+
+
+def handle_sltiu(args: InstrArgs) -> Expression:
+    left = args.reg(1)
+    right = args.imm(2)
+    if isinstance(right, Literal):
+        value = right.value & 0xFFFFFFFF
+        if value == 1:
+            # (x < 1U) is equivalent to (x == 0)
+            uw_left = early_unwrap(left)
+            if isinstance(uw_left, BinaryOp) and uw_left.op == "^":
+                # ((a ^ b) == 0) is equivalent to (a == b)
+                return BinaryOp.icmp(uw_left.left, "==", uw_left.right)
+            return BinaryOp.icmp(left, "==", Literal(0))
+        else:
+            right = Literal(value)
+    return BinaryOp.ucmp(left, "<", right)
 
 
 def handle_addi(args: InstrArgs) -> Expression:
@@ -1844,10 +1905,10 @@ CASES_BRANCHES: CmpInstrMap = {
     "bne": lambda a: BinaryOp.icmp(a.reg(0), "!=", a.reg(1)),
     "beqz": lambda a: BinaryOp.icmp(a.reg(0), "==", Literal(0)),
     "bnez": lambda a: BinaryOp.icmp(a.reg(0), "!=", Literal(0)),
-    "blez": lambda a: BinaryOp.icmp(a.reg(0), "<=", Literal(0)),
-    "bgtz": lambda a: BinaryOp.icmp(a.reg(0), ">", Literal(0)),
-    "bltz": lambda a: BinaryOp.icmp(a.reg(0), "<", Literal(0)),
-    "bgez": lambda a: BinaryOp.icmp(a.reg(0), ">=", Literal(0)),
+    "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
+    "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
+    "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
+    "bgez": lambda a: BinaryOp.scmp(a.reg(0), ">=", Literal(0)),
 }
 CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
@@ -1892,10 +1953,10 @@ CASES_SOURCE_FIRST: InstrMap = {
 }
 CASES_DESTINATION_FIRST: InstrMap = {
     # Flag-setting instructions
-    "slt": lambda a: BinaryOp.icmp(a.reg(1), "<", a.reg(2)),
-    "slti": lambda a: BinaryOp.icmp(a.reg(1), "<", a.imm(2)),
-    "sltu": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.reg(2)),
-    "sltiu": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.imm(2)),
+    "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
+    "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
+    "sltu": lambda a: handle_sltu(a),
+    "sltiu": lambda a: handle_sltiu(a),
     # Integer arithmetic
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
@@ -1947,8 +2008,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
         "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
     ),
     "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
-    "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.imm(2)),
-    "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.imm(2)),
+    "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
+    "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
     "sll": lambda a: fold_mul_chains(
         BinaryOp.int(left=a.reg(1), op="<<", right=a.imm(2))
     ),
@@ -2382,7 +2443,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=True)
                 for slot in abi_slots:
                     if slot.reg:
-                        func_args.append(regs[slot.reg])
+                        func_args.append(as_type(regs[slot.reg], slot.type, True))
             else:
                 possible_regs = list(
                     map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"])
@@ -2401,6 +2462,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     func_args.append(expr)
 
             # Add the arguments after a3.
+            # TODO: limit this and unify types based on abi_slots
             subroutine_args.sort(key=lambda a: a[1].value)
             for arg in subroutine_args:
                 func_args.append(arg[0])
@@ -2408,8 +2470,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
-            call: Expression = FuncCall(fn_target, func_args, Type.any())
+            if c_fn and c_fn.ret_type and typemap:
+                known_ret_type = type_from_ctype(c_fn.ret_type, typemap)
+            else:
+                known_ret_type = Type.any()
+
+            call: Expression = FuncCall(fn_target, func_args, known_ret_type)
             call = eval_once(call, always_emit=True, trivial=False, prefix="ret")
+
             # Clear out caller-save registers, for clarity and to ensure
             # that argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
@@ -2421,12 +2489,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # However, if we have type information that says the function is
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
+            # Note that this logic is duplicated in output_regs_for_instr.
             if not c_fn or c_fn.ret_type:
                 regs[Register("f0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.f32()
+                    expr=call, reinterpret=True, silent=True, type=Type.floatish()
                 )
+                regs[Register("f1")] = SecondF64Half()
                 regs[Register("v0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.intish()
+                    expr=call, reinterpret=True, silent=True, type=Type.intptr()
                 )
                 regs[Register("v1")] = as_u32(
                     Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())

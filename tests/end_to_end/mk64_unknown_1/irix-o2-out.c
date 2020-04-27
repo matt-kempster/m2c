@@ -36,7 +36,7 @@ s32 test(u32 arg0, s32 arg1, s32 arg2)
             {
                 do
                 {
-                    *phi_a0 = (s32) phi_v0;
+                    *phi_a0 = phi_v0;
                     temp_v1 = phi_v1 + 1;
                     temp_v0_2 = phi_v0 + 0x10;
                     temp_a2 = phi_a2_2 + 1;
@@ -61,7 +61,7 @@ s32 test(u32 arg0, s32 arg1, s32 arg2)
         {
             do
             {
-                phi_a0_2->unk0 = (s32) phi_v0_2;
+                phi_a0_2->unk0 = phi_v0_2;
                 temp_v0_3 = phi_v0_2 + 0x10;
                 phi_a0_2->unk4 = temp_v0_3;
                 temp_v0_3 = temp_v0_3 + 0x10;

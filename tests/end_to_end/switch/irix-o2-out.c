@@ -33,6 +33,6 @@ s32 test(s32 arg0)
         phi_a0 = phi_t8;
     }
 block_10:
-    D_410150 = (s32) phi_a0;
+    D_410150 = phi_a0;
     return 2;
 }

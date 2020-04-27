@@ -10,7 +10,7 @@ s32 test(s32 arg0)
     {
         do
         {
-            D_410150 = (s32) phi_a0;
+            D_410150 = phi_a0;
             temp_a0 = phi_a0 + 1;
             D_410150 = temp_a0;
             temp_a0 = temp_a0 + 1;

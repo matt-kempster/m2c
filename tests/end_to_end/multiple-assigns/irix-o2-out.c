@@ -9,7 +9,7 @@ s32 test(s32 arg0)
     {
         phi_a0 = arg0;
 loop_2:
-        D_410120 = (s32) phi_a0;
+        D_410120 = phi_a0;
         temp_a0 = phi_a0 + 1;
         D_410120 = temp_a0;
         temp_a0 = temp_a0 + 1;
