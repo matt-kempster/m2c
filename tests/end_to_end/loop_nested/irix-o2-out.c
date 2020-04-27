@@ -45,7 +45,7 @@ loop_1:
                     phi_a3 = phi_a3 + 1;
                     phi_v1_4 = temp_v1;
                     phi_a2_2 = phi_a2_2 + phi_v0;
-                } while ((temp_t1 != phi_a3))
+                } while ((temp_t1 != phi_a3));
                 phi_a1_2 = temp_a1;
                 phi_v1_2 = temp_v1;
                 phi_v1_3 = temp_v1;
@@ -70,7 +70,7 @@ loop_1:
                 phi_a3_2 = phi_a3_2 + (phi_v0 * 4);
                 phi_t0 = phi_t0 + (phi_v0 * 4);
                 phi_t1 = phi_t1 + (phi_v0 * 4);
-            } while ((temp_a1_2 != arg0))
+            } while ((temp_a1_2 != arg0));
         }
 block_8:
         temp_v0 = phi_v0 + 1;

@@ -26,7 +26,7 @@ s32 test(void *arg0, s32 arg1)
                 *phi_v1 = (u8)0;
                 phi_v1 = phi_v1 + 1;
                 phi_v0 = temp_v0;
-            } while ((temp_a3 != temp_v0))
+            } while ((temp_a3 != temp_v0));
             phi_return = temp_v0;
             phi_v0_3 = temp_v0;
             if (temp_v0 == arg1)
@@ -47,7 +47,7 @@ s32 test(void *arg0, s32 arg1)
             phi_v1_2 = temp_v1;
             phi_v0_2 = temp_v0_2;
             phi_return = temp_v0_2;
-        } while ((temp_v0_2 != arg1))
+        } while ((temp_v0_2 != arg1));
     }
 block_7:
     return phi_return;

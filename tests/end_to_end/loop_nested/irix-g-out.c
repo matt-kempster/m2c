@@ -16,7 +16,7 @@ loop_1:
             {
                 sp8 = sp8 + (spC * sp4);
                 sp4 = sp4 + 1;
-            } while (((sp4 < arg0) != 0))
+            } while (((sp4 < arg0) != 0));
         }
         spC = spC + 1;
         if (spC < arg0)

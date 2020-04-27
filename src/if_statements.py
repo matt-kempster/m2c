@@ -130,7 +130,7 @@ class DoWhileLoop:
         body = f"\n".join(f"{stmt}" for stmt in self.body.statements)
         string_components = [
             f"{space}do{brace_after_do}{body}",
-            f"{space}}} while ({cond})",
+            f"{space}}} while ({cond});",
         ]
         return "\n".join(string_components)
 
