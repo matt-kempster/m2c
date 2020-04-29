@@ -521,6 +521,14 @@ class BaseNode:
     immediate_dominator: Optional["Node"] = attr.ib(init=False, default=None)
     immediately_dominates: List["Node"] = attr.ib(init=False, factory=list)
 
+    def to_basic_node(self, successor: "Node") -> "BasicNode":
+        new_node = BasicNode(self.block, self.emit_goto, successor)
+        new_node.parents = self.parents
+        new_node.dominators = self.dominators
+        new_node.immediate_dominator = self.immediate_dominator
+        new_node.immediately_dominates = self.immediately_dominates
+        return new_node
+
     def add_parent(self, parent: "Node") -> None:
         self.parents.append(parent)
 
@@ -549,6 +557,8 @@ class BasicNode(BaseNode):
 class ConditionalNode(BaseNode):
     conditional_edge: "Node" = attr.ib()
     fallthrough_edge: "Node" = attr.ib()
+
+    marked_to_remove_remainder_op: bool = attr.ib(default=False)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)

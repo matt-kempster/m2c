@@ -2,13 +2,14 @@ import argparse
 import sys
 from typing import List, Optional
 
+from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
-from .flow_graph import build_flowgraph, visualize_flowgraph
+from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
+from .flow_graph_munge import munge_flowgraph
 from .if_statements import get_function_text
-from .options import Options, CodingStyle
+from .options import CodingStyle, Options
 from .parse_file import Function, MIPSFile, Rodata, parse_file
 from .translate import translate_to_ast
-from .c_types import TypeMap, build_typemap, dump_typemap
 
 
 def decompile_function(
@@ -18,11 +19,16 @@ def decompile_function(
         print(function)
         print()
 
+    flowgraph: FlowGraph = build_flowgraph(function, rodata)
+
+    if options.loop_rerolling:
+        flowgraph = munge_flowgraph(flowgraph)
+
     if options.visualize_flowgraph:
-        visualize_flowgraph(build_flowgraph(function, rodata))
+        visualize_flowgraph(flowgraph)
         return
 
-    function_info = translate_to_ast(function, options, rodata, typemap)
+    function_info = translate_to_ast(function, flowgraph, options, rodata, typemap)
     function_text = get_function_text(function_info, options)
     print(function_text)
 

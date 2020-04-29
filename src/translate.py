@@ -2651,7 +2651,11 @@ class FunctionInfo:
 
 
 def translate_to_ast(
-    function: Function, options: Options, rodata: Rodata, typemap: Optional[TypeMap]
+    function: Function,
+    flow_graph: FlowGraph,
+    options: Options,
+    rodata: Rodata,
+    typemap: Optional[TypeMap],
 ) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
@@ -2659,7 +2663,6 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function, rodata)
     start_node = flow_graph.entry_node()
     stack_info = get_stack_info(function, rodata, start_node, typemap)
 
