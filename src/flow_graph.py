@@ -29,7 +29,7 @@ class Block:
     block_info: Optional[Any] = None
 
     def add_block_info(self, block_info: Any) -> None:
-        assert self.block_info is None, breakpoint()
+        assert self.block_info is None
         self.block_info = block_info
 
     def clone(self) -> "Block":
@@ -863,6 +863,11 @@ def ensure_fallthrough(nodes: List[Node]) -> None:
 
 
 def compute_dominators(nodes: List[Node]) -> None:
+    for node in nodes:
+        node.dominators = set()
+        node.immediate_dominator = None
+        node.immediately_dominates = []
+
     entry = nodes[0]
     entry.dominators = {entry}
     for n in nodes[1:]:

@@ -91,13 +91,25 @@ def unroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> Optional[FlowG
     assert len(branches) == 1
     del new_instructions_0[new_instructions_0.index(branches[0])]
     new_block_0 = attr.evolve(start.block, instructions=new_instructions_0)
-    modified_node_0 = start.to_basic_node(successor=modified_node_1)
-    modified_node_0.block = new_block_0
+    modified_node_0 = attr.evolve(
+        start.to_basic_node(successor=modified_node_1), block=new_block_0
+    )
+    modified_node_0.parents = start.parents
+    # Behold, the most confusing for-loop ever written.
+    for parent in start.parents:
+        if isinstance(parent, ConditionalNode):
+            if start.block.index == parent.fallthrough_edge.block.index:
+                parent.fallthrough_edge = modified_node_0
+            if start.block.index == parent.conditional_edge.block.index:
+                parent.conditional_edge = modified_node_0
+        elif isinstance(parent, BasicNode):
+            if start.block.index == parent.successor.block.index:
+                parent.successor = modified_node_0
     modified_node_1.parents = [modified_node_0]
 
     # back to node_7:
-    # if start in node_7.parents:
-    #     node_7.parents[node_7.parents.index(start)] = modified_node_0
+    if start in node_7.parents:
+        node_7.parents[node_7.parents.index(start)] = modified_node_0
     if node_1 in node_7.parents:
         node_7.parents[node_7.parents.index(node_1)] = modified_node_1
     if node_2 in node_7.parents:
