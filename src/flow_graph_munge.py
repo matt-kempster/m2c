@@ -54,7 +54,16 @@ def unroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> Optional[FlowG
     modified_node_3.conditional_edge = modified_node_3
     modified_node_2 = attr.evolve(node_2, successor=modified_node_3)
     modified_node_3.parents = [modified_node_2, modified_node_3]
-    node_7.parents = [modified_node_3]
+    # Need to delete deleted nodes ONLY (may have other still-relevant parents)
+    node_7.parents.append(modified_node_3)
+    if start in node_7.parents:
+        del node_7.parents[node_7.parents.index(start)]
+    if node_4 in node_7.parents:
+        del node_7.parents[node_7.parents.index(node_4)]
+    if node_5 in node_7.parents:
+        del node_7.parents[node_7.parents.index(node_5)]
+    if node_6 in node_7.parents:
+        del node_7.parents[node_7.parents.index(node_6)]
 
     new_instructions_1 = copy(node_1.block.instructions)
     branches = list(
@@ -82,10 +91,17 @@ def unroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> Optional[FlowG
     assert len(branches) == 1
     del new_instructions_0[new_instructions_0.index(branches[0])]
     new_block_0 = attr.evolve(start.block, instructions=new_instructions_0)
-    modified_node_0 = attr.evolve(
-        start.to_basic_node(successor=modified_node_1), block=new_block_0
-    )
+    modified_node_0 = start.to_basic_node(successor=modified_node_1)
+    modified_node_0.block = new_block_0
     modified_node_1.parents = [modified_node_0]
+
+    # back to node_7:
+    # if start in node_7.parents:
+    #     node_7.parents[node_7.parents.index(start)] = modified_node_0
+    if node_1 in node_7.parents:
+        node_7.parents[node_7.parents.index(node_1)] = modified_node_1
+    if node_2 in node_7.parents:
+        node_7.parents[node_7.parents.index(node_2)] = modified_node_2
 
     # TODO: does copy() work?
     new_nodes = copy(flow_graph.nodes)

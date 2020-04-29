@@ -29,7 +29,7 @@ class Block:
     block_info: Optional[Any] = None
 
     def add_block_info(self, block_info: Any) -> None:
-        assert self.block_info is None
+        assert self.block_info is None, breakpoint()
         self.block_info = block_info
 
     def clone(self) -> "Block":
