@@ -16,7 +16,9 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-cov = Coverage(include="src/*", data_file=".coverage" if args.emit_data_file else None)
+cov = Coverage(
+    include="src/*", data_file=".coverage" if args.emit_data_file else None, branch=True
+)
 cov.start()
 
 import run_tests
