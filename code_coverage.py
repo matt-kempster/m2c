@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from coverage import Coverage
 import sys
-import shutil
 import argparse
 import os
 
@@ -26,12 +25,6 @@ run_tests.set_up_logging(debug=False)
 ret = run_tests.main(should_overwrite=False, coverage=cov)
 
 cov.stop()
-
-# 'coverage' defaults to incremental updates, which we don't want. Erase the output
-# directory to get a clean slate (but check for index.html for protection against
-# wrong deletions).
-if os.path.isfile(args.dir + "/index.html"):
-    shutil.rmtree(args.dir)
 
 cov.html_report(directory=args.dir, show_contexts=True, skip_empty=True)
 print(f"Wrote html to {args.dir}")
