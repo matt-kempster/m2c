@@ -7,7 +7,7 @@ import logging
 import shlex
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 from src.main import parse_flags
 from src.main import run as decompile
@@ -90,13 +90,17 @@ def decompile_and_capture_output(options: Options) -> str:
         return CRASH_STRING
 
 
-def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> bool:
+def run_e2e_test(e2e_test_path: Path, should_overwrite: bool, coverage: Any) -> bool:
     logging.info(f"Running test: {e2e_test_path.name}")
 
     ret = True
     for asm_file_path in e2e_test_path.glob("*.s"):
         old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
         flags_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-flags.txt")
+        if coverage:
+            coverage.switch_context(
+                str(asm_file_path.relative_to(Path(__file__).parent))
+            )
         if not decompile_and_compare(
             asm_file_path, old_output_path, flags_path, should_overwrite
         ):
@@ -104,10 +108,10 @@ def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> bool:
     return ret
 
 
-def main(should_overwrite: bool) -> int:
+def main(should_overwrite: bool, coverage: Any) -> int:
     ret = 0
     for e2e_test_path in (Path(__file__).parent / "tests" / "end_to_end").iterdir():
-        if not run_e2e_test(e2e_test_path, should_overwrite):
+        if not run_e2e_test(e2e_test_path, should_overwrite, coverage):
             ret = 1
 
     return ret
@@ -134,5 +138,5 @@ if __name__ == "__main__":
 
     if args.should_overwrite:
         logging.info("Overwriting test output files.")
-    ret = main(args.should_overwrite)
+    ret = main(args.should_overwrite, coverage=None)
     sys.exit(ret)
