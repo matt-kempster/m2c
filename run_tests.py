@@ -90,7 +90,9 @@ def decompile_and_capture_output(options: Options) -> str:
         return CRASH_STRING
 
 
-def run_e2e_test(e2e_test_path: Path, should_overwrite: bool, coverage: Any) -> bool:
+def run_e2e_test(
+    e2e_top_dir: Path, e2e_test_path: Path, should_overwrite: bool, coverage: Any
+) -> bool:
     logging.info(f"Running test: {e2e_test_path.name}")
 
     ret = True
@@ -98,9 +100,7 @@ def run_e2e_test(e2e_test_path: Path, should_overwrite: bool, coverage: Any) -> 
         old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
         flags_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-flags.txt")
         if coverage:
-            coverage.switch_context(
-                str(asm_file_path.relative_to(Path(__file__).parent))
-            )
+            coverage.switch_context(str(asm_file_path.relative_to(e2e_top_dir)))
         if not decompile_and_compare(
             asm_file_path, old_output_path, flags_path, should_overwrite
         ):
@@ -110,8 +110,9 @@ def run_e2e_test(e2e_test_path: Path, should_overwrite: bool, coverage: Any) -> 
 
 def main(should_overwrite: bool, coverage: Any) -> int:
     ret = 0
-    for e2e_test_path in (Path(__file__).parent / "tests" / "end_to_end").iterdir():
-        if not run_e2e_test(e2e_test_path, should_overwrite, coverage):
+    e2e_top_dir = Path(__file__).parent / "tests" / "end_to_end"
+    for e2e_test_path in e2e_top_dir.iterdir():
+        if not run_e2e_test(e2e_top_dir, e2e_test_path, should_overwrite, coverage):
             ret = 1
 
     return ret
