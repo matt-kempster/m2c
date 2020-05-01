@@ -590,6 +590,9 @@ def build_flowgraph_between(
             # rooted at curr_start against certain predefined subgraphs
             # that emit do-while-loops:
             if isinstance(curr_start, ConditionalNode):
+                loops = curr_start.loop_edges()
+                for loop in loops:
+                    postdominated
                 do_while_loop = pattern_match_simple_do_while_loop(
                     context, curr_start, indent
                 )

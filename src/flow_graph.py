@@ -550,6 +550,12 @@ class BaseNode(abc.ABC):
             self.parents.remove(replace_this)
             self.parents.add(with_this)
 
+    def is_loop(self) -> bool:
+        return False  # overridden by some child classes
+
+    def loop_edges(self) -> List["Node"]:
+        return list(filter(lambda n: n.is_loop(), self.parents))
+
     @abc.abstractmethod
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
         ...
