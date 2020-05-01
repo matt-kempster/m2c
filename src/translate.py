@@ -4,6 +4,7 @@ import sys
 import traceback
 import typing
 from contextlib import contextmanager
+from copy import copy
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
@@ -2096,7 +2097,7 @@ def regs_clobbered_until_dominator(
     if node.immediate_dominator is None:
         return set()
     seen = set([node.immediate_dominator])
-    stack = node.parents[:]
+    stack = copy(node.parents)
     clobbered = set()
     while stack:
         n = stack.pop()
@@ -2108,7 +2109,7 @@ def regs_clobbered_until_dominator(
                 clobbered.update(output_regs_for_instr(instr, typemap))
                 if instr.mnemonic in CASES_FN_CALL:
                     clobbered.update(TEMP_REGS)
-        stack.extend(n.parents)
+        stack.update(n.parents)
     return clobbered
 
 
@@ -2118,7 +2119,7 @@ def reg_always_set(
     if node.immediate_dominator is None:
         return False
     seen = set([node.immediate_dominator])
-    stack = node.parents[:]
+    stack = copy(node.parents)
     while stack:
         n = stack.pop()
         if n == node.immediate_dominator and not dom_set:
@@ -2136,7 +2137,7 @@ def reg_always_set(
         if clobbered == True:
             return False
         if clobbered is None:
-            stack.extend(n.parents)
+            stack.update(n.parents)
     return True
 
 

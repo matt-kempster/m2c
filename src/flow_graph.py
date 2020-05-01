@@ -1,3 +1,4 @@
+import abc
 import copy
 import typing
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
@@ -512,11 +513,16 @@ def is_loop_edge(node: "Node", edge: "Node") -> bool:
     return edge.block.index <= node.block.index
 
 
+# TODO: Nodes need to be frozen.
+# We use dictionaries and sets of nodes throughout the codebase,
+# and it would be helpful to define __eq__ using `self.block.index`.
+# This would also keep code from silently modifying Nodes.
+# It just makes more sense.
 @attr.s(eq=False)
-class BaseNode:
+class BaseNode(abc.ABC):
     block: Block = attr.ib()
     emit_goto: bool = attr.ib()
-    parents: List["Node"] = attr.ib(init=False, factory=list)
+    parents: Set["Node"] = attr.ib(init=False, factory=set)
     dominators: Set["Node"] = attr.ib(init=False, factory=set)
     immediate_dominator: Optional["Node"] = attr.ib(init=False, default=None)
     immediately_dominates: List["Node"] = attr.ib(init=False, factory=list)
@@ -530,7 +536,19 @@ class BaseNode:
         return new_node
 
     def add_parent(self, parent: "Node") -> None:
-        self.parents.append(parent)
+        self.parents.add(parent)
+
+    def remove_parent(self, parent: "Node") -> None:
+        self.parents.remove(parent)
+
+    def replace_parent(self, replace_this: "Node", with_this: "Node") -> None:
+        if replace_this in self.parents:
+            self.parents.remove(replace_this)
+            self.parents.add(with_this)
+
+    @abc.abstractmethod
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        ...
 
     def name(self) -> str:
         return str(self.block.index)
@@ -539,6 +557,11 @@ class BaseNode:
 @attr.s(eq=False)
 class BasicNode(BaseNode):
     successor: "Node" = attr.ib()
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        if self.successor is replace_this:
+            self.successor = with_this
+            with_this.add_parent(self)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.successor)
@@ -558,7 +581,13 @@ class ConditionalNode(BaseNode):
     conditional_edge: "Node" = attr.ib()
     fallthrough_edge: "Node" = attr.ib()
 
-    marked_to_remove_remainder_op: bool = attr.ib(default=False)
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        if self.conditional_edge is replace_this:
+            self.conditional_edge = with_this
+            with_this.add_parent(self)
+        if self.fallthrough_edge is replace_this:
+            self.fallthrough_edge = with_this
+            with_this.add_parent(self)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)
@@ -580,6 +609,9 @@ class ConditionalNode(BaseNode):
 class ReturnNode(BaseNode):
     index: int = attr.ib()
 
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        pass
+
     def name(self) -> str:
         name = super().name()
         return name if self.is_real() else f"{name}.{self.index}"
@@ -594,6 +626,16 @@ class ReturnNode(BaseNode):
 @attr.s(eq=False)
 class SwitchNode(BaseNode):
     cases: List["Node"] = attr.ib()
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        new_cases: List["Node"] = []
+        for case in self.cases:
+            if case is replace_this:
+                new_cases.append(with_this)
+                with_this.add_parent(self)
+            else:
+                new_cases.append(case)
+        self.cases = new_cases
 
     def __str__(self) -> str:
         targets = ", ".join(str(c.block.index) for c in self.cases)
