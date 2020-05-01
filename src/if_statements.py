@@ -122,9 +122,9 @@ class DoWhileLoop:
         brace_after_do = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
 
         cond = stringify_expr(self.condition).rstrip(";") if self.condition else ""
-        body = f"\n".join(f"{stmt}" for stmt in self.body.statements)
+        body = str(self.body)
         string_components = [
-            f"{space}do{brace_after_do}{body}",
+            f"{space}do{brace_after_do}\n{body}",
             f"{space}}} while ({cond});",
         ]
         return "\n".join(string_components)
@@ -223,6 +223,7 @@ def build_conditional_subgraph(
     given that "start" is a ConditionalNode; this program will intelligently
     output if/else relationships.
     """
+    print(f"build_conditional_subgraph({start.block.index}, {end.block.index})")
     if_block_info = start.block.block_info
     assert isinstance(if_block_info, BlockInfo)
     assert if_block_info.branch_condition is not None
@@ -558,13 +559,35 @@ def pattern_match_simple_do_while_loop(
 
     loop_body = Body(False, [])
     emit_node(context, start, loop_body, indent + 4)
-    do_while = DoWhileLoop(
+    return DoWhileLoop(
         indent,
         context.options.coding_style,
         loop_body,
         start.block.block_info.branch_condition,
     )
-    return do_while
+
+
+def get_do_while_loop_between(
+    context: Context, start: ConditionalNode, end: ConditionalNode, indent: int
+) -> DoWhileLoop:
+    assert end.block.block_info
+    assert end.block.block_info.branch_condition
+
+    # TODO: fallthrough_edge needs to be the right thing here
+    # the real detection is conditional has a reverse arrow...
+    # (a self-arrow IS a reverse arrow, so we can even consolidate with the
+    # above function)
+    loop_body = build_flowgraph_between(
+        context, start.fallthrough_edge, end, indent + 4
+    )
+    emit_node(context, end, loop_body, indent + 4)
+
+    return DoWhileLoop(
+        indent,
+        context.options.coding_style,
+        loop_body,
+        end.block.block_info.branch_condition,  # TODO: negated?
+    )
 
 
 def build_flowgraph_between(
@@ -578,12 +601,16 @@ def build_flowgraph_between(
     """
     curr_start = start
     body = Body(print_node_comment=context.options.debug)
+    print(f"build_flowgraph_between({start.block.index}, {end.block.index})")
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
     # iterate through these nodes, which are commonly referred to as
     # articulation nodes.
     while curr_start != end:
+        print(f"...curr_start={curr_start.block.index}")
+        if curr_start.block.index == 4:
+            breakpoint()
         # Write the current node (but return nodes are handled specially).
         if not isinstance(curr_start, ReturnNode):
             # Before we do anything else, we pattern-match the subgraph
@@ -609,6 +636,7 @@ def build_flowgraph_between(
             # hints at that situation better than if we just blindly duplicate
             # the block.
             if curr_start in context.emitted_nodes:
+                breakpoint()
                 emit_goto(context, curr_start, body, indent)
                 break
             context.emitted_nodes.add(curr_start)
@@ -660,6 +688,23 @@ def build_flowgraph_between(
             # In a BasicNode, the successor is the next articulation node.
             curr_start = curr_start.successor
         elif isinstance(curr_start, ConditionalNode):
+            # Once again, before anything else, we pattern match against "big"
+            # do-while loops.
+            loops = curr_start.loop_edges()
+            loops = list(
+                filter(
+                    lambda n: isinstance(n, ConditionalNode) and not n.is_self_loop(),
+                    loops,
+                )
+            )
+            if loops:
+                curr_end = sorted(loops, key=lambda n: n.block.index, reverse=True)[0]
+                body.add_do_while_loop(
+                    get_do_while_loop_between(context, curr_start, curr_end, indent)
+                )
+                curr_start = curr_end.fallthrough_edge
+                continue
+
             # A ConditionalNode means we need to find the next articulation
             # node. This means we need to find the "immediate postdominator"
             # of the current node, where "postdominator" means we have to go
