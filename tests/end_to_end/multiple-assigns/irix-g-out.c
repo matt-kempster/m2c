@@ -25,7 +25,7 @@ s32 test(s32 arg0)
             temp_a0 = temp_a0 + 1;
             D_410150 = sp4;
             phi_a0 = temp_a0;
-        } while ((temp_a0 == 5));
+        } while (temp_a0 == 5);
     }
     return sp4;
 }

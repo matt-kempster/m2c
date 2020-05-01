@@ -1,8 +1,4 @@
-import typing
-from copy import copy
-from typing import List, Optional, Tuple
-
-import attr
+from typing import List
 
 from .flow_graph import BasicNode, ConditionalNode, FlowGraph, Node, compute_dominators
 from .parse_instruction import Instruction

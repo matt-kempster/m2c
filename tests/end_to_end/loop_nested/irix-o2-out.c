@@ -22,16 +22,14 @@ loop_1:
             phi_a3 = 1;
             phi_v1_4 = phi_v1_3;
             phi_a2 = phi_v0 * 0;
-loop_4:
-            temp_v1 = phi_v1_4 + phi_a2;
-            phi_a3 = phi_a3 + 1;
-            phi_v1_2 = temp_v1;
-            phi_v1_4 = temp_v1;
-            phi_a2 = phi_a2 + phi_v0;
-            if (arg0 != phi_a3)
+            do
             {
-                goto loop_4;
-            }
+                temp_v1 = phi_v1_4 + phi_a2;
+                phi_a3 = phi_a3 + 1;
+                phi_v1_2 = temp_v1;
+                phi_v1_4 = temp_v1;
+                phi_a2 = phi_a2 + phi_v0;
+            } while (arg0 != phi_a3);
         }
         temp_v0 = phi_v0 + 1;
         phi_v0 = temp_v0;

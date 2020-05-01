@@ -508,6 +508,10 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
     return block_builder.get_blocks()
 
 
+def is_self_loop_edge(node: "Node", edge: "Node") -> bool:
+    return edge.block.index == node.block.index
+
+
 def is_loop_edge(node: "Node", edge: "Node") -> bool:
     # Loops are represented by backwards jumps.
     return edge.block.index <= node.block.index
@@ -588,6 +592,9 @@ class ConditionalNode(BaseNode):
         if self.fallthrough_edge is replace_this:
             self.fallthrough_edge = with_this
             with_this.add_parent(self)
+
+    def is_self_loop(self) -> bool:
+        return is_self_loop_edge(self, self.conditional_edge)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)

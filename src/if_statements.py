@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
@@ -20,14 +20,9 @@ from .translate import (
     Condition,
     Expression,
     FunctionInfo,
-)
-from .translate import Statement as TranslateStatement
-from .translate import (
     Type,
     simplify_condition,
     stringify_expr,
-    EvalOnceStmt,
-    EvalOnceExpr,
 )
 
 
@@ -124,12 +119,9 @@ class DoWhileLoop:
 
     def __str__(self) -> str:
         space = " " * self.indent
-        space_2 = " " * (self.indent + 4)
-        space_3 = " " * (self.indent + 8)
-        brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
         brace_after_do = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
 
-        cond = str(self.condition).rstrip(";") if self.condition else ""
+        cond = stringify_expr(self.condition).rstrip(";") if self.condition else ""
         body = f"\n".join(f"{stmt}" for stmt in self.body.statements)
         string_components = [
             f"{space}do{brace_after_do}{body}",
@@ -555,42 +547,24 @@ def add_return_statement(
         body.add_statement(SimpleStatement(indent, "return;"))
 
 
-def pattern_match_against_simple_do_while_loop(
+def pattern_match_simple_do_while_loop(
     context: Context, start: ConditionalNode, indent: int
-) -> Optional[Tuple[Node, IfElseStatement, Node]]:
-    node_1 = start.fallthrough_edge
-    node_2 = start.conditional_edge
-
-    if not (
-        isinstance(node_1, ConditionalNode)
-        and node_1.is_loop()
-        # TODO: could also use id() here?:
-        and node_1.conditional_edge.block.index == node_1.block.index
-        and node_1.fallthrough_edge.block.index == node_2.block.index
-    ):
+) -> Optional[DoWhileLoop]:
+    if not start.is_self_loop():
         return None
 
-    assert isinstance(start.block.block_info, BlockInfo)
-    assert isinstance(node_1.block.block_info, BlockInfo)
+    assert start.block.block_info
     assert start.block.block_info.branch_condition
-    assert node_1.block.block_info.branch_condition
 
     loop_body = Body(False, [])
-    emit_node(context, node_1, loop_body, indent + 8)
-
+    emit_node(context, start, loop_body, indent + 4)
     do_while = DoWhileLoop(
-        indent + 4,
-        context.options.coding_style,
-        loop_body,
-        node_1.block.block_info.branch_condition,
-    )
-    should_loop = IfElseStatement(
-        start.block.block_info.branch_condition.negated(),
         indent,
         context.options.coding_style,
-        Body(False, [do_while]),
+        loop_body,
+        start.block.block_info.branch_condition,
     )
-    return (start, should_loop, node_2)
+    return do_while
 
 
 def build_flowgraph_between(
@@ -612,6 +586,18 @@ def build_flowgraph_between(
     while curr_start != end:
         # Write the current node (but return nodes are handled specially).
         if not isinstance(curr_start, ReturnNode):
+            # Before we do anything else, we pattern-match the subgraph
+            # rooted at curr_start against certain predefined subgraphs
+            # that emit do-while-loops:
+            if isinstance(curr_start, ConditionalNode):
+                do_while_loop = pattern_match_simple_do_while_loop(
+                    context, curr_start, indent
+                )
+                if do_while_loop:
+                    body.add_do_while_loop(do_while_loop)
+                    curr_start = curr_start.fallthrough_edge
+                    continue
+
             # If a node is ever encountered twice, we can emit a goto to the
             # first place we emitted it. Since nodes represent positions in the
             # assembly, and we use phi's for preserved variable contents, this
@@ -671,19 +657,6 @@ def build_flowgraph_between(
             # In a BasicNode, the successor is the next articulation node.
             curr_start = curr_start.successor
         elif isinstance(curr_start, ConditionalNode):
-            # Before we do anything else, we pattern-match the subgraph
-            # rooted at curr_start against certain predefined subgraphs
-            # that emit do-while-loops:
-            do_while_loop = pattern_match_against_simple_do_while_loop(
-                context, curr_start, indent
-            )
-            if do_while_loop:
-                (_, loop_if_statement, curr_end) = do_while_loop
-                # emit_node(context, curr_start, body, indent)
-                body.add_if_else(loop_if_statement)
-                curr_start = curr_end
-                continue
-
             # A ConditionalNode means we need to find the next articulation
             # node. This means we need to find the "immediate postdominator"
             # of the current node, where "postdominator" means we have to go
