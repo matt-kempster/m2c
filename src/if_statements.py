@@ -547,28 +547,26 @@ def add_return_statement(
         body.add_statement(SimpleStatement(indent, "return;"))
 
 
-def pattern_match_simple_do_while_loop(
+def detect_loop(
     context: Context, start: ConditionalNode, indent: int
 ) -> Optional[DoWhileLoop]:
     # We detect edges that are accompanied by their reverse as loops.
-    if start.is_self_loop():
-
-        loop_body = Body(False, [])
-        emit_node(context, start, loop_body, indent + 4)
-    elif (
+    if not (
         isinstance(start.conditional_edge, ConditionalNode)
         and start.conditional_edge.conditional_edge is start
-        # we only want to go through loops in one direction.
-        and not start.is_loop()
     ):
-        loop_body = Body(False, [])
-        emit_node(context, start, loop_body, indent + 4)
+        return None
+
+    loop_body = Body(False, [])
+    emit_node(context, start, loop_body, indent + 4)
+
+    if not start.is_self_loop():
+        # There are more nodes to emit, "between" the start node
+        # and the loop edge that it connects to:
         loop_body = build_flowgraph_between(
             context, start.fallthrough_edge, start.conditional_edge, indent + 4
         )
         emit_node(context, start.conditional_edge, loop_body, indent + 4)
-    else:
-        return None
 
     assert start.block.block_info
     assert start.block.block_info.branch_condition
@@ -603,12 +601,11 @@ def build_flowgraph_between(
             # rooted at curr_start against certain predefined subgraphs
             # that emit do-while-loops:
             if isinstance(curr_start, ConditionalNode):
-                do_while_loop = pattern_match_simple_do_while_loop(
-                    context, curr_start, indent
-                )
+                do_while_loop = detect_loop(context, curr_start, indent)
                 if do_while_loop:
                     body.add_do_while_loop(do_while_loop)
                     assert isinstance(curr_start.conditional_edge, ConditionalNode)
+                    # Move past the loop:
                     curr_start = curr_start.conditional_edge.fallthrough_edge
                     continue
 
