@@ -14,5 +14,10 @@ int test(int a, int b, int c, int d) {
     if (var1 || var2 || (var2 = foo(var2)) || d) {
         ret = 1;
     }
+
+    if (var1 && var2 && (var2 = foo(var2)) && d) {
+        ret = 2;
+    }
+
     return ret;
 }

@@ -11,5 +11,15 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     } else {
 
     }
+    if (sp24 != 0) {
+        if (sp20 != 0) {
+            sp20 = func_00400090(sp20);
+            if (sp20 != 0) {
+                if (arg3 != 0) {
+                    sp1C = 2;
+                }
+            }
+        }
+    }
     return sp1C;
 }
