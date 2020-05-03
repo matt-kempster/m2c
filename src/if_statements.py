@@ -223,7 +223,7 @@ def build_conditional_subgraph(
     given that "start" is a ConditionalNode; this program will intelligently
     output if/else relationships.
     """
-    print(f"build_conditional_subgraph({start.block.index}, {end.block.index})")
+    # print(f"build_conditional_subgraph({start.block.index}, {end.block.index})")
     if_block_info = start.block.block_info
     assert isinstance(if_block_info, BlockInfo)
     assert if_block_info.branch_condition is not None
@@ -601,25 +601,23 @@ def build_flowgraph_between(
     """
     curr_start = start
     body = Body(print_node_comment=context.options.debug)
-    print(f"build_flowgraph_between({start.block.index}, {end.block.index})")
+    # print(f"build_flowgraph_between({start.block.index}, {end.block.index})")
 
     # We will split this graph into subgraphs, where the entrance and exit nodes
     # of that subgraph are at the same indentation level. "curr_start" will
     # iterate through these nodes, which are commonly referred to as
     # articulation nodes.
     while curr_start != end:
-        print(f"...curr_start={curr_start.block.index}")
-        if curr_start.block.index == 4:
-            breakpoint()
+        # print(f"...curr_start={curr_start.block.index}")
         # Write the current node (but return nodes are handled specially).
         if not isinstance(curr_start, ReturnNode):
             # Before we do anything else, we pattern-match the subgraph
             # rooted at curr_start against certain predefined subgraphs
             # that emit do-while-loops:
             if isinstance(curr_start, ConditionalNode):
-                loops = curr_start.loop_edges()
-                for loop in loops:
-                    postdominated
+                # loops = curr_start.loop_edges()
+                # for loop in loops:
+                #     postdominated
                 do_while_loop = pattern_match_simple_do_while_loop(
                     context, curr_start, indent
                 )
@@ -636,7 +634,6 @@ def build_flowgraph_between(
             # hints at that situation better than if we just blindly duplicate
             # the block.
             if curr_start in context.emitted_nodes:
-                breakpoint()
                 emit_goto(context, curr_start, body, indent)
                 break
             context.emitted_nodes.add(curr_start)
@@ -690,20 +687,20 @@ def build_flowgraph_between(
         elif isinstance(curr_start, ConditionalNode):
             # Once again, before anything else, we pattern match against "big"
             # do-while loops.
-            loops = curr_start.loop_edges()
-            loops = list(
-                filter(
-                    lambda n: isinstance(n, ConditionalNode) and not n.is_self_loop(),
-                    loops,
-                )
-            )
-            if loops:
-                curr_end = sorted(loops, key=lambda n: n.block.index, reverse=True)[0]
-                body.add_do_while_loop(
-                    get_do_while_loop_between(context, curr_start, curr_end, indent)
-                )
-                curr_start = curr_end.fallthrough_edge
-                continue
+            # loops = curr_start.loop_edges()
+            # loops = list(
+            #     filter(
+            #         lambda n: isinstance(n, ConditionalNode) and not n.is_self_loop(),
+            #         loops,
+            #     )
+            # )
+            # if loops:
+            #     curr_end = sorted(loops, key=lambda n: n.block.index, reverse=True)[0]
+            #     body.add_do_while_loop(
+            #         get_do_while_loop_between(context, curr_start, curr_end, indent)
+            #     )
+            #     curr_start = curr_end.fallthrough_edge
+            #     continue
 
             # A ConditionalNode means we need to find the next articulation
             # node. This means we need to find the "immediate postdominator"
