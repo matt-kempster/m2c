@@ -23,6 +23,7 @@ from .flow_graph import (
     Node,
     ReturnNode,
     SwitchNode,
+    build_flowgraph,
 )
 from .options import Options
 from .parse_file import Rodata
