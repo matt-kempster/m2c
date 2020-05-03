@@ -122,9 +122,9 @@ class DoWhileLoop:
         brace_after_do = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
 
         cond = stringify_expr(self.condition).rstrip(";") if self.condition else ""
-        body = f"\n".join(f"{stmt}" for stmt in self.body.statements)
         string_components = [
-            f"{space}do{brace_after_do}{body}",
+            f"{space}do{brace_after_do}",
+            str(self.body),
             f"{space}}} while ({cond});",
         ]
         return "\n".join(string_components)
@@ -550,21 +550,34 @@ def add_return_statement(
 def pattern_match_simple_do_while_loop(
     context: Context, start: ConditionalNode, indent: int
 ) -> Optional[DoWhileLoop]:
-    if not start.is_self_loop():
+    # We detect edges that are accompanied by their reverse as loops.
+    if start.is_self_loop():
+
+        loop_body = Body(False, [])
+        emit_node(context, start, loop_body, indent + 4)
+    elif (
+        isinstance(start.conditional_edge, ConditionalNode)
+        and start.conditional_edge.conditional_edge is start
+        # we only want to go through loops in one direction.
+        and not start.is_loop()
+    ):
+        loop_body = Body(False, [])
+        emit_node(context, start, loop_body, indent + 4)
+        loop_body = build_flowgraph_between(
+            context, start.fallthrough_edge, start.conditional_edge, indent + 4
+        )
+        emit_node(context, start.conditional_edge, loop_body, indent + 4)
+    else:
         return None
 
     assert start.block.block_info
     assert start.block.block_info.branch_condition
-
-    loop_body = Body(False, [])
-    emit_node(context, start, loop_body, indent + 4)
-    do_while = DoWhileLoop(
+    return DoWhileLoop(
         indent,
         context.options.coding_style,
         loop_body,
         start.block.block_info.branch_condition,
     )
-    return do_while
 
 
 def build_flowgraph_between(
@@ -595,7 +608,8 @@ def build_flowgraph_between(
                 )
                 if do_while_loop:
                     body.add_do_while_loop(do_while_loop)
-                    curr_start = curr_start.fallthrough_edge
+                    assert isinstance(curr_start.conditional_edge, ConditionalNode)
+                    curr_start = curr_start.conditional_edge.fallthrough_edge
                     continue
 
             # If a node is ever encountered twice, we can emit a goto to the
