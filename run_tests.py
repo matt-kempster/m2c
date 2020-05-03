@@ -7,11 +7,11 @@ import logging
 import shlex
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 from src.main import parse_flags
 from src.main import run as decompile
-from src.options import CodingStyle, Options
+from src.options import Options
 
 CRASH_STRING = "CRASHED\n"
 
@@ -44,7 +44,7 @@ def get_test_flags(flags_path: Path) -> List[str]:
 
 def decompile_and_compare(
     asm_file_path: Path, output_path: Path, flags_path: Path, should_overwrite: bool
-) -> None:
+) -> bool:
     logging.debug(
         f"Decompiling {asm_file_path}"
         + (f" into {output_path}" if should_overwrite else "")
@@ -55,7 +55,7 @@ def decompile_and_compare(
         logging.info(f"{output_path} does not exist. Creating...")
         original_contents = "(file did not exist)"
 
-    flags = [str(asm_file_path), "test", "--allman", "--stop-on-error"]
+    flags = [str(asm_file_path), "test", "--stop-on-error"]
     flags_list = get_test_flags(flags_path)
     flags.extend(flags_list)
 
@@ -77,6 +77,7 @@ def decompile_and_compare(
                 ]
             )
         )
+    return should_overwrite or not changed
 
 
 def decompile_and_capture_output(options: Options) -> str:
@@ -89,22 +90,32 @@ def decompile_and_capture_output(options: Options) -> str:
         return CRASH_STRING
 
 
-def run_e2e_test(e2e_test_path: Path, should_overwrite: bool) -> None:
+def run_e2e_test(
+    e2e_top_dir: Path, e2e_test_path: Path, should_overwrite: bool, coverage: Any
+) -> bool:
     logging.info(f"Running test: {e2e_test_path.name}")
 
+    ret = True
     for asm_file_path in e2e_test_path.glob("*.s"):
         old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
         flags_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-flags.txt")
-        decompile_and_compare(
+        if coverage:
+            coverage.switch_context(str(asm_file_path.relative_to(e2e_top_dir)))
+        if not decompile_and_compare(
             asm_file_path, old_output_path, flags_path, should_overwrite
-        )
+        ):
+            ret = False
+    return ret
 
 
-def main(should_overwrite: bool) -> int:
-    for e2e_test_path in (Path(__file__).parent / "tests" / "end_to_end").iterdir():
-        run_e2e_test(e2e_test_path, should_overwrite)
+def main(should_overwrite: bool, coverage: Any) -> int:
+    ret = 0
+    e2e_top_dir = Path(__file__).parent / "tests" / "end_to_end"
+    for e2e_test_path in e2e_top_dir.iterdir():
+        if not run_e2e_test(e2e_top_dir, e2e_test_path, should_overwrite, coverage):
+            ret = 1
 
-    return 0
+    return ret
 
 
 if __name__ == "__main__":
@@ -128,4 +139,5 @@ if __name__ == "__main__":
 
     if args.should_overwrite:
         logging.info("Overwriting test output files.")
-    sys.exit(main(args.should_overwrite))
+    ret = main(args.should_overwrite, coverage=None)
+    sys.exit(ret)

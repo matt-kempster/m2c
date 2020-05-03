@@ -1,5 +1,4 @@
-void test(s32 arg0)
-{
+void test(s32 arg0) {
     D_410250 = arg0;
     D_410250 = (s32) (arg0 * 2);
     D_410250 = (s32) (arg0 * 3);

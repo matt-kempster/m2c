@@ -1,13 +1,11 @@
-s32 test(s32 arg0)
-{
+s32 test(s32 arg0) {
     u32 temp_t6;
     s32 phi_a0;
     s32 phi_a0_2;
     s32 phi_t8;
 
     temp_t6 = arg0 - 1;
-    if (temp_t6 < 7U)
-    {
+    if (temp_t6 < 7U) {
         phi_a0_2 = arg0;
         goto **(&jtbl_400150 + (temp_t6 * 4));
     case 0:
@@ -21,13 +19,10 @@ s32 test(s32 arg0)
         goto block_10;
     default:
         phi_a0 = arg0 * 2;
-    }
-    else
-    {
+    } else {
     case 4:
         phi_t8 = arg0 >> 1;
-        if (arg0 < 0)
-        {
+        if (arg0 < 0) {
             phi_t8 = (s32) (arg0 + 1) >> 1;
         }
         phi_a0 = phi_t8;

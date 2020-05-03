@@ -1171,15 +1171,21 @@ class InstrArgs:
                     return as_type(sym, type, True)
         return AddressOf(sym, type=type)
 
-    def imm(self, index: int) -> Expression:
+    def full_imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_args[index])
         ret = literal_expr(arg, self.stack_info)
         if isinstance(ret, GlobalSymbol):
             return self.address_of_gsym(ret)
         return ret
 
+    def imm(self, index: int) -> Expression:
+        ret = self.full_imm(index)
+        if isinstance(ret, Literal):
+            return Literal(((ret.value + 0x8000) & 0xFFFF) - 0x8000)
+        return ret
+
     def unsigned_imm(self, index: int) -> Expression:
-        ret = self.imm(index)
+        ret = self.full_imm(index)
         if isinstance(ret, Literal):
             return Literal(ret.value & 0xFFFF)
         return ret
@@ -2036,7 +2042,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # FCSR get
     "cfc1": lambda a: ErrorExpr("cfc1"),
     # Immediates
-    "li": lambda a: a.imm(1),
+    "li": lambda a: a.full_imm(1),
     "lui": lambda a: load_upper(a),
     # Loading instructions
     "lb": lambda a: handle_load(a, type=Type.s8()),

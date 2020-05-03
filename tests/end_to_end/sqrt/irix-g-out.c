@@ -1,5 +1,4 @@
-f32 test(f32 arg0)
-{
+f32 test(f32 arg0) {
     s32 spC;
     f32 sp8;
     f32 sp4;

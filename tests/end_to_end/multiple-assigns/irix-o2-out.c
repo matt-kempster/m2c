@@ -1,15 +1,12 @@
-s32 test(s32 arg0)
-{
+s32 test(s32 arg0) {
     s32 sp4;
     s32 temp_a0;
     s32 temp_v1;
     s32 phi_a0;
 
-    if (arg0 == 5)
-    {
+    if (arg0 == 5) {
         phi_a0 = arg0;
-        do
-        {
+        do {
             D_410120 = phi_a0;
             temp_a0 = phi_a0 + 1;
             D_410120 = temp_a0;
