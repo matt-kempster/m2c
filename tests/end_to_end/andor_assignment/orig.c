@@ -15,8 +15,12 @@ int test(int a, int b, int c, int d) {
         ret = 1;
     }
 
-    if (var1 && var2 && (var2 = foo(var2)) && d) {
-        ret = 2;
+    if (var1 && var2 && ((var1 += var2), (var2 = foo(var1))) && d) {
+        while (ret < 5) {
+            ret += 1;
+            ret *= 2;
+        }
+        ret += 5;
     }
 
     return ret;
