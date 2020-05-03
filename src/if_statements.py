@@ -548,12 +548,17 @@ def add_return_statement(
 
 
 def detect_loop(
-    context: Context, start: ConditionalNode, indent: int
+    context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> Optional[DoWhileLoop]:
     # We detect edges that are accompanied by their reverse as loops.
+    imm_pdom: Node
+    if start.is_self_loop():
+        imm_pdom = start
+    else:
+        imm_pdom = immediate_postdominator(context, start, end)
+
     if not (
-        isinstance(start.conditional_edge, ConditionalNode)
-        and start.conditional_edge.conditional_edge is start
+        isinstance(imm_pdom, ConditionalNode) and imm_pdom.conditional_edge is start
     ):
         return None
 
@@ -564,22 +569,26 @@ def detect_loop(
         # There are more nodes to emit, "between" the start node
         # and the loop edge that it connects to:
         loop_body = build_flowgraph_between(
-            context, start.fallthrough_edge, start.conditional_edge, indent + 4
+            context, start, imm_pdom, indent + 4, skip_loop_detection=True,
         )
-        emit_node(context, start.conditional_edge, loop_body, indent + 4)
+        emit_node(context, imm_pdom, loop_body, indent + 4)
 
-    assert start.block.block_info
-    assert start.block.block_info.branch_condition
+    assert imm_pdom.block.block_info
+    assert imm_pdom.block.block_info.branch_condition
     return DoWhileLoop(
         indent,
         context.options.coding_style,
         loop_body,
-        start.block.block_info.branch_condition,
+        imm_pdom.block.block_info.branch_condition,
     )
 
 
 def build_flowgraph_between(
-    context: Context, start: Node, end: Node, indent: int
+    context: Context,
+    start: Node,
+    end: Node,
+    indent: int,
+    skip_loop_detection: bool = False,
 ) -> Body:
     """
     Output a section of a flow graph that has already been translated to our
@@ -600,13 +609,17 @@ def build_flowgraph_between(
             # Before we do anything else, we pattern-match the subgraph
             # rooted at curr_start against certain predefined subgraphs
             # that emit do-while-loops:
-            if isinstance(curr_start, ConditionalNode):
-                do_while_loop = detect_loop(context, curr_start, indent)
+            if not skip_loop_detection and isinstance(curr_start, ConditionalNode):
+                do_while_loop = detect_loop(context, curr_start, end, indent)
                 if do_while_loop:
                     body.add_do_while_loop(do_while_loop)
-                    assert isinstance(curr_start.conditional_edge, ConditionalNode)
                     # Move past the loop:
-                    curr_start = curr_start.conditional_edge.fallthrough_edge
+                    if curr_start.is_self_loop():
+                        curr_start = curr_start.fallthrough_edge
+                    else:
+                        imm_pdom = immediate_postdominator(context, curr_start, end)
+                        assert isinstance(imm_pdom, ConditionalNode)
+                        curr_start = imm_pdom.fallthrough_edge
                     continue
 
             # If a node is ever encountered twice, we can emit a goto to the
