@@ -416,7 +416,7 @@ def get_full_if_condition(
                 indent,
                 context.options.coding_style,
                 if_body=build_flowgraph_between(
-                    context, curr_node, curr_end, indent + 4
+                    context, next_node, curr_end, indent + 4
                 ),
                 else_body=else_body,
             )
