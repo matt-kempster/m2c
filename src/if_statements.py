@@ -1,8 +1,8 @@
+import itertools
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
-from .error import DecompFailure
 from .flow_graph import (
     BasicNode,
     Block,
@@ -182,74 +182,6 @@ def emit_goto_or_early_return(
         emit_goto(context, target, body, indent)
 
 
-def build_conditional_subgraph(
-    context: Context, start: ConditionalNode, end: Node, indent: int
-) -> IfElseStatement:
-    """
-    Output the subgraph between "start" and "end" at indent level "indent",
-    given that "start" is a ConditionalNode; this program will intelligently
-    output if/else relationships.
-    """
-    if_block_info = start.block.block_info
-    assert isinstance(if_block_info, BlockInfo)
-    assert if_block_info.branch_condition is not None
-
-    # If one of the output edges is the end, it's a "fake" if-statement. That
-    # is, it actually just resides one indentation level above the start node.
-    else_body = None
-    # # TODO: This will trigger for &&-statements, incorrectly.
-    # if start.conditional_edge == end:
-    #     assert start.fallthrough_edge != end  # otherwise two edges point to one node
-    #     # If the conditional edge isn't real, then the "fallthrough_edge" is
-    #     # actually within the inner if-statement. This means we have to negate
-    #     # the fallthrough edge and go down that path.
-    #     if_condition = if_block_info.branch_condition.negated()
-    #     if_body = build_flowgraph_between(
-    #         context, start.fallthrough_edge, end, indent + 4
-    #     )
-    if start.fallthrough_edge == end:
-        if_condition = if_block_info.branch_condition
-        if not start.is_loop():
-            # Only an if block, so this is easy.
-            # I think this can only happen in the case where the other branch has
-            # an early return.
-            if_body = build_flowgraph_between(
-                context, start.conditional_edge, end, indent + 4
-            )
-        else:
-            # Don't want to follow the loop, otherwise we'd be trapped here.
-            # Instead, write a goto for the beginning of the loop.
-            if_body = Body(False, [])
-            emit_goto(context, start.conditional_edge, if_body, indent + 4)
-    else:
-        # We need to see if this is a compound if-statement, i.e. containing
-        # && or ||.
-        return get_number_of_if_conditions(context, start, end, indent)
-
-        # conds = get_number_of_if_conditions(context, start, end)
-        # if conds < 2:  # normal if-statement
-        #     # Both an if and an else block are present. We should write them in
-        #     # chronological order (based on the original MIPS file). The
-        #     # fallthrough edge will always be first, so write it that way.
-        #     if_condition = if_block_info.branch_condition.negated()
-        #     if_body = build_flowgraph_between(
-        #         context, start.fallthrough_edge, end, indent + 4
-        #     )
-        #     else_body = build_flowgraph_between(
-        #         context, start.conditional_edge, end, indent + 4
-        #     )
-        # else:  # multiple conditions in if-statement
-        #     return get_full_if_condition(context, conds, start, end, indent)
-
-    return IfElseStatement(
-        if_condition,
-        indent,
-        context.options.coding_style,
-        if_body=if_body,
-        else_body=else_body,
-    )
-
-
 def end_reachable_without(
     context: Context, start: Node, end: Node, without: Node
 ) -> bool:
@@ -356,32 +288,61 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
-import itertools
-
-
-def get_number_of_if_conditions(
-    context: Context, node: ConditionalNode, curr_end: Node, indent: int
+def build_conditional_subgraph(
+    context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
     """
-    For a given ConditionalNode, this function will return k when the if-
-    statement of the correspondant C code is "if (1 && 2 && ... && k)" or
-    "if (1 || 2 || ... || k)", where the numbers are labels for clauses.
-    (It remains unclear how a predicate that mixes && and || would behave.)
+    Output the subgraph between "start" and "end" at indent level "indent",
+    given that "start" is a ConditionalNode; this program will intelligently
+    output if/else relationships.
     """
-    # if not context.options.andor_detection:
-    #     # If &&/|| detection is disabled, short-circuit this logic and return
-    #     # 1 instead.
-    #     return 1
+    if_block_info = start.block.block_info
+    assert isinstance(if_block_info, BlockInfo)
+    assert if_block_info.branch_condition is not None
 
+    # If one of the output edges is the end, it's a "fake" if-statement. That
+    # is, it actually just resides one indentation level above the start node.
+    else_body = None
+    if start.fallthrough_edge == end:
+        if_condition = if_block_info.branch_condition
+        if not start.is_loop():
+            # Only an if block, so this is easy.
+            # I think this can only happen in the case where the other branch has
+            # an early return.
+            if_body = build_flowgraph_between(
+                context, start.conditional_edge, end, indent + 4
+            )
+        else:
+            # Don't want to follow the loop, otherwise we'd be trapped here.
+            # Instead, write a goto for the beginning of the loop.
+            if_body = Body(False, [])
+            emit_goto(context, start.conditional_edge, if_body, indent + 4)
+    else:
+        return get_full_if_condition(context, start, end, indent)
+
+    return IfElseStatement(
+        if_condition,
+        indent,
+        context.options.coding_style,
+        if_body=if_body,
+        else_body=else_body,
+    )
+
+
+def get_full_if_condition(
+    context: Context, node: ConditionalNode, curr_end: Node, indent: int
+) -> IfElseStatement:
     conditions: List[Condition] = []
     bottom = node.conditional_edge
     curr_node: ConditionalNode = node
     for num_conditions in itertools.count(1):
+
+        # Collect conditions as we accumulate them:
+
         block_info = curr_node.block.block_info
         assert isinstance(block_info, BlockInfo)
         branch_condition = block_info.branch_condition
         assert branch_condition is not None
-
         # Make sure to write down each block's statement list,
         # even inside an and/or group.
         if num_conditions == 1:
@@ -402,15 +363,14 @@ def get_number_of_if_conditions(
             else:
                 conditions.append(branch_condition)
 
+        # The next node will tell us whether we are in an &&/|| statement...
         next_node = curr_node.fallthrough_edge
+
         if (
             not isinstance(next_node, ConditionalNode)
-            or (
-                next_node.conditional_edge is not bottom
-                and next_node.fallthrough_edge is not bottom
-            )
-            # Checking for loop because it is an edge-case of our
-            # pattern-matcher for &&/||...
+            or next_node not in bottom.parents
+            # A strange edge-case of our pattern-matching technology:
+            # self-loops match the pattern. Avoiding that...
             or next_node.is_loop()
         ):
             if num_conditions == 1:
@@ -485,6 +445,7 @@ def get_number_of_if_conditions(
             assert next_node.conditional_edge is bottom
             curr_node = next_node
             continue
+    assert False
 
 
 def join_conditions(
@@ -502,82 +463,6 @@ def join_conditions(
             final_cond = BinaryOp(final_cond, op, cond, type=Type.bool())
     assert final_cond is not None
     return final_cond
-
-
-def get_full_if_condition(
-    context: Context, count: int, start: ConditionalNode, curr_end: Node, indent: int
-) -> IfElseStatement:
-    curr_node: Node = start
-    prev_node: Optional[ConditionalNode] = None
-    conditions: List[Condition] = []
-    # Get every condition.
-    for i in range(count):
-        if not isinstance(curr_node, ConditionalNode):
-            raise DecompFailure(
-                "Complex control flow; node assumed to be "
-                "part of &&/|| wasn't. Run with --no-andor to disable "
-                "detection of &&/|| and try again."
-            )
-        block_info = curr_node.block.block_info
-        assert isinstance(block_info, BlockInfo)
-        branch_condition = block_info.branch_condition
-        assert branch_condition is not None
-
-        # Make sure to write down each block's statement list,
-        # even inside an and/or group.
-        if i == 0:
-            # The first condition in an if-statement will have
-            # unrelated statements in its to_write list. Circumvent
-            # emitting them twice by just using branch_condition:
-            conditions.append(branch_condition)
-        else:
-            comma_statements = [
-                statement
-                for statement in block_info.to_write
-                if statement.should_write()
-            ]
-            if comma_statements:
-                assert not isinstance(branch_condition, CommaConditionExpr)
-                comma_condition = CommaConditionExpr(comma_statements, branch_condition)
-                conditions.append(comma_condition)
-            else:
-                conditions.append(branch_condition)
-        prev_node = curr_node
-        curr_node = curr_node.fallthrough_edge
-
-    # At the end, if we end up at the conditional-edge after the very start,
-    # then we know this was an || statement - if the start condition were true,
-    # we would have skipped ahead to the body.
-    if curr_node == start.conditional_edge:
-        assert prev_node is not None
-        return IfElseStatement(
-            # Negate the last condition, for it must fall-through to the
-            # body instead of jumping to it, hence it must jump OVER the body.
-            join_conditions(conditions, "||", only_negate_last=True),
-            indent,
-            context.options.coding_style,
-            if_body=build_flowgraph_between(
-                context, start.conditional_edge, curr_end, indent + 4
-            ),
-            # The else-body is wherever the code jumps to instead of the
-            # fallthrough (i.e. if-body).
-            else_body=build_flowgraph_between(
-                context, prev_node.conditional_edge, curr_end, indent + 4
-            ),
-        )
-    # Otherwise, we have an && statement.
-    else:
-        return IfElseStatement(
-            # We negate everything, because the conditional edges will jump
-            # OVER the if body.
-            join_conditions(conditions, "&&", only_negate_last=False),
-            indent,
-            context.options.coding_style,
-            if_body=build_flowgraph_between(context, curr_node, curr_end, indent + 4),
-            else_body=build_flowgraph_between(
-                context, start.conditional_edge, curr_end, indent + 4
-            ),
-        )
 
 
 def add_return_statement(
