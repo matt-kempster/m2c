@@ -13,7 +13,12 @@ int test(int a, int b, int c, int d) {
     ret = 0;
     if (var1 || var2 || (var2 = foo(var2)) || d) {
         ret = 1;
+    } else if (a) {
+        ret = -1;
+    } else {
+        ret = -2;
     }
+    ret += c;
 
     if (var1 && var2 && ((var1 += var2), (var2 = foo(var1))) && d) {
         while (ret < 5) {
