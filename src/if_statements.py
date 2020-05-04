@@ -403,13 +403,16 @@ def get_number_of_if_conditions(
                 conditions.append(branch_condition)
 
         next_node = curr_node.fallthrough_edge
-        if not isinstance(next_node, ConditionalNode) or (
-            next_node.conditional_edge is not bottom
-            and next_node.fallthrough_edge is not bottom
+        if (
+            not isinstance(next_node, ConditionalNode)
+            or (
+                next_node.conditional_edge is not bottom
+                and next_node.fallthrough_edge is not bottom
+            )
+            # Checking for loop because it is an edge-case of our
+            # pattern-matcher for &&/||...
+            or next_node.is_loop()
         ):
-            # We reached the end of an and-statement.
-            # TODO: The last one - or more - might've been part
-            # of a while loop.
             if num_conditions == 1:
                 # Normal if-statement.
                 assert (
@@ -423,13 +426,26 @@ def get_number_of_if_conditions(
                 assert curr_node.block.block_info.branch_condition
                 if_condition = curr_node.block.block_info.branch_condition.negated()
                 if_body = build_flowgraph_between(
-                    context, curr_node.fallthrough_edge, bottom, indent + 4
+                    context, curr_node.fallthrough_edge, curr_end, indent + 4
                 )
-                return IfElseStatement(
-                    if_condition, indent, context.options.coding_style, if_body
+                else_body: Optional[Body]
+                else_body = build_flowgraph_between(
+                    context, curr_node.conditional_edge, curr_end, indent + 4
                 )
+                if not any(stmt.should_write() for stmt in else_body.statements):
+                    else_body = None
 
-            else_body: Optional[Body]
+                return IfElseStatement(
+                    if_condition,
+                    indent,
+                    context.options.coding_style,
+                    if_body,
+                    else_body,
+                )
+            # We reached the end of an and-statement.
+            # TODO: The last one - or more - might've been part
+            # of a while loop.
+
             else_body = build_flowgraph_between(context, bottom, curr_end, indent + 4)
             if not any(stmt.should_write() for stmt in else_body.statements):
                 else_body = None
