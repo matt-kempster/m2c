@@ -509,7 +509,7 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
 
 
 def is_self_loop_edge(node: "Node", edge: "Node") -> bool:
-    return edge.block.index == node.block.index
+    return node is edge
 
 
 def is_loop_edge(node: "Node", edge: "Node") -> bool:
@@ -542,13 +542,14 @@ class BaseNode(abc.ABC):
     def add_parent(self, parent: "Node") -> None:
         self.parents.add(parent)
 
-    def remove_parent(self, parent: "Node") -> None:
-        self.parents.remove(parent)
-
     def replace_parent(self, replace_this: "Node", with_this: "Node") -> None:
         if replace_this in self.parents:
             self.parents.remove(replace_this)
             self.parents.add(with_this)
+
+    @abc.abstractmethod
+    def children(self) -> List["Node"]:
+        ...
 
     @abc.abstractmethod
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
@@ -565,10 +566,12 @@ class BasicNode(BaseNode):
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
         if self.successor is replace_this:
             self.successor = with_this
-            with_this.add_parent(self)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.successor)
+
+    def children(self) -> List["Node"]:
+        return [self.successor]
 
     def __str__(self) -> str:
         return "".join(
@@ -588,16 +591,17 @@ class ConditionalNode(BaseNode):
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
         if self.conditional_edge is replace_this:
             self.conditional_edge = with_this
-            with_this.add_parent(self)
         if self.fallthrough_edge is replace_this:
             self.fallthrough_edge = with_this
-            with_this.add_parent(self)
 
     def is_self_loop(self) -> bool:
         return is_self_loop_edge(self, self.conditional_edge)
 
     def is_loop(self) -> bool:
         return is_loop_edge(self, self.conditional_edge)
+
+    def children(self) -> List["Node"]:
+        return [self.conditional_edge, self.fallthrough_edge]
 
     def __str__(self) -> str:
         return "".join(
@@ -623,6 +627,9 @@ class ReturnNode(BaseNode):
         name = super().name()
         return name if self.is_real() else f"{name}.{self.index}"
 
+    def children(self) -> List["Node"]:
+        return []
+
     def is_real(self) -> bool:
         return self.index == 0
 
@@ -643,6 +650,9 @@ class SwitchNode(BaseNode):
             else:
                 new_cases.append(case)
         self.cases = new_cases
+
+    def children(self) -> List["Node"]:
+        return self.cases
 
     def __str__(self) -> str:
         targets = ", ".join(str(c.block.index) for c in self.cases)
@@ -911,11 +921,21 @@ def ensure_fallthrough(nodes: List[Node]) -> None:
             pre.emit_goto = True
 
 
-def compute_dominators(nodes: List[Node]) -> None:
+def compute_parents(nodes: List[Node]) -> None:
+    for node in nodes:
+        node.parents = set()
+    for node in nodes:
+        for child in node.children():
+            child.parents.add(node)
+
+
+def compute_dominators_and_parents(nodes: List[Node]) -> None:
+    """Compute or recompute the dominators and parents of the given nodes."""
     for node in nodes:
         node.dominators = set()
         node.immediate_dominator = None
         node.immediately_dominates = []
+    compute_parents(nodes)
 
     entry = nodes[0]
     entry.dominators = {entry}
@@ -964,7 +984,7 @@ def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
     nodes = build_nodes(function, blocks, rodata)
     nodes = duplicate_premature_returns(nodes)
     ensure_fallthrough(nodes)
-    compute_dominators(nodes)
+    compute_dominators_and_parents(nodes)
     return FlowGraph(nodes)
 
 

@@ -1,34 +1,34 @@
 from typing import List
 
-from .flow_graph import BasicNode, ConditionalNode, FlowGraph, Node, compute_dominators
+from .flow_graph import (
+    BasicNode,
+    ConditionalNode,
+    FlowGraph,
+    Node,
+    compute_dominators_and_parents,
+)
 from .parse_instruction import Instruction
 
 
 def replace_node_references(
-    flow_graph: FlowGraph, replace_this: Node, with_this: Node, replace_parent: bool
+    flow_graph: FlowGraph, replace_this: Node, with_this: Node
 ) -> None:
     for node_to_modify in flow_graph.nodes:
         node_to_modify.replace_any_children(replace_this, with_this)
-        if replace_this in node_to_modify.parents:
-            if replace_parent:
-                node_to_modify.replace_parent(replace_this, with_this)
-            else:
-                node_to_modify.remove_parent(replace_this)
-    compute_dominators(flow_graph.nodes)
 
 
 def remove_node(flow_graph: FlowGraph, to_delete: Node, new_child: Node) -> None:
     flow_graph.nodes.remove(to_delete)
-    replace_node_references(flow_graph, to_delete, new_child, False)
+    replace_node_references(flow_graph, to_delete, new_child)
 
 
 def replace_node(flow_graph: FlowGraph, replace_this: Node, with_this: Node) -> None:
     replacement_index = flow_graph.nodes.index(replace_this)
     flow_graph.nodes[replacement_index] = with_this
-    replace_node_references(flow_graph, replace_this, with_this, True)
+    replace_node_references(flow_graph, replace_this, with_this)
 
 
-def unroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
+def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
     node_1 = start.fallthrough_edge
     node_7 = start.conditional_edge
 
@@ -94,11 +94,12 @@ def unroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
     replace_node(flow_graph, node_1, new_node_1)  # now it does
     remove_node(flow_graph, node_4, node_7)
     remove_node(flow_graph, node_5, node_7)
-    remove_node(flow_graph, node_6, node_7)  # TODO: assert didn't execute anything?
+    remove_node(flow_graph, node_6, node_7)  # TODO: assert didn't execute anything?.
+
     return True
 
 
-def munge_unrolled_loops(flow_graph: FlowGraph) -> FlowGraph:
+def reroll_loops(flow_graph: FlowGraph) -> FlowGraph:
     # TODO: What if knocking out nodes reveals another set of nodes
     # that look identical? We will incorrectly be merging two
     # adjacent for-loops.
@@ -108,11 +109,8 @@ def munge_unrolled_loops(flow_graph: FlowGraph) -> FlowGraph:
         for node in flow_graph.nodes:
             if not isinstance(node, ConditionalNode):
                 continue
-            changed = unroll_loop(flow_graph, node)
+            changed = reroll_loop(flow_graph, node)
             if changed:
                 break
+    compute_dominators_and_parents(flow_graph.nodes)
     return flow_graph
-
-
-def munge_flowgraph(flow_graph: FlowGraph) -> FlowGraph:
-    return munge_unrolled_loops(flow_graph)

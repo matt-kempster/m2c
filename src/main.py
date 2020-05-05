@@ -5,7 +5,7 @@ from typing import List, Optional
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
-from .flow_graph_munge import munge_flowgraph
+from .loop_rerolling import reroll_loops
 from .if_statements import get_function_text
 from .options import CodingStyle, Options
 from .parse_file import Function, MIPSFile, Rodata, parse_file
@@ -22,7 +22,7 @@ def decompile_function(
     flowgraph: FlowGraph = build_flowgraph(function, rodata)
 
     if options.loop_rerolling:
-        flowgraph = munge_flowgraph(flowgraph)
+        flowgraph = reroll_loops(flowgraph)
 
     if options.visualize_flowgraph:
         visualize_flowgraph(flowgraph)
@@ -126,7 +126,7 @@ def parse_flags(flags: List[str]) -> Options:
     parser.add_argument(
         "--no-reroll",
         dest="loop_rerolling",
-        help="disable emitting for-loops by un-unrolling (rerolling) while-loops",
+        help="disable detection and fixing of unrolled loops",
         action="store_false",
     )
     parser.add_argument(
