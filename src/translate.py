@@ -303,6 +303,20 @@ class StackInfo:
             return self.uses_framepointer
         return False
 
+    def address_of_gsym(self, sym: "GlobalSymbol") -> "Expression":
+        ent = self.rodata.values.get(sym.symbol_name)
+        if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
+            return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
+        type = Type.ptr()
+        typemap = self.typemap
+        if typemap:
+            ctype = typemap.var_types.get(sym.symbol_name)
+            if ctype:
+                type, is_ptr = ptr_type_from_ctype(ctype, typemap)
+                if is_ptr:
+                    return as_type(sym, type, True)
+        return AddressOf(sym, type=type)
+
     def __str__(self) -> str:
         return "\n".join(
             [
@@ -1044,6 +1058,18 @@ class AddressMode:
             return f"({self.rhs})"
 
 
+@attr.s(frozen=True)
+class RawSymbolRef:
+    offset: int = attr.ib()
+    sym: AsmGlobalSymbol = attr.ib()
+
+    def __str__(self) -> str:
+        if self.offset:
+            return f"{self.sym.symbol_name} + {self.offset}"
+        else:
+            return self.sym.symbol_name
+
+
 @attr.s
 class RegInfo:
     contents: Dict[Register, Expression] = attr.ib()
@@ -1156,25 +1182,11 @@ class InstrArgs:
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
-    def address_of_gsym(self, sym: GlobalSymbol) -> Expression:
-        ent = self.stack_info.rodata.values.get(sym.symbol_name)
-        if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
-            return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
-        type = Type.ptr()
-        typemap = self.stack_info.typemap
-        if typemap:
-            ctype = typemap.var_types.get(sym.symbol_name)
-            if ctype:
-                type, is_ptr = ptr_type_from_ctype(ctype, typemap)
-                if is_ptr:
-                    return as_type(sym, type, True)
-        return AddressOf(sym, type=type)
-
     def full_imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_args[index])
         ret = literal_expr(arg, self.stack_info)
         if isinstance(ret, GlobalSymbol):
-            return self.address_of_gsym(ret)
+            return self.stack_info.address_of_gsym(ret)
         return ret
 
     def imm(self, index: int) -> Expression:
@@ -1194,11 +1206,25 @@ class InstrArgs:
         assert isinstance(arg, Macro) and arg.macro_name == "hi"
         ret = literal_expr(arg.argument, self.stack_info)
         if isinstance(ret, GlobalSymbol):
-            return self.address_of_gsym(ret)
+            return self.stack_info.address_of_gsym(ret)
         return ret
 
-    def memory_ref(self, index: int) -> AddressMode:
+    def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_args[index])
+
+        # Allow e.g. "lw $v0, symbol + 4", which isn't valid MIPS assembly, but is
+        # outputted by some disassemblers (like IDA).
+        if isinstance(ret, AsmGlobalSymbol):
+            return RawSymbolRef(offset=0, sym=ret)
+        if (
+            isinstance(ret, BinOp)
+            and ret.op in "+-"
+            and isinstance(ret.lhs, AsmGlobalSymbol)
+            and isinstance(ret.rhs, AsmLiteral)
+        ):
+            sign = 1 if ret.op == "+" else -1
+            return RawSymbolRef(offset=(ret.rhs.value * sign), sym=ret.lhs)
+
         assert isinstance(ret, AsmAddressMode)
         if ret.lhs is None:
             return AddressMode(offset=0, rhs=ret.rhs)
@@ -1210,7 +1236,7 @@ class InstrArgs:
 
 
 def deref(
-    arg: AddressMode,
+    arg: Union[AddressMode, RawSymbolRef],
     regs: RegInfo,
     stack_info: StackInfo,
     *,
@@ -1218,11 +1244,14 @@ def deref(
     store: bool = False,
 ) -> Expression:
     offset = arg.offset
-    if stack_info.is_stack_reg(arg.rhs):
-        return stack_info.get_stack_var(offset, store=store)
+    if isinstance(arg, AddressMode):
+        if stack_info.is_stack_reg(arg.rhs):
+            return stack_info.get_stack_var(offset, store=store)
+        var = regs[arg.rhs]
+    else:
+        var = stack_info.address_of_gsym(stack_info.global_symbol(arg.sym))
 
     # Struct member is being dereferenced.
-    var = regs[arg.rhs]
 
     # Cope slightly better with raw pointers.
     if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
@@ -1638,8 +1667,9 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     source_val = args.reg(0)
     source_raw = args.regs.get_raw(source_reg)
     target = args.memory_ref(1)
+    is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.rhs)
     if (
-        stack_info.is_stack_reg(target.rhs)
+        is_stack
         and source_raw is not None
         and stack_info.should_save(source_raw, target.offset)
     ):
@@ -1647,8 +1677,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
         return None
     dest = deref(target, args.regs, stack_info, size=size, store=True)
     dest.type.unify(type)
-    silent = stack_info.is_stack_reg(target.rhs)
-    return StoreStmt(source=as_type(source_val, type, silent=silent), dest=dest)
+    return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 
 
 def format_f32_imm(num: int) -> str:
