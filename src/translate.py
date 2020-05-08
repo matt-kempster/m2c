@@ -1562,11 +1562,7 @@ def handle_addi(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
-    if imm == Literal(0):
-        # addiu $reg1, $reg2, 0 is a move
-        # (this happens when replacing %lo(...) by 0)
-        return source
-    elif stack_info.is_stack_reg(source_reg):
+    if stack_info.is_stack_reg(source_reg):
         # Adding to sp, i.e. passing an address.
         assert isinstance(imm, Literal)
         if stack_info.is_stack_reg(args.reg_ref(0)):
@@ -1577,6 +1573,10 @@ def handle_addi(args: InstrArgs) -> Expression:
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
         return AddressOf(var, type=Type.ptr(var.type))
+    elif imm == Literal(0):
+        # addiu $reg1, $reg2, 0 is a move
+        # (this happens when replacing %lo(...) by 0)
+        return source
     elif source.type.is_pointer():
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
