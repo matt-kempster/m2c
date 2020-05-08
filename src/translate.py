@@ -1517,6 +1517,21 @@ def load_upper(args: InstrArgs) -> Expression:
     return args.hi_imm(1)
 
 
+def handle_la(args: InstrArgs) -> Expression:
+    target = args.memory_ref(1)
+    stack_info = args.stack_info
+    if isinstance(target, AddressMode):
+        return handle_addi(
+            InstrArgs(
+                raw_args=[args.reg_ref(0), target.rhs, AsmLiteral(target.offset)],
+                regs=args.regs,
+                stack_info=args.stack_info,
+            )
+        )
+    var = stack_info.address_of_gsym(stack_info.global_symbol(target.sym))
+    return add_imm(var, Literal(target.offset), stack_info)
+
+
 def handle_ori(args: InstrArgs) -> Expression:
     imm = args.unsigned_imm(2)
     r = args.reg(1)
@@ -1573,7 +1588,12 @@ def handle_addi(args: InstrArgs) -> Expression:
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
         return AddressOf(var, type=Type.ptr(var.type))
-    elif imm == Literal(0):
+    else:
+        return add_imm(source, imm, stack_info)
+
+
+def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expression:
+    if imm == Literal(0):
         # addiu $reg1, $reg2, 0 is a move
         # (this happens when replacing %lo(...) by 0)
         return source
@@ -2072,6 +2092,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Immediates
     "li": lambda a: a.full_imm(1),
     "lui": lambda a: load_upper(a),
+    "la": lambda a: handle_la(a),
     # Loading instructions
     "lb": lambda a: handle_load(a, type=Type.s8()),
     "lbu": lambda a: handle_load(a, type=Type.u8()),
