@@ -329,6 +329,19 @@ def build_conditional_subgraph(
     )
 
 
+def get_full_condition(block_info: BlockInfo) -> Union[Condition]:
+    branch_condition = block_info.branch_condition
+    assert branch_condition is not None
+    comma_statements = [
+        statement for statement in block_info.to_write if statement.should_write()
+    ]
+    if comma_statements:
+        assert not isinstance(branch_condition, CommaConditionExpr)
+        return CommaConditionExpr(comma_statements, branch_condition)
+    else:
+        return branch_condition
+
+
 def get_full_if_condition(
     context: Context, node: ConditionalNode, curr_end: Node, indent: int
 ) -> IfElseStatement:
@@ -343,25 +356,15 @@ def get_full_if_condition(
         assert isinstance(block_info, BlockInfo)
         branch_condition = block_info.branch_condition
         assert branch_condition is not None
-        # Make sure to write down each block's statement list,
-        # even inside an and/or group.
         if num_conditions == 1:
             # The first condition in an if-statement will have
             # unrelated statements in its to_write list. Circumvent
             # emitting them twice by just using branch_condition:
             conditions.append(branch_condition)
+        # Make sure to write down each block's statement list,
+        # even inside an and/or group.
         else:
-            comma_statements = [
-                statement
-                for statement in block_info.to_write
-                if statement.should_write()
-            ]
-            if comma_statements:
-                assert not isinstance(branch_condition, CommaConditionExpr)
-                comma_condition = CommaConditionExpr(comma_statements, branch_condition)
-                conditions.append(comma_condition)
-            else:
-                conditions.append(branch_condition)
+            conditions.append(get_full_condition(block_info))
 
         # The next node will tell us whether we are in an &&/|| statement...
         next_node = curr_node.fallthrough_edge
