@@ -345,13 +345,76 @@ def get_full_condition(block_info: BlockInfo) -> Union[Condition]:
 def get_full_if_condition(
     context: Context, node: ConditionalNode, curr_end: Node, indent: int
 ) -> IfElseStatement:
+    """
+
+        +------------------------------------------------------+
+        |                                                      |
+        |                                                      |
+        |    +----------------------------------------+        |
+        |    |                                        |        |
+        |    |                     COND               |        |
+        |    |    +--------------------------+        | COND   | FALL
+        |    |    |                          v        v        v
+        |    |    |      +-------+  COND   +-------------------------+
+        |    |    |      |   0   | ------> |            4            |
+        |    |    |      +-------+         +-------------------------+
+        |    |    |        |                 |
+        |    |    |        | FALL            |
+        |    |    |        v                 |
+        |    |    |      +-------+           |
+        |    |    +----- |   1   |           |
+        |    |           +-------+           |
+        |    |             |                 |
+        |    |             | FALL            |
+        |    |             v                 |
+        |    |           +-------+           |
+        |    +---------- |   2   |           |
+        |                +-------+           |
+        |                  |                 |
+        |                  | FALL            |
+        |                  |                 |
+        |                  |                 |
+_______________________________________________________________________
+        .                  .                 .
+        .                  .                 .
+        .                  .                 .
+_______________________________________________________________________
+
+        |                  |                 |
+        |                  |                 |
+        |                  |                 |
+        |                  v                 |
+        |                +-------+           |
+        +--------------- |   N   |           |
+                         +-------+           |
+                           |                 |
+                           | COND            |
+                           |                 |
+                           |                 |
+                           v                 |
+           +---+  COND   +-------+           |
+           | 7 | <------ |   5   |           |
+           +---+         +-------+           |
+             |             |                 |
+             |             | FALL            |
+             |             v                 |
+             |           +-------+           |
+             |           |   6   |           |
+             |           +-------+           |
+             |             |                 |
+             |             |                 |
+             |             v                 v
+             |           +-------------------------+
+             +---------> |      8 (curr_end)       |
+                         +-------------------------+
+
+    """
     conditions: List[Condition] = []
     bottom = node.conditional_edge
     curr_node: ConditionalNode = node
     for num_conditions in itertools.count(1):
 
         # Collect conditions as we accumulate them:
-
         block_info = curr_node.block.block_info
         assert isinstance(block_info, BlockInfo)
         branch_condition = block_info.branch_condition
