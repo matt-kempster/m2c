@@ -288,6 +288,16 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
+def is_and_statement(next_node: Node, bottom: Node) -> bool:
+    return (
+        not isinstance(next_node, ConditionalNode)
+        or next_node not in bottom.parents
+        # A strange edge-case of our pattern-matching technology:
+        # self-loops match the pattern. Avoiding that...
+        or next_node.is_loop()
+    )
+
+
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
@@ -302,7 +312,7 @@ def build_conditional_subgraph(
 
     # If one of the output edges is the end, it's a "fake" if-statement. That
     # is, it actually just resides one indentation level above the start node.
-    else_body = None
+    else_body: Optional[Body] = None
     if start.fallthrough_edge == end:
         if_condition = if_block_info.branch_condition
         if not start.is_loop():
@@ -317,15 +327,27 @@ def build_conditional_subgraph(
             # Instead, write a goto for the beginning of the loop.
             if_body = Body(False, [])
             emit_goto(context, start.conditional_edge, if_body, indent + 4)
+    elif is_and_statement(start.fallthrough_edge, start.conditional_edge):
+        # If the conditional edge isn't real, then the "fallthrough_edge" is
+        # actually within the inner if-statement. This means we have to negate
+        # the fallthrough edge and go down that path.
+        assert start.block.block_info
+        assert start.block.block_info.branch_condition
+        if_condition = start.block.block_info.branch_condition.negated()
+
+        if_body = build_flowgraph_between(
+            context, start.fallthrough_edge, end, indent + 4
+        )
+        else_body = build_flowgraph_between(
+            context, start.conditional_edge, end, indent + 4
+        )
+        if not any(stmt.should_write() for stmt in else_body.statements):
+            else_body = None
     else:
         return get_full_if_condition(context, start, end, indent)
 
     return IfElseStatement(
-        if_condition,
-        indent,
-        context.options.coding_style,
-        if_body=if_body,
-        else_body=else_body,
+        if_condition, indent, context.options.coding_style, if_body, else_body
     )
 
 
@@ -405,7 +427,6 @@ def get_full_if_condition(
     bottom = start.conditional_edge
     curr_node: ConditionalNode = start
     for num_conditions in itertools.count(1):
-
         # Collect conditions as we accumulate them:
         block_info = curr_node.block.block_info
         assert isinstance(block_info, BlockInfo)
@@ -424,42 +445,8 @@ def get_full_if_condition(
         # The next node will tell us whether we are in an &&/|| statement...
         next_node = curr_node.fallthrough_edge
 
-        if (
-            not isinstance(next_node, ConditionalNode)
-            or next_node not in bottom.parents
-            # A strange edge-case of our pattern-matching technology:
-            # self-loops match the pattern. Avoiding that...
-            or next_node.is_loop()
-        ):
-            if num_conditions == 1:
-                # Normal if-statement.
-                assert (
-                    curr_node.fallthrough_edge is not bottom
-                )  # otherwise two edges point to one node
-
-                # If the conditional edge isn't real, then the "fallthrough_edge" is
-                # actually within the inner if-statement. This means we have to negate
-                # the fallthrough edge and go down that path.
-                assert curr_node.block.block_info
-                assert curr_node.block.block_info.branch_condition
-                if_condition = curr_node.block.block_info.branch_condition.negated()
-                if_body = build_flowgraph_between(
-                    context, curr_node.fallthrough_edge, end, indent + 4
-                )
-                else_body: Optional[Body]
-                else_body = build_flowgraph_between(
-                    context, curr_node.conditional_edge, end, indent + 4
-                )
-                if not any(stmt.should_write() for stmt in else_body.statements):
-                    else_body = None
-
-                return IfElseStatement(
-                    if_condition,
-                    indent,
-                    context.options.coding_style,
-                    if_body,
-                    else_body,
-                )
+        else_body: Optional[Body]
+        if is_and_statement(next_node, bottom):
             # We reached the end of an and-statement.
             # TODO: The last one - or more - might've been part
             # of a while loop.
@@ -476,7 +463,9 @@ def get_full_if_condition(
                 if_body=build_flowgraph_between(context, next_node, end, indent + 4),
                 else_body=else_body,
             )
-        elif next_node.fallthrough_edge is bottom:
+        assert isinstance(next_node, ConditionalNode)  # from is_and_statement()
+
+        if next_node.fallthrough_edge is bottom:
             assert next_node.block.block_info
             next_node_condition = next_node.block.block_info.branch_condition
             assert next_node_condition
@@ -496,11 +485,10 @@ def get_full_if_condition(
                     context, next_node.conditional_edge, end, indent + 4
                 ),
             )
-        else:
-            # Still in the middle of an and-or statement.
-            assert next_node.conditional_edge is bottom
-            curr_node = next_node
-            continue
+
+        # Otherwise, still in the middle of an and-or statement.
+        assert next_node.conditional_edge is bottom
+        curr_node = next_node
     assert False
 
 
