@@ -343,7 +343,7 @@ def get_full_condition(block_info: BlockInfo) -> Union[Condition]:
 
 
 def get_full_if_condition(
-    context: Context, node: ConditionalNode, curr_end: Node, indent: int
+    context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
     """
 
@@ -410,8 +410,8 @@ _______________________________________________________________________
 
     """
     conditions: List[Condition] = []
-    bottom = node.conditional_edge
-    curr_node: ConditionalNode = node
+    bottom = start.conditional_edge
+    curr_node: ConditionalNode = start
     for num_conditions in itertools.count(1):
 
         # Collect conditions as we accumulate them:
@@ -452,11 +452,11 @@ _______________________________________________________________________
                 assert curr_node.block.block_info.branch_condition
                 if_condition = curr_node.block.block_info.branch_condition.negated()
                 if_body = build_flowgraph_between(
-                    context, curr_node.fallthrough_edge, curr_end, indent + 4
+                    context, curr_node.fallthrough_edge, end, indent + 4
                 )
                 else_body: Optional[Body]
                 else_body = build_flowgraph_between(
-                    context, curr_node.conditional_edge, curr_end, indent + 4
+                    context, curr_node.conditional_edge, end, indent + 4
                 )
                 if not any(stmt.should_write() for stmt in else_body.statements):
                     else_body = None
@@ -472,7 +472,7 @@ _______________________________________________________________________
             # TODO: The last one - or more - might've been part
             # of a while loop.
 
-            else_body = build_flowgraph_between(context, bottom, curr_end, indent + 4)
+            else_body = build_flowgraph_between(context, bottom, end, indent + 4)
             if not any(stmt.should_write() for stmt in else_body.statements):
                 else_body = None
             return IfElseStatement(
@@ -481,9 +481,7 @@ _______________________________________________________________________
                 join_conditions(conditions, "&&", only_negate_last=False),
                 indent,
                 context.options.coding_style,
-                if_body=build_flowgraph_between(
-                    context, next_node, curr_end, indent + 4
-                ),
+                if_body=build_flowgraph_between(context, next_node, end, indent + 4),
                 else_body=else_body,
             )
         elif next_node.fallthrough_edge is bottom:
@@ -499,11 +497,11 @@ _______________________________________________________________________
                 ),
                 indent,
                 context.options.coding_style,
-                if_body=build_flowgraph_between(context, bottom, curr_end, indent + 4),
+                if_body=build_flowgraph_between(context, bottom, end, indent + 4),
                 # The else-body is wherever the code jumps to instead of the
                 # fallthrough (i.e. if-body).
                 else_body=build_flowgraph_between(
-                    context, next_node.conditional_edge, curr_end, indent + 4
+                    context, next_node.conditional_edge, end, indent + 4
                 ),
             )
         else:
