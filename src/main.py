@@ -215,7 +215,7 @@ def parse_flags(flags: List[str]) -> Options:
     )
 
 
-def main() -> int:
+def main() -> None:
     options = parse_flags(sys.argv[1:])
     sys.exit(run(options))
 
