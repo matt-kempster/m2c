@@ -1159,9 +1159,20 @@ class InstrArgs:
     regs: RegInfo = attr.ib(repr=False)
     stack_info: StackInfo = attr.ib(repr=False)
 
+    def raw_arg(self, index: int) -> Argument:
+        assert index >= 0
+        if index >= len(self.raw_args):
+            raise DecompFailure(
+                f"Too few arguments for instruction, expected at least {index + 1}"
+            )
+        return self.raw_args[index]
+
     def reg_ref(self, index: int) -> Register:
-        ret = self.raw_args[index]
-        assert isinstance(ret, Register)
+        ret = self.raw_arg(index)
+        if not isinstance(ret, Register):
+            raise DecompFailure(
+                f"Expected instruction argument to be a register, but found {ret}"
+            )
         return ret
 
     def reg(self, index: int) -> Expression:
@@ -1171,19 +1182,31 @@ class InstrArgs:
         """Extract a double from a register. This may involve reading both the
         mentioned register and the next."""
         reg = self.reg_ref(index)
-        assert reg.is_float()
+        if not reg.is_float():
+            raise DecompFailure(
+                f"Expected instruction argument {reg} to be a float register"
+            )
         ret = self.regs[reg]
         if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
             return ret
         reg_num = int(reg.register_name[1:])
-        assert reg_num % 2 == 0
+        if reg_num % 2 != 0:
+            raise DecompFailure(
+                "Tried to use a double-precision instruction with odd-numbered float "
+                f"register {reg}"
+            )
         other = self.regs[Register(f"f{reg_num+1}")]
-        assert isinstance(other, Literal) and other.type.get_size_bits() != 64
+        if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
+            raise DecompFailure(
+                f"Unable to determine a value for double-precision register {reg} "
+                "whose second half is non-static. This is a mips_to_c restriction "
+                "which may be lifted in the future."
+            )
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
     def full_imm(self, index: int) -> Expression:
-        arg = strip_macros(self.raw_args[index])
+        arg = strip_macros(self.raw_arg(index))
         ret = literal_expr(arg, self.stack_info)
         if isinstance(ret, GlobalSymbol):
             return self.stack_info.address_of_gsym(ret)
@@ -1202,15 +1225,16 @@ class InstrArgs:
         return ret
 
     def hi_imm(self, index: int) -> Expression:
-        arg = self.raw_args[index]
-        assert isinstance(arg, Macro) and arg.macro_name == "hi"
+        arg = self.raw_arg(index)
+        if not isinstance(arg, Macro) or arg.macro_name != "hi":
+            raise DecompFailure("Got lui instruction with macro other than %hi")
         ret = literal_expr(arg.argument, self.stack_info)
         if isinstance(ret, GlobalSymbol):
             return self.stack_info.address_of_gsym(ret)
         return ret
 
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
-        ret = strip_macros(self.raw_args[index])
+        ret = strip_macros(self.raw_arg(index))
 
         # Allow e.g. "lw $v0, symbol + 4", which isn't valid MIPS assembly, but is
         # outputted by some disassemblers (like IDA).
@@ -1225,10 +1249,18 @@ class InstrArgs:
             sign = 1 if ret.op == "+" else -1
             return RawSymbolRef(offset=(ret.rhs.value * sign), sym=ret.lhs)
 
-        assert isinstance(ret, AsmAddressMode)
+        if not isinstance(ret, AsmAddressMode):
+            raise DecompFailure(
+                "Expected instruction argument to be of the form offset($register), "
+                f"but found {ret}"
+            )
         if ret.lhs is None:
             return AddressMode(offset=0, rhs=ret.rhs)
-        assert isinstance(ret.lhs, AsmLiteral)  # macros were removed
+        if not isinstance(ret.lhs, AsmLiteral):
+            raise DecompFailure(
+                f"Unable to parse offset for instruction argument {ret}. "
+                "Expected a constant or a %lo macro."
+            )
         return AddressMode(offset=ret.lhs.signed_value(), rhs=ret.rhs)
 
     def count(self) -> int:
@@ -1494,10 +1526,11 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
         return stack_info.global_symbol(arg)
     if isinstance(arg, AsmLiteral):
         return Literal(arg.value)
-    assert isinstance(arg, BinOp), f"argument {arg} must be a literal"
-    lhs = literal_expr(arg.lhs, stack_info)
-    rhs = literal_expr(arg.rhs, stack_info)
-    return BinaryOp.int(left=lhs, op=arg.op, right=rhs)
+    if isinstance(arg, BinOp):
+        lhs = literal_expr(arg.lhs, stack_info)
+        rhs = literal_expr(arg.rhs, stack_info)
+        return BinaryOp.int(left=lhs, op=arg.op, right=rhs)
+    raise DecompFailure(f"Instruction argument {arg} must be a literal")
 
 
 def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
@@ -1513,11 +1546,12 @@ def void_fn_op(fn_name: str, args: List[Expression]) -> FuncCall:
 
 
 def load_upper(args: InstrArgs) -> Expression:
-    if not isinstance(args.raw_args[1], Macro):
+    arg = args.raw_arg(1)
+    if not isinstance(arg, Macro):
         assert not isinstance(
-            args.raw_args[1], Literal
+            arg, Literal
         ), "normalize_instruction should convert lui <literal> to li"
-        raise DecompFailure("lui argument must be a literal or %hi macro")
+        raise DecompFailure(f"lui argument must be a literal or %hi macro, found {arg}")
     return args.hi_imm(1)
 
 
@@ -1849,15 +1883,21 @@ def handle_add(lhs: Expression, rhs: Expression, stack_info: StackInfo) -> Expre
 
 
 def strip_macros(arg: Argument) -> Argument:
-    """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume
-    that %hi's only ever occur in lui, where we expand them to an entire value,
-    and not just the upper part. This ought to preserve semantics in all
-    reasonable cases."""
+    """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
+    %hi's only ever occur in lui, where we expand them to an entire value, and not
+    just the upper part. This preserves semantics in most cases (though not when %hi's
+    are reused for different %lo's...)"""
     if isinstance(arg, Macro):
-        assert arg.macro_name == "lo"
+        if arg.macro_name == "hi":
+            raise DecompFailure("%hi macro outside of lui")
+        if arg.macro_name != "lo":
+            raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
         return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
-        assert arg.lhs.macro_name == "lo"
+        if arg.lhs.macro_name != "lo":
+            raise DecompFailure(
+                f"Bad linker macro in instruction argument {arg}, expected %lo"
+            )
         return AsmAddressMode(lhs=None, rhs=arg.rhs)
     else:
         return arg
@@ -2132,7 +2172,9 @@ def output_regs_for_instr(
 ) -> List[Register]:
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
-        assert isinstance(reg, Register)
+        if not isinstance(reg, Register):
+            # We'll deal with this error later
+            return []
         ret = [reg]
         if reg.register_name in ["f0", "v0"]:
             ret.append(Register("return"))
@@ -2500,13 +2542,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 assert mnemonic == "jalr"
                 if args.count() == 1:
                     fn_target = as_ptr(args.reg(0))
-                else:
-                    assert args.count() == 2
+                elif args.count() == 2:
                     if args.reg_ref(0) != Register("ra"):
                         raise DecompFailure(
                             "Two-argument form of jalr is not supported."
                         )
                     fn_target = as_ptr(args.reg(1))
+                else:
+                    raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
 
             # At most one of $f12 and $a0 may be passed, and at most one of
             # $f14 and $a1. We could try to figure out which ones, and cap
@@ -2587,7 +2630,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         elif mnemonic in CASES_FLOAT_COMP:
             expr = CASES_FLOAT_COMP[mnemonic](args)
-            assert expr is not None
             regs[Register("condition_bit")] = expr
 
         elif mnemonic in CASES_HI_LO:
@@ -2616,7 +2658,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
-            if args.count() >= 1 and isinstance(args.raw_args[0], Register):
+            if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
                 reg = args.reg_ref(0)
                 expr = eval_once(
                     expr, always_emit=True, trivial=False, prefix=reg.register_name
@@ -2753,6 +2795,7 @@ def translate_to_ast(
     }
 
     def make_arg(offset: int, type: Type) -> PassedInArg:
+        assert offset % 4 == 0
         return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
 
     c_fn: Optional[CFunction] = None
