@@ -69,7 +69,7 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_rodata_symbol(self, symbol_name: str) -> None:
+    def new_rodata_label(self, symbol_name: str) -> None:
         self.current_rodata = RodataEntry()
         self.rodata.values[symbol_name] = self.current_rodata
 
@@ -267,7 +267,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             if curr_section == ".rodata":
                 if line.startswith("glabel"):
                     name = line.split(" ")[1]
-                    mips_file.new_rodata_symbol(name)
+                    mips_file.new_rodata_label(name)
             elif curr_section == ".text":
                 if line.startswith("."):
                     # Label.
