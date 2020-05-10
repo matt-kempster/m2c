@@ -1680,6 +1680,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
                     left=source, op="+", right=as_intish(imm), type=source.type
                 )
         return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
+    elif isinstance(source, Literal) and isinstance(imm, Literal):
+        return Literal(source.value + imm.value)
     else:
         # Regular binary addition.
         return BinaryOp.intptr(left=source, op="+", right=imm)
