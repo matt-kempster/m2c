@@ -1080,7 +1080,7 @@ class RegInfo:
             return Literal(0)
         ret = self.get_raw(key)
         if ret is None:
-            raise DecompFailure(f"Read from unset register {key}")
+            return ErrorExpr(f"Read from unset register {key}")
         if isinstance(ret, PassedInArg) and not ret.copied:
             # Create a new argument object to better distinguish arguments we
             # are called with from arguments passed to subroutines. Also, unify

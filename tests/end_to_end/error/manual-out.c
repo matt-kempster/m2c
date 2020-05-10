@@ -19,5 +19,6 @@
     ERROR(unknown instruction: badinstr $t0, $t0);
     temp_t1 = ERROR(unknown instruction: badinstr2 $t1, $t1);
     *NULL = (s32) (temp_t1 << temp_t1);
+    *NULL = (s32) (ERROR(Read from unset register $v1) + 2);
     return ERROR(unknown instruction: badinstr3 $v0, $t2);
 }

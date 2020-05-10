@@ -26,5 +26,7 @@ glabel test
     badinstr3 $v0, $t2
     sllv $t1, $t1, $t1
     sw $t1, ($zero)
+    addiu $v1, $v1, 2
+    sw $v1, ($zero)
     jr $ra
      nop
