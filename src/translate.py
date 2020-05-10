@@ -1508,6 +1508,10 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
     )
 
 
+def void_fn_op(fn_name: str, args: List[Expression]) -> FuncCall:
+    return fn_op(fn_name, args, Type.any())
+
+
 def load_upper(args: InstrArgs) -> Expression:
     if not isinstance(args.raw_args[1], Macro):
         assert not isinstance(
@@ -1979,6 +1983,24 @@ CASES_FN_CALL: InstrSet = {
     "jal",
     "jalr",
 }
+CASES_NO_DEST: InstrMap = {
+    # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
+    # output than ERROR(...))
+    "teq": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]),
+    "tne": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]),
+    "tlt": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]),
+    "tltu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]),
+    "tge": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]),
+    "tgeu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]),
+    "teqi": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]),
+    "tnei": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]),
+    "tlti": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]),
+    "tltiu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]),
+    "tgei": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]),
+    "tgeiu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]),
+    "break": lambda a: void_fn_op("BREAK", [a.imm(0)] if a.count() >= 1 else []),
+    "sync": lambda a: void_fn_op("SYNC", []),
+}
 CASES_FLOAT_COMP: CmpInstrMap = {
     # Floating point comparisons
     "c.eq.s": lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)),
@@ -2123,6 +2145,7 @@ def output_regs_for_instr(
         or mnemonic in CASES_BRANCHES
         or mnemonic in CASES_FLOAT_BRANCHES
         or mnemonic in CASES_IGNORE
+        or mnemonic in CASES_NO_DEST
     ):
         return []
     if mnemonic == "jal" and typemap:
@@ -2571,6 +2594,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             hi, lo = CASES_HI_LO[mnemonic](args)
             set_reg(Register("hi"), hi)
             set_reg(Register("lo"), lo)
+
+        elif mnemonic in CASES_NO_DEST:
+            expr = CASES_NO_DEST[mnemonic](args)
+            mark_used(expr)
+            to_write.append(ExprStmt(expr))
 
         elif mnemonic in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
