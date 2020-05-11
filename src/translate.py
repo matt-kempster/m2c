@@ -1812,6 +1812,19 @@ def make_store(args: InstrArgs, type: Optional[Type]) -> Optional[StoreStmt]:
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 
 
+def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
+    expr = early_unwrap(args.reg(0))
+    target = args.memory_ref(1)
+    if not isinstance(expr, Load3Bytes):
+        # Elide swr's that don't come from 3-byte-loading lwr's; they probably
+        # come with a corresponding swl which has already been emitted.
+        return None
+    # Pass size=1 for the same reason as above.
+    real_target = attr.evolve(target, offset=target.offset - 2)
+    dest = deref(real_target, args.regs, args.stack_info, size=1, store=True)
+    return StoreStmt(source=expr, dest=dest)
+
+
 def format_f32_imm(num: int) -> str:
     (num,) = struct.unpack(">f", struct.pack(">I", num & (2 ** 32 - 1)))
     return str(num)
@@ -2070,8 +2083,11 @@ CASES_STORE: StoreInstrMap = {
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
     "sw": lambda a: make_store(a, type=Type.of_size(32)),
     # Treat swl the same as a regular store; it only occurs in combination
-    # with swr
+    # with swr. (TODO: at least wrap the expression in an UnalignedLoad
+    # if it isn't already.)
     "swl": lambda a: make_store(a, type=None),
+    # swr emits a store if the value it's storing is an unbalanced lwr
+    "swr": lambda a: handle_swr(a),
     # Floating point storage/conversion
     "swc1": lambda a: make_store(a, type=Type.f32()),
     "sdc1": lambda a: make_store(a, type=Type.f64()),
