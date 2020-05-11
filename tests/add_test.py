@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import distutils.spawn
 import logging
 import os
 import pathlib
@@ -41,7 +42,7 @@ def get_environment_variables() -> Optional[PathsToBinaries]:
         if env_var is None:
             logging.error(error_message)
         return env_var
-    QEMU_IRIX = os.popen("which qemu-irix 2>/dev/null").read()[:-1] # cut off the \n at the end
+    QEMU_IRIX = distutils.spawn.find_executable("qemu-irix")
     if not QEMU_IRIX:
         QEMU_IRIX = load(
             "QEMU_IRIX", "env variable QEMU_IRIX should point to the qemu-mips binary"
