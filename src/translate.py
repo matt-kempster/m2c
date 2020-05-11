@@ -1772,8 +1772,8 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
     return ErrorExpr("Unable to handle lwr; missing a corresponding lwl")
 
 
-def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
-    size = type.get_size_bits() // 8
+def make_store(args: InstrArgs, type: Optional[Type]) -> Optional[StoreStmt]:
+    size = type.get_size_bits() // 8 if type is not None else None
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
@@ -1788,7 +1788,10 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
         # Elide register preserval.
         return None
     dest = deref(target, args.regs, stack_info, size=size, store=True)
-    dest.type.unify(type)
+    if type is not None:
+        dest.type.unify(type)
+    if type is None:
+        return StoreStmt(source=source_val, dest=dest)
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 
 
@@ -2049,6 +2052,9 @@ CASES_STORE: StoreInstrMap = {
     "sb": lambda a: make_store(a, type=Type.of_size(8)),
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
     "sw": lambda a: make_store(a, type=Type.of_size(32)),
+    # Treat swl the same as a regular store; it only occurs in combination
+    # with swr
+    "swl": lambda a: make_store(a, type=None),
     # Floating point storage/conversion
     "swc1": lambda a: make_store(a, type=Type.f32()),
     "sdc1": lambda a: make_store(a, type=Type.f64()),
