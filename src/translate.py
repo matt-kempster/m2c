@@ -1261,14 +1261,11 @@ class InstrArgs:
             return Literal(ret.value & 0xFFFF)
         return ret
 
-    def hi_imm(self, index: int) -> Expression:
+    def hi_imm(self, index: int) -> Argument:
         arg = self.raw_arg(index)
         if not isinstance(arg, Macro) or arg.macro_name != "hi":
             raise DecompFailure("Got lui instruction with macro other than %hi")
-        ret = literal_expr(arg.argument, self.stack_info)
-        if isinstance(ret, GlobalSymbol):
-            return self.stack_info.address_of_gsym(ret)
-        return ret
+        return arg.argument
 
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))
@@ -1589,7 +1586,26 @@ def load_upper(args: InstrArgs) -> Expression:
             arg, Literal
         ), "normalize_instruction should convert lui <literal> to li"
         raise DecompFailure(f"lui argument must be a literal or %hi macro, found {arg}")
-    return args.hi_imm(1)
+
+    hi_arg = args.hi_imm(1)
+    if (
+        isinstance(hi_arg, BinOp)
+        and hi_arg.op in "+-"
+        and isinstance(hi_arg.lhs, AsmGlobalSymbol)
+        and isinstance(hi_arg.rhs, AsmLiteral)
+    ):
+        sym = hi_arg.lhs
+        offset = hi_arg.rhs.value * (-1 if hi_arg.op == "-" else 1)
+    elif isinstance(hi_arg, AsmGlobalSymbol):
+        sym = hi_arg
+        offset = 0
+    else:
+        raise DecompFailure(f"Invalid %hi argument {hi_arg}")
+
+    stack_info = args.stack_info
+    source = stack_info.address_of_gsym(stack_info.global_symbol(sym))
+    imm = Literal(offset)
+    return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info)
 
 
 def handle_la(args: InstrArgs) -> Expression:
@@ -1657,12 +1673,12 @@ def handle_addi(args: InstrArgs) -> Expression:
 
 def handle_addi_real(
     output_reg: Register,
-    source_reg: Register,
+    source_reg: Optional[Register],
     source: Expression,
     imm: Expression,
     stack_info: StackInfo,
 ) -> Expression:
-    if stack_info.is_stack_reg(source_reg):
+    if source_reg is not None and stack_info.is_stack_reg(source_reg):
         # Adding to sp, i.e. passing an address.
         assert isinstance(imm, Literal)
         if stack_info.is_stack_reg(output_reg):
