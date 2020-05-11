@@ -876,6 +876,31 @@ class AddressOf(Expression):
         return f"&{self.expr}"
 
 
+@attr.s(frozen=True)
+class Lwl(Expression):
+    load_expr: Expression = attr.ib()
+    key: Tuple[int, object] = attr.ib()
+    type: Type = attr.ib(eq=False, factory=Type.any)
+
+    def dependencies(self) -> List[Expression]:
+        return [self.load_expr]
+
+    def __str__(self) -> str:
+        return f"LWL({self.load_expr})"
+
+
+@attr.s(frozen=True)
+class UnalignedLoad(Expression):
+    load_expr: Expression = attr.ib()
+    type: Type = attr.ib(eq=False, factory=Type.any)
+
+    def dependencies(self) -> List[Expression]:
+        return [self.load_expr]
+
+    def __str__(self) -> str:
+        return f"(unaligned s32) {self.load_expr}"
+
+
 @attr.s(frozen=False, eq=False)
 class EvalOnceExpr(Expression):
     wrapped_expr: Expression = attr.ib()
@@ -1720,6 +1745,33 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     return as_type(expr, type, silent=True)
 
 
+def handle_lwl(args: InstrArgs) -> Expression:
+    ref = args.memory_ref(1)
+    expr = deref(ref, args.regs, args.stack_info, size=32)
+    key: Tuple[int, object]
+    if isinstance(ref, AddressMode):
+        key = (ref.offset, args.regs[ref.rhs])
+    else:
+        key = (ref.offset, ref.sym)
+    return Lwl(expr, key)
+
+
+def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
+    # This lwr may merge with an existing lwl, if it loads from the same target
+    # but with an offset that's +3.
+    uw_old_value = early_unwrap(old_value)
+    ref = args.memory_ref(1)
+    lwl_key: Tuple[int, object]
+    if isinstance(ref, AddressMode):
+        lwl_key = (ref.offset - 3, args.regs[ref.rhs])
+    else:
+        lwl_key = (ref.offset - 3, ref.sym)
+    if isinstance(uw_old_value, Lwl) and uw_old_value.key[0] == lwl_key[0]:
+        return UnalignedLoad(uw_old_value.load_expr)
+    # TODO: handle 3-byte load
+    return ErrorExpr("Unable to handle lwr; missing a corresponding lwl")
+
+
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     size = type.get_size_bits() // 8
     stack_info = args.stack_info
@@ -1977,6 +2029,7 @@ def function_abi(
 
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
+LwrInstrMap = Dict[str, Callable[[InstrArgs, Expression], Expression]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], BinaryOp]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
@@ -2166,6 +2219,15 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.f32()),
     "ldc1": lambda a: handle_load(a, type=Type.f64()),
+    # Unaligned load for the left part of a register (lwl can technically merge
+    # with a pre-existing lwr, but doesn't in practice, so we treat this as a
+    # standard destination-first operation)
+    "lwl": lambda a: handle_lwl(a),
+}
+CASES_LWR: LwrInstrMap = {
+    # Unaligned load for the right part of a register. Only writes a partial
+    # register.
+    "lwr": lambda a, old_value: handle_lwr(a, old_value),
 }
 
 
@@ -2203,6 +2265,8 @@ def output_regs_for_instr(
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
+        return reg_at(0)
+    if mnemonic in CASES_LWR:
         return reg_at(0)
     if mnemonic in CASES_FLOAT_COMP:
         return [Register("condition_bit")]
@@ -2657,6 +2721,13 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             mn_parts = mnemonic.split(".")
             if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
+
+        elif mnemonic in CASES_LWR:
+            assert mnemonic == "lwr"
+            target = args.reg_ref(0)
+            old_value = args.reg(0)
+            val = CASES_LWR[mnemonic](args, old_value)
+            set_reg(target, val)
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
