@@ -1652,10 +1652,20 @@ def handle_addi(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
+    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
+
+
+def handle_addi_real(
+    output_reg: Register,
+    source_reg: Register,
+    source: Expression,
+    imm: Expression,
+    stack_info: StackInfo,
+) -> Expression:
     if stack_info.is_stack_reg(source_reg):
         # Adding to sp, i.e. passing an address.
         assert isinstance(imm, Literal)
-        if stack_info.is_stack_reg(args.reg_ref(0)):
+        if stack_info.is_stack_reg(output_reg):
             # Changing sp. Just ignore that.
             return source
         # Keep track of all local variables that we take addresses of.
@@ -1949,12 +1959,23 @@ def array_access_from_add(
     return ret
 
 
-def handle_add(lhs: Expression, rhs: Expression, stack_info: StackInfo) -> Expression:
+def handle_add(args: InstrArgs) -> Expression:
+    lhs = args.reg(1)
+    rhs = args.reg(2)
+    stack_info = args.stack_info
     type = Type.intptr()
     if lhs.type.is_pointer():
         type = Type.ptr()
     elif rhs.type.is_pointer():
         type = Type.ptr()
+
+    # addiu instructions can sometimes be emitted as addu instead, when the
+    # offset is too large.
+    if isinstance(rhs, Literal):
+        return handle_addi_real(args.reg_ref(0), args.reg_ref(1), lhs, rhs, stack_info)
+    if isinstance(lhs, Literal):
+        return handle_addi_real(args.reg_ref(0), args.reg_ref(2), rhs, lhs, stack_info)
+
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)
     if folded_expr is not expr:
@@ -2171,7 +2192,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Integer arithmetic
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
-    "addu": lambda a: handle_add(a.reg(1), a.reg(2), a.stack_info),
+    "addu": lambda a: handle_add(a),
     "subu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
     "negu": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
