@@ -41,10 +41,11 @@ def get_environment_variables() -> Optional[PathsToBinaries]:
         if env_var is None:
             logging.error(error_message)
         return env_var
-
-    QEMU_IRIX = load(
-        "QEMU_IRIX", "env variable QEMU_IRIX should point to the qemu-mips binary"
-    )
+    QEMU_IRIX = os.popen("which qemu-irix 2>/dev/null").read()[:-1] # cut off the \n at the end
+    if not QEMU_IRIX:
+        QEMU_IRIX = load(
+            "QEMU_IRIX", "env variable QEMU_IRIX should point to the qemu-mips binary"
+        )
     IRIX_ROOT = load(
         "IRIX_ROOT",
         "env variable IRIX_ROOT should point to the IRIX compiler directory",
