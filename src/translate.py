@@ -890,6 +890,18 @@ class Lwl(Expression):
 
 
 @attr.s(frozen=True)
+class Load3Bytes(Expression):
+    load_expr: Expression = attr.ib()
+    type: Type = attr.ib(eq=False, factory=Type.any)
+
+    def dependencies(self) -> List[Expression]:
+        return [self.load_expr]
+
+    def __str__(self) -> str:
+        return f"(first 3 bytes) {self.load_expr}"
+
+
+@attr.s(frozen=True)
 class UnalignedLoad(Expression):
     load_expr: Expression = attr.ib()
     type: Type = attr.ib(eq=False, factory=Type.any)
@@ -1747,7 +1759,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
 
 def handle_lwl(args: InstrArgs) -> Expression:
     ref = args.memory_ref(1)
-    expr = deref(ref, args.regs, args.stack_info, size=32)
+    expr = deref(ref, args.regs, args.stack_info, size=1)
     key: Tuple[int, object]
     if isinstance(ref, AddressMode):
         key = (ref.offset, args.regs[ref.rhs])
@@ -1768,7 +1780,10 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
         lwl_key = (ref.offset - 3, ref.sym)
     if isinstance(uw_old_value, Lwl) and uw_old_value.key[0] == lwl_key[0]:
         return UnalignedLoad(uw_old_value.load_expr)
-    # TODO: handle 3-byte load
+    if ref.offset % 4 == 2:
+        left_mem_ref = attr.evolve(ref, offset=ref.offset - 2)
+        load_expr = deref(left_mem_ref, args.regs, args.stack_info, size=1)
+        return Load3Bytes(load_expr)
     return ErrorExpr("Unable to handle lwr; missing a corresponding lwl")
 
 
@@ -1787,7 +1802,9 @@ def make_store(args: InstrArgs, type: Optional[Type]) -> Optional[StoreStmt]:
     ):
         # Elide register preserval.
         return None
-    dest = deref(target, args.regs, stack_info, size=size, store=True)
+    # If size is None, fall back to 1 to keep signalling to deref that we are
+    # performing a memory load and not just taking an address.
+    dest = deref(target, args.regs, stack_info, size=size or 1, store=True)
     if type is not None:
         dest.type.unify(type)
     if type is None:
