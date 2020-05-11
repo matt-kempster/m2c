@@ -1783,9 +1783,23 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     return as_type(expr, type, silent=True)
 
 
+def deref_unaligned(
+    arg: Union[AddressMode, RawSymbolRef],
+    regs: RegInfo,
+    stack_info: StackInfo,
+    *,
+    store: bool = False,
+) -> Expression:
+    # We don't know the correct size pass to deref. Passing None would signal that we
+    # are taking an address, cause us to prefer entire substructs as referenced fields,
+    # which would be confusing. Instead, we lie and pass 1. Hopefully nothing bad will
+    # happen...
+    return deref(arg, regs, stack_info, size=1, store=store)
+
+
 def handle_lwl(args: InstrArgs) -> Expression:
     ref = args.memory_ref(1)
-    expr = deref(ref, args.regs, args.stack_info, size=1)
+    expr = deref_unaligned(ref, args.regs, args.stack_info)
     key: Tuple[int, object]
     if isinstance(ref, AddressMode):
         key = (ref.offset, args.regs[ref.rhs])
@@ -1808,13 +1822,13 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
         return UnalignedLoad(uw_old_value.load_expr)
     if ref.offset % 4 == 2:
         left_mem_ref = attr.evolve(ref, offset=ref.offset - 2)
-        load_expr = deref(left_mem_ref, args.regs, args.stack_info, size=1)
+        load_expr = deref_unaligned(left_mem_ref, args.regs, args.stack_info)
         return Load3Bytes(load_expr)
     return ErrorExpr("Unable to handle lwr; missing a corresponding lwl")
 
 
-def make_store(args: InstrArgs, type: Optional[Type]) -> Optional[StoreStmt]:
-    size = type.get_size_bits() // 8 if type is not None else None
+def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
+    size = type.get_size_bits() // 8
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_val = args.reg(0)
@@ -1828,14 +1842,20 @@ def make_store(args: InstrArgs, type: Optional[Type]) -> Optional[StoreStmt]:
     ):
         # Elide register preserval.
         return None
-    # If size is None, fall back to 1 to keep signalling to deref that we are
-    # performing a memory load and not just taking an address.
-    dest = deref(target, args.regs, stack_info, size=size or 1, store=True)
-    if type is not None:
-        dest.type.unify(type)
-    if type is None:
-        return StoreStmt(source=source_val, dest=dest)
+    dest = deref(target, args.regs, stack_info, size=size, store=True)
+    dest.type.unify(type)
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
+
+
+def handle_swl(args: InstrArgs) -> Optional[StoreStmt]:
+    # swl in practice only occurs together with swr, so we can treat it as a regular
+    # store, with the expression wrapped in UnalignedLoad if needed.
+    source = args.reg(0)
+    target = args.memory_ref(1)
+    if not isinstance(early_unwrap(source), UnalignedLoad):
+        source = UnalignedLoad(source)
+    dest = deref_unaligned(target, args.regs, args.stack_info, store=True)
+    return StoreStmt(source=source, dest=dest)
 
 
 def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
@@ -1845,9 +1865,8 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
         # Elide swr's that don't come from 3-byte-loading lwr's; they probably
         # come with a corresponding swl which has already been emitted.
         return None
-    # Pass size=1 for the same reason as above.
     real_target = attr.evolve(target, offset=target.offset - 2)
-    dest = deref(real_target, args.regs, args.stack_info, size=1, store=True)
+    dest = deref_unaligned(real_target, args.regs, args.stack_info, store=True)
     return StoreStmt(source=expr, dest=dest)
 
 
@@ -2119,11 +2138,8 @@ CASES_STORE: StoreInstrMap = {
     "sb": lambda a: make_store(a, type=Type.of_size(8)),
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
     "sw": lambda a: make_store(a, type=Type.of_size(32)),
-    # Treat swl the same as a regular store; it only occurs in combination
-    # with swr. (TODO: at least wrap the expression in an UnalignedLoad
-    # if it isn't already.)
-    "swl": lambda a: make_store(a, type=None),
-    # swr emits a store if the value it's storing is an unbalanced lwr
+    # Unaligned stores
+    "swl": lambda a: handle_swl(a),
     "swr": lambda a: handle_swr(a),
     # Floating point storage/conversion
     "swc1": lambda a: make_store(a, type=Type.f32()),
