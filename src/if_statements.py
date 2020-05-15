@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
@@ -33,7 +34,9 @@ class Context:
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     is_void: bool = attr.ib(default=True)
     switch_nodes: Dict[SwitchNode, int] = attr.ib(factory=dict)
-    case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(factory=dict)
+    case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(
+        factory=lambda: defaultdict(list)
+    )
     goto_nodes: Set[Node] = attr.ib(factory=set)
     loop_nodes: Set[Node] = attr.ib(factory=set)
     emitted_nodes: Set[Node] = attr.ib(factory=set)
@@ -692,12 +695,10 @@ def build_body(
                 switch_index += 1
             context.switch_nodes[node] = switch_index
             most_common = max(node.cases, key=node.cases.count)
-            context.case_nodes[most_common] = [(switch_index, -1)]
+            context.case_nodes[most_common].append((switch_index, -1))
             for index, target in enumerate(node.cases):
                 if target == most_common:
                     continue
-                if target not in context.case_nodes:
-                    context.case_nodes[target] = []
                 context.case_nodes[target].append((switch_index, index))
         elif isinstance(node, ConditionalNode) and node.is_loop():
             context.loop_nodes.add(node.conditional_edge)
