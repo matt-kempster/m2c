@@ -695,9 +695,12 @@ def build_body(
                 switch_index += 1
             context.switch_nodes[node] = switch_index
             most_common = max(node.cases, key=node.cases.count)
-            context.case_nodes[most_common].append((switch_index, -1))
+            has_common = False
+            if node.cases.count(most_common) > 1:
+                context.case_nodes[most_common].append((switch_index, -1))
+                has_common = True
             for index, target in enumerate(node.cases):
-                if target == most_common:
+                if has_common and target == most_common:
                     continue
                 context.case_nodes[target].append((switch_index, index))
         elif isinstance(node, ConditionalNode) and node.is_loop():
