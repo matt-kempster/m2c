@@ -136,6 +136,9 @@ class Body:
     def add_if_else(self, if_else: IfElseStatement) -> None:
         self.statements.append(if_else)
 
+    def is_empty(self) -> bool:
+        return not any(statement.should_write() for statement in self.statements)
+
     def __str__(self) -> str:
         return "\n".join(
             str(statement) for statement in self.statements if statement.should_write()
@@ -341,7 +344,7 @@ def build_conditional_subgraph(
         else_body = build_flowgraph_between(
             context, start.conditional_edge, end, indent + 4
         )
-        if not any(stmt.should_write() for stmt in else_body.statements):
+        if else_body.is_empty():
             else_body = None
     else:
         return get_full_if_condition(context, start, end, indent)
@@ -452,7 +455,7 @@ def get_full_if_condition(
             # of a while loop.
 
             else_body = build_flowgraph_between(context, bottom, end, indent + 4)
-            if not any(stmt.should_write() for stmt in else_body.statements):
+            if else_body.is_empty():
                 else_body = None
             return IfElseStatement(
                 # We negate everything, because the conditional edges will jump
