@@ -433,9 +433,9 @@ def get_andor_if_statement(
             # unrelated statements in its to_write list. Circumvent
             # emitting them twice by just using branch_condition:
             conditions.append(branch_condition)
-        # Make sure to write down each block's statement list,
-        # even inside an and/or group.
         else:
+            # Make sure to write down each block's statement list,
+            # even inside an and/or group.
             conditions.append(gather_any_comma_conditions(block_info))
 
         # The next node will tell us whether we are in an &&/|| statement...
