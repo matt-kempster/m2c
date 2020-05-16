@@ -347,7 +347,7 @@ def build_conditional_subgraph(
         if else_body.is_empty():
             else_body = None
     else:
-        return get_full_if_condition(context, start, end, indent)
+        return get_andor_if_statement(context, start, end, indent)
 
     return IfElseStatement(
         if_condition, indent, context.options.coding_style, if_body, else_body
@@ -367,7 +367,7 @@ def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
         return branch_condition
 
 
-def get_full_if_condition(
+def get_andor_if_statement(
     context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
     """
