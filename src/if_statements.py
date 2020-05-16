@@ -1,4 +1,3 @@
-import itertools
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
@@ -423,13 +422,13 @@ def get_andor_if_statement(
     conditions: List[Condition] = []
     bottom = start.conditional_edge
     curr_node: ConditionalNode = start
-    for num_conditions in itertools.count(1):
+    while True:
         # Collect conditions as we accumulate them:
         block_info = curr_node.block.block_info
         assert isinstance(block_info, BlockInfo)
         branch_condition = block_info.branch_condition
         assert branch_condition is not None
-        if num_conditions == 1:
+        if not conditions:
             # The first condition in an if-statement will have
             # unrelated statements in its to_write list. Circumvent
             # emitting them twice by just using branch_condition:
