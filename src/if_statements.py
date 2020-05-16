@@ -354,7 +354,7 @@ def build_conditional_subgraph(
     )
 
 
-def get_full_condition(block_info: BlockInfo) -> Union[Condition]:
+def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
     branch_condition = block_info.branch_condition
     assert branch_condition is not None
     comma_statements = [
@@ -443,7 +443,7 @@ def get_full_if_condition(
         # Make sure to write down each block's statement list,
         # even inside an and/or group.
         else:
-            conditions.append(get_full_condition(block_info))
+            conditions.append(gather_any_comma_conditions(block_info))
 
         # The next node will tell us whether we are in an &&/|| statement...
         next_node = curr_node.fallthrough_edge
