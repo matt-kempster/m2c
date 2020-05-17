@@ -293,7 +293,9 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
 def is_and_statement(next_node: Node, bottom: Node) -> bool:
     return (
         not isinstance(next_node, ConditionalNode)
-        or next_node not in bottom.parents
+        or not (
+            next_node.conditional_edge is bottom or next_node.fallthrough_edge is bottom
+        )
         # A strange edge-case of our pattern-matching technology:
         # self-loops match the pattern. Avoiding that...
         or next_node.is_loop()
@@ -466,6 +468,12 @@ def get_andor_if_statement(
             next_node_condition = next_node.block.block_info.branch_condition
             assert next_node_condition
             # We were following an or-statement.
+            if_body = build_flowgraph_between(context, bottom, end, indent + 4)
+            else_body = build_flowgraph_between(
+                context, next_node.conditional_edge, end, indent + 4
+            )
+            if else_body.is_empty():
+                else_body = None
             return IfElseStatement(
                 # Negate the last condition, for it must fall-through to the
                 # body instead of jumping to it, hence it must jump OVER the body.
@@ -474,12 +482,10 @@ def get_andor_if_statement(
                 ),
                 indent,
                 context.options.coding_style,
-                if_body=build_flowgraph_between(context, bottom, end, indent + 4),
+                if_body=if_body,
                 # The else-body is wherever the code jumps to instead of the
                 # fallthrough (i.e. if-body).
-                else_body=build_flowgraph_between(
-                    context, next_node.conditional_edge, end, indent + 4
-                ),
+                else_body=else_body,
             )
 
         # Otherwise, still in the middle of an and-or statement.
