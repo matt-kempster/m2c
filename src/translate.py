@@ -1491,7 +1491,9 @@ def parenthesize_for_struct_access(expr: Expression) -> str:
     # expressions will already have adequate parentheses added to them.
     # (Except Cast's, TODO...)
     s = str(expr)
-    return f"({s})" if s.startswith("*") else s
+    if s.startswith("*") or s.startswith("&"):
+        return f"({s})"
+    return s
 
 
 def mark_used(expr: Expression) -> None:
