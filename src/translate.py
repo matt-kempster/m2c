@@ -1522,6 +1522,8 @@ def late_unwrap(expr: Expression) -> Expression:
         return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return late_unwrap(expr.wrapped_expr)
+    if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
+        return late_unwrap(expr.replacement_expr)
     return expr
 
 
