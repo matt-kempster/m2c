@@ -1908,7 +1908,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
         if isinstance(expr, UnaryOp) and not toplevel:
             base, num = fold(expr.expr, False)
             return (base, -num)
-        if isinstance(expr, EvalOnceExpr):
+        if isinstance(expr, EvalOnceExpr) and not expr.always_emit:
             base, num = fold(expr.wrapped_expr, False)
             if num != 1 and is_trivial_expression(base):
                 return (base, num)
