@@ -1450,7 +1450,7 @@ def simplify_condition(expr: Expression) -> Expression:
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, EvalOnceExpr) and expr.num_usages <= 1:
+    if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return simplify_condition(expr.wrapped_expr)
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
