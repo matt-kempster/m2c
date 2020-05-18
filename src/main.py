@@ -216,6 +216,9 @@ def parse_flags(flags: List[str]) -> Options:
 
 
 def main() -> None:
+    # Large functions can sometimes require a higher recursion limit than the
+    # CPython default.
+    sys.setrecursionlimit(10 * sys.getrecursionlimit())
     options = parse_flags(sys.argv[1:])
     sys.exit(run(options))
 
