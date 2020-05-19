@@ -1012,6 +1012,9 @@ class PhiExpr(Expression):
             mark_used(self.replacement_expr)
 
     def propagates_to(self) -> "PhiExpr":
+        """Compute the phi that stores to this phi should propagate to. This is
+        usually the phi itself, but if the phi is only once for the purpose of
+        computing another phi, we forward the store there directly."""
         if self.num_usages != 1 or self.used_by is None:
             return self
         return self.used_by.propagates_to()
@@ -1050,6 +1053,9 @@ class SetPhiStmt(Statement):
     def should_write(self) -> bool:
         expr = self.expr
         if isinstance(expr, PhiExpr) and expr.propagates_to() != expr:
+            # When we have phi1 = phi2, and phi2 is only used in this place,
+            # the SetPhiStmt for phi2 will store directly to phi1 and we can
+            # skip this store.
             assert expr.propagates_to() == self.phi.propagates_to()
             return False
         return True
@@ -2453,6 +2459,12 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
+            # TODO: the unwrapping here is necessary, but also kinda sketchy:
+            # we may set as replacement_expr an expression that really shouldn't
+            # be repeated, e.g. a StructAccess. It would make sense to use less
+            # eager unwrapping, and/or to emit an EvalOnceExpr at this point
+            # (though it's too late for it to be able to participate in the
+            # prevent_later_uses machinery).
             phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
             for e in exprs[1:]:
                 e.type.unify(phi.type)
