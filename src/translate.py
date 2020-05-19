@@ -2455,7 +2455,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             for e in exprs[1:]:
                 e.type.unify(phi.type)
             for _ in range(phi.num_usages):
-                mark_used(exprs[0])
+                mark_used(first_uw)
         else:
             for node in phi.node.parents:
                 block_info = node.block.block_info
