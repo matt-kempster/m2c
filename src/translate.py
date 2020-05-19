@@ -221,7 +221,9 @@ class StackInfo:
     def add_known_param(self, offset: int, name: Optional[str], type: Type) -> None:
         if name:
             self.param_names[offset] = name
-        self.unique_type_for("arg", offset).unify(type)
+        _, arg = self.get_argument(offset)
+        self.add_argument(arg)
+        arg.type.unify(type)
 
     def get_param_name(self, offset: int) -> Optional[str]:
         return self.param_names.get(offset)
@@ -241,17 +243,17 @@ class StackInfo:
 
     def get_argument(self, location: int) -> Tuple["Expression", "PassedInArg"]:
         real_location = location & -4
-        ret = PassedInArg(
+        arg = PassedInArg(
             real_location,
             copied=True,
             stack_info=self,
             type=self.unique_type_for("arg", real_location),
         )
         if real_location == location - 3:
-            return as_type(ret, Type.of_size(8), True), ret
+            return as_type(arg, Type.of_size(8), True), arg
         if real_location == location - 2:
-            return as_type(ret, Type.of_size(16), True), ret
-        return ret, ret
+            return as_type(arg, Type.of_size(16), True), arg
+        return arg, arg
 
     def record_struct_access(self, ptr: "Expression", location: int) -> None:
         if location:
