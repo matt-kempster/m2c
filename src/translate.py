@@ -1008,6 +1008,8 @@ class PhiExpr(Expression):
             self.used_phis.append(self)
         self.num_usages += 1
         self.used_by = from_phi
+        if self.replacement_expr is not None:
+            mark_used(self.replacement_expr)
 
     def propagates_to(self) -> "PhiExpr":
         if self.num_usages != 1 or self.used_by is None:
