@@ -2088,7 +2088,7 @@ def function_abi(
 
     for ind, param in enumerate(fn.params):
         size, align = function_arg_size_align(param.type, typemap)
-        size = max(size, 4)
+        size = (size + 3) & ~3
         primitive_list = get_primitive_list(param.type, typemap)
         only_floats = only_floats and (primitive_list in [["float"], ["double"]])
         offset = (offset + align - 1) & -align
