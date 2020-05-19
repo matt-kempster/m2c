@@ -218,8 +218,10 @@ class StackInfo:
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
 
-    def set_param_name(self, offset: int, name: str) -> None:
-        self.param_names[offset] = name
+    def add_known_param(self, offset: int, name: Optional[str], type: Type) -> None:
+        if name:
+            self.param_names[offset] = name
+        self.unique_type_for("arg", offset).unify(type)
 
     def get_param_name(self, offset: int) -> Optional[str]:
         return self.param_names.get(offset)
@@ -2093,6 +2095,7 @@ def function_abi(
         only_floats = only_floats and (primitive_list in [["float"], ["double"]])
         offset = (offset + align - 1) & -align
         name = param.name
+        reg2: Optional[Register]
         if ind < 2 and only_floats:
             reg = Register("f12" if ind == 0 else "f14")
             is_double = primitive_list == ["double"]
@@ -2107,10 +2110,10 @@ def function_abi(
                     )
                 )
         else:
-            for i in range(offset // 4, min((offset + size) // 4, 4)):
+            for i in range(offset // 4, (offset + size) // 4):
                 unk_offset = 4 * i - offset
                 name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
-                reg2 = Register(f"a{i}")
+                reg2 = Register(f"a{i}") if i < 4 else None
                 type2 = type_from_ctype(param.type, typemap)
                 slots.append(
                     AbiStackSlot(offset=4 * i, reg=reg2, name=name2, type=type2)
@@ -2984,8 +2987,7 @@ def translate_to_ast(
         if c_fn.params is not None:
             abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=False)
             for slot in abi_slots:
-                if slot.name is not None:
-                    stack_info.set_param_name(slot.offset, slot.name)
+                stack_info.add_known_param(slot.offset, slot.name, slot.type)
                 if slot.reg is not None:
                     initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
             for reg in possible_regs:
