@@ -48,6 +48,12 @@ class Rodata:
     values: Dict[str, RodataEntry] = attr.ib(factory=dict)
     mentioned_labels: Set[str] = attr.ib(factory=set)
 
+    def merge_into(self, other: "Rodata") -> None:
+        for (sym, value) in self.values.items():
+            other.values[sym] = value
+        for label in self.mentioned_labels:
+            other.mentioned_labels.add(label)
+
 
 @attr.s
 class MIPSFile:

@@ -41,8 +41,7 @@ def run(options: Options) -> int:
         for rodata_file in options.rodata_files:
             with open(rodata_file, "r", encoding="utf-8-sig") as f:
                 sub_file = parse_file(f, options)
-                for (sym, value) in sub_file.rodata.values.items():
-                    mips_file.rodata.values[sym] = value
+                sub_file.rodata.merge_into(mips_file.rodata)
 
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
