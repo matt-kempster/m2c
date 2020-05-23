@@ -3,7 +3,6 @@ void test(s32 arg0) {
 
     phi_s0 = arg0;
 loop_1:
-    phi_s0 = phi_s0;
     if (phi_s0 < 3) {
         goto loop_1;
     }

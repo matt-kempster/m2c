@@ -744,7 +744,8 @@ class StructAccess(Expression):
     # Represents struct_var->offset.
     # This has eq=True since it represents a live expression and not
     # an access at a certain point in time -- this sometimes helps get rid of phi nodes.
-    # Really it should represent the latter, but making that so is hard.
+    # prevent_later_uses makes sure it's not used after writes/function calls that
+    # may invalidate it.
     struct_var: Expression = attr.ib()
     offset: int = attr.ib()
     target_size: Optional[int] = attr.ib()
@@ -1057,6 +1058,9 @@ class SetPhiStmt(Statement):
             # the SetPhiStmt for phi2 will store directly to phi1 and we can
             # skip this store.
             assert expr.propagates_to() == self.phi.propagates_to()
+            return False
+        if unwrap_deep(expr) == self.phi:
+            # Elide "phi = phi".
             return False
         return True
 
