@@ -295,14 +295,16 @@ def end_reachable_without(
     return end in reachable
 
 
-def get_reachable_nodes(start: Node) -> Set[Node]:
-    reachable_nodes: Set[Node] = set()
+def get_reachable_nodes(start: Node) -> List[Node]:
+    reachable_nodes_set: Set[Node] = set()
+    reachable_nodes: List[Node] = []
     stack: List[Node] = [start]
     while stack:
         node = stack.pop()
-        if node in reachable_nodes:
+        if node in reachable_nodes_set:
             continue
-        reachable_nodes.add(node)
+        reachable_nodes_set.add(node)
+        reachable_nodes.append(node)
         if isinstance(node, BasicNode):
             stack.append(node.successor)
         elif isinstance(node, ConditionalNode):
@@ -328,7 +330,11 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     # expression. That in turn can result in nodes emitted multiple times.
     # (TODO: this is rather ad hoc, we should probably come up with a more
     # principled approach to early returns...)
-    reachable_nodes = get_reachable_nodes(start)
+    #
+    # Note that we use a List instead of a Set here, since duplicated return
+    # nodes may result in multiple nodes with the same block index, and sets
+    # have non-deterministic iteration order.
+    reachable_nodes: List[Node] = get_reachable_nodes(start)
     if end not in reachable_nodes:
         end = max(reachable_nodes, key=lambda n: n.block.index)
 
