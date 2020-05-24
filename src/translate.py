@@ -453,6 +453,21 @@ class Expression(abc.ABC):
     def dependencies(self) -> List["Expression"]:
         ...
 
+    def use(self) -> None:
+        """Mark an expression as "will occur in the output". Various subclasses
+        override this to provide special behavior; for instance, EvalOnceExpr
+        checks if it occurs more than once in the output and if so emits a temp.
+        It is important to get the number of use() calls correct:
+        * if use() is called but the expression is not emitted, it may cause
+          function calls to be silently dropped.
+        * if use() is not called but the expression is emitted, it may cause phi
+          variables to be printed as unnamed-phi($reg), without any assignment
+          to that phi.
+        * if use() is called once but the expression is emitted twice, it may
+          cause function calls to be duplicated."""
+        for expr in self.dependencies():
+            expr.use()
+
     @abc.abstractmethod
     def __str__(self) -> str:
         ...
@@ -672,6 +687,7 @@ class Cast(Expression):
     def use(self) -> None:
         # Try to unify, to make stringification output better.
         self.expr.type.unify(self.type)
+        super().use()
 
     def __str__(self) -> str:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
@@ -950,7 +966,7 @@ class EvalOnceExpr(Expression):
     def use(self) -> None:
         self.num_usages += 1
         if self.trivial or (self.num_usages == 1 and not self.always_emit):
-            mark_used(self.wrapped_expr)
+            self.wrapped_expr.use()
 
     def need_decl(self) -> bool:
         return self.num_usages > 1 and not self.trivial
@@ -1010,7 +1026,7 @@ class PhiExpr(Expression):
         self.num_usages += 1
         self.used_by = from_phi
         if self.replacement_expr is not None:
-            mark_used(self.replacement_expr)
+            self.replacement_expr.use()
 
     def propagates_to(self) -> "PhiExpr":
         """Compute the phi that stores to this phi should propagate to. This is
@@ -1514,14 +1530,6 @@ def parenthesize_for_struct_access(expr: Expression) -> str:
     if s.startswith("*") or s.startswith("&"):
         return f"({s})"
     return s
-
-
-def mark_used(expr: Expression) -> None:
-    if isinstance(expr, (PhiExpr, EvalOnceExpr, ForceVarExpr, Cast)):
-        expr.use()
-    if not isinstance(expr, (EvalOnceExpr, ForceVarExpr)):
-        for sub_expr in expr.dependencies():
-            mark_used(sub_expr)
 
 
 def uses_expr(expr: Expression, sub_expr: Expression) -> bool:
@@ -2473,7 +2481,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             for e in exprs[1:]:
                 e.type.unify(phi.type)
             for _ in range(phi.num_usages):
-                mark_used(first_uw)
+                first_uw.use()
         else:
             for node in phi.node.parents:
                 block_info = node.block.block_info
@@ -2484,7 +2492,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
                     # so we can propagate phi sets (to get rid of temporaries).
                     expr.use(from_phi=phi)
                 else:
-                    mark_used(expr)
+                    expr.use()
                 typed_expr = as_type(expr, phi.type, silent=True)
                 block_info.to_write.append(SetPhiStmt(phi, typed_expr))
         i += 1
@@ -2541,7 +2549,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     ) -> EvalOnceExpr:
         if always_emit:
             # (otherwise this will be marked used once num_usages reaches 1)
-            mark_used(expr)
+            expr.use()
         assert reuse_var or prefix
         var = reuse_var or Var(stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
@@ -2607,7 +2615,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
         if reg == Register("zero"):
             # Emit the expression as is. It's probably a volatile load.
-            mark_used(expr)
+            expr.use()
             to_write.append(ExprStmt(expr))
         else:
             set_reg_maybe_return(reg, expr)
@@ -2682,15 +2690,15 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # - mark other usages of the dest as "emit before this point if used".
                 # - emit the actual write.
                 #
-                # Note that the prevent_later_uses step happens after mark_used, since
+                # Note that the prevent_later_uses step happens after use(), since
                 # the stored expression is allowed to reference its destination var,
                 # but before the write is written, since prevent_later_uses might emit
                 # writes of its own that should go before this write. In practice that
                 # probably never occurs -- all relevant register contents should be
                 # EvalOnceExpr's that can be emitted at their point of creation, but
                 # I'm not 100% certain that that's always the case and will remain so.
-                mark_used(to_store.source)
-                mark_used(to_store.dest)
+                to_store.source.use()
+                to_store.dest.use()
                 prevent_later_uses(to_store.dest, avoid_reg=None)
                 to_write.append(to_store)
 
@@ -2831,7 +2839,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         elif mnemonic in CASES_NO_DEST:
             expr = CASES_NO_DEST[mnemonic](args)
-            mark_used(expr)
+            expr.use()
             to_write.append(ExprStmt(expr))
 
         elif mnemonic in CASES_DESTINATION_FIRST:
@@ -2872,9 +2880,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             process_instr(instr)
 
     if branch_condition is not None:
-        mark_used(branch_condition)
+        branch_condition.use()
     if switch_value is not None:
-        mark_used(switch_value)
+        switch_value.use()
     return_value: Optional[Expression] = None
     if isinstance(node, ReturnNode):
         return_value = regs.get_raw(Register("return"))
@@ -3062,7 +3070,7 @@ def translate_to_ast(
             if b.return_value is not None:
                 ret_val = as_type(b.return_value, return_type, True)
                 b.return_value = ret_val
-                mark_used(ret_val)
+                ret_val.use()
     else:
         for b in return_blocks:
             b.return_value = None
