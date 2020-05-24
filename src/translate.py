@@ -1544,6 +1544,15 @@ def uses_expr(expr: Expression, sub_expr: Expression) -> bool:
     return False
 
 
+def uses_fn_call(expr: Expression) -> bool:
+    if isinstance(expr, FuncCall):
+        return True
+    for e in expr.dependencies():
+        if uses_fn_call(e):
+            return True
+    return False
+
+
 def late_unwrap(expr: Expression) -> Expression:
     """
     Unwrap EvalOnceExpr's and ForceVarExpr's, stopping at variable boundaries.
@@ -2590,6 +2599,17 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     )
                 regs[r] = ForceVarExpr(e, type=e.type)
 
+    def prevent_later_function_calls() -> None:
+        for r in regs.contents.keys():
+            e = regs.get_raw(r)
+            assert e is not None
+            if not isinstance(e, ForceVarExpr) and uses_fn_call(e):
+                if not isinstance(e, EvalOnceExpr):
+                    e = eval_once(
+                        e, always_emit=False, trivial=False, prefix=r.register_name
+                    )
+                regs[r] = ForceVarExpr(e, type=e.type)
+
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         nonlocal has_custom_return
         regs[reg] = expr
@@ -2703,6 +2723,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 to_store.source.use()
                 to_store.dest.use()
                 prevent_later_uses(to_store.dest, avoid_reg=None)
+                prevent_later_function_calls()
                 to_write.append(to_store)
 
         elif mnemonic in CASES_SOURCE_FIRST:
