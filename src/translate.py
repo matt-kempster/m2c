@@ -1031,7 +1031,10 @@ class PhiExpr(Expression):
     def propagates_to(self) -> "PhiExpr":
         """Compute the phi that stores to this phi should propagate to. This is
         usually the phi itself, but if the phi is only once for the purpose of
-        computing another phi, we forward the store there directly."""
+        computing another phi, we forward the store there directly. This is
+        admittedly a bit sketchy, in case the phi is in scope here and used
+        later on... but we have that problem with regular phi assignments as
+        well."""
         if self.num_usages != 1 or self.used_by is None:
             return self
         return self.used_by.propagates_to()
