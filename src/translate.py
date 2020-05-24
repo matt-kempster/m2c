@@ -2410,7 +2410,7 @@ def regs_clobbered_until_dominator(
 ) -> Set[Register]:
     if node.immediate_dominator is None:
         return set()
-    seen = set([node.immediate_dominator])
+    seen = {node.immediate_dominator}
     stack = node.parents[:]
     clobbered = set()
     while stack:
@@ -2432,7 +2432,7 @@ def reg_always_set(
 ) -> bool:
     if node.immediate_dominator is None:
         return False
-    seen = set([node.immediate_dominator])
+    seen = {node.immediate_dominator}
     stack = node.parents[:]
     while stack:
         n = stack.pop()

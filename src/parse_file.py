@@ -179,8 +179,15 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             return s
 
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
-
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
+
+    T = TypeVar("T")
+
+    def try_parse(parser: Callable[[], T], directive: str) -> T:
+        try:
+            return parser()
+        except ValueError:
+            raise DecompFailure(f"Could not parse rodata {directive}: {line}")
 
     for line in f:
         # Check for goto markers before stripping comments
@@ -234,16 +241,6 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 elif line.startswith(".text"):
                     curr_section = ".text"
                 elif curr_section == ".rodata":
-                    T = TypeVar("T")
-
-                    def try_parse(parser: Callable[[], T], directive: str) -> T:
-                        try:
-                            return parser()
-                        except ValueError:
-                            raise DecompFailure(
-                                f"Could not parse rodata {directive}: {line}"
-                            )
-
                     if line.startswith(".word"):
                         for w in line[5:].split(","):
                             w = w.strip()
