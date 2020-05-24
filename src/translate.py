@@ -2614,13 +2614,16 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)
+        at = regs.get_raw(Register("at"))
         if isinstance(prev, ForceVarExpr):
             prev = prev.wrapped_expr
         if (
             not isinstance(prev, EvalOnceExpr)
             or isinstance(expr, Literal)
             or reg == Register("sp")
+            or reg == Register("at")
             or not prev.type.unify(expr.type)
+            or (at is not None and uses_expr(at, prev))
         ):
             set_reg(reg, expr)
         else:
