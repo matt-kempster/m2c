@@ -2858,15 +2858,28 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # believe the function we're decompiling is non-void.
             # Note that this logic is duplicated in output_regs_for_instr.
             if not c_fn or c_fn.ret_type:
-                regs[Register("f0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.floatish()
+                regs[Register("f0")] = eval_once(
+                    Cast(
+                        expr=call, reinterpret=True, silent=True, type=Type.floatish()
+                    ),
+                    emit_exactly_once=False,
+                    trivial=False,
+                    prefix="f0",
                 )
                 regs[Register("f1")] = SecondF64Half()
-                regs[Register("v0")] = Cast(
-                    expr=call, reinterpret=True, silent=True, type=Type.intptr()
+                regs[Register("v0")] = eval_once(
+                    Cast(expr=call, reinterpret=True, silent=True, type=Type.intptr()),
+                    emit_exactly_once=False,
+                    trivial=False,
+                    prefix="v0",
                 )
-                regs[Register("v1")] = as_u32(
-                    Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
+                regs[Register("v1")] = eval_once(
+                    as_u32(
+                        Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
+                    ),
+                    emit_exactly_once=False,
+                    trivial=False,
+                    prefix="v1",
                 )
                 regs[Register("return")] = call
 
