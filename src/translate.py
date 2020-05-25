@@ -964,8 +964,7 @@ class EvalOnceExpr(Expression):
     num_usages: int = attr.ib(default=0)
 
     def dependencies(self) -> List[Expression]:
-        # (this is a bit iffy since state can change over time, but improves uses_expr
-        # and uses_fn_call)
+        # (this is a bit iffy since state can change over time, but improves uses_expr)
         if self.need_decl():
             return []
         return [self.wrapped_expr]
@@ -1542,20 +1541,11 @@ def parenthesize_for_struct_access(expr: Expression) -> str:
     return s
 
 
-def uses_expr(expr: Expression, sub_expr: Expression) -> bool:
-    if expr == sub_expr:
+def uses_expr(expr: Expression, expr_filter: Callable[[Expression], bool]) -> bool:
+    if expr_filter(expr):
         return True
     for e in expr.dependencies():
-        if uses_expr(e, sub_expr):
-            return True
-    return False
-
-
-def uses_fn_call(expr: Expression) -> bool:
-    if isinstance(expr, FuncCall):
-        return True
-    for e in expr.dependencies():
-        if uses_fn_call(e):
+        if uses_expr(e, expr_filter):
             return True
     return False
 
@@ -2619,13 +2609,18 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         # call logic sees an opaque wrapper and doesn't realize that they are unused
         # arguments that should not be passed on.
         prevent_later_uses(
-            lambda e: uses_expr(e, sub_expr)
+            lambda e: uses_expr(e, lambda e2: e2 == sub_expr)
             and not (isinstance(e, PassedInArg) and not e.copied)
         )
 
     def prevent_later_function_calls() -> None:
         """Prevent later uses of registers that recursively contain a function call."""
-        prevent_later_uses(uses_fn_call)
+        prevent_later_uses(lambda e: uses_expr(e, lambda e2: isinstance(e2, FuncCall)))
+
+    def prevent_later_reads() -> None:
+        """Prevent later uses of registers that recursively contain a read."""
+        contains_read = lambda e: isinstance(e, (StructAccess, ArrayAccess))
+        prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         nonlocal has_custom_return
@@ -2671,7 +2666,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             or reg == Register("sp")
             or reg == Register("at")
             or not prev.type.unify(expr.type)
-            or (at is not None and uses_expr(at, prev))
+            or (at is not None and uses_expr(at, lambda e2: e2 == prev))
         ):
             set_reg(reg, expr)
         else:
@@ -2849,11 +2844,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
 
-            # Prevent function calls from moving across this call.
+            # Prevent reads and function calls from moving across this call.
             # This isn't really right, because this call might be moved later,
             # and then this prevention should also be... but it's the best we
             # can do with the current code architecture.
             prevent_later_function_calls()
+            prevent_later_reads()
 
             # We may not know what this function's return registers are --
             # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
