@@ -758,10 +758,10 @@ class SubroutineArg(Expression):
 @attr.s(frozen=True, eq=True)
 class StructAccess(Expression):
     # Represents struct_var->offset.
-    # This has eq=True since it represents a live expression and not
-    # an access at a certain point in time -- this sometimes helps get rid of phi nodes.
-    # prevent_later_uses makes sure it's not used after writes/function calls that
-    # may invalidate it.
+    # This has eq=True since it represents a live expression and not an access
+    # at a certain point in time -- this sometimes helps get rid of phi nodes.
+    # prevent_later_uses makes sure it's not used after writes/function calls
+    # that may invalidate it.
     struct_var: Expression = attr.ib()
     offset: int = attr.ib()
     target_size: Optional[int] = attr.ib()
@@ -2592,23 +2592,16 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         stack_info.temp_vars.append(stmt)
         return expr
 
-    def prevent_later_uses(sub_expr: Expression, avoid_reg: Optional[Register]) -> None:
+    def prevent_later_uses(expr_filter: Callable[[Expression], bool]) -> None:
+        """Prevent later uses of registers whose contents match a callback filter."""
         for r in regs.contents.keys():
-            if r == avoid_reg:
-                # For debugging sanity, don't modify registers that we're just about
-                # to overwrite.
-                continue
             e = regs.get_raw(r)
             assert e is not None
-            if not isinstance(e, ForceVarExpr) and uses_expr(e, sub_expr):
+            if not isinstance(e, ForceVarExpr) and expr_filter(e):
                 # Mark the register as "if used, emit the expression's once
                 # var". I think we should always have a once var at this point,
                 # but if we don't, create one.
-                # Exception: unused PassedInArg, which can pass the uses_expr
-                # test simply based on having the same variable name.
                 if not isinstance(e, EvalOnceExpr):
-                    if isinstance(e, PassedInArg) and not e.copied:
-                        continue
                     e = eval_once(
                         e,
                         emit_exactly_once=False,
@@ -2617,19 +2610,22 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     )
                 regs[r] = ForceVarExpr(e, type=e.type)
 
+    def prevent_later_value_uses(sub_expr: Expression) -> None:
+        """Prevent later uses of registers that recursively contain a given
+        subexpression."""
+        # Unused PassedInArg are fine; they can pass the uses_expr test simply based
+        # on having the same variable name. If we didn't filter them out here it could
+        # cause them to be incorrectly passed as function arguments -- the function
+        # call logic sees an opaque wrapper and doesn't realize that they are unused
+        # arguments that should not be passed on.
+        prevent_later_uses(
+            lambda e: uses_expr(e, sub_expr)
+            and not (isinstance(e, PassedInArg) and not e.copied)
+        )
+
     def prevent_later_function_calls() -> None:
-        for r in regs.contents.keys():
-            e = regs.get_raw(r)
-            assert e is not None
-            if not isinstance(e, ForceVarExpr) and uses_fn_call(e):
-                if not isinstance(e, EvalOnceExpr):
-                    e = eval_once(
-                        e,
-                        emit_exactly_once=False,
-                        trivial=False,
-                        prefix=r.register_name,
-                    )
-                regs[r] = ForceVarExpr(e, type=e.type)
+        """Prevent later uses of registers that recursively contain a function call."""
+        prevent_later_uses(uses_fn_call)
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         nonlocal has_custom_return
@@ -2684,7 +2680,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # overwrite. Doing this properly is hard, however -- it would
             # involve tracking "time" for uses, and sometimes moving timestamps
             # backwards when EvalOnceExpr's get emitted as vars.
-            prevent_later_uses(prev, avoid_reg=reg)
+            if reg in regs:
+                # For ease of debugging, don't let prevent_later_value_uses see
+                # the register we're writing to.
+                del regs[reg]
+            prevent_later_value_uses(prev)
             set_reg_maybe_return(
                 reg,
                 eval_once(
@@ -2734,16 +2734,16 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # - mark other usages of the dest as "emit before this point if used".
                 # - emit the actual write.
                 #
-                # Note that the prevent_later_uses step happens after use(), since
+                # Note that the prevent_later_value_uses step happens after use(), since
                 # the stored expression is allowed to reference its destination var,
-                # but before the write is written, since prevent_later_uses might emit
-                # writes of its own that should go before this write. In practice that
-                # probably never occurs -- all relevant register contents should be
+                # but before the write is written, since prevent_later_value_uses might
+                # emit writes of its own that should go before this write. In practice
+                # that probably never occurs -- all relevant register contents should be
                 # EvalOnceExpr's that can be emitted at their point of creation, but
                 # I'm not 100% certain that that's always the case and will remain so.
                 to_store.source.use()
                 to_store.dest.use()
-                prevent_later_uses(to_store.dest, avoid_reg=None)
+                prevent_later_value_uses(to_store.dest)
                 prevent_later_function_calls()
                 to_write.append(to_store)
 
@@ -2845,8 +2845,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             call: Expression = FuncCall(fn_target, func_args, known_ret_type)
             call = eval_once(call, emit_exactly_once=True, trivial=False, prefix="ret")
 
-            # Clear out caller-save registers, for clarity and to ensure
-            # that argument regs don't get passed into the next function.
+            # Clear out caller-save registers, for clarity and to ensure that
+            # argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
 
             # We may not know what this function's return registers are --
