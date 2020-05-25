@@ -944,17 +944,20 @@ class EvalOnceExpr(Expression):
     var: Var = attr.ib()
     type: Type = attr.ib()
 
-    # Mutable state:
+    # True for function calls/errors
+    emit_exactly_once: bool = attr.ib()
 
-    # True for function calls/errors, and may be set to true dynamically by the hack
-    # in RegInfo.__getitem__ that deals with code that does not understand ForceVarExpr.
-    # This is a mess, sorry. :(
-    always_emit: bool = attr.ib()
+    # Mutable state:
 
     # True if this EvalOnceExpr should be totally transparent and not emit a variable,
     # It may dynamically change from true to false due to forced emissions.
     # Initially, it is based on is_trivial_expression.
     trivial: bool = attr.ib()
+
+    # True if this EvalOnceExpr is wrapped by a ForceVarExpr which has been triggered.
+    # This state really live in ForceVarExpr, but there's a hack in RegInfo.__getitem__
+    # where we strip off ForceVarExpr's... This is a mess, sorry. :(
+    forced_emit: bool = attr.ib(default=False)
 
     # The number of expressions that depend on this EvalOnceExpr; we emit a variable
     # if this is > 1.
@@ -965,7 +968,7 @@ class EvalOnceExpr(Expression):
 
     def use(self) -> None:
         self.num_usages += 1
-        if self.trivial or (self.num_usages == 1 and not self.always_emit):
+        if self.trivial or (self.num_usages == 1 and not self.emit_exactly_once):
             self.wrapped_expr.use()
 
     def need_decl(self) -> bool:
@@ -996,6 +999,7 @@ class ForceVarExpr(Expression):
         # getting this wrong are pretty mild -- it just causes extraneous var
         # emission in rare cases.
         self.wrapped_expr.trivial = False
+        self.wrapped_expr.forced_emit = True
         self.wrapped_expr.use()
         self.wrapped_expr.use()
 
@@ -1053,14 +1057,14 @@ class EvalOnceStmt(Statement):
         return self.expr.need_decl()
 
     def should_write(self) -> bool:
-        if self.expr.always_emit:
+        if self.expr.emit_exactly_once:
             return self.expr.num_usages != 1
         else:
             return self.need_decl()
 
     def __str__(self) -> str:
         val_str = stringify_expr(self.expr.wrapped_expr)
-        if self.expr.always_emit and self.expr.num_usages == 0:
+        if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
         return f"{self.expr.var} = {val_str};"
 
@@ -1172,7 +1176,6 @@ class RegInfo:
             # isn't used after all?), but it works decently well.
             ret.use()
             ret = ret.wrapped_expr
-            ret.always_emit = True
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -1579,7 +1582,11 @@ def early_unwrap(expr: Expression) -> Expression:
     TODO: unwrap ForceVarExpr as well when safe, pushing the forces down into the
     expression tree.
     """
-    if isinstance(expr, EvalOnceExpr) and not expr.always_emit:
+    if (
+        isinstance(expr, EvalOnceExpr)
+        and not expr.forced_emit
+        and not expr.emit_exactly_once
+    ):
         return early_unwrap(expr.wrapped_expr)
     return expr
 
@@ -1944,7 +1951,11 @@ def fold_mul_chains(expr: Expression) -> Expression:
         if isinstance(expr, UnaryOp) and not toplevel:
             base, num = fold(expr.expr, False)
             return (base, -num)
-        if isinstance(expr, EvalOnceExpr) and not expr.always_emit:
+        if (
+            isinstance(expr, EvalOnceExpr)
+            and not expr.emit_exactly_once
+            and not expr.forced_emit
+        ):
             base, num = fold(expr.wrapped_expr, False)
             if num != 1 and is_trivial_expression(base):
                 return (base, num)
@@ -2554,12 +2565,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def eval_once(
         expr: Expression,
         *,
-        always_emit: bool,
+        emit_exactly_once: bool,
         trivial: bool,
         prefix: str = "",
         reuse_var: Optional[Var] = None,
     ) -> EvalOnceExpr:
-        if always_emit:
+        if emit_exactly_once:
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
         assert reuse_var or prefix
@@ -2568,7 +2579,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             wrapped_expr=expr,
             var=var,
             type=expr.type,
-            always_emit=always_emit,
+            emit_exactly_once=emit_exactly_once,
             trivial=trivial,
         )
         var.num_usages += 1
@@ -2595,7 +2606,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     if isinstance(e, PassedInArg) and not e.copied:
                         continue
                     e = eval_once(
-                        e, always_emit=False, trivial=False, prefix=r.register_name
+                        e,
+                        emit_exactly_once=False,
+                        trivial=False,
+                        prefix=r.register_name,
                     )
                 regs[r] = ForceVarExpr(e, type=e.type)
 
@@ -2606,7 +2620,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if not isinstance(e, ForceVarExpr) and uses_fn_call(e):
                 if not isinstance(e, EvalOnceExpr):
                     e = eval_once(
-                        e, always_emit=False, trivial=False, prefix=r.register_name
+                        e,
+                        emit_exactly_once=False,
+                        trivial=False,
+                        prefix=r.register_name,
                     )
                 regs[r] = ForceVarExpr(e, type=e.type)
 
@@ -2632,7 +2649,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if not isinstance(expr, Literal):
             expr = eval_once(
                 expr,
-                always_emit=False,
+                emit_exactly_once=False,
                 trivial=is_trivial_expression(expr),
                 prefix=reg.register_name,
             )
@@ -2668,7 +2685,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 reg,
                 eval_once(
                     expr,
-                    always_emit=False,
+                    emit_exactly_once=False,
                     trivial=is_trivial_expression(expr),
                     reuse_var=prev.var,
                 ),
@@ -2822,7 +2839,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 known_ret_type = Type.any()
 
             call: Expression = FuncCall(fn_target, func_args, known_ret_type)
-            call = eval_once(call, always_emit=True, trivial=False, prefix="ret")
+            call = eval_once(call, emit_exactly_once=True, trivial=False, prefix="ret")
 
             # Clear out caller-save registers, for clarity and to ensure
             # that argument regs don't get passed into the next function.
@@ -2892,7 +2909,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
                 reg = args.reg_ref(0)
                 expr = eval_once(
-                    expr, always_emit=True, trivial=False, prefix=reg.register_name
+                    expr,
+                    emit_exactly_once=True,
+                    trivial=False,
+                    prefix=reg.register_name,
                 )
                 if reg != Register("zero"):
                     set_reg_maybe_return(reg, expr)
