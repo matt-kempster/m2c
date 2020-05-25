@@ -964,6 +964,10 @@ class EvalOnceExpr(Expression):
     num_usages: int = attr.ib(default=0)
 
     def dependencies(self) -> List[Expression]:
+        # (this is a bit iffy since state can change over time, but improves uses_expr
+        # and uses_fn_call)
+        if self.need_decl():
+            return []
         return [self.wrapped_expr]
 
     def use(self) -> None:
