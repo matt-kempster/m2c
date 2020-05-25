@@ -2849,6 +2849,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # argument regs don't get passed into the next function.
             regs.clear_caller_save_regs()
 
+            # Prevent function calls from moving across this call.
+            # This isn't really right, because this call might be moved later,
+            # and then this prevention should also be... but it's the best we
+            # can do with the current code architecture.
+            prevent_later_function_calls()
+
             # We may not know what this function's return registers are --
             # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
             # it's fine to be liberal here and put the return value in all
