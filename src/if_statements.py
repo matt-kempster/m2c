@@ -308,18 +308,6 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     return postdominators[0]
 
 
-def is_and_statement(next_node: Node, bottom: Node) -> bool:
-    return (
-        not isinstance(next_node, ConditionalNode)
-        or not (
-            next_node.conditional_edge is bottom or next_node.fallthrough_edge is bottom
-        )
-        # A strange edge-case of our pattern-matching technology:
-        # self-loops match the pattern. Avoiding that...
-        or next_node.is_loop()
-    )
-
-
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node, indent: int
 ) -> IfElseStatement:
@@ -335,21 +323,26 @@ def build_conditional_subgraph(
     # If one of the output edges is the end, it's a "fake" if-statement. That
     # is, it actually just resides one indentation level above the start node.
     else_body: Optional[Body] = None
-    if start.fallthrough_edge == end:
+    fallthrough_node: Node = start.fallthrough_edge
+    conditional_node: Node = start.conditional_edge
+    if fallthrough_node is end:
         if_condition = if_block_info.branch_condition
         if not start.is_loop():
             # Only an if block, so this is easy.
             # I think this can only happen in the case where the other branch has
             # an early return.
             if_body = build_flowgraph_between(
-                context, start.conditional_edge, end, indent + 4
+                context, conditional_node, end, indent + 4
             )
         else:
             # Don't want to follow the loop, otherwise we'd be trapped here.
             # Instead, write a goto for the beginning of the loop.
             if_body = Body(False, [])
-            emit_goto(context, start.conditional_edge, if_body, indent + 4)
-    elif is_and_statement(start.fallthrough_edge, start.conditional_edge):
+            emit_goto(context, conditional_node, if_body, indent + 4)
+    elif not isinstance(fallthrough_node, ConditionalNode) or not (
+        fallthrough_node.conditional_edge is conditional_node
+        or fallthrough_node.fallthrough_edge is conditional_node
+    ):
         # If the conditional edge isn't real, then the "fallthrough_edge" is
         # actually within the inner if-statement. This means we have to negate
         # the fallthrough edge and go down that path.
@@ -357,12 +350,8 @@ def build_conditional_subgraph(
         assert start.block.block_info.branch_condition
         if_condition = start.block.block_info.branch_condition.negated()
 
-        if_body = build_flowgraph_between(
-            context, start.fallthrough_edge, end, indent + 4
-        )
-        else_body = build_flowgraph_between(
-            context, start.conditional_edge, end, indent + 4
-        )
+        if_body = build_flowgraph_between(context, fallthrough_node, end, indent + 4)
+        else_body = build_flowgraph_between(context, conditional_node, end, indent + 4)
         if else_body.is_empty():
             else_body = None
     else:
@@ -462,7 +451,16 @@ def get_andor_if_statement(
         next_node = curr_node.fallthrough_edge
 
         else_body: Optional[Body]
-        if is_and_statement(next_node, bottom):
+        if (
+            not isinstance(next_node, ConditionalNode)
+            or not (
+                next_node.conditional_edge is bottom
+                or next_node.fallthrough_edge is bottom
+            )
+            # A strange edge-case of our pattern-matching technology:
+            # self-loops match the pattern. Avoiding that...
+            or next_node.is_loop()
+        ):
             # We reached the end of an and-statement.
             # TODO: The last one - or more - might've been part
             # of a while loop.
@@ -479,7 +477,6 @@ def get_andor_if_statement(
                 if_body=build_flowgraph_between(context, next_node, end, indent + 4),
                 else_body=else_body,
             )
-        assert isinstance(next_node, ConditionalNode)  # from is_and_statement()
 
         if next_node.fallthrough_edge is bottom:
             assert next_node.block.block_info
