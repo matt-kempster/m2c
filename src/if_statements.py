@@ -457,8 +457,9 @@ def get_andor_if_statement(
                 next_node.conditional_edge is bottom
                 or next_node.fallthrough_edge is bottom
             )
-            # A strange edge-case of our pattern-matching technology:
-            # self-loops match the pattern. Avoiding that...
+            # An edge-case of our pattern-matching technology: without
+            # this, self-loops match the pattern indefinitely, since a
+            # self-loop node's conditional edge points to itself.
             or next_node.is_loop()
         ):
             # We reached the end of an and-statement.
