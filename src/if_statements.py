@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
@@ -31,7 +32,10 @@ class Context:
     options: Options = attr.ib()
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     is_void: bool = attr.ib(default=True)
-    case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(factory=dict)
+    switch_nodes: Dict[SwitchNode, int] = attr.ib(factory=dict)
+    case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(
+        factory=lambda: defaultdict(list)
+    )
     goto_nodes: Set[Node] = attr.ib(factory=set)
     loop_nodes: Set[Node] = attr.ib(factory=set)
     emitted_nodes: Set[Node] = attr.ib(factory=set)
@@ -168,9 +172,17 @@ def emit_goto(context: Context, target: Node, body: Body, indent: int) -> None:
 
 
 def emit_switch_jump(
-    context: Context, expr: Expression, body: Body, indent: int
+    context: Context, node: SwitchNode, body: Body, indent: int
 ) -> None:
-    body.add_statement(SimpleStatement(indent, f"goto *{stringify_expr(expr)};"))
+    block_info = node.block.block_info
+    assert isinstance(block_info, BlockInfo)
+    expr = block_info.switch_value
+    assert expr is not None
+    switch_index = context.switch_nodes.get(node, 0)
+    comment = f" // switch {switch_index}" if switch_index else ""
+    body.add_statement(
+        SimpleStatement(indent, f"goto *{stringify_expr(expr)};{comment}")
+    )
 
 
 def emit_goto_or_early_return(
@@ -220,14 +232,16 @@ def end_reachable_without(
     return end in reachable
 
 
-def get_reachable_nodes(start: Node) -> Set[Node]:
-    reachable_nodes: Set[Node] = set()
+def get_reachable_nodes(start: Node) -> List[Node]:
+    reachable_nodes_set: Set[Node] = set()
+    reachable_nodes: List[Node] = []
     stack: List[Node] = [start]
     while stack:
         node = stack.pop()
-        if node in reachable_nodes:
+        if node in reachable_nodes_set:
             continue
-        reachable_nodes.add(node)
+        reachable_nodes_set.add(node)
+        reachable_nodes.append(node)
         if isinstance(node, BasicNode):
             stack.append(node.successor)
         elif isinstance(node, ConditionalNode):
@@ -253,7 +267,11 @@ def immediate_postdominator(context: Context, start: Node, end: Node) -> Node:
     # expression. That in turn can result in nodes emitted multiple times.
     # (TODO: this is rather ad hoc, we should probably come up with a more
     # principled approach to early returns...)
-    reachable_nodes = get_reachable_nodes(start)
+    #
+    # Note that we use a List instead of a Set here, since duplicated return
+    # nodes may result in multiple nodes with the same block index, and sets
+    # have non-deterministic iteration order.
+    reachable_nodes: List[Node] = get_reachable_nodes(start)
     if end not in reachable_nodes:
         end = max(reachable_nodes, key=lambda n: n.block.index)
 
@@ -585,8 +603,7 @@ def build_flowgraph_between(
                     )
                 )
             elif isinstance(curr_start, SwitchNode):
-                assert block_info.switch_value is not None
-                emit_switch_jump(context, block_info.switch_value, body, indent)
+                emit_switch_jump(context, curr_start, body, indent)
             else:  # ReturnNode
                 add_return_statement(context, body, curr_start, indent, last=False)
 
@@ -658,8 +675,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             emit_successor(node.successor, i)
         elif isinstance(node, SwitchNode):
             emit_node(context, node, body, 4)
-            assert block_info.switch_value is not None
-            emit_switch_jump(context, block_info.switch_value, body, 4)
+            emit_switch_jump(context, node, body, 4)
         else:  # ConditionalNode
             emit_node(context, node, body, 4)
             if_body = Body(print_node_comment=False)
@@ -697,13 +713,15 @@ def build_body(
             assert node.cases, "jtbl list must not be empty"
             if num_switches > 1:
                 switch_index += 1
+            context.switch_nodes[node] = switch_index
             most_common = max(node.cases, key=node.cases.count)
-            context.case_nodes[most_common] = [(switch_index, -1)]
+            has_common = False
+            if node.cases.count(most_common) > 1:
+                context.case_nodes[most_common].append((switch_index, -1))
+                has_common = True
             for index, target in enumerate(node.cases):
-                if target == most_common:
+                if has_common and target == most_common:
                     continue
-                if target not in context.case_nodes:
-                    context.case_nodes[target] = []
                 context.case_nodes[target].append((switch_index, index))
         elif isinstance(node, ConditionalNode) and node.is_loop():
             context.loop_nodes.add(node.conditional_edge)
