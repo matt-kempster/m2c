@@ -447,11 +447,16 @@ def get_andor_if_statement(
             # even inside an and/or group.
             conditions.append(gather_any_comma_conditions(block_info))
 
-        # The next node will tell us whether we are in an &&/|| statement...
+        # The next node will tell us whether we are in an &&/|| statement.
+        # Our strategy will be:
+        #   - Check if we have reached the end of an &&-statement
+        #   - Check if we have reached the end of an ||-statement
+        #   - Otherwise, assert we still fit the criteria of an &&/|| statement.
         next_node = curr_node.fallthrough_edge
 
         else_body: Optional[Body]
-        if (
+
+        end_of_and_statement = (
             not isinstance(next_node, ConditionalNode)
             or not (
                 next_node.conditional_edge is bottom
@@ -461,11 +466,11 @@ def get_andor_if_statement(
             # this, self-loops match the pattern indefinitely, since a
             # self-loop node's conditional edge points to itself.
             or next_node.is_loop()
-        ):
+        )
+        if end_of_and_statement:
             # We reached the end of an and-statement.
-            # TODO: The last one - or more - might've been part
-            # of a while loop.
-
+            # TODO: The last condition - or last few - might've been part
+            # of a while-loop.
             else_body = build_flowgraph_between(context, bottom, end, indent + 4)
             if else_body.is_empty():
                 else_body = None
@@ -479,11 +484,12 @@ def get_andor_if_statement(
                 else_body=else_body,
             )
 
-        if next_node.fallthrough_edge is bottom:
+        assert isinstance(next_node, ConditionalNode)  # mypy bug
+        end_of_or_statement = next_node.fallthrough_edge is bottom
+        if end_of_or_statement:
             assert next_node.block.block_info
             next_node_condition = next_node.block.block_info.branch_condition
             assert next_node_condition
-            # We were following an or-statement.
             if_body = build_flowgraph_between(context, bottom, end, indent + 4)
             else_body = build_flowgraph_between(
                 context, next_node.conditional_edge, end, indent + 4
