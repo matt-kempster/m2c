@@ -74,6 +74,14 @@ def run(options: Options) -> int:
     else:
         try:
             index = int(options.function_index_or_name)
+            count = len(mips_file.functions)
+            if not (0 <= index < count):
+                print(
+                    f"Function index {index} is out of bounds (must be between "
+                    f"0 and {count - 1}).",
+                    file=sys.stderr,
+                )
+                return 1
             function = mips_file.functions[index]
         except ValueError:
             name = options.function_index_or_name
@@ -82,14 +90,6 @@ def run(options: Options) -> int:
             except StopIteration:
                 print(f"Function {name} not found.", file=sys.stderr)
                 return 1
-        except IndexError:
-            count = len(mips_file.functions)
-            print(
-                f"Function index {index} is out of bounds (must be between "
-                f"0 and {count - 1}).",
-                file=sys.stderr,
-            )
-            return 1
 
         try:
             decompile_function(options, function, mips_file.rodata, typemap)
