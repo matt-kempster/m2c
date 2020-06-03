@@ -1,5 +1,6 @@
 import argparse
 import sys
+import traceback
 from typing import List, Optional
 
 from .error import DecompFailure
@@ -56,13 +57,20 @@ def run(options: Options) -> int:
         return 0
 
     if options.function_index_or_name == "all":
-        options.stop_on_error = True
+        has_error = False
         for fn in mips_file.functions:
             try:
                 decompile_function(options, fn, mips_file.rodata, typemap)
+            except DecompFailure as e:
+                print(f"Failed to decompile function {fn.name}:\n\n{e}")
+                has_error = True
             except Exception:
-                print(f"{fn.name}: ERROR")
+                print(f"Internal error while decompiling function {fn.name}:\n")
+                traceback.print_exc()
+                has_error = True
             print()
+        if has_error:
+            return 1
     else:
         try:
             index = int(options.function_index_or_name)

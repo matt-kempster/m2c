@@ -2983,7 +2983,7 @@ def translate_graph_from_block(
             print(block_info)
     except Exception as e:  # TODO: handle issues better
         if options.stop_on_error:
-            raise e
+            raise
 
         instr: Optional[Instruction] = None
         if isinstance(e, InstrProcessingFailure) and isinstance(e.__cause__, Exception):
