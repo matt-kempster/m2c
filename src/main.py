@@ -56,7 +56,7 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
-    if options.function_index_or_name == "all":
+    if options.function_index_or_name is None:
         has_error = False
         for fn in mips_file.functions:
             try:
@@ -102,7 +102,7 @@ def run(options: Options) -> int:
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
     parser.add_argument("filename", help="input filename")
-    parser.add_argument("function", help="function index or name (or 'all')", type=str)
+    parser.add_argument("function", help="function index or name", nargs="?")
     parser.add_argument(
         "--debug", dest="debug", help="print debug info", action="store_true"
     )
@@ -203,9 +203,13 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
     )
+    function = args.function
+    if function == "all":
+        # accept "all" as "all functions in file", for compat reasons.
+        function = None
     return Options(
         filename=args.filename,
-        function_index_or_name=args.function,
+        function_index_or_name=function,
         debug=args.debug,
         void=args.void,
         ifs=args.ifs,
