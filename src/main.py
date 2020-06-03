@@ -58,7 +58,9 @@ def run(options: Options) -> int:
 
     if options.function_index_or_name is None:
         has_error = False
-        for fn in mips_file.functions:
+        for index, fn in enumerate(mips_file.functions):
+            if index != 0:
+                print()
             try:
                 decompile_function(options, fn, mips_file.rodata, typemap)
             except DecompFailure as e:
@@ -68,7 +70,6 @@ def run(options: Options) -> int:
                 print(f"Internal error while decompiling function {fn.name}:\n")
                 traceback.print_exc()
                 has_error = True
-            print()
         if has_error:
             return 1
     else:
