@@ -657,6 +657,23 @@ class UnaryOp(Condition):
 
 
 @attr.s(frozen=True, eq=False)
+class ExprCondition(Condition):
+    expr: Expression = attr.ib()
+    type: Type = attr.ib()
+    is_negated: bool = attr.ib(default=False)
+
+    def dependencies(self) -> List[Expression]:
+        return [self.expr]
+
+    def negated(self) -> "Condition":
+        return ExprCondition(self.expr, self.type, not self.is_negated)
+
+    def __str__(self) -> str:
+        neg = "!" if self.is_negated else ""
+        return f"{neg}{self.expr}"
+
+
+@attr.s(frozen=True, eq=False)
 class CommaConditionExpr(Condition):
     statements: List["Statement"] = attr.ib()
     condition: "Condition" = attr.ib()
@@ -2568,6 +2585,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
         assert reuse_var or prefix
+        if prefix == "condition_bit":
+            prefix = "cond"
         var = reuse_var or Var(stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
             wrapped_expr=expr,
@@ -2753,7 +2772,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_FLOAT_BRANCHES:
             assert branch_condition is None
             cond_bit = regs[Register("condition_bit")]
-            assert isinstance(cond_bit, BinaryOp)
+            if not isinstance(cond_bit, BinaryOp):
+                cond_bit = ExprCondition(cond_bit, type=cond_bit.type)
             if mnemonic == "bc1t":
                 branch_condition = cond_bit
             elif mnemonic == "bc1f":
