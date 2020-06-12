@@ -121,6 +121,12 @@ class AsmAddressMode:
     lhs: Union[AsmLiteral, Macro, None] = attr.ib()
     rhs: Register = attr.ib()
 
+    def lhs_as_literal(self) -> int:
+        if not self.lhs:
+            return 0
+        assert isinstance(self.lhs, AsmLiteral)
+        return self.lhs.signed_value()
+
     def __str__(self) -> str:
         if self.lhs is not None:
             return f"{self.lhs}({self.rhs})"

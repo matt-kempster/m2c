@@ -346,12 +346,14 @@ def get_stack_info(
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
     for inst in start_node.block.instructions:
-        if not inst.args:
+        if not inst.args or not isinstance(inst.args[0], Register):
             continue
 
-        destination = typing.cast(Register, inst.args[0])
+        destination = inst.args[0]
 
-        if inst.mnemonic == "addiu" and destination.register_name == "sp":
+        if inst.mnemonic == "jal":
+            break
+        elif inst.mnemonic == "addiu" and destination.register_name == "sp":
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
@@ -364,18 +366,16 @@ def get_stack_info(
             # "move fp, sp" very likely means the code is compiled with frame
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
-        elif inst.mnemonic == "sw" and destination.register_name == "ra":
+        elif (
+            inst.mnemonic == "sw"
+            and destination.register_name == "ra"
+            and isinstance(inst.args[1], AsmAddressMode)
+            and inst.args[1].rhs.register_name == "sp"
+            and info.is_leaf
+        ):
             # Saving the return address on the stack.
-            assert isinstance(inst.args[1], AsmAddressMode)
-            assert inst.args[1].rhs.register_name == "sp"
             info.is_leaf = False
-            if inst.args[1].lhs:
-                assert isinstance(inst.args[1].lhs, AsmLiteral)
-                info.return_addr_location = inst.args[1].lhs.signed_value()
-            else:
-                # Note that this should only happen in the rare case that
-                # this function only calls subroutines with no arguments.
-                info.return_addr_location = 0
+            info.return_addr_location = inst.args[1].lhs_as_literal()
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
             and destination.is_callee_save()
@@ -383,14 +383,7 @@ def get_stack_info(
             and inst.args[1].rhs.register_name == "sp"
         ):
             # Initial saving of callee-save register onto the stack.
-            assert isinstance(inst.args[1].rhs, Register)
-            if inst.args[1].lhs:
-                assert isinstance(inst.args[1].lhs, AsmLiteral)
-                info.callee_save_reg_locations[destination] = inst.args[
-                    1
-                ].lhs.signed_value()
-            else:
-                info.callee_save_reg_locations[destination] = 0
+            info.callee_save_reg_locations[destination] = inst.args[1].lhs_as_literal()
 
     # Find the region that contains local variables.
     if info.is_leaf and info.callee_save_reg_locations:
