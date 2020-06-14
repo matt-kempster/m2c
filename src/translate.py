@@ -1385,7 +1385,7 @@ def deref(
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             if (
                 isinstance(addend, Literal)
-                and addend.value % 2 ** 16 == 0
+                and addend.value % 2 ** 15 in [0, 2 ** 15 - 1]
                 and addend.value < 0x1000000
             ):
                 offset += addend.value
