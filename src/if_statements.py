@@ -18,7 +18,6 @@ from .translate import (
     BlockInfo,
     CommaConditionExpr,
     Condition,
-    Expression,
     FunctionInfo,
     Type,
     simplify_condition,
@@ -320,12 +319,12 @@ def build_conditional_subgraph(
     assert isinstance(if_block_info, BlockInfo)
     assert if_block_info.branch_condition is not None
 
-    # If one of the output edges is the end, it's a "fake" if-statement. That
-    # is, it actually just resides one indentation level above the start node.
     else_body: Optional[Body] = None
     fallthrough_node: Node = start.fallthrough_edge
     conditional_node: Node = start.conditional_edge
     if fallthrough_node is end:
+        # This case is quite rare, and either indicates an early return, or
+        # some sort of loop.
         if_condition = if_block_info.branch_condition
         if not start.is_loop():
             # Only an if block, so this is easy.
@@ -343,9 +342,10 @@ def build_conditional_subgraph(
         fallthrough_node.conditional_edge is conditional_node
         or fallthrough_node.fallthrough_edge is conditional_node
     ):
-        # If the conditional edge isn't real, then the "fallthrough_edge" is
-        # actually within the inner if-statement. This means we have to negate
-        # the fallthrough edge and go down that path.
+        # This case is very common: the above conditions indicate that the
+        # fallthrough edge doesn't point to the conditional edge.
+        # This means we split into an if-body and an else-body, though the latter
+        # (for one reason or another) can still be empty.
         assert start.block.block_info
         assert start.block.block_info.branch_condition
         if_condition = start.block.block_info.branch_condition.negated()
@@ -355,6 +355,10 @@ def build_conditional_subgraph(
         if else_body.is_empty():
             else_body = None
     else:
+        # This means the fallthrough edge points directly to the conditional
+        # edge. This case comes up for &&-statements and ||-statements,
+        # but also just for regular if-statements (a degenerate case of
+        # an &&/|| statement).
         return get_andor_if_statement(context, start, end, indent)
 
     return IfElseStatement(
@@ -409,7 +413,13 @@ def get_andor_if_statement(
                    |                     | | |
                    | FALL                | | |
                    v                     v v v
+               +-------+    COND   +--------------+
+               |  N-1  |---------->|    bottom    |
                +-------+           +--------------+
+                   |                   | | | |
+                   | FALL              | | | |
+                   v                   v v v v
+               +-------+    COND   +--------------+
                |   N   |---------->|    bottom    |
                +-------+           +--------------+
                    |                   |
