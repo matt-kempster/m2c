@@ -10,6 +10,7 @@ import attr
 from .error import DecompFailure
 
 LENGTH_TWO: Set[str] = {
+    "neg",
     "negu",
     "not",
     "neg.s",
@@ -29,6 +30,9 @@ LENGTH_THREE: Set[str] = {
     "addiu",
     "addu",
     "subu",
+    "daddi",
+    "daddiu",
+    "dsubu",
     "add.s",
     "sub.s",
     "div.s",
@@ -50,6 +54,26 @@ LENGTH_THREE: Set[str] = {
     "srlv",
     "sra",
     "srav",
+    "dsll",
+    "dsll32",
+    "dsllv",
+    "dsrl",
+    "dsrl32",
+    "dsrlv",
+    "dsra",
+    "dsra32",
+    "dsrav",
+}
+
+DIV_MULT_INSTRUCTIONS: Set[str] = {
+    "div",
+    "divu",
+    "ddiv",
+    "ddivu",
+    "mult",
+    "multu",
+    "dmult",
+    "dmultu",
 }
 
 
@@ -386,15 +410,17 @@ def normalize_instruction(instr: Instruction) -> Instruction:
             return Instruction("move", args[:2], instr.emit_goto)
         if instr.mnemonic == "addu" and args[2] == Register("zero"):
             return Instruction("move", args[:2], instr.emit_goto)
+        if instr.mnemonic == "daddu" and args[2] == Register("zero"):
+            return Instruction("move", args[:2], instr.emit_goto)
         if instr.mnemonic == "nor" and args[1] == Register("zero"):
             return Instruction("not", [args[0], args[2]])
         if instr.mnemonic == "nor" and args[2] == Register("zero"):
             return Instruction("not", [args[0], args[1]])
         if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
             return Instruction("move", args[:2], instr.emit_goto)
-        if instr.mnemonic in ["div", "divu"]:
+        if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
             if args[0] != Register("zero"):
-                raise DecompFailure("first argument to div must be $zero")
+                raise DecompFailure("first argument to div/mult must be $zero")
             return Instruction(instr.mnemonic, args[1:], instr.emit_goto)
         if (
             instr.mnemonic == "ori"

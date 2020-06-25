@@ -164,8 +164,20 @@ def as_u32(expr: "Expression") -> "Expression":
     return as_type(expr, Type.u32(), False)
 
 
+def as_s64(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.s64(), silent)
+
+
+def as_u64(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.u64(), silent)
+
+
 def as_intish(expr: "Expression") -> "Expression":
     return as_type(expr, Type.intish(), True)
+
+
+def as_int64(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.int64(), True)
 
 
 def as_intptr(expr: "Expression") -> "Expression":
@@ -526,6 +538,12 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
+    def int64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_int64(left), op=op, right=as_int64(right), type=Type.int64()
+        )
+
+    @staticmethod
     def intptr(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.intptr()
@@ -577,6 +595,14 @@ class BinaryOp(Condition):
     @staticmethod
     def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.u32())
+
+    @staticmethod
+    def s64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(left=as_s64(left), op=op, right=as_s64(right), type=Type.s64())
+
+    @staticmethod
+    def u64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(left=as_u64(left), op=op, right=as_u64(right), type=Type.u64())
 
     @staticmethod
     def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -1623,6 +1649,13 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     raise DecompFailure(f"Instruction argument {arg} must be a literal")
 
 
+def imm_add_32(expr: Expression) -> Expression:
+    if isinstance(expr, Literal):
+        return as_intish(Literal(expr.value + 32))
+    else:
+        return BinaryOp.int(expr, "+", Literal(32))
+
+
 def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
     return FuncCall(
         function=GlobalSymbol(symbol_name=fn_name, type=Type.any()),
@@ -2318,9 +2351,19 @@ CASES_HI_LO: PairInstrMap = {
         BinaryOp.u32(a.reg(0), "%", a.reg(1)),
         BinaryOp.u32(a.reg(0), "/", a.reg(1)),
     ),
+    "ddiv": lambda a: (
+        BinaryOp.s64(a.reg(0), "%", a.reg(1)),
+        BinaryOp.s64(a.reg(0), "/", a.reg(1)),
+    ),
+    "ddivu": lambda a: (
+        BinaryOp.u64(a.reg(0), "%", a.reg(1)),
+        BinaryOp.u64(a.reg(0), "/", a.reg(1)),
+    ),
     # The high part of multiplication cannot be directly represented in C
     "mult": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
     "multu": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
+    "dmult": lambda a: (None, BinaryOp.int64(a.reg(0), "*", a.reg(1))),
+    "dmultu": lambda a: (None, BinaryOp.int64(a.reg(0), "*", a.reg(1))),
 }
 CASES_SOURCE_FIRST: InstrMap = {
     # Floating point moving instruction
@@ -2342,6 +2385,17 @@ CASES_DESTINATION_FIRST: InstrMap = {
     ),
     "neg": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+    ),
+    # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
+    "daddi": lambda a: handle_addi(a),
+    "daddiu": lambda a: handle_addi(a),
+    "daddu": lambda a: handle_add(a),
+    "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
+    "dnegu": lambda a: fold_mul_chains(
+        UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
+    ),
+    "dneg": lambda a: fold_mul_chains(
+        UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
     ),
     # Hi/lo register uses (used after division/multiplication)
     "mfhi": lambda a: a.regs[Register("hi")],
@@ -2385,10 +2439,11 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
     "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
     "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
+    # Shifts
     "sll": lambda a: fold_mul_chains(
-        BinaryOp.int(left=a.reg(1), op="<<", right=a.imm(2))
+        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
     ),
-    "sllv": lambda a: BinaryOp.int(left=a.reg(1), op="<<", right=a.reg(2)),
+    "sllv": lambda a: BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2))),
     "srl": lambda a: BinaryOp(
         left=as_u32(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u32()
     ),
@@ -2400,6 +2455,34 @@ CASES_DESTINATION_FIRST: InstrMap = {
     ),
     "srav": lambda a: BinaryOp(
         left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
+    ),
+    # 64-bit shifts
+    "dsll": lambda a: fold_mul_chains(
+        BinaryOp.int64(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
+    ),
+    "dsll32": lambda a: fold_mul_chains(
+        BinaryOp.int64(left=a.reg(1), op="<<", right=imm_add_32(a.imm(2)))
+    ),
+    "dsllv": lambda a: BinaryOp.int64(
+        left=a.reg(1), op="<<", right=as_intish(a.reg(2))
+    ),
+    "dsrl": lambda a: BinaryOp(
+        left=as_u64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u64()
+    ),
+    "dsrl32": lambda a: BinaryOp(
+        left=as_u64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.u64()
+    ),
+    "dsrlv": lambda a: BinaryOp(
+        left=as_u64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u64()
+    ),
+    "dsra": lambda a: BinaryOp(
+        left=as_s64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s64()
+    ),
+    "dsra32": lambda a: BinaryOp(
+        left=as_s64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.s64()
+    ),
+    "dsrav": lambda a: BinaryOp(
+        left=as_s64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s64()
     ),
     # Move pseudoinstruction
     "move": lambda a: a.reg(1),

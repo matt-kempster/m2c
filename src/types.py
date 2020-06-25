@@ -209,8 +209,16 @@ class Type:
         return Type(kind=Type.K_INT, size=32, sign=Type.UNSIGNED)
 
     @staticmethod
+    def s64() -> "Type":
+        return Type(kind=Type.K_INT, size=64, sign=Type.SIGNED)
+
+    @staticmethod
     def u64() -> "Type":
         return Type(kind=Type.K_INT, size=64, sign=Type.UNSIGNED)
+
+    @staticmethod
+    def int64() -> "Type":
+        return Type(kind=Type.K_INT, size=64, sign=Type.ANY_SIGN)
 
     @staticmethod
     def of_size(size: int) -> "Type":
