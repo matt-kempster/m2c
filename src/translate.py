@@ -217,11 +217,11 @@ class StackInfo:
     def in_subroutine_arg_region(self, location: int) -> bool:
         if self.is_leaf:
             return False
+        subroutine_arg_top = self.return_addr_location
         if self.callee_save_reg_locations:
-            subroutine_arg_top = min(self.callee_save_reg_locations.values())
-            assert self.return_addr_location > subroutine_arg_top
-        else:
-            subroutine_arg_top = self.return_addr_location
+            subroutine_arg_top = min(
+                subroutine_arg_top, min(self.callee_save_reg_locations.values())
+            )
 
         return location < subroutine_arg_top
 
@@ -398,21 +398,20 @@ def get_stack_info(
             # Initial saving of callee-save register onto the stack.
             info.callee_save_reg_locations[destination] = inst.args[1].lhs_as_literal()
 
-    # Find the region that contains local variables.
-    if info.is_leaf and info.callee_save_reg_locations:
-        # In a leaf with callee-save registers, the local variables
-        # lie directly above those registers.
-        info.local_vars_region_bottom = max(info.callee_save_reg_locations.values()) + 4
-    elif info.is_leaf:
-        # In a leaf without callee-save registers, the local variables
-        # lie directly at the bottom of the stack.
-        info.local_vars_region_bottom = 0
-    else:
-        # In a non-leaf, the local variables lie above the location of the
-        # return address.
+    # Find the region that contains local variables. It is above saved registers
+    # and the return address, if those exist. If they don't, the local variables
+    # can lie directly at the bottom of the stack.
+    info.local_vars_region_bottom = 0
+
+    if not info.is_leaf:
         info.local_vars_region_bottom = info.return_addr_location + 4
 
-    # Done.
+    if info.callee_save_reg_locations:
+        info.local_vars_region_bottom = max(
+            info.local_vars_region_bottom,
+            max(info.callee_save_reg_locations.values()) + 4,
+        )
+
     return info
 
 
