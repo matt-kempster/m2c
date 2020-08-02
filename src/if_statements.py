@@ -20,16 +20,19 @@ from .translate import (
     CommaConditionExpr,
     Condition,
     Expression,
+    Formatter,
     FunctionInfo,
+    Statement as TrStatement,
     Type,
     simplify_condition,
-    stringify_expr,
+    format_expr,
 )
 
 
 @attr.s
 class Context:
     flow_graph: FlowGraph = attr.ib()
+    fmt: Formatter = attr.ib()
     options: Options = attr.ib()
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     is_void: bool = attr.ib(default=True)
@@ -47,29 +50,32 @@ class Context:
 class IfElseStatement:
     condition: Condition = attr.ib()
     indent: int = attr.ib()
-    coding_style: CodingStyle = attr.ib()
     if_body: "Body" = attr.ib()
     else_body: Optional["Body"] = attr.ib(default=None)
 
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         space = " " * self.indent
         condition = simplify_condition(self.condition)
-        cond_str = stringify_expr(condition)
-        brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
+        cond_str = format_expr(condition, fmt)
+        brace_after_if = f"\n{space}{{" if fmt.coding_style.newline_after_if else " {"
         if_str = "\n".join(
             [
                 f"{space}if ({cond_str}){brace_after_if}",
-                str(self.if_body),  # has its own indentation
+                self.if_body.format(fmt),  # has its own indentation
                 f"{space}}}",
             ]
         )
         if self.else_body is not None:
-            whitespace = f"\n{space}" if self.coding_style.newline_before_else else " "
+            whitespace = f"\n{space}" if fmt.coding_style.newline_before_else else " "
             else_str = "\n".join(
-                [f"{whitespace}else{brace_after_if}", str(self.else_body), f"{space}}}"]
+                [
+                    f"{whitespace}else{brace_after_if}",
+                    self.else_body.format(fmt),
+                    f"{space}}}",
+                ]
             )
             if_str = if_str + else_str
         return if_str
@@ -78,13 +84,16 @@ class IfElseStatement:
 @attr.s
 class SimpleStatement:
     indent: int = attr.ib()
-    contents: str = attr.ib()
+    contents: Union[str, TrStatement] = attr.ib()
 
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        return f'{" " * self.indent}{self.contents}'
+    def format(self, fmt: Formatter) -> str:
+        if isinstance(self.contents, str):
+            return f'{" " * self.indent}{self.contents}'
+        else:
+            return f'{" " * self.indent}{self.contents.format(fmt)}'
 
 
 @attr.s
@@ -98,7 +107,7 @@ class LabelStatement:
             self.node in self.context.goto_nodes or self.node in self.context.case_nodes
         )
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         lines = []
         if self.node in self.context.case_nodes:
             for (switch, case) in self.context.case_nodes[self.node]:
@@ -129,7 +138,7 @@ class Body:
         # Add node contents
         for item in node.block.block_info.to_write:
             if item.should_write():
-                self.statements.append(SimpleStatement(indent, str(item)))
+                self.statements.append(SimpleStatement(indent, item))
 
     def add_statement(self, statement: Statement) -> None:
         self.statements.append(statement)
@@ -140,9 +149,11 @@ class Body:
     def add_if_else(self, if_else: IfElseStatement) -> None:
         self.statements.append(if_else)
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return "\n".join(
-            str(statement) for statement in self.statements if statement.should_write()
+            statement.format(fmt)
+            for statement in self.statements
+            if statement.should_write()
         )
 
 
@@ -179,7 +190,7 @@ def emit_switch_jump(
     switch_index = context.switch_nodes.get(node, 0)
     comment = f" // switch {switch_index}" if switch_index else ""
     body.add_statement(
-        SimpleStatement(indent, f"goto *{stringify_expr(expr)};{comment}")
+        SimpleStatement(indent, f"goto *{format_expr(expr, context.fmt)};{comment}")
     )
 
 
@@ -249,13 +260,7 @@ def build_conditional_subgraph(
         else:  # multiple conditions in if-statement
             return get_full_if_condition(context, conds, start, end, indent)
 
-    return IfElseStatement(
-        if_condition,
-        indent,
-        context.options.coding_style,
-        if_body=if_body,
-        else_body=else_body,
-    )
+    return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body,)
 
 
 def end_reachable_without(
@@ -489,7 +494,6 @@ def get_full_if_condition(
             # body instead of jumping to it, hence it must jump OVER the body.
             join_conditions(conditions, "||", only_negate_last=True),
             indent,
-            context.options.coding_style,
             if_body=build_flowgraph_between(
                 context, start.conditional_edge, curr_end, indent + 4
             ),
@@ -506,7 +510,6 @@ def get_full_if_condition(
             # OVER the if body.
             join_conditions(conditions, "&&", only_negate_last=False),
             indent,
-            context.options.coding_style,
             if_body=build_flowgraph_between(context, curr_node, curr_end, indent + 4),
             else_body=build_flowgraph_between(
                 context, start.conditional_edge, curr_end, indent + 4
@@ -524,7 +527,7 @@ def add_return_statement(
 
     ret = ret_info.return_value
     if ret is not None:
-        ret_str = stringify_expr(ret)
+        ret_str = format_expr(ret, context.fmt)
         body.add_statement(SimpleStatement(indent, f"return {ret_str};"))
         context.is_void = False
     elif not last:
@@ -582,7 +585,6 @@ def build_flowgraph_between(
                     IfElseStatement(
                         block_info.branch_condition,
                         indent,
-                        context.options.coding_style,
                         if_body=if_body,
                         else_body=None,
                     )
@@ -668,11 +670,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             assert block_info.branch_condition is not None
             body.add_if_else(
                 IfElseStatement(
-                    block_info.branch_condition,
-                    4,
-                    context.options.coding_style,
-                    if_body=if_body,
-                    else_body=None,
+                    block_info.branch_condition, 4, if_body=if_body, else_body=None,
                 )
             )
             emit_successor(node.fallthrough_edge, i)
@@ -728,7 +726,8 @@ def build_body(
 
 
 def get_function_text(function_info: FunctionInfo, options: Options) -> str:
-    context = Context(flow_graph=function_info.flow_graph, options=options)
+    fmt = Formatter(options.coding_style)
+    context = Context(flow_graph=function_info.flow_graph, options=options, fmt=fmt)
     body: Body = build_body(context, function_info, options)
 
     function_lines: List[str] = []
@@ -736,7 +735,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
-        arg_strs.append(arg.type.to_decl(str(arg)))
+        arg_strs.append(arg.type.to_decl(arg.format(fmt)))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
@@ -747,31 +746,31 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         fn_header = f"void {fn_header}"
     else:
         fn_header = function_info.return_type.to_decl(fn_header)
-    whitespace = "\n" if options.coding_style.newline_after_function else " "
+    whitespace = "\n" if fmt.coding_style.newline_after_function else " "
     function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:
-        type_decl = local_var.type.to_decl(str(local_var))
-        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
+        type_decl = local_var.type.to_decl(local_var.format(fmt))
+        function_lines.append(SimpleStatement(4, f"{type_decl};").format(fmt))
         any_decl = True
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
             expr = temp_var.expr
-            type_decl = expr.type.to_decl(str(expr.var))
+            type_decl = expr.type.to_decl(expr.var.format(fmt))
             temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(list(temp_decls)):
-        function_lines.append(str(SimpleStatement(4, decl)))
+        function_lines.append(SimpleStatement(4, decl).format(fmt))
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl(phi_var.get_var_name())
-        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
+        function_lines.append(SimpleStatement(4, f"{type_decl};").format(fmt))
         any_decl = True
     if any_decl:
         function_lines.append("")
 
-    function_lines.append(str(body))
+    function_lines.append(body.format(fmt))
     function_lines.append("}")
     full_function_text: str = "\n".join(function_lines)
     return full_function_text

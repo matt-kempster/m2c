@@ -25,7 +25,7 @@ from .flow_graph import (
     SwitchNode,
     build_flowgraph,
 )
-from .options import Options
+from .options import CodingStyle, Options, DEFAULT_CODING_STYLE
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -138,6 +138,11 @@ def current_instr(instr: Instruction) -> Iterator[None]:
         yield
     except Exception as e:
         raise InstrProcessingFailure(instr) from e
+
+
+@attr.s
+class Formatter:
+    coding_style: CodingStyle = attr.ib()
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
@@ -445,10 +450,13 @@ class Var:
     num_usages: int = attr.ib(default=0)
     name: Optional[str] = attr.ib(default=None)
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.name is None:
             self.name = self.stack_info.temp_var(self.prefix)
         return self.name
+
+    def __str__(self) -> str:
+        return "<temp>"
 
 
 class Expression(abc.ABC):
@@ -474,8 +482,15 @@ class Expression(abc.ABC):
             expr.use()
 
     @abc.abstractmethod
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         ...
+
+    def __str__(self) -> str:
+        """Stringify an expression for debug purposes. The output can change
+        depending on when this is called, e.g. because of EvalOnceExpr state.
+        To avoid using it by accident, output is quoted."""
+        fmt = Formatter(DEFAULT_CODING_STYLE)
+        return '"' + self.format(fmt) + '"'
 
 
 class Condition(Expression):
@@ -490,8 +505,15 @@ class Statement(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         ...
+
+    def __str__(self) -> str:
+        """Stringify a statement for debug purposes. The output can change
+        depending on when this is called, e.g. because of EvalOnceExpr state.
+        To avoid using it by accident, output is quoted."""
+        fmt = Formatter(DEFAULT_CODING_STYLE)
+        return '"' + self.format(fmt) + '"'
 
 
 @attr.s(frozen=True, eq=False)
@@ -505,7 +527,7 @@ class ErrorExpr(Condition):
     def negated(self) -> "Condition":
         return self
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.desc is not None:
             return f"ERROR({self.desc})"
         return "ERROR"
@@ -518,7 +540,7 @@ class SecondF64Half(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return "(second half of f64)"
 
 
@@ -644,7 +666,7 @@ class BinaryOp(Condition):
     def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if (
             self.op == "+"
             and not self.floating
@@ -653,8 +675,8 @@ class BinaryOp(Condition):
         ):
             neg = Literal(value=-self.right.value, type=self.right.type)
             sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
-            return str(sub)
-        return f"({self.left} {self.op} {self.right})"
+            return sub.format(fmt)
+        return f"({self.left.format(fmt)} {self.op} {self.right.format(fmt)})"
 
 
 @attr.s(frozen=True, eq=False)
@@ -671,8 +693,8 @@ class UnaryOp(Condition):
             return self.expr
         return UnaryOp("!", self, type=Type.bool())
 
-    def __str__(self) -> str:
-        return f"{self.op}{self.expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"{self.op}{self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True, eq=False)
@@ -687,9 +709,9 @@ class ExprCondition(Condition):
     def negated(self) -> "Condition":
         return ExprCondition(self.expr, self.type, not self.is_negated)
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         neg = "!" if self.is_negated else ""
-        return f"{neg}{self.expr}"
+        return f"{neg}{self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True, eq=False)
@@ -705,9 +727,11 @@ class CommaConditionExpr(Condition):
     def negated(self) -> "Condition":
         return CommaConditionExpr(self.statements, self.condition.negated())
 
-    def __str__(self) -> str:
-        comma_joined = ", ".join(str(stmt).rstrip(";") for stmt in self.statements)
-        return f"({comma_joined}, {self.condition})"
+    def format(self, fmt: Formatter) -> str:
+        comma_joined = ", ".join(
+            stmt.format(fmt).rstrip(";") for stmt in self.statements
+        )
+        return f"({comma_joined}, {self.condition.format(fmt)})"
 
 
 @attr.s(frozen=True, eq=False)
@@ -725,16 +749,16 @@ class Cast(Expression):
         self.expr.type.unify(self.type)
         super().use()
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
-            return f"(bitwise {self.type}) {self.expr}"
+            return f"(bitwise {self.type}) {self.expr.format(fmt)}"
         if self.reinterpret and (
             self.silent
             or (is_type_obvious(self.expr) and self.expr.type.unify(self.type))
         ):
-            return str(self.expr)
-        return f"({self.type}) {self.expr}"
+            return self.expr.format(fmt)
+        return f"({self.type}) {self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True, eq=False)
@@ -746,9 +770,9 @@ class FuncCall(Expression):
     def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
 
-    def __str__(self) -> str:
-        args = ", ".join(stringify_expr(arg) for arg in self.args)
-        return f"{self.function}({args})"
+    def format(self, fmt: Formatter) -> str:
+        args = ", ".join(format_expr(arg, fmt) for arg in self.args)
+        return f"{self.function.format(fmt)}({args})"
 
 
 @attr.s(frozen=True, eq=True)
@@ -759,7 +783,7 @@ class LocalVar(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return f"sp{format_hex(self.value)}"
 
 
@@ -773,7 +797,7 @@ class PassedInArg(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         assert self.value % 4 == 0
         name = self.stack_info.get_param_name(self.value)
         return name or f"arg{format_hex(self.value // 4)}"
@@ -787,7 +811,7 @@ class SubroutineArg(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return f"subroutine_arg{format_hex(self.value // 4)}"
 
 
@@ -808,7 +832,7 @@ class StructAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         var = late_unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
@@ -832,14 +856,14 @@ class StructAccess(Expression):
 
         if isinstance(var, AddressOf):
             if self.offset == 0 and not has_nonzero_access:
-                return f"{var.expr}"
+                return f"{var.expr.format(fmt)}"
             else:
-                return f"{parenthesize_for_struct_access(var.expr)}.{field_name}"
+                return f"{parenthesize_for_struct_access(var.expr, fmt)}.{field_name}"
         else:
             if self.offset == 0 and not has_nonzero_access:
-                return f"*{var}"
+                return f"*{var.format(fmt)}"
             else:
-                return f"{parenthesize_for_struct_access(var)}->{field_name}"
+                return f"{parenthesize_for_struct_access(var, fmt)}->{field_name}"
 
 
 @attr.s(frozen=True, eq=True)
@@ -852,8 +876,10 @@ class ArrayAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.ptr, self.index]
 
-    def __str__(self) -> str:
-        return f"{parenthesize_for_struct_access(self.ptr)}[{self.index}]"
+    def format(self, fmt: Formatter) -> str:
+        base = parenthesize_for_struct_access(self.ptr, fmt)
+        index = format_expr(self.index, fmt)
+        return f"{base}[{index}]"
 
 
 @attr.s(frozen=True, eq=True)
@@ -864,7 +890,7 @@ class GlobalSymbol(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return self.symbol_name
 
 
@@ -876,7 +902,7 @@ class Literal(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.type.is_float():
             if self.type.get_size_bits() == 32:
                 return format_f32_imm(self.value) + "f"
@@ -909,7 +935,7 @@ class StringLiteral(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         has_trailing_null = False
         strdata: str
         try:
@@ -933,8 +959,8 @@ class AddressOf(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.expr]
 
-    def __str__(self) -> str:
-        return f"&{self.expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"&{self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True)
@@ -946,8 +972,8 @@ class Lwl(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
 
-    def __str__(self) -> str:
-        return f"LWL({self.load_expr})"
+    def format(self, fmt: Formatter) -> str:
+        return f"LWL({self.load_expr.format(fmt)})"
 
 
 @attr.s(frozen=True)
@@ -958,8 +984,8 @@ class Load3Bytes(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
 
-    def __str__(self) -> str:
-        return f"(first 3 bytes) {self.load_expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"(first 3 bytes) {self.load_expr.format(fmt)}"
 
 
 @attr.s(frozen=True)
@@ -970,8 +996,8 @@ class UnalignedLoad(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
 
-    def __str__(self) -> str:
-        return f"(unaligned s32) {self.load_expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"(unaligned s32) {self.load_expr.format(fmt)}"
 
 
 @attr.s(frozen=False, eq=False)
@@ -1013,11 +1039,11 @@ class EvalOnceExpr(Expression):
     def need_decl(self) -> bool:
         return self.num_usages > 1 and not self.trivial
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if not self.need_decl():
-            return str(self.wrapped_expr)
+            return self.wrapped_expr.format(fmt)
         else:
-            return str(self.var)
+            return self.var.format(fmt)
 
 
 @attr.s(eq=False)
@@ -1042,8 +1068,8 @@ class ForceVarExpr(Expression):
         self.wrapped_expr.use()
         self.wrapped_expr.use()
 
-    def __str__(self) -> str:
-        return str(self.wrapped_expr)
+    def format(self, fmt: Formatter) -> str:
+        return self.wrapped_expr.format(fmt)
 
 
 @attr.s(frozen=False, eq=False)
@@ -1082,9 +1108,9 @@ class PhiExpr(Expression):
             return self
         return self.used_by.propagates_to()
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.replacement_expr:
-            return str(self.replacement_expr)
+            return self.replacement_expr.format(fmt)
         return self.get_var_name()
 
 
@@ -1101,11 +1127,11 @@ class EvalOnceStmt(Statement):
         else:
             return self.need_decl()
 
-    def __str__(self) -> str:
-        val_str = stringify_expr(self.expr.wrapped_expr)
+    def format(self, fmt: Formatter) -> str:
+        val_str = format_expr(self.expr.wrapped_expr, fmt)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
-        return f"{self.expr.var} = {val_str};"
+        return f"{self.expr.var.format(fmt)} = {val_str};"
 
 
 @attr.s
@@ -1126,8 +1152,8 @@ class SetPhiStmt(Statement):
             return False
         return True
 
-    def __str__(self) -> str:
-        val_str = stringify_expr(self.expr)
+    def format(self, fmt: Formatter) -> str:
+        val_str = format_expr(self.expr, fmt)
         return f"{self.phi.propagates_to().get_var_name()} = {val_str};"
 
 
@@ -1138,8 +1164,8 @@ class ExprStmt(Statement):
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        return f"{stringify_expr(self.expr)};"
+    def format(self, fmt: Formatter) -> str:
+        return f"{format_expr(self.expr, fmt)};"
 
 
 @attr.s
@@ -1150,8 +1176,8 @@ class StoreStmt(Statement):
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        return f"{self.dest} = {stringify_expr(self.source)};"
+    def format(self, fmt: Formatter) -> str:
+        return f"{self.dest.format(fmt)} = {format_expr(self.source, fmt)};"
 
 
 @attr.s
@@ -1161,7 +1187,7 @@ class CommentStmt(Statement):
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return f"// {self.contents}"
 
 
@@ -1557,21 +1583,19 @@ def balanced_parentheses(string: str) -> bool:
     return bal == 0
 
 
-def stringify_expr(expr: Expression) -> str:
-    """
-    Stringify an expression, stripping unnecessary parentheses around it.
-    """
-    ret = str(expr)
+def format_expr(expr: Expression, fmt: Formatter) -> str:
+    """Stringify an expression, stripping unnecessary parentheses around it."""
+    ret = expr.format(fmt)
     if ret.startswith("(") and balanced_parentheses(ret[1:-1]):
         return ret[1:-1]
     return ret
 
 
-def parenthesize_for_struct_access(expr: Expression) -> str:
+def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     # Nested dereferences may need to be parenthesized. All other
     # expressions will already have adequate parentheses added to them.
     # (Except Cast's, TODO...)
-    s = str(expr)
+    s = expr.format(fmt)
     if s.startswith("*") or s.startswith("&"):
         return f"({s})"
     return s
