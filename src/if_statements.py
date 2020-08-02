@@ -210,7 +210,6 @@ def build_conditional_subgraph(
     # is, it actually just resides one indentation level above the start node.
     else_body = None
     if start.conditional_edge == end:
-        assert start.fallthrough_edge != end  # otherwise two edges point to one node
         # If the conditional edge isn't real, then the "fallthrough_edge" is
         # actually within the inner if-statement. This means we have to negate
         # the fallthrough edge and go down that path.
