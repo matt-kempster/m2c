@@ -142,8 +142,9 @@ def current_instr(instr: Instruction) -> Iterator[None]:
 
 @attr.s
 class Formatter:
-    coding_style: CodingStyle = attr.ib()
+    coding_style: CodingStyle = attr.ib(default=DEFAULT_CODING_STYLE)
     indent_step: str = attr.ib(default=" " * 4)
+    skip_casts: bool = attr.ib(default=False)
 
     def indent(self, indent: int, line: str) -> str:
         return self.indent_step * indent + line
@@ -493,7 +494,7 @@ class Expression(abc.ABC):
         """Stringify an expression for debug purposes. The output can change
         depending on when this is called, e.g. because of EvalOnceExpr state.
         To avoid using it by accident, output is quoted."""
-        fmt = Formatter(DEFAULT_CODING_STYLE)
+        fmt = Formatter()
         return '"' + self.format(fmt) + '"'
 
 
@@ -516,7 +517,7 @@ class Statement(abc.ABC):
         """Stringify a statement for debug purposes. The output can change
         depending on when this is called, e.g. because of EvalOnceExpr state.
         To avoid using it by accident, output is quoted."""
-        fmt = Formatter(DEFAULT_CODING_STYLE)
+        fmt = Formatter()
         return '"' + self.format(fmt) + '"'
 
 
@@ -762,6 +763,8 @@ class Cast(Expression):
             or (is_type_obvious(self.expr) and self.expr.type.unify(self.type))
         ):
             return self.expr.format(fmt)
+        if fmt.skip_casts:
+            return f"{self.expr.format(fmt)}"
         return f"({self.type}) {self.expr.format(fmt)}"
 
 
@@ -912,17 +915,20 @@ class Literal(Expression):
                 return format_f32_imm(self.value) + "f"
             else:
                 return format_f64_imm(self.value)
+        if self.type.is_pointer() and self.value == 0:
+            return "NULL"
+
         prefix = ""
-        if self.type.is_pointer():
-            if self.value == 0:
-                return "NULL"
-            else:
+        suffix = ""
+        if not fmt.skip_casts:
+            if self.type.is_pointer():
                 prefix = "(void *)"
-        elif self.type.get_size_bits() == 8:
-            prefix = "(u8)"
-        elif self.type.get_size_bits() == 16:
-            prefix = "(u16)"
-        suffix = "U" if self.type.is_unsigned() else ""
+            elif self.type.get_size_bits() == 8:
+                prefix = "(u8)"
+            elif self.type.get_size_bits() == 16:
+                prefix = "(u16)"
+            if self.type.is_unsigned():
+                suffix = "U"
         mid = (
             str(self.value)
             if abs(self.value) < 10

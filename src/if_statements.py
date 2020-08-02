@@ -726,7 +726,7 @@ def build_body(
 
 
 def get_function_text(function_info: FunctionInfo, options: Options) -> str:
-    fmt = Formatter(options.coding_style)
+    fmt = Formatter(options.coding_style, skip_casts=options.skip_casts)
     context = Context(flow_graph=function_info.flow_graph, options=options, fmt=fmt)
     body: Body = build_body(context, function_info, options)
 

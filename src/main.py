@@ -126,6 +126,12 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_false",
     )
     parser.add_argument(
+        "--no-casts",
+        dest="skip_casts",
+        help="don't emit any type casts",
+        action="store_true",
+    )
+    parser.add_argument(
         "--goto",
         metavar="PATTERN",
         dest="goto_patterns",
@@ -215,6 +221,7 @@ def parse_flags(flags: List[str]) -> Options:
         void=args.void,
         ifs=args.ifs,
         andor_detection=args.andor_detection,
+        skip_casts=args.skip_casts,
         goto_patterns=args.goto_patterns,
         rodata_files=args.rodata_files,
         stop_on_error=args.stop_on_error,
