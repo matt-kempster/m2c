@@ -143,6 +143,10 @@ def current_instr(instr: Instruction) -> Iterator[None]:
 @attr.s
 class Formatter:
     coding_style: CodingStyle = attr.ib()
+    indent_step: str = attr.ib(default=" " * 4)
+
+    def indent(self, indent: int, line: str) -> str:
+        return self.indent_step * indent + line
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
