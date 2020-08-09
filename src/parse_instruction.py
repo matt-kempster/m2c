@@ -339,6 +339,7 @@ class Instruction:
         return (
             self.mnemonic
             in [
+                "j",
                 "b",
                 "beq",
                 "bne",
