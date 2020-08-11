@@ -2299,6 +2299,7 @@ CASES_IGNORE: InstrSet = {
     "ctc1",
     "nop",
     "b",
+    "j",
 }
 CASES_STORE: StoreInstrMap = {
     # Storage instructions
