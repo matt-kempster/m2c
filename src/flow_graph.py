@@ -696,7 +696,7 @@ def build_graph_from_block(
             target = branch_label.target
             raise DecompFailure(f"Cannot find branch target {target}")
 
-        is_constant_branch = jump.mnemonic == "b"
+        is_constant_branch = jump.mnemonic in ["b", "j"]
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, jump.emit_goto, dummy_node)
