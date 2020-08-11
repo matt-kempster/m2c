@@ -1496,12 +1496,6 @@ def deref(
 
 def is_trivial_expression(expr: Expression) -> bool:
     # Determine whether an expression should be evaluated only once or not.
-    # TODO: Some of this logic is sketchy, saying that it's fine to repeat e.g.
-    # reads even though there might have been e.g. sets or function calls in
-    # between. It should really take into account what has changed since the
-    # expression was created and when it's used. For now, though, we make this
-    # naive guess at the creation. (Another signal we could potentially use is
-    # whether the expression is stored in a callee-save register.)
     if expr is None or isinstance(
         expr,
         (
@@ -1517,10 +1511,6 @@ def is_trivial_expression(expr: Expression) -> bool:
         return True
     if isinstance(expr, AddressOf):
         return is_trivial_expression(expr.expr)
-    if isinstance(expr, StructAccess):
-        return is_trivial_expression(expr.struct_var)
-    if isinstance(expr, ArrayAccess):
-        return is_trivial_expression(expr.ptr) and is_trivial_expression(expr.index)
     return False
 
 
