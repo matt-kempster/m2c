@@ -3145,7 +3145,7 @@ def translate_graph_from_block(
     """
 
     if options.debug:
-        print(f"\nNode in question: {node.block}")
+        print(f"\nNode in question: {node}")
 
     # Translate the given node and discover final register states.
     try:

@@ -541,6 +541,7 @@ class BasicNode(BaseNode):
                 f"{self.block}\n",
                 f"# {self.block.index} -> {self.successor.block.index}",
                 " (loop)" if self.is_loop() else "",
+                " (goto)" if self.emit_goto else "",
             ]
         )
 
@@ -562,6 +563,7 @@ class ConditionalNode(BaseNode):
                 " (loop)" if self.is_loop() else "",
                 ", ",
                 f"def: {self.fallthrough_edge.block.index}",
+                " (goto)" if self.emit_goto else "",
             ]
         )
 
@@ -578,7 +580,13 @@ class ReturnNode(BaseNode):
         return self.index == 0
 
     def __str__(self) -> str:
-        return f"{self.block}\n# {self.block.index} -> ret"
+        return "".join(
+            [
+                f"{self.block}\n",
+                f"# {self.block.index} -> ret",
+                " (goto)" if self.emit_goto else "",
+            ]
+        )
 
 
 @attr.s(eq=False)
