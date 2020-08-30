@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from coverage import Coverage
+from coverage import Coverage  # type: ignore
 import sys
 import argparse
 import os
