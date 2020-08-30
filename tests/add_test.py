@@ -42,6 +42,7 @@ def get_environment_variables() -> Optional[PathsToBinaries]:
         if env_var is None:
             logging.error(error_message)
         return env_var
+
     QEMU_IRIX = distutils.spawn.find_executable("qemu-irix")
     if not QEMU_IRIX:
         QEMU_IRIX = load(

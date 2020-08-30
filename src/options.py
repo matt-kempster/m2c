@@ -31,5 +31,7 @@ class Options:
 
 
 DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
-    newline_after_function=False, newline_after_if=False, newline_before_else=False,
+    newline_after_function=False,
+    newline_after_if=False,
+    newline_before_else=False,
 )

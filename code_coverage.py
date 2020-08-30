@@ -6,7 +6,10 @@ import os
 
 parser = argparse.ArgumentParser(description="Compute code coverage for tests.")
 parser.add_argument(
-    "--dir", dest="dir", help="output HTML to directory", default="htmlcov/",
+    "--dir",
+    dest="dir",
+    help="output HTML to directory",
+    default="htmlcov/",
 )
 parser.add_argument(
     "--emit-data-file",

@@ -260,14 +260,18 @@ def build_conditional_subgraph(
         else:  # multiple conditions in if-statement
             return get_full_if_condition(context, conds, start, end, indent)
 
-    return IfElseStatement(if_condition, indent, if_body=if_body, else_body=else_body,)
+    return IfElseStatement(
+        if_condition,
+        indent,
+        if_body=if_body,
+        else_body=else_body,
+    )
 
 
 def end_reachable_without(
     context: Context, start: Node, end: Node, without: Node
 ) -> bool:
-    """Return whether "end" is reachable from "start" if "without" were removed.
-    """
+    """Return whether "end" is reachable from "start" if "without" were removed."""
     key = (start, without)
     if key in context.reachable_without:
         return end in context.reachable_without[key]
@@ -670,7 +674,10 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             assert block_info.branch_condition is not None
             body.add_if_else(
                 IfElseStatement(
-                    block_info.branch_condition, 1, if_body=if_body, else_body=None,
+                    block_info.branch_condition,
+                    1,
+                    if_body=if_body,
+                    else_body=None,
                 )
             )
             emit_successor(node.fallthrough_edge, i)
@@ -678,9 +685,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
     return body
 
 
-def build_body(
-    context: Context, function_info: FunctionInfo, options: Options,
-) -> Body:
+def build_body(context: Context, function_info: FunctionInfo, options: Options) -> Body:
     start_node: Node = context.flow_graph.entry_node()
     return_node: Optional[ReturnNode] = context.flow_graph.return_node()
     if return_node is None:
