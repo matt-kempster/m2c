@@ -92,6 +92,22 @@ class BlockBuilder:
         return self.blocks
 
 
+def inverse_branch_mnemonic(mnemonic: str) -> str:
+    inverses = {
+        "beq": "bne",
+        "bne": "beq",
+        "beqz": "bnez",
+        "bnez": "beqz",
+        "bgez": "bltz",
+        "bgtz": "blez",
+        "blez": "bgtz",
+        "bltz": "bgez",
+        "bc1t": "bc1f",
+        "bc1f": "bc1t",
+    }
+    return inverses[mnemonic]
+
+
 # Branch-likely instructions only evaluate their delay slots when they are
 # taken, making control flow more complex. However, on the IRIX compiler they
 # only occur in a very specific pattern:
@@ -126,7 +142,6 @@ def normalize_likely_branches(function: Function) -> Function:
             prev_label = item
 
     insert_label_before: Dict[int, str] = {}
-    noped_instructions: Set[int] = set()
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
@@ -141,11 +156,20 @@ def normalize_likely_branches(function: Function) -> Function:
             orig_next_item = next_item
             if (
                 isinstance(next_item, Instruction)
+                and before_target is next_item
+                and item.mnemonic != "b"
+            ):
+                mn_inverted = inverse_branch_mnemonic(item.mnemonic[:-1])
+                item = Instruction(mn_inverted, item.args, item.emit_goto)
+                new_body.append((orig_item, item))
+                new_body.append((Instruction("dummy", []), Instruction("nop", [])))
+                new_body.append((orig_next_item, next_item))
+            elif (
+                isinstance(next_item, Instruction)
                 and before_target is not None
                 and before_target is not next_item
                 and str(before_target) == str(next_item)
-                and id(before_target) not in noped_instructions
-                and next_item.mnemonic != "nop"
+                and (item.mnemonic != "b" or next_item.mnemonic != "nop")
             ):
                 if id(before_target) not in label_before_instr:
                     new_label = old_label + "_before"
@@ -157,9 +181,11 @@ def normalize_likely_branches(function: Function) -> Function:
                     mn_unlikely, item.args[:-1] + [new_target], item.emit_goto
                 )
                 next_item = Instruction("nop", [])
-                noped_instructions.add(id(next_item))
-            new_body.append((orig_item, item))
-            new_body.append((orig_next_item, next_item))
+                new_body.append((orig_item, item))
+                new_body.append((orig_next_item, next_item))
+            else:
+                new_body.append((item, item))
+                new_body.append((next_item, next_item))
         else:
             new_body.append((orig_item, item))
 
