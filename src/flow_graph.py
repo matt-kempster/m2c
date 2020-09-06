@@ -132,7 +132,7 @@ def normalize_likely_branches(function: Function) -> Function:
     instr_before_instr: Dict[int, Instruction] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
-    prev_item: Union[Instrucion, Label, None] = None
+    prev_item: Union[Instruction, Label, None] = None
     for item in function.body:
         if isinstance(item, Instruction):
             if prev_label is not None:
