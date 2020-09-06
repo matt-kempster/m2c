@@ -2663,7 +2663,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # (though it's too late for it to be able to participate in the
             # prevent_later_uses machinery).
             phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
-            for e in exprs[1:]:
+            for e in exprs:
                 e.type.unify(phi.type)
             for _ in range(phi.num_usages):
                 first_uw.use()
