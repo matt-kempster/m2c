@@ -1102,8 +1102,10 @@ class PhiExpr(Expression):
     def use(self, from_phi: Optional["PhiExpr"] = None) -> None:
         if self.num_usages == 0:
             self.used_phis.append(self)
+            self.used_by = from_phi
         self.num_usages += 1
-        self.used_by = from_phi
+        if self.used_by != from_phi:
+            self.used_by = None
         if self.replacement_expr is not None:
             self.replacement_expr.use()
 
@@ -1114,7 +1116,7 @@ class PhiExpr(Expression):
         admittedly a bit sketchy, in case the phi is in scope here and used
         later on... but we have that problem with regular phi assignments as
         well."""
-        if self.num_usages != 1 or self.used_by is None:
+        if self.used_by is None:
             return self
         return self.used_by.propagates_to()
 
