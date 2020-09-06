@@ -198,7 +198,8 @@ def parse_flags(flags: List[str]) -> Options:
         "--dump-typemap",
         dest="dump_typemap",
         action="store_true",
-        help=argparse.SUPPRESS,
+        help="dump information about all functions and structs from the provided C "
+        "context. Mainly useful for debugging.",
     )
     args = parser.parse_args(flags)
     preproc_defines = {
