@@ -92,7 +92,7 @@ class BlockBuilder:
         return self.blocks
 
 
-def inverse_branch_mnemonic(mnemonic: str) -> str:
+def invert_branch_mnemonic(mnemonic: str) -> str:
     inverses = {
         "beq": "bne",
         "bne": "beq",
@@ -125,7 +125,14 @@ def inverse_branch_mnemonic(mnemonic: str) -> str:
 #
 # Branch-likely instructions that do not appear in this pattern are kept.
 #
-# We also do this for b instructions, which sometimes occur in the same pattern.
+# We also do this for b instructions, which sometimes occur in the same pattern,
+# and also fix up the pattern
+#
+# <branch likely instr> .label
+#  X
+# .label:
+#
+# which GCC emits.
 def normalize_likely_branches(function: Function) -> Function:
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
@@ -179,7 +186,7 @@ def normalize_likely_branches(function: Function) -> Function:
                 and before_target is next_item
                 and item.mnemonic != "b"
             ):
-                mn_inverted = inverse_branch_mnemonic(item.mnemonic[:-1])
+                mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
                 item = Instruction(mn_inverted, item.args, item.emit_goto)
                 new_body.append((orig_item, item))
                 new_body.append((Instruction("dummy", []), Instruction("nop", [])))
@@ -516,15 +523,21 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
             )
 
         if item.is_branch_likely_instruction():
-            raise DecompFailure(
-                "Not yet able to handle general branch-likely instruction:\n"
-                f"{item}\n\n"
-                "Only branch-likely instructions which can be turned into non-likely\n"
-                "versions pointing one step up are currently supported. Try rewriting\n"
-                "the assembly using non-branch-likely instructions."
-            )
+            target = item.args[-1]
+            assert isinstance(target, JumpTarget)
+            mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
+            temp_label = JumpTarget(target.target + "_branchlikelyskip")
+            branch_not = Instruction(mn_inverted, item.args[:-1] + [temp_label], False)
+            block_builder.add_instruction(branch_not)
+            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.new_block()
+            block_builder.add_instruction(next_item)
+            block_builder.add_instruction(Instruction("b", [target], item.emit_goto))
+            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.new_block()
+            block_builder.set_label(Label(temp_label.target))
 
-        if item.mnemonic in ["jal", "jalr"]:
+        elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
             if next_item.args and next_item.args[0] == item.args[0]:
