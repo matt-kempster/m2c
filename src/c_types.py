@@ -529,7 +529,7 @@ def dump_typemap(typemap: TypeMap) -> None:
     for name, struct in typemap.named_structs.items():
         print(f"{name}: size {struct.size}, align {struct.align}")
         for offset, fields in struct.fields.items():
-            print(f"  {offset}:", end="")
+            print(f"  {hex(offset)}:", end="")
             for field in fields:
                 print(f" {field.name} ({type_to_string(field.type)})", end="")
             print()
