@@ -3310,4 +3310,22 @@ def translate_to_ast(
             b.return_value = None
 
     assign_phis(used_phis, stack_info)
+
+    if options.pdb_translate:
+        import pdb
+
+        v: Dict[str, object] = {}
+        fmt = Formatter()
+        for local in stack_info.local_vars:
+            var_name = local.format(fmt)
+            v[var_name] = local
+        for temp in stack_info.temp_vars:
+            if temp.need_decl():
+                var_name = temp.expr.var.format(fmt)
+                v[var_name] = temp.expr
+        for phi in stack_info.phi_vars:
+            assert phi.name is not None
+            v[phi.name] = phi
+        pdb.set_trace()
+
     return FunctionInfo(stack_info, flow_graph, return_type)

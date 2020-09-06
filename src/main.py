@@ -201,6 +201,12 @@ def parse_flags(flags: List[str]) -> Options:
         help="dump information about all functions and structs from the provided C "
         "context. Mainly useful for debugging.",
     )
+    parser.add_argument(
+        "--pdb-translate",
+        dest="pdb_translate",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(flags)
     preproc_defines = {
         **{d: 0 for d in args.undefined},
@@ -230,6 +236,7 @@ def parse_flags(flags: List[str]) -> Options:
         visualize_flowgraph=args.visualize,
         c_context=args.c_context,
         dump_typemap=args.dump_typemap,
+        pdb_translate=args.pdb_translate,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )

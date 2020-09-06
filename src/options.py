@@ -26,6 +26,7 @@ class Options:
     visualize_flowgraph: bool = attr.ib()
     c_context: Optional[str] = attr.ib()
     dump_typemap: bool = attr.ib()
+    pdb_translate: bool = attr.ib()
     preproc_defines: Dict[str, int] = attr.ib()
     coding_style: CodingStyle = attr.ib()
 
