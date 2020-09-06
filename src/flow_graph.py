@@ -129,17 +129,23 @@ def inverse_branch_mnemonic(mnemonic: str) -> str:
 def normalize_likely_branches(function: Function) -> Function:
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
+    instr_before_instr: Dict[int, Instruction] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
+    prev_item: Union[Instrucion, Label, None] = None
     for item in function.body:
         if isinstance(item, Instruction):
             if prev_label is not None:
                 label_before_instr[id(item)] = prev_label.name
                 prev_label = None
+            if isinstance(prev_item, Instruction):
+                instr_before_instr[id(item)] = prev_item
             prev_instr = item
         elif isinstance(item, Label):
             label_prev_instr[item.name] = prev_instr
             prev_label = item
+            prev_instr = None
+        prev_item = item
 
     insert_label_before: Dict[int, str] = {}
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
@@ -152,9 +158,23 @@ def normalize_likely_branches(function: Function) -> Function:
         ):
             old_label = item.get_branch_target().target
             before_target = label_prev_instr[old_label]
+            before_before_target = (
+                instr_before_instr.get(id(before_target))
+                if before_target is not None
+                else None
+            )
             next_item = next(body_iter)
             orig_next_item = next_item
             if (
+                item.mnemonic == "b"
+                and before_before_target is not None
+                and before_before_target.is_branch_instruction()
+            ):
+                # Don't treat 'b' instructions as branch likelies if doing so would
+                # introduce a label in a delay slot.
+                new_body.append((item, item))
+                new_body.append((next_item, next_item))
+            elif (
                 isinstance(next_item, Instruction)
                 and before_target is next_item
                 and item.mnemonic != "b"
