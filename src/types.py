@@ -78,7 +78,19 @@ class Type:
                     return False
             else:
                 # TODO: unify Type and CType (needs a typemap)
-                return False
+                # Until we get that, let's handle some easy cases though:
+                if isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
+                    type = x.ptr_to
+                    ctype = y.ptr_to
+                elif isinstance(y.ptr_to, Type) and not isinstance(x.ptr_to, Type):
+                    type = y.ptr_to
+                    ctype = x.ptr_to
+                else:
+                    assert False, "unreachable"
+                if not (
+                    isinstance(ctype, ca.PtrDecl) and Type.ptr(ctype.type).unify(type)
+                ):
+                    return False
         x.kind = kind
         x.size = size
         x.sign = sign
@@ -197,8 +209,16 @@ class Type:
         return Type(kind=Type.K_INT, size=32, sign=Type.UNSIGNED)
 
     @staticmethod
+    def s64() -> "Type":
+        return Type(kind=Type.K_INT, size=64, sign=Type.SIGNED)
+
+    @staticmethod
     def u64() -> "Type":
         return Type(kind=Type.K_INT, size=64, sign=Type.UNSIGNED)
+
+    @staticmethod
+    def int64() -> "Type":
+        return Type(kind=Type.K_INT, size=64, sign=Type.ANY_SIGN)
 
     @staticmethod
     def of_size(size: int) -> "Type":

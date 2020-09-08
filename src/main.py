@@ -1,5 +1,6 @@
 import argparse
 import sys
+import traceback
 from typing import List, Optional
 
 from .error import DecompFailure
@@ -55,17 +56,33 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
-    if options.function_index_or_name == "all":
-        options.stop_on_error = True
-        for fn in mips_file.functions:
+    if options.function_index_or_name is None:
+        has_error = False
+        for index, fn in enumerate(mips_file.functions):
+            if index != 0:
+                print()
             try:
                 decompile_function(options, fn, mips_file.rodata, typemap)
+            except DecompFailure as e:
+                print(f"Failed to decompile function {fn.name}:\n\n{e}")
+                has_error = True
             except Exception:
-                print(f"{fn.name}: ERROR")
-            print()
+                print(f"Internal error while decompiling function {fn.name}:\n")
+                traceback.print_exc()
+                has_error = True
+        if has_error:
+            return 1
     else:
         try:
             index = int(options.function_index_or_name)
+            count = len(mips_file.functions)
+            if not (0 <= index < count):
+                print(
+                    f"Function index {index} is out of bounds (must be between "
+                    f"0 and {count - 1}).",
+                    file=sys.stderr,
+                )
+                return 1
             function = mips_file.functions[index]
         except ValueError:
             name = options.function_index_or_name
@@ -74,14 +91,6 @@ def run(options: Options) -> int:
             except StopIteration:
                 print(f"Function {name} not found.", file=sys.stderr)
                 return 1
-        except IndexError:
-            count = len(mips_file.functions)
-            print(
-                f"Function index {index} is out of bounds (must be between "
-                f"0 and {count - 1}).",
-                file=sys.stderr,
-            )
-            return 1
 
         try:
             decompile_function(options, function, mips_file.rodata, typemap)
@@ -94,7 +103,7 @@ def run(options: Options) -> int:
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
     parser.add_argument("filename", help="input filename")
-    parser.add_argument("function", help="function index or name (or 'all')", type=str)
+    parser.add_argument("function", help="function index or name", nargs="?")
     parser.add_argument(
         "--debug", dest="debug", help="print debug info", action="store_true"
     )
@@ -115,6 +124,12 @@ def parse_flags(flags: List[str]) -> Options:
         dest="andor_detection",
         help="disable detection of &&/||",
         action="store_false",
+    )
+    parser.add_argument(
+        "--no-casts",
+        dest="skip_casts",
+        help="don't emit any type casts",
+        action="store_true",
     )
     parser.add_argument(
         "--goto",
@@ -183,6 +198,13 @@ def parse_flags(flags: List[str]) -> Options:
         "--dump-typemap",
         dest="dump_typemap",
         action="store_true",
+        help="dump information about all functions and structs from the provided C "
+        "context. Mainly useful for debugging.",
+    )
+    parser.add_argument(
+        "--pdb-translate",
+        dest="pdb_translate",
+        action="store_true",
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args(flags)
@@ -195,13 +217,18 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
     )
+    function = args.function
+    if function == "all":
+        # accept "all" as "all functions in file", for compat reasons.
+        function = None
     return Options(
         filename=args.filename,
-        function_index_or_name=args.function,
+        function_index_or_name=function,
         debug=args.debug,
         void=args.void,
         ifs=args.ifs,
         andor_detection=args.andor_detection,
+        skip_casts=args.skip_casts,
         goto_patterns=args.goto_patterns,
         rodata_files=args.rodata_files,
         stop_on_error=args.stop_on_error,
@@ -209,6 +236,7 @@ def parse_flags(flags: List[str]) -> Options:
         visualize_flowgraph=args.visualize,
         c_context=args.c_context,
         dump_typemap=args.dump_typemap,
+        pdb_translate=args.pdb_translate,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
     )
@@ -216,8 +244,8 @@ def parse_flags(flags: List[str]) -> Options:
 
 def main() -> None:
     # Large functions can sometimes require a higher recursion limit than the
-    # CPython default.
-    sys.setrecursionlimit(10 * sys.getrecursionlimit())
+    # CPython default. Cap to INT_MAX to avoid an OverflowError, though.
+    sys.setrecursionlimit(min(2 ** 31 - 1, 10 * sys.getrecursionlimit()))
     options = parse_flags(sys.argv[1:])
     sys.exit(run(options))
 

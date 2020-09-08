@@ -18,16 +18,19 @@ from .translate import (
     BlockInfo,
     CommaConditionExpr,
     Condition,
+    Formatter,
     FunctionInfo,
+    Statement as TrStatement,
     Type,
     simplify_condition,
-    stringify_expr,
+    format_expr,
 )
 
 
 @attr.s
 class Context:
     flow_graph: FlowGraph = attr.ib()
+    fmt: Formatter = attr.ib()
     options: Options = attr.ib()
     reachable_without: Dict[Tuple[Node, Node], Set[Node]] = attr.ib(factory=dict)
     is_void: bool = attr.ib(default=True)
@@ -45,29 +48,32 @@ class Context:
 class IfElseStatement:
     condition: Condition = attr.ib()
     indent: int = attr.ib()
-    coding_style: CodingStyle = attr.ib()
     if_body: "Body" = attr.ib()
     else_body: Optional["Body"] = attr.ib(default=None)
 
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        space = " " * self.indent
+    def format(self, fmt: Formatter) -> str:
+        space = fmt.indent(self.indent, "")
         condition = simplify_condition(self.condition)
-        cond_str = stringify_expr(condition)
-        brace_after_if = f"\n{space}{{" if self.coding_style.newline_after_if else " {"
+        cond_str = format_expr(condition, fmt)
+        after_ifelse = f"\n{space}" if fmt.coding_style.newline_after_if else " "
+        before_else = f"\n{space}" if fmt.coding_style.newline_before_else else " "
         if_str = "\n".join(
             [
-                f"{space}if ({cond_str}){brace_after_if}",
-                str(self.if_body),  # has its own indentation
+                f"{space}if ({cond_str}){after_ifelse}{{",
+                self.if_body.format(fmt),  # has its own indentation
                 f"{space}}}",
             ]
         )
         if self.else_body is not None:
-            whitespace = f"\n{space}" if self.coding_style.newline_before_else else " "
             else_str = "\n".join(
-                [f"{whitespace}else{brace_after_if}", str(self.else_body), f"{space}}}"]
+                [
+                    f"{before_else}else{after_ifelse}{{",
+                    self.else_body.format(fmt),
+                    f"{space}}}",
+                ]
             )
             if_str = if_str + else_str
         return if_str
@@ -76,13 +82,16 @@ class IfElseStatement:
 @attr.s
 class SimpleStatement:
     indent: int = attr.ib()
-    contents: str = attr.ib()
+    contents: Union[str, TrStatement] = attr.ib()
 
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        return f'{" " * self.indent}{self.contents}'
+    def format(self, fmt: Formatter) -> str:
+        if isinstance(self.contents, str):
+            return fmt.indent(self.indent, self.contents)
+        else:
+            return fmt.indent(self.indent, self.contents.format(fmt))
 
 
 @attr.s
@@ -96,13 +105,13 @@ class LabelStatement:
             self.node in self.context.goto_nodes or self.node in self.context.case_nodes
         )
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         lines = []
         if self.node in self.context.case_nodes:
             for (switch, case) in self.context.case_nodes[self.node]:
                 case_str = f"case {case}" if case != -1 else "default"
                 switch_str = f" // switch {switch}" if switch != 0 else ""
-                lines.append(f'{" " * self.indent}{case_str}:{switch_str}')
+                lines.append(fmt.indent(self.indent, f"{case_str}:{switch_str}"))
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
         return "\n".join(lines)
@@ -127,7 +136,7 @@ class Body:
         # Add node contents
         for item in node.block.block_info.to_write:
             if item.should_write():
-                self.statements.append(SimpleStatement(indent, str(item)))
+                self.statements.append(SimpleStatement(indent, item))
 
     def add_statement(self, statement: Statement) -> None:
         self.statements.append(statement)
@@ -141,9 +150,11 @@ class Body:
     def is_empty(self) -> bool:
         return not any(statement.should_write() for statement in self.statements)
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return "\n".join(
-            str(statement) for statement in self.statements if statement.should_write()
+            statement.format(fmt)
+            for statement in self.statements
+            if statement.should_write()
         )
 
 
@@ -160,7 +171,7 @@ def emit_node(context: Context, node: Node, body: Body, indent: int) -> None:
     if isinstance(node, ReturnNode) and not node.is_real():
         body.add_node(node, indent, comment_empty=False)
     else:
-        body.add_statement(LabelStatement(max(indent - 4, 0), context, node))
+        body.add_statement(LabelStatement(max(indent - 1, 0), context, node))
         body.add_node(node, indent, comment_empty=True)
 
 
@@ -180,7 +191,7 @@ def emit_switch_jump(
     switch_index = context.switch_nodes.get(node, 0)
     comment = f" // switch {switch_index}" if switch_index else ""
     body.add_statement(
-        SimpleStatement(indent, f"goto *{stringify_expr(expr)};{comment}")
+        SimpleStatement(indent, f"goto *{format_expr(expr, context.fmt)};{comment}")
     )
 
 
@@ -198,8 +209,7 @@ def emit_goto_or_early_return(
 def end_reachable_without(
     context: Context, start: Node, end: Node, without: Node
 ) -> bool:
-    """Return whether "end" is reachable from "start" if "without" were removed.
-    """
+    """Return whether "end" is reachable from "start" if "without" were removed."""
     key = (start, without)
     if key in context.reachable_without:
         return end in context.reachable_without[key]
@@ -331,13 +341,13 @@ def build_conditional_subgraph(
             # I think this can only happen in the case where the other branch has
             # an early return.
             if_body = build_flowgraph_between(
-                context, conditional_node, end, indent + 4
+                context, conditional_node, end, indent + 1
             )
         else:
             # Don't want to follow the loop, otherwise we'd be trapped here.
             # Instead, write a goto for the beginning of the loop.
             if_body = Body(False, [])
-            emit_goto(context, conditional_node, if_body, indent + 4)
+            emit_goto(context, conditional_node, if_body, indent + 1)
     elif not isinstance(fallthrough_node, ConditionalNode) or not (
         fallthrough_node.conditional_edge is conditional_node
         or fallthrough_node.fallthrough_edge is conditional_node
@@ -350,8 +360,8 @@ def build_conditional_subgraph(
         assert start.block.block_info.branch_condition
         if_condition = start.block.block_info.branch_condition.negated()
 
-        if_body = build_flowgraph_between(context, fallthrough_node, end, indent + 4)
-        else_body = build_flowgraph_between(context, conditional_node, end, indent + 4)
+        if_body = build_flowgraph_between(context, fallthrough_node, end, indent + 1)
+        else_body = build_flowgraph_between(context, conditional_node, end, indent + 1)
         if else_body.is_empty():
             else_body = None
     else:
@@ -361,9 +371,7 @@ def build_conditional_subgraph(
         # an &&/|| statement).
         return get_andor_if_statement(context, start, end, indent)
 
-    return IfElseStatement(
-        if_condition, indent, context.options.coding_style, if_body, else_body
-    )
+    return IfElseStatement(if_condition, indent, if_body, else_body)
 
 
 def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
@@ -473,7 +481,7 @@ def get_andor_if_statement(
             # We reached the end of an and-statement.
             # TODO: The last condition - or last few - might've been part
             # of a while-loop.
-            else_body = build_flowgraph_between(context, bottom, end, indent + 4)
+            else_body = build_flowgraph_between(context, bottom, end, indent + 1)
             if else_body.is_empty():
                 else_body = None
             return IfElseStatement(
@@ -481,8 +489,7 @@ def get_andor_if_statement(
                 # OVER the if body.
                 join_conditions(conditions, "&&", only_negate_last=False),
                 indent,
-                context.options.coding_style,
-                if_body=build_flowgraph_between(context, next_node, end, indent + 4),
+                if_body=build_flowgraph_between(context, next_node, end, indent + 1),
                 else_body=else_body,
             )
 
@@ -492,9 +499,9 @@ def get_andor_if_statement(
             assert next_node.block.block_info
             next_node_condition = next_node.block.block_info.branch_condition
             assert next_node_condition
-            if_body = build_flowgraph_between(context, bottom, end, indent + 4)
+            if_body = build_flowgraph_between(context, bottom, end, indent + 1)
             else_body = build_flowgraph_between(
-                context, next_node.conditional_edge, end, indent + 4
+                context, next_node.conditional_edge, end, indent + 1
             )
             if else_body.is_empty():
                 else_body = None
@@ -505,7 +512,6 @@ def get_andor_if_statement(
                     conditions + [next_node_condition], "||", only_negate_last=True
                 ),
                 indent,
-                context.options.coding_style,
                 if_body=if_body,
                 # The else-body is wherever the code jumps to instead of the
                 # fallthrough (i.e. if-body).
@@ -545,7 +551,7 @@ def add_return_statement(
 
     ret = ret_info.return_value
     if ret is not None:
-        ret_str = stringify_expr(ret)
+        ret_str = format_expr(ret, context.fmt)
         body.add_statement(SimpleStatement(indent, f"return {ret_str};"))
         context.is_void = False
     elif not last:
@@ -597,13 +603,12 @@ def build_flowgraph_between(
             elif isinstance(curr_start, ConditionalNode):
                 target = curr_start.conditional_edge
                 if_body = Body(print_node_comment=False)
-                emit_goto_or_early_return(context, target, if_body, indent + 4)
+                emit_goto_or_early_return(context, target, if_body, indent + 1)
                 assert block_info.branch_condition is not None
                 body.add_if_else(
                     IfElseStatement(
                         block_info.branch_condition,
                         indent,
-                        context.options.coding_style,
                         if_body=if_body,
                         else_body=None,
                     )
@@ -666,7 +671,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         ):
             # Fallthrough is fine
             return
-        emit_goto_or_early_return(context, node, body, 4)
+        emit_goto_or_early_return(context, node, body, 1)
 
     for i, node in enumerate(nodes):
         block_info = node.block.block_info
@@ -677,21 +682,20 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             # are jumped to instead.
             pass
         elif isinstance(node, BasicNode):
-            emit_node(context, node, body, 4)
+            emit_node(context, node, body, 1)
             emit_successor(node.successor, i)
         elif isinstance(node, SwitchNode):
-            emit_node(context, node, body, 4)
-            emit_switch_jump(context, node, body, 4)
+            emit_node(context, node, body, 1)
+            emit_switch_jump(context, node, body, 1)
         else:  # ConditionalNode
-            emit_node(context, node, body, 4)
+            emit_node(context, node, body, 1)
             if_body = Body(print_node_comment=False)
-            emit_goto_or_early_return(context, node.conditional_edge, if_body, 8)
+            emit_goto_or_early_return(context, node.conditional_edge, if_body, 2)
             assert block_info.branch_condition is not None
             body.add_if_else(
                 IfElseStatement(
                     block_info.branch_condition,
-                    4,
-                    context.options.coding_style,
+                    1,
                     if_body=if_body,
                     else_body=None,
                 )
@@ -701,9 +705,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
     return body
 
 
-def build_body(
-    context: Context, function_info: FunctionInfo, options: Options,
-) -> Body:
+def build_body(context: Context, function_info: FunctionInfo, options: Options) -> Body:
     start_node: Node = context.flow_graph.entry_node()
     return_node: Optional[ReturnNode] = context.flow_graph.return_node()
     if return_node is None:
@@ -738,18 +740,19 @@ def build_body(
         print("Here's the whole function!\n")
     body: Body
     if options.ifs:
-        body = build_flowgraph_between(context, start_node, return_node, 4)
+        body = build_flowgraph_between(context, start_node, return_node, 1)
     else:
         body = build_naive(context, context.flow_graph.nodes)
 
     if return_node.index != -1:
-        add_return_statement(context, body, return_node, 4, last=True)
+        add_return_statement(context, body, return_node, 1, last=True)
 
     return body
 
 
 def get_function_text(function_info: FunctionInfo, options: Options) -> str:
-    context = Context(flow_graph=function_info.flow_graph, options=options)
+    fmt = Formatter(options.coding_style, skip_casts=options.skip_casts)
+    context = Context(flow_graph=function_info.flow_graph, options=options, fmt=fmt)
     body: Body = build_body(context, function_info, options)
 
     function_lines: List[str] = []
@@ -757,7 +760,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
-        arg_strs.append(arg.type.to_decl(str(arg)))
+        arg_strs.append(arg.type.to_decl(arg.format(fmt)))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
@@ -768,31 +771,31 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         fn_header = f"void {fn_header}"
     else:
         fn_header = function_info.return_type.to_decl(fn_header)
-    whitespace = "\n" if options.coding_style.newline_after_function else " "
+    whitespace = "\n" if fmt.coding_style.newline_after_function else " "
     function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
     for local_var in function_info.stack_info.local_vars[::-1]:
-        type_decl = local_var.type.to_decl(str(local_var))
-        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
+        type_decl = local_var.type.to_decl(local_var.format(fmt))
+        function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
             expr = temp_var.expr
-            type_decl = expr.type.to_decl(str(expr.var))
+            type_decl = expr.type.to_decl(expr.var.format(fmt))
             temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(list(temp_decls)):
-        function_lines.append(str(SimpleStatement(4, decl)))
+        function_lines.append(SimpleStatement(1, decl).format(fmt))
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl(phi_var.get_var_name())
-        function_lines.append(str(SimpleStatement(4, f"{type_decl};")))
+        function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
     if any_decl:
         function_lines.append("")
 
-    function_lines.append(str(body))
+    function_lines.append(body.format(fmt))
     function_lines.append("}")
     full_function_text: str = "\n".join(function_lines)
     return full_function_text

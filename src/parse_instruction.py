@@ -10,6 +10,7 @@ import attr
 from .error import DecompFailure
 
 LENGTH_TWO: Set[str] = {
+    "neg",
     "negu",
     "not",
     "neg.s",
@@ -29,6 +30,9 @@ LENGTH_THREE: Set[str] = {
     "addiu",
     "addu",
     "subu",
+    "daddi",
+    "daddiu",
+    "dsubu",
     "add.s",
     "sub.s",
     "div.s",
@@ -50,6 +54,26 @@ LENGTH_THREE: Set[str] = {
     "srlv",
     "sra",
     "srav",
+    "dsll",
+    "dsll32",
+    "dsllv",
+    "dsrl",
+    "dsrl32",
+    "dsrlv",
+    "dsra",
+    "dsra32",
+    "dsrav",
+}
+
+DIV_MULT_INSTRUCTIONS: Set[str] = {
+    "div",
+    "divu",
+    "ddiv",
+    "ddivu",
+    "mult",
+    "multu",
+    "dmult",
+    "dmultu",
 }
 
 
@@ -120,6 +144,12 @@ class AsmLiteral:
 class AsmAddressMode:
     lhs: Union[AsmLiteral, Macro, None] = attr.ib()
     rhs: Register = attr.ib()
+
+    def lhs_as_literal(self) -> int:
+        if not self.lhs:
+            return 0
+        assert isinstance(self.lhs, AsmLiteral)
+        return self.lhs.signed_value()
 
     def __str__(self) -> str:
         if self.lhs is not None:
@@ -309,6 +339,7 @@ class Instruction:
         return (
             self.mnemonic
             in [
+                "j",
                 "b",
                 "beq",
                 "bne",
@@ -357,11 +388,10 @@ class Instruction:
     def is_jump_instruction(self) -> bool:
         # (we don't treat jal/jalr as jumps, since control flow will return
         # after the call)
-        return self.is_branch_instruction() or self.mnemonic in ["j", "jr"]
+        return self.is_branch_instruction() or self.mnemonic == "jr"
 
     def is_delay_slot_instruction(self) -> bool:
         return self.is_branch_instruction() or self.mnemonic in [
-            "j",
             "jr",
             "jal",
             "jalr",
@@ -374,9 +404,13 @@ class Instruction:
 def normalize_instruction(instr: Instruction) -> Instruction:
     args = instr.args
     if len(args) == 3:
+        if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
+            return Instruction("nop", [])
         if instr.mnemonic == "or" and args[2] == Register("zero"):
             return Instruction("move", args[:2], instr.emit_goto)
         if instr.mnemonic == "addu" and args[2] == Register("zero"):
+            return Instruction("move", args[:2], instr.emit_goto)
+        if instr.mnemonic == "daddu" and args[2] == Register("zero"):
             return Instruction("move", args[:2], instr.emit_goto)
         if instr.mnemonic == "nor" and args[1] == Register("zero"):
             return Instruction("not", [args[0], args[2]])
@@ -384,9 +418,9 @@ def normalize_instruction(instr: Instruction) -> Instruction:
             return Instruction("not", [args[0], args[1]])
         if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
             return Instruction("move", args[:2], instr.emit_goto)
-        if instr.mnemonic in ["div", "divu"]:
+        if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
             if args[0] != Register("zero"):
-                raise DecompFailure("first argument to div must be $zero")
+                raise DecompFailure("first argument to div/mult must be $zero")
             return Instruction(instr.mnemonic, args[1:], instr.emit_goto)
         if (
             instr.mnemonic == "ori"
@@ -410,14 +444,20 @@ def normalize_instruction(instr: Instruction) -> Instruction:
             mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
             return Instruction(mn, [args[0], args[2]], instr.emit_goto)
     if len(args) == 2:
+        if instr.mnemonic == "beqz" and args[0] == Register("zero"):
+            return Instruction("b", [args[1]], instr.emit_goto)
         if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
             lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
             return Instruction("li", [args[0], lit], instr.emit_goto)
         if instr.mnemonic in LENGTH_THREE:
-            return Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+            return normalize_instruction(
+                Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+            )
     if len(args) == 1:
         if instr.mnemonic in LENGTH_TWO:
-            return Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+            return normalize_instruction(
+                Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+            )
     return instr
 
 

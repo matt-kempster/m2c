@@ -1,4 +1,5 @@
 import abc
+import math
 import struct
 import sys
 import traceback
@@ -24,7 +25,7 @@ from .flow_graph import (
     SwitchNode,
     build_flowgraph,
 )
-from .options import Options
+from .options import CodingStyle, Options, DEFAULT_CODING_STYLE
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -139,6 +140,16 @@ def current_instr(instr: Instruction) -> Iterator[None]:
         raise InstrProcessingFailure(instr) from e
 
 
+@attr.s
+class Formatter:
+    coding_style: CodingStyle = attr.ib(default=DEFAULT_CODING_STYLE)
+    indent_step: str = attr.ib(default=" " * 4)
+    skip_casts: bool = attr.ib(default=False)
+
+    def indent(self, indent: int, line: str) -> str:
+        return self.indent_step * indent + line
+
+
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     if expr.type.unify(type):
         if not silent:
@@ -163,8 +174,20 @@ def as_u32(expr: "Expression") -> "Expression":
     return as_type(expr, Type.u32(), False)
 
 
+def as_s64(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.s64(), silent)
+
+
+def as_u64(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.u64(), silent)
+
+
 def as_intish(expr: "Expression") -> "Expression":
     return as_type(expr, Type.intish(), True)
+
+
+def as_int64(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.int64(), True)
 
 
 def as_intptr(expr: "Expression") -> "Expression":
@@ -204,11 +227,11 @@ class StackInfo:
     def in_subroutine_arg_region(self, location: int) -> bool:
         if self.is_leaf:
             return False
+        subroutine_arg_top = self.return_addr_location
         if self.callee_save_reg_locations:
-            subroutine_arg_top = min(self.callee_save_reg_locations.values())
-            assert self.return_addr_location > subroutine_arg_top
-        else:
-            subroutine_arg_top = self.return_addr_location
+            subroutine_arg_top = min(
+                subroutine_arg_top, min(self.callee_save_reg_locations.values())
+            )
 
         return location < subroutine_arg_top
 
@@ -346,12 +369,14 @@ def get_stack_info(
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
     for inst in start_node.block.instructions:
-        if not inst.args:
+        if not inst.args or not isinstance(inst.args[0], Register):
             continue
 
-        destination = typing.cast(Register, inst.args[0])
+        destination = inst.args[0]
 
-        if inst.mnemonic == "addiu" and destination.register_name == "sp":
+        if inst.mnemonic == "jal":
+            break
+        elif inst.mnemonic == "addiu" and destination.register_name == "sp":
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
@@ -364,18 +389,16 @@ def get_stack_info(
             # "move fp, sp" very likely means the code is compiled with frame
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
-        elif inst.mnemonic == "sw" and destination.register_name == "ra":
+        elif (
+            inst.mnemonic == "sw"
+            and destination.register_name == "ra"
+            and isinstance(inst.args[1], AsmAddressMode)
+            and inst.args[1].rhs.register_name == "sp"
+            and info.is_leaf
+        ):
             # Saving the return address on the stack.
-            assert isinstance(inst.args[1], AsmAddressMode)
-            assert inst.args[1].rhs.register_name == "sp"
             info.is_leaf = False
-            if inst.args[1].lhs:
-                assert isinstance(inst.args[1].lhs, AsmLiteral)
-                info.return_addr_location = inst.args[1].lhs.signed_value()
-            else:
-                # Note that this should only happen in the rare case that
-                # this function only calls subroutines with no arguments.
-                info.return_addr_location = 0
+            info.return_addr_location = inst.args[1].lhs_as_literal()
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
             and destination.is_callee_save()
@@ -383,30 +406,22 @@ def get_stack_info(
             and inst.args[1].rhs.register_name == "sp"
         ):
             # Initial saving of callee-save register onto the stack.
-            assert isinstance(inst.args[1].rhs, Register)
-            if inst.args[1].lhs:
-                assert isinstance(inst.args[1].lhs, AsmLiteral)
-                info.callee_save_reg_locations[destination] = inst.args[
-                    1
-                ].lhs.signed_value()
-            else:
-                info.callee_save_reg_locations[destination] = 0
+            info.callee_save_reg_locations[destination] = inst.args[1].lhs_as_literal()
 
-    # Find the region that contains local variables.
-    if info.is_leaf and info.callee_save_reg_locations:
-        # In a leaf with callee-save registers, the local variables
-        # lie directly above those registers.
-        info.local_vars_region_bottom = max(info.callee_save_reg_locations.values()) + 4
-    elif info.is_leaf:
-        # In a leaf without callee-save registers, the local variables
-        # lie directly at the bottom of the stack.
-        info.local_vars_region_bottom = 0
-    else:
-        # In a non-leaf, the local variables lie above the location of the
-        # return address.
+    # Find the region that contains local variables. It is above saved registers
+    # and the return address, if those exist. If they don't, the local variables
+    # can lie directly at the bottom of the stack.
+    info.local_vars_region_bottom = 0
+
+    if not info.is_leaf:
         info.local_vars_region_bottom = info.return_addr_location + 4
 
-    # Done.
+    if info.callee_save_reg_locations:
+        info.local_vars_region_bottom = max(
+            info.local_vars_region_bottom,
+            max(info.callee_save_reg_locations.values()) + 4,
+        )
+
     return info
 
 
@@ -440,10 +455,13 @@ class Var:
     num_usages: int = attr.ib(default=0)
     name: Optional[str] = attr.ib(default=None)
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.name is None:
             self.name = self.stack_info.temp_var(self.prefix)
         return self.name
+
+    def __str__(self) -> str:
+        return "<temp>"
 
 
 class Expression(abc.ABC):
@@ -469,8 +487,15 @@ class Expression(abc.ABC):
             expr.use()
 
     @abc.abstractmethod
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         ...
+
+    def __str__(self) -> str:
+        """Stringify an expression for debug purposes. The output can change
+        depending on when this is called, e.g. because of EvalOnceExpr state.
+        To avoid using it by accident, output is quoted."""
+        fmt = Formatter()
+        return '"' + self.format(fmt) + '"'
 
 
 class Condition(Expression):
@@ -485,8 +510,15 @@ class Statement(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         ...
+
+    def __str__(self) -> str:
+        """Stringify a statement for debug purposes. The output can change
+        depending on when this is called, e.g. because of EvalOnceExpr state.
+        To avoid using it by accident, output is quoted."""
+        fmt = Formatter()
+        return '"' + self.format(fmt) + '"'
 
 
 @attr.s(frozen=True, eq=False)
@@ -500,7 +532,7 @@ class ErrorExpr(Condition):
     def negated(self) -> "Condition":
         return self
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.desc is not None:
             return f"ERROR({self.desc})"
         return "ERROR"
@@ -513,7 +545,7 @@ class SecondF64Half(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return "(second half of f64)"
 
 
@@ -529,6 +561,12 @@ class BinaryOp(Condition):
     def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_intish(left), op=op, right=as_intish(right), type=Type.intish()
+        )
+
+    @staticmethod
+    def int64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_int64(left), op=op, right=as_int64(right), type=Type.int64()
         )
 
     @staticmethod
@@ -585,6 +623,14 @@ class BinaryOp(Condition):
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.u32())
 
     @staticmethod
+    def s64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(left=as_s64(left), op=op, right=as_s64(right), type=Type.s64())
+
+    @staticmethod
+    def u64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(left=as_u64(left), op=op, right=as_u64(right), type=Type.u64())
+
+    @staticmethod
     def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_f32(left),
@@ -625,7 +671,7 @@ class BinaryOp(Condition):
     def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if (
             self.op == "+"
             and not self.floating
@@ -634,8 +680,8 @@ class BinaryOp(Condition):
         ):
             neg = Literal(value=-self.right.value, type=self.right.type)
             sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
-            return str(sub)
-        return f"({self.left} {self.op} {self.right})"
+            return sub.format(fmt)
+        return f"({self.left.format(fmt)} {self.op} {self.right.format(fmt)})"
 
 
 @attr.s(frozen=True, eq=False)
@@ -652,8 +698,25 @@ class UnaryOp(Condition):
             return self.expr
         return UnaryOp("!", self, type=Type.bool())
 
-    def __str__(self) -> str:
-        return f"{self.op}{self.expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"{self.op}{self.expr.format(fmt)}"
+
+
+@attr.s(frozen=True, eq=False)
+class ExprCondition(Condition):
+    expr: Expression = attr.ib()
+    type: Type = attr.ib()
+    is_negated: bool = attr.ib(default=False)
+
+    def dependencies(self) -> List[Expression]:
+        return [self.expr]
+
+    def negated(self) -> "Condition":
+        return ExprCondition(self.expr, self.type, not self.is_negated)
+
+    def format(self, fmt: Formatter) -> str:
+        neg = "!" if self.is_negated else ""
+        return f"{neg}{self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True, eq=False)
@@ -669,9 +732,11 @@ class CommaConditionExpr(Condition):
     def negated(self) -> "Condition":
         return CommaConditionExpr(self.statements, self.condition.negated())
 
-    def __str__(self) -> str:
-        comma_joined = ", ".join(str(stmt).rstrip(";") for stmt in self.statements)
-        return f"({comma_joined}, {self.condition})"
+    def format(self, fmt: Formatter) -> str:
+        comma_joined = ", ".join(
+            stmt.format(fmt).rstrip(";") for stmt in self.statements
+        )
+        return f"({comma_joined}, {self.condition.format(fmt)})"
 
 
 @attr.s(frozen=True, eq=False)
@@ -689,16 +754,18 @@ class Cast(Expression):
         self.expr.type.unify(self.type)
         super().use()
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
-            return f"(bitwise {self.type}) {self.expr}"
+            return f"(bitwise {self.type}) {self.expr.format(fmt)}"
         if self.reinterpret and (
             self.silent
             or (is_type_obvious(self.expr) and self.expr.type.unify(self.type))
         ):
-            return str(self.expr)
-        return f"({self.type}) {self.expr}"
+            return self.expr.format(fmt)
+        if fmt.skip_casts:
+            return f"{self.expr.format(fmt)}"
+        return f"({self.type}) {self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True, eq=False)
@@ -710,9 +777,9 @@ class FuncCall(Expression):
     def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
 
-    def __str__(self) -> str:
-        args = ", ".join(stringify_expr(arg) for arg in self.args)
-        return f"{self.function}({args})"
+    def format(self, fmt: Formatter) -> str:
+        args = ", ".join(format_expr(arg, fmt) for arg in self.args)
+        return f"{self.function.format(fmt)}({args})"
 
 
 @attr.s(frozen=True, eq=True)
@@ -723,7 +790,7 @@ class LocalVar(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return f"sp{format_hex(self.value)}"
 
 
@@ -737,7 +804,7 @@ class PassedInArg(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         assert self.value % 4 == 0
         name = self.stack_info.get_param_name(self.value)
         return name or f"arg{format_hex(self.value // 4)}"
@@ -751,7 +818,7 @@ class SubroutineArg(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return f"subroutine_arg{format_hex(self.value // 4)}"
 
 
@@ -772,7 +839,7 @@ class StructAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         var = late_unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
@@ -796,14 +863,14 @@ class StructAccess(Expression):
 
         if isinstance(var, AddressOf):
             if self.offset == 0 and not has_nonzero_access:
-                return f"{var.expr}"
+                return f"{var.expr.format(fmt)}"
             else:
-                return f"{parenthesize_for_struct_access(var.expr)}.{field_name}"
+                return f"{parenthesize_for_struct_access(var.expr, fmt)}.{field_name}"
         else:
             if self.offset == 0 and not has_nonzero_access:
-                return f"*{var}"
+                return f"*{var.format(fmt)}"
             else:
-                return f"{parenthesize_for_struct_access(var)}->{field_name}"
+                return f"{parenthesize_for_struct_access(var, fmt)}->{field_name}"
 
 
 @attr.s(frozen=True, eq=True)
@@ -816,8 +883,10 @@ class ArrayAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.ptr, self.index]
 
-    def __str__(self) -> str:
-        return f"{parenthesize_for_struct_access(self.ptr)}[{self.index}]"
+    def format(self, fmt: Formatter) -> str:
+        base = parenthesize_for_struct_access(self.ptr, fmt)
+        index = format_expr(self.index, fmt)
+        return f"{base}[{index}]"
 
 
 @attr.s(frozen=True, eq=True)
@@ -828,7 +897,7 @@ class GlobalSymbol(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return self.symbol_name
 
 
@@ -840,23 +909,26 @@ class Literal(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.type.is_float():
             if self.type.get_size_bits() == 32:
                 return format_f32_imm(self.value) + "f"
             else:
                 return format_f64_imm(self.value)
+        if self.type.is_pointer() and self.value == 0:
+            return "NULL"
+
         prefix = ""
-        if self.type.is_pointer():
-            if self.value == 0:
-                return "NULL"
-            else:
+        suffix = ""
+        if not fmt.skip_casts:
+            if self.type.is_pointer():
                 prefix = "(void *)"
-        elif self.type.get_size_bits() == 8:
-            prefix = "(u8)"
-        elif self.type.get_size_bits() == 16:
-            prefix = "(u16)"
-        suffix = "U" if self.type.is_unsigned() else ""
+            elif self.type.get_size_bits() == 8:
+                prefix = "(u8)"
+            elif self.type.get_size_bits() == 16:
+                prefix = "(u16)"
+            if self.type.is_unsigned():
+                suffix = "U"
         mid = (
             str(self.value)
             if abs(self.value) < 10
@@ -873,7 +945,7 @@ class StringLiteral(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         has_trailing_null = False
         strdata: str
         try:
@@ -897,8 +969,8 @@ class AddressOf(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.expr]
 
-    def __str__(self) -> str:
-        return f"&{self.expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"&{self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True)
@@ -910,8 +982,8 @@ class Lwl(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
 
-    def __str__(self) -> str:
-        return f"LWL({self.load_expr})"
+    def format(self, fmt: Formatter) -> str:
+        return f"LWL({self.load_expr.format(fmt)})"
 
 
 @attr.s(frozen=True)
@@ -922,8 +994,8 @@ class Load3Bytes(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
 
-    def __str__(self) -> str:
-        return f"(first 3 bytes) {self.load_expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"(first 3 bytes) {self.load_expr.format(fmt)}"
 
 
 @attr.s(frozen=True)
@@ -934,8 +1006,8 @@ class UnalignedLoad(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
 
-    def __str__(self) -> str:
-        return f"(unaligned s32) {self.load_expr}"
+    def format(self, fmt: Formatter) -> str:
+        return f"(unaligned s32) {self.load_expr.format(fmt)}"
 
 
 @attr.s(frozen=False, eq=False)
@@ -977,11 +1049,11 @@ class EvalOnceExpr(Expression):
     def need_decl(self) -> bool:
         return self.num_usages > 1 and not self.trivial
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if not self.need_decl():
-            return str(self.wrapped_expr)
+            return self.wrapped_expr.format(fmt)
         else:
-            return str(self.var)
+            return self.var.format(fmt)
 
 
 @attr.s(eq=False)
@@ -1006,8 +1078,8 @@ class ForceVarExpr(Expression):
         self.wrapped_expr.use()
         self.wrapped_expr.use()
 
-    def __str__(self) -> str:
-        return str(self.wrapped_expr)
+    def format(self, fmt: Formatter) -> str:
+        return self.wrapped_expr.format(fmt)
 
 
 @attr.s(frozen=False, eq=False)
@@ -1030,8 +1102,10 @@ class PhiExpr(Expression):
     def use(self, from_phi: Optional["PhiExpr"] = None) -> None:
         if self.num_usages == 0:
             self.used_phis.append(self)
+            self.used_by = from_phi
         self.num_usages += 1
-        self.used_by = from_phi
+        if self.used_by != from_phi:
+            self.used_by = None
         if self.replacement_expr is not None:
             self.replacement_expr.use()
 
@@ -1042,13 +1116,13 @@ class PhiExpr(Expression):
         admittedly a bit sketchy, in case the phi is in scope here and used
         later on... but we have that problem with regular phi assignments as
         well."""
-        if self.num_usages != 1 or self.used_by is None:
+        if self.used_by is None:
             return self
         return self.used_by.propagates_to()
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.replacement_expr:
-            return str(self.replacement_expr)
+            return self.replacement_expr.format(fmt)
         return self.get_var_name()
 
 
@@ -1065,11 +1139,11 @@ class EvalOnceStmt(Statement):
         else:
             return self.need_decl()
 
-    def __str__(self) -> str:
-        val_str = stringify_expr(self.expr.wrapped_expr)
+    def format(self, fmt: Formatter) -> str:
+        val_str = format_expr(self.expr.wrapped_expr, fmt)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
-        return f"{self.expr.var} = {val_str};"
+        return f"{self.expr.var.format(fmt)} = {val_str};"
 
 
 @attr.s
@@ -1090,8 +1164,8 @@ class SetPhiStmt(Statement):
             return False
         return True
 
-    def __str__(self) -> str:
-        val_str = stringify_expr(self.expr)
+    def format(self, fmt: Formatter) -> str:
+        val_str = format_expr(self.expr, fmt)
         return f"{self.phi.propagates_to().get_var_name()} = {val_str};"
 
 
@@ -1102,8 +1176,8 @@ class ExprStmt(Statement):
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        return f"{stringify_expr(self.expr)};"
+    def format(self, fmt: Formatter) -> str:
+        return f"{format_expr(self.expr, fmt)};"
 
 
 @attr.s
@@ -1114,8 +1188,8 @@ class StoreStmt(Statement):
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
-        return f"{self.dest} = {stringify_expr(self.source)};"
+    def format(self, fmt: Formatter) -> str:
+        return f"{self.dest.format(fmt)} = {format_expr(self.source, fmt)};"
 
 
 @attr.s
@@ -1125,7 +1199,7 @@ class CommentStmt(Statement):
     def should_write(self) -> bool:
         return True
 
-    def __str__(self) -> str:
+    def format(self, fmt: Formatter) -> str:
         return f"// {self.contents}"
 
 
@@ -1375,7 +1449,7 @@ def deref(
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             if (
                 isinstance(addend, Literal)
-                and addend.value % 2 ** 16 == 0
+                and addend.value % 2 ** 15 in [0, 2 ** 15 - 1]
                 and addend.value < 0x1000000
             ):
                 offset += addend.value
@@ -1424,12 +1498,6 @@ def deref(
 
 def is_trivial_expression(expr: Expression) -> bool:
     # Determine whether an expression should be evaluated only once or not.
-    # TODO: Some of this logic is sketchy, saying that it's fine to repeat e.g.
-    # reads even though there might have been e.g. sets or function calls in
-    # between. It should really take into account what has changed since the
-    # expression was created and when it's used. For now, though, we make this
-    # naive guess at the creation. (Another signal we could potentially use is
-    # whether the expression is stored in a callee-save register.)
     if expr is None or isinstance(
         expr,
         (
@@ -1445,10 +1513,6 @@ def is_trivial_expression(expr: Expression) -> bool:
         return True
     if isinstance(expr, AddressOf):
         return is_trivial_expression(expr.expr)
-    if isinstance(expr, StructAccess):
-        return is_trivial_expression(expr.struct_var)
-    if isinstance(expr, ArrayAccess):
-        return is_trivial_expression(expr.ptr) and is_trivial_expression(expr.index)
     return False
 
 
@@ -1521,21 +1585,19 @@ def balanced_parentheses(string: str) -> bool:
     return bal == 0
 
 
-def stringify_expr(expr: Expression) -> str:
-    """
-    Stringify an expression, stripping unnecessary parentheses around it.
-    """
-    ret = str(expr)
+def format_expr(expr: Expression, fmt: Formatter) -> str:
+    """Stringify an expression, stripping unnecessary parentheses around it."""
+    ret = expr.format(fmt)
     if ret.startswith("(") and balanced_parentheses(ret[1:-1]):
         return ret[1:-1]
     return ret
 
 
-def parenthesize_for_struct_access(expr: Expression) -> str:
+def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     # Nested dereferences may need to be parenthesized. All other
     # expressions will already have adequate parentheses added to them.
     # (Except Cast's, TODO...)
-    s = str(expr)
+    s = expr.format(fmt)
     if s.startswith("*") or s.startswith("&"):
         return f"({s})"
     return s
@@ -1610,6 +1672,13 @@ def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
         rhs = literal_expr(arg.rhs, stack_info)
         return BinaryOp.int(left=lhs, op=arg.op, right=rhs)
     raise DecompFailure(f"Instruction argument {arg} must be a literal")
+
+
+def imm_add_32(expr: Expression) -> Expression:
+    if isinstance(expr, Literal):
+        return as_intish(Literal(expr.value + 32))
+    else:
+        return BinaryOp.int(expr, "+", Literal(32))
 
 
 def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
@@ -1916,13 +1985,63 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
 
 
 def format_f32_imm(num: int) -> str:
-    (num,) = struct.unpack(">f", struct.pack(">I", num & (2 ** 32 - 1)))
-    return str(num)
+    packed = struct.pack(">I", num & (2 ** 32 - 1))
+    value = struct.unpack(">f", packed)[0]
+
+    if not value or value == 4294967296.0:
+        # Zero, negative zero, nan, or INT_MAX.
+        return str(value)
+
+    # Write values smaller than 1e-7 / greater than 1e7 using scientific notation,
+    # and values in between using fixed point.
+    if abs(math.log10(abs(value))) > 6.9:
+        fmt_char = "e"
+    elif abs(value) < 1:
+        fmt_char = "f"
+    else:
+        fmt_char = "g"
+
+    def fmt(prec: int) -> str:
+        """Format 'value' with 'prec' significant digits/decimals, in either scientific
+        or regular notation depending on 'fmt_char'."""
+        ret = ("{:." + str(prec) + fmt_char + "}").format(value)
+        if fmt_char == "e":
+            return ret.replace("e+", "e").replace("e0", "e").replace("e-0", "e-")
+        if "e" in ret:
+            # The "g" format character can sometimes introduce scientific notation if
+            # formatting with too few decimals. If this happens, return an incorrect
+            # value to prevent the result from being used.
+            #
+            # Since the value we are formatting is within (1e-7, 1e7) in absolute
+            # value, it will at least be possible to format with 7 decimals, which is
+            # less than float precision. Thus, this annoying Python limitation won't
+            # lead to us outputting numbers with more precision than we really have.
+            return "0"
+        return ret
+
+    # 20 decimals is more than enough for a float. Start there, then try to shrink it.
+    prec = 20
+    while prec > 0:
+        prec -= 1
+        value2 = float(fmt(prec))
+        if struct.pack(">f", value2) != packed:
+            prec += 1
+            break
+
+    if prec == 20:
+        # Uh oh, even the original value didn't format correctly. Fall back to str(),
+        # which ought to work.
+        return str(value)
+
+    ret = fmt(prec)
+    if "." not in ret:
+        ret += ".0"
+    return ret
 
 
 def format_f64_imm(num: int) -> str:
-    (num,) = struct.unpack(">d", struct.pack(">Q", num & (2 ** 64 - 1)))
-    return str(num)
+    (value,) = struct.unpack(">d", struct.pack(">Q", num & (2 ** 64 - 1)))
+    return str(value)
 
 
 def fold_mul_chains(expr: Expression) -> Expression:
@@ -2182,6 +2301,7 @@ CASES_IGNORE: InstrSet = {
     "ctc1",
     "nop",
     "b",
+    "j",
 }
 CASES_STORE: StoreInstrMap = {
     # Storage instructions
@@ -2257,9 +2377,19 @@ CASES_HI_LO: PairInstrMap = {
         BinaryOp.u32(a.reg(0), "%", a.reg(1)),
         BinaryOp.u32(a.reg(0), "/", a.reg(1)),
     ),
+    "ddiv": lambda a: (
+        BinaryOp.s64(a.reg(0), "%", a.reg(1)),
+        BinaryOp.s64(a.reg(0), "/", a.reg(1)),
+    ),
+    "ddivu": lambda a: (
+        BinaryOp.u64(a.reg(0), "%", a.reg(1)),
+        BinaryOp.u64(a.reg(0), "/", a.reg(1)),
+    ),
     # The high part of multiplication cannot be directly represented in C
     "mult": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
     "multu": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
+    "dmult": lambda a: (None, BinaryOp.int64(a.reg(0), "*", a.reg(1))),
+    "dmultu": lambda a: (None, BinaryOp.int64(a.reg(0), "*", a.reg(1))),
 }
 CASES_SOURCE_FIRST: InstrMap = {
     # Floating point moving instruction
@@ -2281,6 +2411,17 @@ CASES_DESTINATION_FIRST: InstrMap = {
     ),
     "neg": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+    ),
+    # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
+    "daddi": lambda a: handle_addi(a),
+    "daddiu": lambda a: handle_addi(a),
+    "daddu": lambda a: handle_add(a),
+    "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
+    "dnegu": lambda a: fold_mul_chains(
+        UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
+    ),
+    "dneg": lambda a: fold_mul_chains(
+        UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
     ),
     # Hi/lo register uses (used after division/multiplication)
     "mfhi": lambda a: a.regs[Register("hi")],
@@ -2324,10 +2465,11 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
     "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
     "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
+    # Shifts
     "sll": lambda a: fold_mul_chains(
-        BinaryOp.int(left=a.reg(1), op="<<", right=a.imm(2))
+        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
     ),
-    "sllv": lambda a: BinaryOp.int(left=a.reg(1), op="<<", right=a.reg(2)),
+    "sllv": lambda a: BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2))),
     "srl": lambda a: BinaryOp(
         left=as_u32(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u32()
     ),
@@ -2339,6 +2481,34 @@ CASES_DESTINATION_FIRST: InstrMap = {
     ),
     "srav": lambda a: BinaryOp(
         left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
+    ),
+    # 64-bit shifts
+    "dsll": lambda a: fold_mul_chains(
+        BinaryOp.int64(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
+    ),
+    "dsll32": lambda a: fold_mul_chains(
+        BinaryOp.int64(left=a.reg(1), op="<<", right=imm_add_32(a.imm(2)))
+    ),
+    "dsllv": lambda a: BinaryOp.int64(
+        left=a.reg(1), op="<<", right=as_intish(a.reg(2))
+    ),
+    "dsrl": lambda a: BinaryOp(
+        left=as_u64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u64()
+    ),
+    "dsrl32": lambda a: BinaryOp(
+        left=as_u64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.u64()
+    ),
+    "dsrlv": lambda a: BinaryOp(
+        left=as_u64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u64()
+    ),
+    "dsra": lambda a: BinaryOp(
+        left=as_s64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s64()
+    ),
+    "dsra32": lambda a: BinaryOp(
+        left=as_s64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.s64()
+    ),
+    "dsrav": lambda a: BinaryOp(
+        left=as_s64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s64()
     ),
     # Move pseudoinstruction
     "move": lambda a: a.reg(1),
@@ -2495,7 +2665,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # (though it's too late for it to be able to participate in the
             # prevent_later_uses machinery).
             phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
-            for e in exprs[1:]:
+            for e in exprs:
                 e.type.unify(phi.type)
             for _ in range(phi.num_usages):
                 first_uw.use()
@@ -2568,6 +2738,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
         assert reuse_var or prefix
+        if prefix == "condition_bit":
+            prefix = "cond"
         var = reuse_var or Var(stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
             wrapped_expr=expr,
@@ -2753,7 +2925,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_FLOAT_BRANCHES:
             assert branch_condition is None
             cond_bit = regs[Register("condition_bit")]
-            assert isinstance(cond_bit, BinaryOp)
+            if not isinstance(cond_bit, BinaryOp):
+                cond_bit = ExprCondition(cond_bit, type=cond_bit.type)
             if mnemonic == "bc1t":
                 branch_condition = cond_bit
             elif mnemonic == "bc1f":
@@ -2974,7 +3147,7 @@ def translate_graph_from_block(
     """
 
     if options.debug:
-        print(f"\nNode in question: {node.block}")
+        print(f"\nNode in question: {node}")
 
     # Translate the given node and discover final register states.
     try:
@@ -2983,7 +3156,7 @@ def translate_graph_from_block(
             print(block_info)
     except Exception as e:  # TODO: handle issues better
         if options.stop_on_error:
-            raise e
+            raise
 
         instr: Optional[Instruction] = None
         if isinstance(e, InstrProcessingFailure) and isinstance(e.__cause__, Exception):
@@ -3139,4 +3312,22 @@ def translate_to_ast(
             b.return_value = None
 
     assign_phis(used_phis, stack_info)
+
+    if options.pdb_translate:
+        import pdb
+
+        v: Dict[str, object] = {}
+        fmt = Formatter()
+        for local in stack_info.local_vars:
+            var_name = local.format(fmt)
+            v[var_name] = local
+        for temp in stack_info.temp_vars:
+            if temp.need_decl():
+                var_name = temp.expr.var.format(fmt)
+                v[var_name] = temp.expr
+        for phi in stack_info.phi_vars:
+            assert phi.name is not None
+            v[phi.name] = phi
+        pdb.set_trace()
+
     return FunctionInfo(stack_info, flow_graph, return_type)

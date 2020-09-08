@@ -479,8 +479,8 @@ def build_typemap(source: str) -> TypeMap:
                 self.visit(decl.type)
 
         def visit_Enum(self, enum: ca.Enum) -> None:
-            if enum.name is not None:
-                ret.typedefs[enum.name] = basic_type(["int"])
+            # We treat all enums as having size 4; no need to do anything here.
+            pass
 
         def visit_FuncDef(self, fn: ca.FuncDef) -> None:
             if fn.decl.name is not None:
@@ -529,7 +529,7 @@ def dump_typemap(typemap: TypeMap) -> None:
     for name, struct in typemap.named_structs.items():
         print(f"{name}: size {struct.size}, align {struct.align}")
         for offset, fields in struct.fields.items():
-            print(f"  {offset}:", end="")
+            print(f"  {hex(offset)}:", end="")
             for field in fields:
                 print(f" {field.name} ({type_to_string(field.type)})", end="")
             print()
