@@ -562,6 +562,13 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
     for item in body_iter:
         process(item)
 
+    if block_builder.curr_label:
+        label = block_builder.curr_label.name
+        print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
+        block_builder.add_instruction(Instruction("jr", [Register("ra")]))
+        block_builder.add_instruction(Instruction("nop", []))
+        block_builder.new_block()
+
     # Throw away whatever is past the last "jr $ra" and return what we have.
     return block_builder.get_blocks()
 
