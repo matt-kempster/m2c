@@ -333,21 +333,13 @@ def build_conditional_subgraph(
     fallthrough_node: Node = start.fallthrough_edge
     conditional_node: Node = start.conditional_edge
     if fallthrough_node is end:
-        # This case is quite rare, and either indicates an early return, or
-        # some sort of loop.
+        # This case is quite rare, and either indicates an early return, an
+        # empty if, or some sort of loop. In the loop case, we expect
+        # build_flowgraph_between to end up noticing that the label has already
+        # been seen and emit a goto, but in rare cases this might not happen.
+        # If so it seems fine to emit the loop here.
         if_condition = if_block_info.branch_condition
-        if not start.is_loop():
-            # Only an if block, so this is easy.
-            # I think this can only happen in the case where the other branch has
-            # an early return.
-            if_body = build_flowgraph_between(
-                context, conditional_node, end, indent + 1
-            )
-        else:
-            # Don't want to follow the loop, otherwise we'd be trapped here.
-            # Instead, write a goto for the beginning of the loop.
-            if_body = Body(False, [])
-            emit_goto(context, conditional_node, if_body, indent + 1)
+        if_body = build_flowgraph_between(context, conditional_node, end, indent + 1)
     elif not isinstance(fallthrough_node, ConditionalNode) or not (
         fallthrough_node.conditional_edge is conditional_node
         or fallthrough_node.fallthrough_edge is conditional_node
