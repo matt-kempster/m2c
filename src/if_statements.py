@@ -340,13 +340,20 @@ def build_conditional_subgraph(
         # If so it seems fine to emit the loop here.
         if_condition = if_block_info.branch_condition
         if_body = build_flowgraph_between(context, conditional_node, end, indent + 1)
-    elif not isinstance(fallthrough_node, ConditionalNode) or not (
+    elif isinstance(fallthrough_node, ConditionalNode) and (
         fallthrough_node.conditional_edge is conditional_node
         or fallthrough_node.fallthrough_edge is conditional_node
     ):
-        # This case is very common: the above conditions indicate that the
-        # fallthrough edge doesn't point to the conditional edge.
-        # This means we split into an if-body and an else-body, though the latter
+        # The fallthrough node is also a conditional, with an edge pointing to
+        # the same target as our conditional edge. This case comes up for
+        # &&-statements and ||-statements, but also sometimes for regular
+        # if-statements (a degenerate case of an &&/|| statement).
+        return get_andor_if_statement(context, start, end, indent)
+    else:
+        # This case is the most common. Since we missed the if above, we will
+        # assume that taking the conditional edge does not perform any other
+        # ||/&&-chain checks, but instead represents skipping the if body.
+        # Thus, we split into an if-body and an else-body, though the latter
         # (for one reason or another) can still be empty.
         assert start.block.block_info
         assert start.block.block_info.branch_condition
@@ -356,12 +363,6 @@ def build_conditional_subgraph(
         else_body = build_flowgraph_between(context, conditional_node, end, indent + 1)
         if else_body.is_empty():
             else_body = None
-    else:
-        # This means the fallthrough edge points directly to the conditional
-        # edge. This case comes up for &&-statements and ||-statements,
-        # but also just for regular if-statements (a degenerate case of
-        # an &&/|| statement).
-        return get_andor_if_statement(context, start, end, indent)
 
     return IfElseStatement(if_condition, indent, if_body, else_body)
 
