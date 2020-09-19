@@ -8,8 +8,11 @@ union SomeUnion {
 
 enum SomeEnum
 {
-    FIRST_ELEM = 1,
-    SECOND_ELEM = 2
+    FIRST_ELEM,
+    SECOND_ELEM = 2,
+    THIRD_ELEM = SECOND_ELEM * 3,
+    FOURTH_ELEM,
+    FIFTH_ELEM,
 };
 
 struct SomeBitfield {
@@ -27,13 +30,34 @@ struct SomeStruct
     void *pointer_field;
     union SomeUnion data_field;
     enum SomeEnum enum_field;
+    enum {
+        MORE_ENUM = SECOND_ELEM,
+    } anon_enum_field;
+    struct {
+        int sub;
+    } anon_struct_field;
+    struct SubStruct {
+        int x;
+    };
+    union {
+        int anon_union_field1;
+        float anon_union_field2;
+    };
+    struct SubStruct inner_struct_field;
     long long long_long_field;
     struct SomeBitfield bitfield_field;
     int array_arithmetic_1[1 + 1];
     int array_arithmetic_2[2 - 1];
     int array_arithmetic_3[1 * 1];
     int array_arithmetic_4[1 << 1];
-    int array_arithmetic_5[1 >> 1];
+    int array_arithmetic_5[2 >> 1];
+    int array_arithmetic_6[SECOND_ELEM];
+};
+
+extern struct SubStruct extern_inner_struct_field;
+
+enum {
+    YET_MORE_ENUM = MORE_ENUM
 };
 
 void func_decl(void) {
