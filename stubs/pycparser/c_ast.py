@@ -51,7 +51,6 @@ Expression = Union_[
 ]
 Statement = Union_[
     Expression,
-    "Decl",
     "Break",
     "Case",
     "Compound",
@@ -401,12 +400,12 @@ class EmptyStatement(Node):
 
 class Enum(Node):
     name: Optional[str]
-    values: "EnumeratorList"
+    values: "Optional[EnumeratorList]"
 
     def __init__(
         self,
         name: Optional[str],
-        values: "EnumeratorList",
+        values: "Optional[EnumeratorList]",
         coord: Optional[Coord] = None,
     ):
         ...
