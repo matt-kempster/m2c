@@ -442,7 +442,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         if bgez.get_branch_target().target != label.name:
             return None
         cvt_instr = typing.cast(Instruction, actual[1])
-        new_instr = Instruction(mnemonic="cvt.s.u", args=cvt_instr.args)
+        new_instr = Instruction(mnemonic="cvt.s.u.fictive", args=cvt_instr.args)
         return ([new_instr], i + len(utf_pattern) - 1)
 
     def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
@@ -460,9 +460,9 @@ def simplify_standard_patterns(function: Function) -> Function:
         fmt = sub.mnemonic.split(".")[-1]
         args = [cfc.args[0], sub.args[1]]
         if fmt == "s":
-            new_instr = Instruction(mnemonic="cvt.u.s", args=args)
+            new_instr = Instruction(mnemonic="cvt.u.s.fictive", args=args)
         else:
-            new_instr = Instruction(mnemonic="cvt.u.d", args=args)
+            new_instr = Instruction(mnemonic="cvt.u.d.fictive", args=args)
         return ([new_instr], i + consumed)
 
     def try_replace_mips1_double_load_store(
