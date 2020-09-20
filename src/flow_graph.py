@@ -265,7 +265,28 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
     ]
 
-    divu_pattern: List[str] = ["bnez", "nop", "break", ""]
+    divu_pattern: List[str] = [
+        "bnez",
+        "nop",
+        "break",
+        "",
+    ]
+
+    div_p2_pattern_1: List[str] = [
+        "bgez",
+        "sra",
+        "addiu",
+        "sra",
+        "",
+    ]
+
+    div_p2_pattern_2: List[str] = [
+        "bgez",
+        "move",
+        "addiu",
+        "",
+        "sra",
+    ]
 
     utf_pattern: List[str] = [
         "bgez",
@@ -350,6 +371,13 @@ def simplify_standard_patterns(function: Function) -> Function:
                 return 0
         return actuali
 
+    def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
+        assert isinstance(sra.args[2], AsmLiteral)
+        shift = sra.args[2].value & 0x1F
+        return Instruction(
+            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)]
+        )
+
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(div_pattern)]
         if not matches_pattern(actual, div_pattern):
@@ -376,6 +404,34 @@ def simplify_standard_patterns(function: Function) -> Function:
         if bnez.get_branch_target().target != label.name:
             return None
         return ([], i + len(divu_pattern) - 1)
+
+    def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_p2_pattern_1)]
+        if not matches_pattern(actual, div_p2_pattern_1):
+            return None
+        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
+            return None
+        label = typing.cast(Label, actual[4])
+        bnez = typing.cast(Instruction, actual[0])
+        if bnez.get_branch_target().target != label.name:
+            return None
+        div = create_div_p2(bnez, typing.cast(Instruction, actual[3]))
+        return ([div], i + len(div_p2_pattern_1) - 1)
+
+    def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_p2_pattern_2)]
+        if not matches_pattern(actual, div_p2_pattern_2):
+            return None
+        if typing.cast(Instruction, actual[1]).args[0] != Register("at"):
+            return None
+        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
+            return None
+        label = typing.cast(Label, actual[3])
+        bnez = typing.cast(Instruction, actual[0])
+        if bnez.get_branch_target().target != label.name:
+            return None
+        div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
+        return ([div], i + len(div_p2_pattern_2))
 
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(utf_pattern)]
@@ -453,6 +509,8 @@ def simplify_standard_patterns(function: Function) -> Function:
         repl, i = (
             try_replace_div(i)
             or try_replace_divu(i)
+            or try_replace_div_p2_1(i)
+            or try_replace_div_p2_2(i)
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
             or try_replace_mips1_double_load_store(i)
