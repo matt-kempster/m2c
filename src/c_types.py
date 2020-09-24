@@ -423,7 +423,8 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
         bit_offset = 0
         offset += 1
 
-    size = union_size if is_union else (offset + align - 1) & -align
+    size = union_size if is_union else offset
+    size = (size + align - 1) & -align
     return Struct(fields=fields, size=size, align=align)
 
 
