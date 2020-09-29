@@ -68,13 +68,20 @@ class IfElseStatement:
             ]
         )
         if self.else_body is not None and not self.else_body.is_empty():
-            else_str = "\n".join(
-                [
-                    f"{before_else}else{after_ifelse}{{",
-                    self.else_body.format(fmt),
-                    f"{space}}}",
-                ]
-            )
+            sub_if = self.else_body.get_lone_if_statement()
+            if sub_if:
+                fmt.extra_indent -= 1
+                sub_if_str = sub_if.format(fmt).lstrip()
+                fmt.extra_indent += 1
+                else_str = f"{before_else}else {sub_if_str}"
+            else:
+                else_str = "\n".join(
+                    [
+                        f"{before_else}else{after_ifelse}{{",
+                        self.else_body.format(fmt),
+                        f"{space}}}",
+                    ]
+                )
             if_str = if_str + else_str
         return if_str
 
@@ -149,6 +156,16 @@ class Body:
 
     def is_empty(self) -> bool:
         return not any(statement.should_write() for statement in self.statements)
+
+    def get_lone_if_statement(self) -> Optional[IfElseStatement]:
+        """If the body consists solely of one IfElseStatement, return it, else None."""
+        ret: Optional[IfElseStatement] = None
+        for statement in self.statements:
+            if statement.should_write():
+                if not isinstance(statement, IfElseStatement) or ret:
+                    return None
+                ret = statement
+        return ret
 
     def format(self, fmt: Formatter) -> str:
         return "\n".join(
