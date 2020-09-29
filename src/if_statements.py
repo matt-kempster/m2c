@@ -435,6 +435,7 @@ def get_andor_if_statement(
 
     """
     conditions: List[Condition] = []
+    condition_nodes: List[ConditionalNode] = []
     bottom = start.conditional_edge
     curr_node: ConditionalNode = start
     while True:
@@ -444,14 +445,14 @@ def get_andor_if_statement(
         branch_condition = block_info.branch_condition
         assert branch_condition is not None
         if not conditions:
-            # The first condition in an if-statement will have
-            # unrelated statements in its to_write list. Circumvent
-            # emitting them twice by just using branch_condition:
+            # The first condition in an if-statement will have unrelated
+            # statements in its to_write list, which our caller will already
+            # have emitted. Avoid emitting them twice.
             conditions.append(branch_condition)
         else:
-            # Make sure to write down each block's statement list,
-            # even inside an and/or group.
+            # Include the statements in the condition by using a comma expression.
             conditions.append(gather_any_comma_conditions(block_info))
+        condition_nodes.append(curr_node)
 
         # The next node will tell us whether we are in an &&/|| statement.
         # Our strategy will be:
@@ -476,6 +477,32 @@ def get_andor_if_statement(
             # We reached the end of an && statement.
             # TODO: The last condition - or last few - might've been part
             # of a while-loop.
+
+            if bottom is end:
+                # If we don't need to emit an 'else', only emit && conditions up
+                # to the first comma-statement condition, to avoid too much of
+                # the output being sucked into if conditions.
+                index = next(
+                    (
+                        i
+                        for i, cond in enumerate(conditions)
+                        if isinstance(cond, CommaConditionExpr)
+                    ),
+                    None,
+                )
+
+                if index is not None:
+                    if_body = build_flowgraph_between(
+                        context, condition_nodes[index], end, indent + 1
+                    )
+                    return IfElseStatement(
+                        join_conditions(
+                            [cond.negated() for cond in conditions[:index]], "&&"
+                        ),
+                        indent,
+                        if_body=if_body,
+                    )
+
             if_body = build_flowgraph_between(context, next_node, end, indent + 1)
             else_body = build_flowgraph_between(context, bottom, end, indent + 1)
             return IfElseStatement(
