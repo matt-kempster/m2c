@@ -473,13 +473,14 @@ def get_andor_if_statement(
             # We reached the end of an && statement.
             # TODO: The last condition - or last few - might've been part
             # of a while-loop.
+            if_body = build_flowgraph_between(context, next_node, end, indent + 1)
             else_body = build_flowgraph_between(context, bottom, end, indent + 1)
             return IfElseStatement(
                 # We negate everything, because the conditional edges will jump
                 # OVER the if body.
                 join_conditions(conditions, "&&", only_negate_last=False),
                 indent,
-                if_body=build_flowgraph_between(context, next_node, end, indent + 1),
+                if_body=if_body,
                 else_body=else_body,
             )
 
