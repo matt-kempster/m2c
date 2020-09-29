@@ -459,19 +459,18 @@ def get_andor_if_statement(
 
         else_body: Optional[Body]
 
-        end_of_and_statement = (
+        if (
             not isinstance(next_node, ConditionalNode)
-            or not (
-                next_node.conditional_edge is bottom
-                or next_node.fallthrough_edge is bottom
+            or (
+                next_node.conditional_edge is not bottom
+                and next_node.fallthrough_edge is not bottom
             )
             # An edge-case of our pattern-matching technology: without
             # this, self-loops match the pattern indefinitely, since a
             # self-loop node's conditional edge points to itself.
             or next_node.is_loop()
-        )
-        if end_of_and_statement:
-            # We reached the end of an and-statement.
+        ):
+            # We reached the end of an && statement.
             # TODO: The last condition - or last few - might've been part
             # of a while-loop.
             else_body = build_flowgraph_between(context, bottom, end, indent + 1)
@@ -484,9 +483,8 @@ def get_andor_if_statement(
                 else_body=else_body,
             )
 
-        assert isinstance(next_node, ConditionalNode)  # mypy bug
-        end_of_or_statement = next_node.fallthrough_edge is bottom
-        if end_of_or_statement:
+        if next_node.fallthrough_edge is bottom:
+            # End of || statement.
             assert next_node.block.block_info
             next_node_condition = next_node.block.block_info.branch_condition
             assert next_node_condition
