@@ -494,6 +494,7 @@ def get_andor_if_statement(
             # this, self-loops match the pattern indefinitely, since a
             # self-loop node's conditional edge points to itself.
             or next_node.is_loop()
+            or len(next_node.parents) > 1
         ):
             # We reached the end of an && statement.
             # TODO: The last condition - or last few - might've been part
