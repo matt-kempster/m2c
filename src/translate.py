@@ -149,9 +149,10 @@ class Formatter:
     coding_style: CodingStyle = attr.ib(default=DEFAULT_CODING_STYLE)
     indent_step: str = attr.ib(default=" " * 4)
     skip_casts: bool = attr.ib(default=False)
+    extra_indent: int = attr.ib(default=0)
 
     def indent(self, indent: int, line: str) -> str:
-        return self.indent_step * indent + line
+        return self.indent_step * max(indent + self.extra_indent, 0) + line
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
