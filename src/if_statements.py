@@ -537,8 +537,9 @@ def get_andor_if_statement(
         if next_node.fallthrough_edge is bottom:
             # End of || statement.
             assert next_node.block.block_info
-            next_node_condition = next_node.block.block_info.branch_condition
-            assert next_node_condition
+            next_node_condition = gather_any_comma_conditions(
+                next_node.block.block_info
+            )
             if_body = build_flowgraph_between(context, bottom, end, indent + 1)
             else_body = build_flowgraph_between(
                 context, next_node.conditional_edge, end, indent + 1

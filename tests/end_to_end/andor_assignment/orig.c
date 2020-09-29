@@ -11,7 +11,7 @@ int test(int a, int b, int c, int d) {
     var2 = b + c;
 
     ret = 0;
-    if (var1 || var2 || (var2 = foo(var2)) || d) {
+    if (var1 || var2 || (var2 = foo(var2)) || (var1 = 2, d)) {
         ret = 1;
     } else if (a) {
         ret = -1;
