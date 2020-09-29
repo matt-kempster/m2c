@@ -495,8 +495,6 @@ def get_andor_if_statement(
             or len(next_node.parents) > 1
         ):
             # We reached the end of an && statement.
-            # TODO: The last condition - or last few - might've been part
-            # of a while-loop.
 
             if bottom is end:
                 # If we don't need to emit an 'else', only emit && conditions up
