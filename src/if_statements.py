@@ -67,7 +67,7 @@ class IfElseStatement:
                 f"{space}}}",
             ]
         )
-        if self.else_body is not None:
+        if self.else_body is not None and not self.else_body.is_empty():
             else_str = "\n".join(
                 [
                     f"{before_else}else{after_ifelse}{{",
@@ -361,8 +361,6 @@ def build_conditional_subgraph(
 
         if_body = build_flowgraph_between(context, fallthrough_node, end, indent + 1)
         else_body = build_flowgraph_between(context, conditional_node, end, indent + 1)
-        if else_body.is_empty():
-            else_body = None
 
     return IfElseStatement(if_condition, indent, if_body, else_body)
 
@@ -475,8 +473,6 @@ def get_andor_if_statement(
             # TODO: The last condition - or last few - might've been part
             # of a while-loop.
             else_body = build_flowgraph_between(context, bottom, end, indent + 1)
-            if else_body.is_empty():
-                else_body = None
             return IfElseStatement(
                 # We negate everything, because the conditional edges will jump
                 # OVER the if body.
@@ -496,8 +492,6 @@ def get_andor_if_statement(
             else_body = build_flowgraph_between(
                 context, next_node.conditional_edge, end, indent + 1
             )
-            if else_body.is_empty():
-                else_body = None
             return IfElseStatement(
                 # Negate the last condition, for it must fall-through to the
                 # body instead of jumping to it, hence it must jump OVER the body.
