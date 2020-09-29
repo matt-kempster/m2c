@@ -46,9 +46,13 @@ from .types import (
     type_from_ctype,
 )
 
-ARGUMENT_REGS = list(map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"]))
+ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 
-TEMP_REGS = ARGUMENT_REGS + list(
+ARGUMENT_REGS: List[Register] = list(
+    map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
+)
+
+TEMP_REGS: List[Register] = ARGUMENT_REGS + list(
     map(
         Register,
         [
@@ -89,7 +93,7 @@ TEMP_REGS = ARGUMENT_REGS + list(
     )
 )
 
-SAVED_REGS = list(
+SAVED_REGS: List[Register] = list(
     map(
         Register,
         [
@@ -681,7 +685,18 @@ class BinaryOp(Condition):
             neg = Literal(value=-self.right.value, type=self.right.type)
             sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
             return sub.format(fmt)
-        return f"({self.left.format(fmt)} {self.op} {self.right.format(fmt)})"
+
+        # For commutative, left-associative operations, strip unnecessary parentheses.
+        left_expr = late_unwrap(self.left)
+        lhs = left_expr.format(fmt)
+        if (
+            isinstance(left_expr, BinaryOp)
+            and left_expr.op == self.op
+            and self.op in ASSOCIATIVE_OPS
+        ):
+            lhs = lhs[1:-1]
+
+        return f"({lhs} {self.op} {self.right.format(fmt)})"
 
 
 @attr.s(frozen=True, eq=False)

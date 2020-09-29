@@ -54,7 +54,7 @@ block_6:
                     phi_t0 = phi_v0 * (phi_a1_2 + 2);
                     phi_t1 = phi_v0 * (phi_a1_2 + 3);
 loop_7:
-                    temp_v1_2 = (((phi_v1_3 + phi_a2) + phi_a3_2) + phi_t0) + phi_t1;
+                    temp_v1_2 = phi_v1_3 + phi_a2 + phi_a3_2 + phi_t0 + phi_t1;
                     temp_a1_2 = phi_a1 + 4;
                     phi_a1 = temp_a1_2;
                     phi_v1_2 = temp_v1_2;

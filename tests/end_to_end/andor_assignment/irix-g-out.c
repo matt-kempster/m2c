@@ -8,7 +8,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     sp24 = arg0 + arg1;
     sp20 = arg1 + arg2;
     sp1C = 0;
-    if ((((sp24 != 0) || (sp20 != 0)) || (sp20 = func_00400090(sp20), (sp20 != 0))) || (arg3 != 0)) {
+    if ((sp24 != 0) || (sp20 != 0) || (sp20 = func_00400090(sp20), (sp20 != 0)) || (arg3 != 0)) {
         sp1C = 1;
     } else {
         if (arg0 != 0) {
@@ -34,7 +34,7 @@ loop_13:
             sp1C = sp1C + 5;
         }
     }
-    if ((((sp24 != 0) && (sp20 != 0)) && (temp_t8 = sp24 + sp20, sp24 = temp_t8, sp20 = func_00400090(temp_t8), (sp20 != 0))) && (arg3 != 0)) {
+    if ((sp24 != 0) && (sp20 != 0) && (temp_t8 = sp24 + sp20, sp24 = temp_t8, sp20 = func_00400090(temp_t8), (sp20 != 0)) && (arg3 != 0)) {
         if (sp1C < 5) {
 loop_20:
             sp1C = sp1C + 1;
