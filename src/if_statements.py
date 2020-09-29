@@ -482,8 +482,6 @@ def get_andor_if_statement(
         #   - Otherwise, assert we still fit the criteria of an &&/|| statement.
         next_node = curr_node.fallthrough_edge
 
-        else_body: Optional[Body]
-
         if (
             not isinstance(next_node, ConditionalNode)
             or (
