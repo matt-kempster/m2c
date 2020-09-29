@@ -478,7 +478,7 @@ def get_andor_if_statement(
             return IfElseStatement(
                 # We negate everything, because the conditional edges will jump
                 # OVER the if body.
-                join_conditions(conditions, "&&", only_negate_last=False),
+                join_conditions([cond.negated() for cond in conditions], "&&"),
                 indent,
                 if_body=if_body,
                 else_body=else_body,
@@ -496,9 +496,7 @@ def get_andor_if_statement(
             return IfElseStatement(
                 # Negate the last condition, for it must fall-through to the
                 # body instead of jumping to it, hence it must jump OVER the body.
-                join_conditions(
-                    conditions + [next_node_condition], "||", only_negate_last=True
-                ),
+                join_conditions(conditions + [next_node_condition.negated()], "||"),
                 indent,
                 if_body=if_body,
                 # The else-body is wherever the code jumps to instead of the
@@ -506,27 +504,19 @@ def get_andor_if_statement(
                 else_body=else_body,
             )
 
-        # Otherwise, still in the middle of an and-or statement.
+        # Otherwise, still in the middle of an &&/|| condition.
         assert next_node.conditional_edge is bottom
         curr_node = next_node
     assert False
 
 
-def join_conditions(
-    conditions: List[Condition], op: str, only_negate_last: bool
-) -> Condition:
+def join_conditions(conditions: List[Condition], op: str) -> Condition:
     assert op in ["&&", "||"]
     assert conditions
-    final_cond: Optional[Condition] = None
-    for i, cond in enumerate(conditions):
-        if not only_negate_last or i == len(conditions) - 1:
-            cond = cond.negated()
-        if final_cond is None:
-            final_cond = cond
-        else:
-            final_cond = BinaryOp(final_cond, op, cond, type=Type.bool())
-    assert final_cond is not None
-    return final_cond
+    ret: Condition = conditions[0]
+    for cond in conditions[1:]:
+        ret = BinaryOp(ret, op, cond, type=Type.bool())
+    return ret
 
 
 def add_return_statement(
