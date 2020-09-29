@@ -2,7 +2,6 @@ s32 test(s32 arg0) {
     u32 temp_t6;
     s32 phi_a0;
     s32 phi_a0_2;
-    s32 phi_t8;
 
     temp_t6 = arg0 - 1;
     if (temp_t6 < 7U) {
@@ -16,18 +15,14 @@ s32 test(s32 arg0) {
         return phi_a0_2 * 2;
     case 3:
         phi_a0 = arg0 + 1;
-        goto block_10;
+        goto block_8;
     default:
         phi_a0 = arg0 * 2;
     } else {
     case 4:
-        phi_t8 = arg0 >> 1;
-        if (arg0 < 0) {
-            phi_t8 = (s32) (arg0 + 1) >> 1;
-        }
-        phi_a0 = phi_t8;
+        phi_a0 = arg0 / 2;
     }
-block_10:
+block_8:
     D_410150 = phi_a0;
     return 2;
 }

@@ -643,7 +643,7 @@ def build_flowgraph_between(
     return body
 
 
-def build_naive(context: Context, nodes: List[Node]) -> Body:
+def build_naive(context: Context, nodes: List[Node], return_node: ReturnNode) -> Body:
     """Naive procedure for generating output with only gotos for control flow.
 
     Used for --no-ifs, when the regular if_statements code fails."""
@@ -664,10 +664,12 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         block_info = node.block.block_info
         assert isinstance(block_info, BlockInfo)
         if isinstance(node, ReturnNode):
-            # Do not emit return nodes; they are often duplicated and don't
-            # have a well-defined position, so we emit them next to where they
-            # are jumped to instead.
-            pass
+            # Do not emit duplicated (non-real) return nodes; they don't have
+            # a well-defined position, so we emit them next to where they are
+            # jumped to instead. Also don't emit the final return node; that's
+            # our caller's responsibility.
+            if node.is_real() and node is not return_node:
+                add_return_statement(context, body, node, 1, last=False)
         elif isinstance(node, BasicNode):
             emit_node(context, node, body, 1)
             emit_successor(node.successor, i)
@@ -729,7 +731,7 @@ def build_body(context: Context, function_info: FunctionInfo, options: Options) 
     if options.ifs:
         body = build_flowgraph_between(context, start_node, return_node, 1)
     else:
-        body = build_naive(context, context.flow_graph.nodes)
+        body = build_naive(context, context.flow_graph.nodes, return_node)
 
     if return_node.index != -1:
         add_return_statement(context, body, return_node, 1, last=True)

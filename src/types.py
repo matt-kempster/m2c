@@ -244,6 +244,8 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         if "float" in names:
             return Type.f32()
         size = 8 * primitive_size(ctype.type)
+        if not size:
+            return Type.any()
         sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
         return Type(kind=Type.K_INT, size=size, sign=sign)
 
@@ -307,6 +309,8 @@ def get_field(
 def find_substruct_array(
     type: Type, offset: int, scale: int, typemap: TypeMap
 ) -> Optional[Tuple[str, int, CType]]:
+    if scale <= 0:
+        return None
     type = type.get_representative()
     if not type.ptr_to or isinstance(type.ptr_to, Type):
         return None
@@ -345,4 +349,8 @@ def get_pointer_target(
     if typemap is None:
         # (shouldn't happen, but might as well handle it)
         return None
-    return var_size_align(target, typemap)[0], type_from_ctype(target, typemap)
+    size, align = var_size_align(target, typemap)
+    if align == 0:
+        # void* or function pointer
+        return None
+    return size, type_from_ctype(target, typemap)
