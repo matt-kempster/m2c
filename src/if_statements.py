@@ -255,6 +255,8 @@ def get_reachable_nodes(start: Node) -> List[Node]:
             stack.append(node.successor)
         elif isinstance(node, ConditionalNode):
             if not node.is_loop():
+                # This check is wonky, see end_reachable_without.
+                # It should be kept the same as in immediate_postdominator.
                 stack.append(node.conditional_edge)
             stack.append(node.fallthrough_edge)
         elif isinstance(node, SwitchNode):
