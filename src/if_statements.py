@@ -359,9 +359,13 @@ def build_conditional_subgraph(
         # If so it seems fine to emit the loop here.
         if_condition = if_block_info.branch_condition
         if_body = build_flowgraph_between(context, conditional_node, end, indent + 1)
-    elif isinstance(fallthrough_node, ConditionalNode) and (
-        fallthrough_node.conditional_edge is conditional_node
-        or fallthrough_node.fallthrough_edge is conditional_node
+    elif (
+        isinstance(fallthrough_node, ConditionalNode)
+        and (
+            fallthrough_node.conditional_edge is conditional_node
+            or fallthrough_node.fallthrough_edge is conditional_node
+        )
+        and context.options.andor_detection
     ):
         # The fallthrough node is also a conditional, with an edge pointing to
         # the same target as our conditional edge. This case comes up for
