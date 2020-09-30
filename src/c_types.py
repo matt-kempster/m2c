@@ -54,6 +54,7 @@ class TypeMap:
     functions: Dict[str, Function] = attr.ib(factory=dict)
     named_structs: Dict[str, Struct] = attr.ib(factory=dict)
     anon_structs: Dict[int, Struct] = attr.ib(factory=dict)
+    enum_values: Dict[str, int] = attr.ib(factory=dict)
 
 
 def to_c(node: ca.Node) -> str:
@@ -149,6 +150,8 @@ def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
         return 2
     if "char" in names:
         return 1
+    if "void" in names:
+        return 0
     if names.count("long") == 2:
         return 8
     return 4
@@ -167,11 +170,13 @@ def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
         ), "Function argument can not be of an incomplete struct"
         return struct.size, struct.align
     size = primitive_size(inner_type)
+    if size == 0:
+        raise DecompFailure("Function parameter has void type")
     return size, size
 
 
 def var_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
-    size, align, _ = parse_struct_member(type, "", typemap)
+    size, align, _ = parse_struct_member(type, "", typemap, allow_unsized=True)
     return size, align
 
 
@@ -222,15 +227,18 @@ def parse_function(fn: FuncDecl) -> Function:
     return Function(ret_type=ret_type, params=maybe_params, is_variadic=is_variadic)
 
 
-def parse_constant_int(expr: "ca.Expression") -> int:
+def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
     if isinstance(expr, ca.Constant):
         try:
             return int(expr.value.rstrip("lLuU"), 0)
         except ValueError:
             raise DecompFailure(f"Failed to parse {to_c(expr)} as an int literal")
+    if isinstance(expr, ca.ID):
+        if expr.name in typemap.enum_values:
+            return typemap.enum_values[expr.name]
     if isinstance(expr, ca.BinaryOp):
-        lhs = parse_constant_int(expr.left)
-        rhs = parse_constant_int(expr.right)
+        lhs = parse_constant_int(expr.left, typemap)
+        rhs = parse_constant_int(expr.right, typemap)
         if expr.op == "+":
             return lhs + rhs
         if expr.op == "-":
@@ -244,6 +252,24 @@ def parse_constant_int(expr: "ca.Expression") -> int:
     raise DecompFailure(
         f"Failed to evaluate expression {to_c(expr)} at compile time; only simple arithmetic is supported for now"
     )
+
+
+def parse_enum(enum: ca.Enum, typemap: TypeMap) -> None:
+    """Parse an enum and compute the values of all its enumerators, for use in
+    constant evaluation.
+
+    We match IDO in treating all enums as having size 4, so no need to compute
+    size or alignment here."""
+    if enum.values is None:
+        return
+    next_value = 0
+    for enumerator in enum.values.enumerators:
+        if enumerator.value:
+            value = parse_constant_int(enumerator.value, typemap)
+        else:
+            value = next_value
+        next_value = value + 1
+        typemap.enum_values[enumerator.name] = value
 
 
 def get_struct(
@@ -270,24 +296,33 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
 
 
 def parse_struct_member(
-    type: CType, field_name: str, typemap: TypeMap
+    type: CType, field_name: str, typemap: TypeMap, *, allow_unsized: bool
 ) -> Tuple[int, int, Optional[Struct]]:
+    old_type = type
     type = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl):
         return 4, 4, None
     if isinstance(type, ArrayDecl):
         if type.dim is None:
             raise DecompFailure(f"Array field {field_name} must have a size")
-        dim = parse_constant_int(type.dim)
-        size, align, _ = parse_struct_member(type.type, field_name, typemap)
+        dim = parse_constant_int(type.dim, typemap)
+        size, align, _ = parse_struct_member(
+            type.type, field_name, typemap, allow_unsized=False
+        )
         return size * dim, align, None
-    assert not isinstance(type, FuncDecl), "Struct can not contain a function"
+    if isinstance(type, FuncDecl):
+        assert allow_unsized, "Struct can not contain a function"
+        return 0, 0, None
     inner_type = type.type
     if isinstance(inner_type, (ca.Struct, ca.Union)):
         substr = parse_struct(inner_type, typemap)
         return substr.size, substr.align, substr
+    if isinstance(inner_type, ca.Enum):
+        parse_enum(inner_type, typemap)
     # Otherwise it has to be of type Enum or IdentifierType
     size = primitive_size(inner_type)
+    if size == 0 and not allow_unsized:
+        raise DecompFailure(f"Field {field_name} cannot be void")
     return size, size, None
 
 
@@ -316,8 +351,10 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             #   'type' (lw/lh/lb, unsigned counterparts). If it straddles a 'type'
             #   alignment boundary, skip all bits up to that boundary and then use the
             #   next 'b' bits from there instead.
-            width = parse_constant_int(decl.bitsize)
-            ssize, salign, substr = parse_struct_member(type, field_name, typemap)
+            width = parse_constant_int(decl.bitsize, typemap)
+            ssize, salign, substr = parse_struct_member(
+                type, field_name, typemap, allow_unsized=False
+            )
             align = max(align, salign)
             if width == 0:
                 continue
@@ -341,7 +378,9 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             offset += 1
 
         if decl.name is not None:
-            ssize, salign, substr = parse_struct_member(type, field_name, typemap)
+            ssize, salign, substr = parse_struct_member(
+                type, field_name, typemap, allow_unsized=False
+            )
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
             fields[offset].append(StructField(type=type, size=ssize, name=decl.name))
@@ -377,12 +416,15 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                     union_size = max(union_size, substr.size)
                 else:
                     offset += substr.size
+        elif isinstance(type, ca.Enum):
+            parse_enum(type, typemap)
 
     if not is_union and bit_offset != 0:
         bit_offset = 0
         offset += 1
 
-    size = union_size if is_union else (offset + align - 1) & -align
+    size = union_size if is_union else offset
+    size = (size + align - 1) & -align
     return Struct(fields=fields, size=size, align=align)
 
 
@@ -479,8 +521,7 @@ def build_typemap(source: str) -> TypeMap:
                 self.visit(decl.type)
 
         def visit_Enum(self, enum: ca.Enum) -> None:
-            if enum.name is not None:
-                ret.typedefs[enum.name] = basic_type(["int"])
+            parse_enum(enum, ret)
 
         def visit_FuncDef(self, fn: ca.FuncDef) -> None:
             if fn.decl.name is not None:
@@ -499,13 +540,21 @@ def set_decl_name(decl: ca.Decl) -> None:
 
 
 def type_to_string(type: CType) -> str:
-    if isinstance(type, TypeDecl) and isinstance(type.type, (ca.Struct, ca.Union)):
-        su = "struct" if isinstance(type.type, ca.Struct) else "union"
-        return type.type.name or f"anon {su}"
-    else:
-        decl = ca.Decl("", [], [], [], type, None, None)
-        set_decl_name(decl)
-        return to_c(decl)
+    if isinstance(type, TypeDecl) and isinstance(
+        type.type, (ca.Struct, ca.Union, ca.Enum)
+    ):
+        if isinstance(type.type, ca.Struct):
+            su = "struct"
+        else:
+            # (ternary to work around a mypy bug)
+            su = "union" if isinstance(type.type, ca.Union) else "enum"
+        if type.type.name:
+            return f"{su} {type.type.name}"
+        else:
+            return f"anon {su}"
+    decl = ca.Decl("", [], [], [], type, None, None)
+    set_decl_name(decl)
+    return to_c(decl)
 
 
 def dump_typemap(typemap: TypeMap) -> None:
@@ -529,8 +578,12 @@ def dump_typemap(typemap: TypeMap) -> None:
     for name, struct in typemap.named_structs.items():
         print(f"{name}: size {struct.size}, align {struct.align}")
         for offset, fields in struct.fields.items():
-            print(f"  {offset}:", end="")
+            print(f"  {hex(offset)}:", end="")
             for field in fields:
                 print(f" {field.name} ({type_to_string(field.type)})", end="")
             print()
+    print()
+    print("Enums:")
+    for name, value in typemap.enum_values.items():
+        print(f"{name}: {value}")
     print()

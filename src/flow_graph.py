@@ -93,6 +93,22 @@ class BlockBuilder:
         return self.blocks
 
 
+def invert_branch_mnemonic(mnemonic: str) -> str:
+    inverses = {
+        "beq": "bne",
+        "bne": "beq",
+        "beqz": "bnez",
+        "bnez": "beqz",
+        "bgez": "bltz",
+        "bgtz": "blez",
+        "blez": "bgtz",
+        "bltz": "bgez",
+        "bc1t": "bc1f",
+        "bc1f": "bc1t",
+    }
+    return inverses[mnemonic]
+
+
 # Branch-likely instructions only evaluate their delay slots when they are
 # taken, making control flow more complex. However, on the IRIX compiler they
 # only occur in a very specific pattern:
@@ -110,24 +126,36 @@ class BlockBuilder:
 #
 # Branch-likely instructions that do not appear in this pattern are kept.
 #
-# We also do this for b instructions, which sometimes occur in the same pattern.
+# We also do this for b instructions, which sometimes occur in the same pattern,
+# and also fix up the pattern
+#
+# <branch likely instr> .label
+#  X
+# .label:
+#
+# which GCC emits.
 def normalize_likely_branches(function: Function) -> Function:
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
+    instr_before_instr: Dict[int, Instruction] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
+    prev_item: Union[Instruction, Label, None] = None
     for item in function.body:
         if isinstance(item, Instruction):
             if prev_label is not None:
                 label_before_instr[id(item)] = prev_label.name
                 prev_label = None
+            if isinstance(prev_item, Instruction):
+                instr_before_instr[id(item)] = prev_item
             prev_instr = item
         elif isinstance(item, Label):
             label_prev_instr[item.name] = prev_instr
             prev_label = item
+            prev_instr = None
+        prev_item = item
 
     insert_label_before: Dict[int, str] = {}
-    noped_instructions: Set[int] = set()
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
@@ -138,15 +166,38 @@ def normalize_likely_branches(function: Function) -> Function:
         ):
             old_label = item.get_branch_target().target
             before_target = label_prev_instr[old_label]
+            before_before_target = (
+                instr_before_instr.get(id(before_target))
+                if before_target is not None
+                else None
+            )
             next_item = next(body_iter)
             orig_next_item = next_item
             if (
+                item.mnemonic == "b"
+                and before_before_target is not None
+                and before_before_target.is_branch_instruction()
+            ):
+                # Don't treat 'b' instructions as branch likelies if doing so would
+                # introduce a label in a delay slot.
+                new_body.append((item, item))
+                new_body.append((next_item, next_item))
+            elif (
+                isinstance(next_item, Instruction)
+                and before_target is next_item
+                and item.mnemonic != "b"
+            ):
+                mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
+                item = Instruction(mn_inverted, item.args, item.emit_goto)
+                new_body.append((orig_item, item))
+                new_body.append((Instruction("dummy", []), Instruction("nop", [])))
+                new_body.append((orig_next_item, next_item))
+            elif (
                 isinstance(next_item, Instruction)
                 and before_target is not None
                 and before_target is not next_item
                 and str(before_target) == str(next_item)
-                and id(before_target) not in noped_instructions
-                and next_item.mnemonic != "nop"
+                and (item.mnemonic != "b" or next_item.mnemonic != "nop")
             ):
                 if id(before_target) not in label_before_instr:
                     new_label = old_label + "_before"
@@ -158,9 +209,11 @@ def normalize_likely_branches(function: Function) -> Function:
                     mn_unlikely, item.args[:-1] + [new_target], item.emit_goto
                 )
                 next_item = Instruction("nop", [])
-                noped_instructions.add(id(next_item))
-            new_body.append((orig_item, item))
-            new_body.append((orig_next_item, next_item))
+                new_body.append((orig_item, item))
+                new_body.append((orig_next_item, next_item))
+            else:
+                new_body.append((item, item))
+                new_body.append((next_item, next_item))
         else:
             new_body.append((orig_item, item))
 
@@ -213,7 +266,28 @@ def simplify_standard_patterns(function: Function) -> Function:
         "",
     ]
 
-    divu_pattern: List[str] = ["bnez", "nop", "break", ""]
+    divu_pattern: List[str] = [
+        "bnez",
+        "nop",
+        "break",
+        "",
+    ]
+
+    div_p2_pattern_1: List[str] = [
+        "bgez",
+        "sra",
+        "addiu",
+        "sra",
+        "",
+    ]
+
+    div_p2_pattern_2: List[str] = [
+        "bgez",
+        "move",
+        "addiu",
+        "",
+        "sra",
+    ]
 
     utf_pattern: List[str] = [
         "bgez",
@@ -298,6 +372,13 @@ def simplify_standard_patterns(function: Function) -> Function:
                 return 0
         return actuali
 
+    def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
+        assert isinstance(sra.args[2], AsmLiteral)
+        shift = sra.args[2].value & 0x1F
+        return Instruction(
+            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)]
+        )
+
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(div_pattern)]
         if not matches_pattern(actual, div_pattern):
@@ -325,6 +406,34 @@ def simplify_standard_patterns(function: Function) -> Function:
             return None
         return ([], i + len(divu_pattern) - 1)
 
+    def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_p2_pattern_1)]
+        if not matches_pattern(actual, div_p2_pattern_1):
+            return None
+        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
+            return None
+        label = typing.cast(Label, actual[4])
+        bnez = typing.cast(Instruction, actual[0])
+        if bnez.get_branch_target().target != label.name:
+            return None
+        div = create_div_p2(bnez, typing.cast(Instruction, actual[3]))
+        return ([div], i + len(div_p2_pattern_1) - 1)
+
+    def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_p2_pattern_2)]
+        if not matches_pattern(actual, div_p2_pattern_2):
+            return None
+        if typing.cast(Instruction, actual[1]).args[0] != Register("at"):
+            return None
+        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
+            return None
+        label = typing.cast(Label, actual[3])
+        bnez = typing.cast(Instruction, actual[0])
+        if bnez.get_branch_target().target != label.name:
+            return None
+        div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
+        return ([div], i + len(div_p2_pattern_2))
+
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
@@ -334,7 +443,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         if bgez.get_branch_target().target != label.name:
             return None
         cvt_instr = typing.cast(Instruction, actual[1])
-        new_instr = Instruction(mnemonic="cvt.s.u", args=cvt_instr.args)
+        new_instr = Instruction(mnemonic="cvt.s.u.fictive", args=cvt_instr.args)
         return ([new_instr], i + len(utf_pattern) - 1)
 
     def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
@@ -352,9 +461,9 @@ def simplify_standard_patterns(function: Function) -> Function:
         fmt = sub.mnemonic.split(".")[-1]
         args = [cfc.args[0], sub.args[1]]
         if fmt == "s":
-            new_instr = Instruction(mnemonic="cvt.u.s", args=args)
+            new_instr = Instruction(mnemonic="cvt.u.s.fictive", args=args)
         else:
-            new_instr = Instruction(mnemonic="cvt.u.d", args=args)
+            new_instr = Instruction(mnemonic="cvt.u.d.fictive", args=args)
         return ([new_instr], i + consumed)
 
     def try_replace_mips1_double_load_store(
@@ -401,6 +510,8 @@ def simplify_standard_patterns(function: Function) -> Function:
         repl, i = (
             try_replace_div(i)
             or try_replace_divu(i)
+            or try_replace_div_p2_1(i)
+            or try_replace_div_p2_2(i)
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
             or try_replace_mips1_double_load_store(i)
@@ -471,15 +582,21 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
             )
 
         if item.is_branch_likely_instruction():
-            raise DecompFailure(
-                "Not yet able to handle general branch-likely instruction:\n"
-                f"{item}\n\n"
-                "Only branch-likely instructions which can be turned into non-likely\n"
-                "versions pointing one step up are currently supported. Try rewriting\n"
-                "the assembly using non-branch-likely instructions."
-            )
+            target = item.args[-1]
+            assert isinstance(target, JumpTarget)
+            mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
+            temp_label = JumpTarget(target.target + "_branchlikelyskip")
+            branch_not = Instruction(mn_inverted, item.args[:-1] + [temp_label], False)
+            block_builder.add_instruction(branch_not)
+            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.new_block()
+            block_builder.add_instruction(next_item)
+            block_builder.add_instruction(Instruction("b", [target], item.emit_goto))
+            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.new_block()
+            block_builder.set_label(Label(temp_label.target))
 
-        if item.mnemonic in ["jal", "jalr"]:
+        elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
             if next_item.args and next_item.args[0] == item.args[0]:
@@ -503,6 +620,13 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
 
     for item in body_iter:
         process(item)
+
+    if block_builder.curr_label:
+        label = block_builder.curr_label.name
+        print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
+        block_builder.add_instruction(Instruction("jr", [Register("ra")]))
+        block_builder.add_instruction(Instruction("nop", []))
+        block_builder.new_block()
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
     return block_builder.get_blocks()
@@ -579,6 +703,7 @@ class BasicNode(BaseNode):
                 f"{self.block}\n",
                 f"# {self.block.index} -> {self.successor.block.index}",
                 " (loop)" if self.is_loop() else "",
+                " (goto)" if self.emit_goto else "",
             ]
         )
 
@@ -612,6 +737,7 @@ class ConditionalNode(BaseNode):
                 " (loop)" if self.is_loop() else "",
                 ", ",
                 f"def: {self.fallthrough_edge.block.index}",
+                " (goto)" if self.emit_goto else "",
             ]
         )
 
@@ -634,7 +760,13 @@ class ReturnNode(BaseNode):
         return self.index == 0
 
     def __str__(self) -> str:
-        return f"{self.block}\n# {self.block.index} -> ret"
+        return "".join(
+            [
+                f"{self.block}\n",
+                f"# {self.block.index} -> ret",
+                " (goto)" if self.emit_goto else "",
+            ]
+        )
 
 
 @attr.s(eq=False)
@@ -765,7 +897,7 @@ def build_graph_from_block(
             target = branch_label.target
             raise DecompFailure(f"Cannot find branch target {target}")
 
-        is_constant_branch = jump.mnemonic == "b"
+        is_constant_branch = jump.mnemonic in ["b", "j"]
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, jump.emit_goto, dummy_node)

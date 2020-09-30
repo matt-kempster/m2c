@@ -48,6 +48,12 @@ class Rodata:
     values: Dict[str, RodataEntry] = attr.ib(factory=dict)
     mentioned_labels: Set[str] = attr.ib(factory=set)
 
+    def merge_into(self, other: "Rodata") -> None:
+        for (sym, value) in self.values.items():
+            other.values[sym] = value
+        for label in self.mentioned_labels:
+            other.mentioned_labels.add(label)
+
 
 @attr.s
 class MIPSFile:
@@ -69,7 +75,7 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_rodata_symbol(self, symbol_name: str) -> None:
+    def new_rodata_label(self, symbol_name: str) -> None:
         self.current_rodata = RodataEntry()
         self.rodata.values[symbol_name] = self.current_rodata
 
@@ -173,8 +179,15 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             return s
 
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
-
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
+
+    T = TypeVar("T")
+
+    def try_parse(parser: Callable[[], T], directive: str) -> T:
+        try:
+            return parser()
+        except ValueError:
+            raise DecompFailure(f"Could not parse rodata {directive}: {line}")
 
     for line in f:
         # Check for goto markers before stripping comments
@@ -228,16 +241,6 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 elif line.startswith(".text"):
                     curr_section = ".text"
                 elif curr_section == ".rodata":
-                    T = TypeVar("T")
-
-                    def try_parse(parser: Callable[[], T], directive: str) -> T:
-                        try:
-                            return parser()
-                        except ValueError:
-                            raise DecompFailure(
-                                f"Could not parse rodata {directive}: {line}"
-                            )
-
                     if line.startswith(".word"):
                         for w in line[5:].split(","):
                             w = w.strip()
@@ -267,7 +270,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             if curr_section == ".rodata":
                 if line.startswith("glabel"):
                     name = line.split(" ")[1]
-                    mips_file.new_rodata_symbol(name)
+                    mips_file.new_rodata_label(name)
             elif curr_section == ".text":
                 if line.startswith("."):
                     # Label.
