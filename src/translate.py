@@ -2000,6 +2000,23 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
     return StoreStmt(source=expr, dest=dest)
 
 
+def handle_sra(args: InstrArgs) -> Expression:
+    lhs = args.reg(1)
+    shift = args.imm(2)
+    if isinstance(shift, Literal) and shift.value in [16, 24]:
+        expr = early_unwrap(lhs)
+        pow2 = 1 << shift.value
+        if isinstance(expr, BinaryOp) and isinstance(expr.right, Literal):
+            tp = Type.s16() if shift.value == 16 else Type.s8()
+            rhs = expr.right.value
+            if expr.op == "<<" and rhs == shift.value:
+                return as_type(expr.left, tp, silent=False)
+            elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
+                mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
+                return as_type(mul, tp, silent=False)
+    return BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
+
+
 def format_f32_imm(num: int) -> str:
     packed = struct.pack(">I", num & (2 ** 32 - 1))
     value = struct.unpack(">f", packed)[0]
@@ -2061,6 +2078,11 @@ def format_f64_imm(num: int) -> str:
 
 
 def fold_mul_chains(expr: Expression) -> Expression:
+    """Simplify an expression involving +, -, * and << to a single multiplication,
+    e.g. 4*x - x -> 3*x, or x<<2 -> x*4. This includes some logic for preventing
+    folds of consecutive sll, and keeping multiplications by large powers of two
+    as bitshifts at the top layer."""
+
     def fold(
         expr: Expression, toplevel: bool, allow_sll: bool
     ) -> Tuple[Expression, int]:
@@ -2499,9 +2521,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "srlv": lambda a: BinaryOp(
         left=as_u32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u32()
     ),
-    "sra": lambda a: BinaryOp(
-        left=as_s32(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s32()
-    ),
+    "sra": lambda a: handle_sra(a),
     "srav": lambda a: BinaryOp(
         left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
     ),
