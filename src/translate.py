@@ -2061,36 +2061,42 @@ def format_f64_imm(num: int) -> str:
 
 
 def fold_mul_chains(expr: Expression) -> Expression:
-    def fold(expr: Expression, toplevel: bool) -> Tuple[Expression, int]:
+    def fold(
+        expr: Expression, toplevel: bool, allow_sll: bool
+    ) -> Tuple[Expression, int]:
         if isinstance(expr, BinaryOp):
-            lbase, lnum = fold(expr.left, False)
-            rbase, rnum = fold(expr.right, False)
-            if expr.op == "<<" and isinstance(expr.right, Literal):
+            lbase, lnum = fold(expr.left, False, (expr.op != "<<"))
+            rbase, rnum = fold(expr.right, False, (expr.op != "<<"))
+            if expr.op == "<<" and isinstance(expr.right, Literal) and allow_sll:
                 # Left-shifts by small numbers are easier to understand if
                 # written as multiplications (they compile to the same thing).
                 if toplevel and lnum == 1 and not (1 <= expr.right.value <= 4):
                     return (expr, 1)
                 return (lbase, lnum << expr.right.value)
-            if expr.op == "*" and isinstance(expr.right, Literal):
+            if (
+                expr.op == "*"
+                and isinstance(expr.right, Literal)
+                and (allow_sll or expr.right.value % 2 != 0)
+            ):
                 return (lbase, lnum * expr.right.value)
             if expr.op == "+" and lbase == rbase:
                 return (lbase, lnum + rnum)
             if expr.op == "-" and lbase == rbase:
                 return (lbase, lnum - rnum)
         if isinstance(expr, UnaryOp) and not toplevel:
-            base, num = fold(expr.expr, False)
+            base, num = fold(expr.expr, False, True)
             return (base, -num)
         if (
             isinstance(expr, EvalOnceExpr)
             and not expr.emit_exactly_once
             and not expr.forced_emit
         ):
-            base, num = fold(expr.wrapped_expr, False)
+            base, num = fold(expr.wrapped_expr, False, allow_sll)
             if num != 1 and is_trivial_expression(base):
                 return (base, num)
         return (expr, 1)
 
-    base, num = fold(expr, True)
+    base, num = fold(expr, True, True)
     if num == 1:
         return expr
     return BinaryOp.int(left=base, op="*", right=Literal(num))
