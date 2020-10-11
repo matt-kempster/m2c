@@ -110,6 +110,9 @@ class Type:
     def is_pointer(self) -> bool:
         return self.get_representative().kind == Type.K_PTR
 
+    def is_int(self) -> bool:
+        return self.get_representative().kind == Type.K_INT
+
     def is_unsigned(self) -> bool:
         return self.get_representative().sign == Type.UNSIGNED
 

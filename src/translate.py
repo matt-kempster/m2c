@@ -770,6 +770,15 @@ class Cast(Expression):
         self.expr.type.unify(self.type)
         super().use()
 
+    def needed_for_store(self) -> bool:
+        if not self.reinterpret:
+            # int <-> float casts should be emitted even for stores.
+            return True
+        if not self.expr.type.unify(self.type):
+            # Emit casts when types fail to unify.
+            return True
+        return False
+
     def format(self, fmt: Formatter) -> str:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
@@ -838,7 +847,7 @@ class SubroutineArg(Expression):
         return f"subroutine_arg{format_hex(self.value // 4)}"
 
 
-@attr.s(frozen=True, eq=True)
+@attr.s(eq=True, hash=True)
 class StructAccess(Expression):
     # Represents struct_var->offset.
     # This has eq=True since it represents a live expression and not an access
@@ -851,26 +860,38 @@ class StructAccess(Expression):
     field_name: Optional[str] = attr.ib(eq=False)
     stack_info: StackInfo = attr.ib(eq=False, repr=False)
     type: Type = attr.ib(eq=False)
+    has_late_field_name: bool = attr.ib(default=False, eq=False)
 
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def format(self, fmt: Formatter) -> str:
-        var = late_unwrap(self.struct_var)
-        has_nonzero_access = self.stack_info.has_nonzero_access(var)
-
-        field_name: Optional[str] = None
-        if self.field_name is not None:
-            field_name = self.field_name
-        elif self.stack_info.typemap:
-            # If we didn't have a type at the struct access was constructed,
-            # but now we do, compute field name late.
-            field_name = get_field(
+    def late_field_name(self) -> Optional[str]:
+        # If we didn't have a type at the time when the struct access was
+        # constructed, but now we do, compute field name.
+        if (
+            self.field_name is None
+            and self.stack_info.typemap
+            and not self.has_late_field_name
+        ):
+            var = late_unwrap(self.struct_var)
+            self.field_name = get_field(
                 var.type,
                 self.offset,
                 self.stack_info.typemap,
                 target_size=self.target_size,
             )[0]
+            self.has_late_field_name = True
+        return self.field_name
+
+    def late_has_known_type(self) -> bool:
+        # (Would be nice to include stores to known global vars as well)
+        return self.late_field_name() is not None
+
+    def format(self, fmt: Formatter) -> str:
+        var = late_unwrap(self.struct_var)
+        has_nonzero_access = self.stack_info.has_nonzero_access(var)
+
+        field_name = self.late_field_name()
 
         if field_name:
             has_nonzero_access = True
@@ -1156,7 +1177,7 @@ class EvalOnceStmt(Statement):
             return self.need_decl()
 
     def format(self, fmt: Formatter) -> str:
-        val_str = format_expr(self.expr.wrapped_expr, fmt)
+        val_str = format_expr(elide_casts_for_store(self.expr.wrapped_expr), fmt)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
         return f"{self.expr.var.format(fmt)} = {val_str};"
@@ -1205,7 +1226,13 @@ class StoreStmt(Statement):
         return True
 
     def format(self, fmt: Formatter) -> str:
-        return f"{self.dest.format(fmt)} = {format_expr(self.source, fmt)};"
+        source = self.source
+        if (
+            isinstance(self.dest, StructAccess) and self.dest.late_has_known_type()
+        ) or isinstance(self.dest, (ArrayAccess, LocalVar, SubroutineArg)):
+            # Known destination; fine to elide some casts.
+            source = elide_casts_for_store(source)
+        return f"{self.dest.format(fmt)} = {format_expr(source, fmt)};"
 
 
 @attr.s
@@ -1617,6 +1644,15 @@ def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     if s.startswith("*") or s.startswith("&"):
         return f"({s})"
     return s
+
+
+def elide_casts_for_store(expr: Expression) -> Expression:
+    uw_expr = late_unwrap(expr)
+    if isinstance(uw_expr, Cast) and not uw_expr.needed_for_store():
+        return elide_casts_for_store(uw_expr.expr)
+    if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
+        return Literal(uw_expr.value, type=Type.intish())
+    return expr
 
 
 def uses_expr(expr: Expression, expr_filter: Callable[[Expression], bool]) -> bool:
