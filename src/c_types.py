@@ -227,6 +227,18 @@ def parse_function(fn: FuncDecl) -> Function:
     return Function(ret_type=ret_type, params=maybe_params, is_variadic=is_variadic)
 
 
+def divmod_towards_zero(lhs: int, rhs: int, op: str) -> int:
+    if rhs < 0:
+        rhs = -rhs
+        lhs = -lhs
+    if lhs < 0:
+        return -divmod_towards_zero(-lhs, rhs, op)
+    if op == "/":
+        return lhs // rhs
+    else:
+        return lhs % rhs
+
+
 def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
     if isinstance(expr, ca.Constant):
         try:
@@ -237,18 +249,62 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
         if expr.name in typemap.enum_values:
             return typemap.enum_values[expr.name]
     if isinstance(expr, ca.BinaryOp):
+        op = expr.op
         lhs = parse_constant_int(expr.left, typemap)
+        if op == "&&" and lhs == 0:
+            return 0
+        if op == "||" and lhs != 0:
+            return 1
         rhs = parse_constant_int(expr.right, typemap)
-        if expr.op == "+":
+        if op == "+":
             return lhs + rhs
-        if expr.op == "-":
+        if op == "-":
             return lhs - rhs
-        if expr.op == "*":
+        if op == "*":
             return lhs * rhs
-        if expr.op == "<<":
+        if op == "<<":
             return lhs << rhs
-        if expr.op == ">>":
+        if op == ">>":
             return lhs >> rhs
+        if op == "&":
+            return lhs & rhs
+        if op == "|":
+            return lhs | rhs
+        if op == "^":
+            return lhs ^ rhs
+        if op == ">=":
+            return 1 if lhs >= rhs else 0
+        if op == "<=":
+            return 1 if lhs <= rhs else 0
+        if op == ">":
+            return 1 if lhs > rhs else 0
+        if op == "<":
+            return 1 if lhs < rhs else 0
+        if op == "==":
+            return 1 if lhs == rhs else 0
+        if op == "!=":
+            return 1 if lhs != rhs else 0
+        if op in ["&&", "||"]:
+            return 1 if rhs != 0 else 0
+        if op in ["/", "%"]:
+            if rhs == 0:
+                raise DecompFailure(
+                    f"Division by zero when evaluating expression {to_c(expr)}"
+                )
+            return divmod_towards_zero(lhs, rhs, op)
+    if isinstance(expr, ca.TernaryOp):
+        cond = parse_constant_int(expr.cond, typemap) != 0
+        return parse_constant_int(expr.iftrue if cond else expr.iffalse, typemap)
+    if isinstance(expr, ca.ExprList) and not isinstance(expr.exprs[-1], ca.Typename):
+        return parse_constant_int(expr.exprs[-1], typemap)
+    if isinstance(expr, ca.UnaryOp) and not isinstance(expr.expr, ca.Typename):
+        sub = parse_constant_int(expr.expr, typemap)
+        if expr.op == "-":
+            return -sub
+        if expr.op == "~":
+            return ~sub
+        if expr.op == "!":
+            return 1 if sub == 0 else 1
     raise DecompFailure(
         f"Failed to evaluate expression {to_c(expr)} at compile time; only simple arithmetic is supported for now"
     )
