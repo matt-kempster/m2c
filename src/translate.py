@@ -659,8 +659,9 @@ class BinaryOp(Condition):
         return self.op in ["==", "!=", ">", "<", ">=", "<="]
 
     def negated(self) -> "Condition":
-        assert self.is_boolean()
-        if self.floating and self.op in ["<", ">", "<=", ">="]:
+        if not self.is_boolean() or (
+            self.floating and self.op in ["<", ">", "<=", ">="]
+        ):
             # Floating-point comparisons cannot be negated in any nice way,
             # due to nans.
             return UnaryOp("!", self, type=Type.bool())
@@ -2273,6 +2274,20 @@ def handle_add(args: InstrArgs) -> Expression:
     return expr
 
 
+def handle_bgez(args: InstrArgs) -> Condition:
+    expr = args.reg(0)
+    uw_expr = early_unwrap(expr)
+    if (
+        isinstance(uw_expr, BinaryOp)
+        and uw_expr.op == "<<"
+        and isinstance(uw_expr.right, Literal)
+    ):
+        shift = uw_expr.right.value
+        bitand = BinaryOp.int(uw_expr.left, "&", Literal(1 << (31 - shift)))
+        return UnaryOp("!", bitand, type=Type.bool())
+    return BinaryOp.scmp(expr, ">=", Literal(0))
+
+
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
     %hi's only ever occur in lui, where we expand them to an entire value, and not
@@ -2368,7 +2383,7 @@ def function_abi(
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
 LwrInstrMap = Dict[str, Callable[[InstrArgs, Expression], Expression]]
-CmpInstrMap = Dict[str, Callable[[InstrArgs], BinaryOp]]
+CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
 PairInstrMap = Dict[
@@ -2404,7 +2419,7 @@ CASES_BRANCHES: CmpInstrMap = {
     "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
     "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
     "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
-    "bgez": lambda a: BinaryOp.scmp(a.reg(0), ">=", Literal(0)),
+    "bgez": lambda a: handle_bgez(a),
 }
 CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
