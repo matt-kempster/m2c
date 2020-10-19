@@ -3207,10 +3207,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
             val = CASES_DESTINATION_FIRST[mnemonic](args)
-            if target in args.raw_args[1:]:
-                # IRIX tends to keep variables within single registers. Thus,
+            if False and target in args.raw_args[1:]:
+                # IDO tends to keep variables within single registers. Thus,
                 # if source = target, overwrite that variable instead of
                 # creating a new one.
+                # XXX This code path is disabled due to known bugs, and kept
+                # only to make it easy to experiment with. It should be removed
+                # entirely at some point, hopefully to be replaced by some more
+                # stable alternative.
                 overwrite_reg(target, val)
             else:
                 set_reg(target, val)
