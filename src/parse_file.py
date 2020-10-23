@@ -1,13 +1,16 @@
 import re
 import struct
 import typing
-from typing import Callable, Dict, List, Match, Optional, Set, TypeVar, Union
+from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
 
 import attr
 
 from .error import DecompFailure
 from .options import Options
 from .parse_instruction import Instruction, parse_instruction
+
+
+FUNCTION_PREFIXES: Tuple[str, ...] = ("func", "sub", "loc")
 
 
 @attr.s(frozen=True)
@@ -287,7 +290,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         mips_file.new_label(function_name)
                     else:
                         mips_file.new_function(function_name)
-                elif line.startswith("func") and line.endswith(":"):
+                elif line.endswith(":") and any(
+                    line.startswith(prefix) for prefix in FUNCTION_PREFIXES
+                ):
                     # Other kind of function label.
                     mips_file.new_function(line.rstrip(":"))
                 else:
