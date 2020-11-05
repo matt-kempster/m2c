@@ -3058,10 +3058,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
 
-            # At most one of $f12 and $a0 may be passed, and at most one of
-            # $f14 and $a1. We could try to figure out which ones, and cap
-            # the function call at the point where a register is empty, but
-            # for now we'll leave that for manual fixup.
             typemap = stack_info.typemap
             c_fn: Optional[CFunction] = None
             if typemap and isinstance(fn_target, GlobalSymbol):
@@ -3075,20 +3071,59 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         func_args.append(as_type(regs[slot.reg], slot.type, True))
             else:
                 possible_regs = list(
-                    map(Register, ["f12", "f14", "a0", "a1", "a2", "a3"])
+                    map(Register, ["f12", "f13", "f14", "a0", "a1", "a2", "a3"])
                 )
 
+            valid_extra_regs: Set[str] = set()
             for register in possible_regs:
-                # The latter check verifies that the register is not just
-                # meant for us. This might give false positives for the
-                # first function call if an argument passed in the same
-                # position as we received it, but that's impossible to do
-                # anything about without access to function signatures.
                 expr = regs.get_raw(register)
-                if expr is not None and (
-                    not isinstance(expr, PassedInArg) or expr.copied
-                ):
-                    func_args.append(expr)
+                if expr is None:
+                    continue
+
+                # Don't pass this register if lower numbered ones are undefined.
+                # Following the o32 ABI, register order can be a prefix of either:
+                # a0, a1, a2, a3
+                # f12, a1, a2, a3
+                # f12, f14, a2, a3
+                # f12, f13, a2, a3
+                # f12, f13, f14, f15
+                require: Optional[List[str]] = None
+                if register == possible_regs[0]:
+                    # For varargs, a subset of a0 .. a3 may be used. Don't check
+                    # earlier registers for the first member of that subset.
+                    pass
+                elif register == Register("f13") or register == Register("f14"):
+                    require = ["f12"]
+                elif register == Register("a1"):
+                    require = ["a0", "f12"]
+                elif register == Register("a2"):
+                    require = ["a1", "f13", "f14"]
+                elif register == Register("a3"):
+                    require = ["a2"]
+                if require and not any(r in valid_extra_regs for r in require):
+                    continue
+
+                valid_extra_regs.add(register.register_name)
+
+                if register == Register("f13"):
+                    # We don't pass in f13 or f15 because they will often only
+                    # contain SecondF64Half(), and otherwise would need to be
+                    # merged with f12/f14 which we don't have logic for right
+                    # now. However, f13 can still matter for whether a2 should
+                    # be passed, and so is kept in possible_regs.
+                    continue
+
+                # Skip registers that are untouched from our initial parameter
+                # list. This is sometimes wrong (can give both false positives
+                # and negatives), but having a heuristic here is unavoidable
+                # without access to function signatures, or when dealing with
+                # varargs functions. Decompiling multiple functions at once
+                # would help. TODO: don't do this in the middle of the argument
+                # list, except for f12 if a0 is passed and such.
+                if isinstance(expr, PassedInArg) and not expr.copied:
+                    continue
+
+                func_args.append(expr)
 
             # Add the arguments after a3.
             # TODO: limit this and unify types based on abi_slots

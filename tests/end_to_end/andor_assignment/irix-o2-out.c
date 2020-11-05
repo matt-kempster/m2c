@@ -53,7 +53,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
         if (phi_t0 != 0) {
             temp_s0_2 = phi_s0 + phi_t0;
             sp24 = temp_v1;
-            temp_v0_2 = func_00400090(temp_s0_2, phi_a2);
+            temp_v0_2 = func_00400090(temp_s0_2);
             phi_s0_2 = temp_s0_2;
             phi_t0_2 = temp_v0_2;
             phi_v1_3 = temp_v1;

@@ -72,7 +72,7 @@ block_4:
         if (phi_t1 != 0) {
             sp2C = temp_a0;
             sp24 = temp_v1;
-            temp_v0_2 = func_00400090(temp_a0, phi_a2);
+            temp_v0_2 = func_00400090(temp_a0);
             phi_t1_2 = temp_v0_2;
             phi_v1_3 = temp_v1;
             if (temp_v0_2 != 0) {
