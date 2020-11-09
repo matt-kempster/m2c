@@ -10,7 +10,7 @@ from .options import Options
 from .parse_instruction import Instruction, parse_instruction
 
 
-FUNCTION_PREFIXES: Tuple[str, ...] = ("func", "sub", "loc")
+FUNCTION_PREFIXES: Tuple[str, ...] = ("func", "sub", "loc", "def", "nullsub")
 
 
 @attr.s(frozen=True)
