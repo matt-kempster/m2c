@@ -2,7 +2,7 @@
 .set noreorder # don't insert nops after branches
 
 .late_rodata
-jtbl_400130: .word .L004000D4
+jpt_400130: .word .L004000D4
 .word L004000E4
 .word .L004000E8
 .word .L004000F0
@@ -16,9 +16,9 @@ glabel test
 /* 0000B4 004000B4 2DC10006 */  sltiu $at, $t6, 7
 /* 0000B8 004000B8 10200012 */  beqz  $at, .L00400104
 /* 0000BC 004000BC 000E7080 */   sll   $t6, $t6, 2
-/* 0000C0 004000C0 3C010040 */  lui   $at, %hi(jtbl_400130)
+/* 0000C0 004000C0 3C010040 */  lui   $at, %hi(jpt_400130)
 /* 0000C4 004000C4 002E0821 */  addu  $at, $at, $t6
-/* 0000C8 004000C8 8C2E0130 */  lw    $t6, %lo(jtbl_400130)($at)
+/* 0000C8 004000C8 8C2E0130 */  lw    $t6, %lo(jpt_400130)($at)
 /* 0000CC 004000CC 01C00008 */  jr    $t6
 /* 0000D0 004000D0 00000000 */   nop
 glabel L004000D4

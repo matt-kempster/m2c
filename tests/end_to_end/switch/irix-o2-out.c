@@ -6,7 +6,7 @@ s32 test(s32 arg0) {
     temp_t6 = arg0 - 1;
     if (temp_t6 < 7U) {
         phi_a0_2 = arg0;
-        goto **(&jtbl_400130 + (temp_t6 * 4));
+        goto **(&jpt_400130 + (temp_t6 * 4));
     case 0:
         return arg0 * arg0;
     case 1:

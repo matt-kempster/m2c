@@ -783,14 +783,17 @@ def build_graph_from_block(
                         and isinstance(arg.lhs, Macro)
                         and arg.lhs.macro_name == "lo"
                         and isinstance(arg.lhs.argument, AsmGlobalSymbol)
-                        and arg.lhs.argument.symbol_name.startswith("jtbl")
+                        and any(
+                            arg.lhs.argument.symbol_name.startswith(prefix)
+                            for prefix in ("jtbl", "jpt_")
+                        )
                     ):
                         jtbl_names.append(arg.lhs.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
                     "Unable to determine jump table for jr instruction.\n\n"
                     "There must be a read of a variable in the same block as\n"
-                    'the instruction, which has a name starting with "jtbl".'
+                    'the instruction, which has a name starting with "jtbl"/"jpt_".'
                 )
 
             jtbl_name = jtbl_names[0]
