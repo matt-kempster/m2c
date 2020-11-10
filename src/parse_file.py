@@ -10,9 +10,6 @@ from .options import Options
 from .parse_instruction import Instruction, parse_instruction
 
 
-FUNCTION_PREFIXES: Tuple[str, ...] = ("func", "sub_", "nullsub_")
-
-
 @attr.s(frozen=True)
 class Label:
     name: str = attr.ib()
@@ -183,6 +180,8 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
 
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
+    re_midfunction_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
+    re_label = re.compile(r"([a-zA-Z0-9_.]+):")
 
     T = TypeVar("T")
 
@@ -201,9 +200,37 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
         line = re.sub(re_whitespace_or_string, re_comment_replacer, line)
         line = line.strip()
 
-        if line == "":
-            pass
-        elif line.startswith(".") and not line.endswith(":"):
+        def process_label(label: str, *, glabel: bool) -> None:
+            if curr_section == ".rodata":
+                mips_file.new_rodata_label(label)
+            elif curr_section == ".text":
+                if label.startswith(".") or re_midfunction_glabel.match(label):
+                    # For historical reasons, don't treat glabels as new
+                    # functions if they follow a specific naming pattern.
+                    # This is used for jump table targets. Ideally, we would
+                    # use local labels for this, or else generalize this
+                    # machinery to allow any glabel that has a branch that
+                    # goes across.
+                    mips_file.new_label(label.lstrip("."))
+                else:
+                    mips_file.new_function(label)
+
+        # Check for labels
+        while True:
+            g = re_label.match(line)
+            if not g:
+                break
+
+            label = g.group(1)
+            if ifdef_level == 0:
+                process_label(label, glabel=False)
+
+            line = line[len(label) + 1 :].strip()
+
+        if not line:
+            continue
+
+        if line.startswith("."):
             # Assembler directive.
             if line.startswith(".ifdef") or line.startswith(".ifndef"):
                 macro_name = line.split()[1]
@@ -270,34 +297,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                             parse_ascii_directive(line, z), is_string=True
                         )
         elif ifdef_level == 0:
-            if curr_section == ".rodata":
-                if line.startswith("glabel"):
-                    name = line.split(" ")[1]
-                    mips_file.new_rodata_label(name)
+            if line.startswith("glabel"):
+                process_label(line.split()[1], glabel=True)
+
             elif curr_section == ".text":
-                if line.startswith("."):
-                    # Label.
-                    label_name: str = line.strip(".: ")
-                    mips_file.new_label(label_name)
-                elif line.startswith("glabel"):
-                    # Function label.
-                    function_name: str = line.split(" ")[1]
-                    if re.match("L(_U_)?[0-9A-F]{8}", function_name):
-                        # Also accept jump table targets that use "glabel", if they
-                        # follow a specific naming pattern. In the future it would be
-                        # good to switch to allowing any label that has a branch that
-                        # goes across.
-                        mips_file.new_label(function_name)
-                    else:
-                        mips_file.new_function(function_name)
-                elif line.endswith(":") and any(
-                    line.startswith(prefix) for prefix in FUNCTION_PREFIXES
-                ):
-                    # Other kind of function label.
-                    mips_file.new_function(line.rstrip(":"))
-                else:
-                    # Instruction.
-                    instr: Instruction = parse_instruction(line, emit_goto)
-                    mips_file.new_instruction(instr)
+                instr: Instruction = parse_instruction(line, emit_goto)
+                mips_file.new_instruction(instr)
 
     return mips_file

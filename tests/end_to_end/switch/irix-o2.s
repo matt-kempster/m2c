@@ -2,8 +2,7 @@
 .set noreorder # don't insert nops after branches
 
 .late_rodata
-glabel jtbl_400130
-.word .L004000D4
+jtbl_400130: .word .L004000D4
 .word L004000E4
 .word .L004000E8
 .word .L004000F0
