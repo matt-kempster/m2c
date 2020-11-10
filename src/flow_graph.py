@@ -581,8 +581,7 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
             )
 
         if item.is_branch_likely_instruction():
-            target = item.args[-1]
-            assert isinstance(target, JumpTarget)
+            target = item.get_branch_target()
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
             temp_label = JumpTarget(target.target + "_branchlikelyskip")
             branch_not = Instruction(mn_inverted, item.args[:-1] + [temp_label], False)

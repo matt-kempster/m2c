@@ -181,6 +181,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_midfunction_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
+    re_midfunction_label = re.compile("loc_|def_")
     re_label = re.compile(r"([a-zA-Z0-9_.]+):")
 
     T = TypeVar("T")
@@ -204,13 +205,16 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             if curr_section == ".rodata":
                 mips_file.new_rodata_label(label)
             elif curr_section == ".text":
-                if label.startswith(".") or re_midfunction_glabel.match(label):
-                    # For historical reasons, don't treat glabels as new
-                    # functions if they follow a specific naming pattern.
-                    # This is used for jump table targets. Ideally, we would
-                    # use local labels for this, or else generalize this
-                    # machinery to allow any glabel that has a branch that
-                    # goes across.
+                if (
+                    label.startswith(".")
+                    or (glabel and re_midfunction_glabel.match(label))
+                    or (not glabel and re_midfunction_label.match(label))
+                ):
+                    # Don't treat labels as new functions if they follow a
+                    # specific naming pattern. This is used for jump table
+                    # targets in both IDA and old n64split output.
+                    # (Should possibly be generalized to cover any glabel that
+                    # has a branch that goes across?)
                     mips_file.new_label(label.lstrip("."))
                 else:
                     mips_file.new_function(label)

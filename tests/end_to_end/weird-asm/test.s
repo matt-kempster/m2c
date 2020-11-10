@@ -10,6 +10,7 @@ glabel test
 addiu $sp, $sp, -0x34
 sw $s0, 0X30($sp)
 beq $zero, $zero, .label
+loc_whatever:
 lui $v0, (0x12345678 >> (8 + 0x4 * 2))
 .label: addiu $v0, 0xFFFF # subtract 1
 addiu $sp, $sp, 0x34
