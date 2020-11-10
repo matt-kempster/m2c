@@ -181,7 +181,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_midfunction_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
-    re_midfunction_label = re.compile("loc_|def_")
+    re_midfunction_label = re.compile("loc_|locret_|def_")
     re_label = re.compile(r"([a-zA-Z0-9_.]+):")
 
     T = TypeVar("T")
