@@ -6,7 +6,10 @@
     \label:
 .endm
 
-glabel test
+loc_whatever:
+nop
+
+test:
 addiu $sp, $sp, -0x34
 sw $s0, 0X30($sp)
 beq $zero, $zero, .label

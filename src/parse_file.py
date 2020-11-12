@@ -180,8 +180,8 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
 
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
-    re_midfunction_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
-    re_midfunction_label = re.compile("loc_|locret_|def_")
+    re_local_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
+    re_local_label = re.compile("loc_|locret_|def_")
     re_label = re.compile(r"([a-zA-Z0-9_.]+):")
 
     T = TypeVar("T")
@@ -205,17 +205,20 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             if curr_section == ".rodata":
                 mips_file.new_rodata_label(label)
             elif curr_section == ".text":
-                if (
-                    label.startswith(".")
-                    or (glabel and re_midfunction_glabel.match(label))
-                    or (not glabel and re_midfunction_label.match(label))
-                ):
+                re_local = re_local_glabel if glabel else re_local_label
+                if label.startswith("."):
+                    if mips_file.current_function is None:
+                        raise DecompFailure(f"Label {label} is not within a function!")
+                    mips_file.new_label(label.lstrip("."))
+                elif re_local.match(label) and mips_file.current_function is not None:
                     # Don't treat labels as new functions if they follow a
                     # specific naming pattern. This is used for jump table
                     # targets in both IDA and old n64split output.
-                    # (Should possibly be generalized to cover any glabel that
-                    # has a branch that goes across?)
-                    mips_file.new_label(label.lstrip("."))
+                    # We skip this behavior for the very first label in the
+                    # file though, to avoid crashes due to unidentified
+                    # functions. (Should possibly be generalized to cover any
+                    # glabel that has a branch that goes across?)
+                    mips_file.new_label(label)
                 else:
                     mips_file.new_function(label)
 
