@@ -679,14 +679,19 @@ class BinaryOp(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if (
-            self.op == "+"
-            and not self.floating
+            not self.floating
             and isinstance(self.right, Literal)
             and self.right.value < 0
         ):
-            neg = Literal(value=-self.right.value, type=self.right.type)
-            sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
-            return sub.format(fmt)
+            if self.op == "+":
+                neg = Literal(value=-self.right.value, type=self.right.type)
+                sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
+                return sub.format(fmt)
+            if self.op in ("&", "|"):
+                neg = Literal(value=~self.right.value, type=self.right.type)
+                right = UnaryOp("~", neg, type=Type.any())
+                expr = BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
+                return expr.format(fmt)
 
         # For commutative, left-associative operations, strip unnecessary parentheses.
         left_expr = late_unwrap(self.left)
