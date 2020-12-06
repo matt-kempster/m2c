@@ -2391,9 +2391,7 @@ LwrInstrMap = Dict[str, Callable[[InstrArgs, Expression], Expression]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
-PairInstrMap = Dict[
-    str, Callable[[InstrArgs], Tuple[Optional[Expression], Optional[Expression]]]
-]
+PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]]
 
 CASES_IGNORE: InstrSet = {
     # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
@@ -2485,11 +2483,24 @@ CASES_HI_LO: PairInstrMap = {
         BinaryOp.u64(a.reg(0), "%", a.reg(1)),
         BinaryOp.u64(a.reg(0), "/", a.reg(1)),
     ),
-    # The high part of multiplication cannot be directly represented in C
-    "mult": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
-    "multu": lambda a: (None, BinaryOp.int(a.reg(0), "*", a.reg(1))),
-    "dmult": lambda a: (None, BinaryOp.int64(a.reg(0), "*", a.reg(1))),
-    "dmultu": lambda a: (None, BinaryOp.int64(a.reg(0), "*", a.reg(1))),
+    # GCC uses the high part of multiplication to optimize division/modulo
+    # by constant. Output some nonsense to avoid an error.
+    "mult": lambda a: (
+        fn_op("MULT_HI", [a.reg(0), a.reg(1)], Type.s32()),
+        BinaryOp.int(a.reg(0), "*", a.reg(1)),
+    ),
+    "multu": lambda a: (
+        fn_op("MULTU_HI", [a.reg(0), a.reg(1)], Type.u32()),
+        BinaryOp.int(a.reg(0), "*", a.reg(1)),
+    ),
+    "dmult": lambda a: (
+        fn_op("DMULT_HI", [a.reg(0), a.reg(1)], Type.s64()),
+        BinaryOp.int64(a.reg(0), "*", a.reg(1)),
+    ),
+    "dmultu": lambda a: (
+        fn_op("DMULTU_HI", [a.reg(0), a.reg(1)], Type.u64()),
+        BinaryOp.int64(a.reg(0), "*", a.reg(1)),
+    ),
 }
 CASES_SOURCE_FIRST: InstrMap = {
     # Floating point moving instruction
