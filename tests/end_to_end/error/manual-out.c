@@ -4,12 +4,12 @@
     BREAK();
     BREAK(2);
     SYNC();
-    TRAP_IF(0 == arg0);
-    TRAP_IF(0 != arg0);
-    TRAP_IF(0 < arg0);
-    TRAP_IF(0U < (u32) arg0);
-    TRAP_IF(0 >= arg0);
-    TRAP_IF(0U >= (u32) arg0);
+    TRAP_IF(arg0 == 0);
+    TRAP_IF(arg0 != 0);
+    TRAP_IF(arg0 > 0);
+    TRAP_IF((u32) arg0 > 0U);
+    TRAP_IF(arg0 <= 0);
+    TRAP_IF((u32) arg0 <= 0U);
     TRAP_IF(arg0 == 1);
     TRAP_IF(arg0 != 2);
     TRAP_IF(arg0 < 3);

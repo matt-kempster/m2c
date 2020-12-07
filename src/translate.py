@@ -157,7 +157,7 @@ class Formatter:
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     if expr.type.unify(type):
-        if not silent:
+        if not silent and not isinstance(expr, Literal):
             return Cast(expr=expr, reinterpret=True, silent=False, type=type)
         return expr
     return Cast(expr=expr, reinterpret=True, silent=False, type=type)
@@ -678,6 +678,18 @@ class BinaryOp(Condition):
         return [self.left, self.right]
 
     def format(self, fmt: Formatter) -> str:
+        if (
+            self.is_boolean()
+            and isinstance(self.left, Literal)
+            and not isinstance(self.right, Literal)
+        ):
+            return BinaryOp(
+                left=self.right,
+                op=self.op.translate(str.maketrans("<>", "><")),
+                right=self.left,
+                type=self.type,
+            ).format(fmt)
+
         if (
             not self.floating
             and isinstance(self.right, Literal)
