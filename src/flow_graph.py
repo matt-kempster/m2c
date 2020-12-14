@@ -253,7 +253,7 @@ def simplify_standard_patterns(function: Function) -> Function:
 
     div_pattern: List[str] = [
         "bnez",
-        "nop",
+        "?",  # nop or div
         "break",
         "",
         "li $at, -1",
@@ -393,7 +393,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             and bne2.get_branch_target().target != label2.name
         ):
             return None
-        return ([], i + len(div_pattern) - 1)
+        return ([actual[1]], i + len(div_pattern) - 1)
 
     def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(divu_pattern)]
