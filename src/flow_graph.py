@@ -593,6 +593,7 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
             block_builder.add_instruction(Instruction("nop", []))
             block_builder.new_block()
             block_builder.set_label(Label(temp_label.target))
+            block_builder.add_instruction(Instruction("nop", []))
 
         elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
