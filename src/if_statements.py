@@ -757,7 +757,9 @@ def build_body(context: Context, function_info: FunctionInfo, options: Options) 
                 context.case_nodes[most_common].append((switch_index, -1))
                 has_common = True
             for index, target in enumerate(node.cases):
-                if has_common and target == most_common:
+                # (jump table entry 0 is never covered by 'default'; the compiler would
+                # do 'switch (x - 1)' in that case)
+                if has_common and target == most_common and index != 0:
                     continue
                 context.case_nodes[target].append((switch_index, index))
         elif isinstance(node, ConditionalNode) and node.is_loop():
