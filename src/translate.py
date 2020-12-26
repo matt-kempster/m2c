@@ -150,6 +150,7 @@ class Formatter:
     indent_step: str = attr.ib(default=" " * 4)
     skip_casts: bool = attr.ib(default=False)
     extra_indent: int = attr.ib(default=0)
+    debug: bool = attr.ib(default=False)
 
     def indent(self, indent: int, line: str) -> str:
         return self.indent_step * max(indent + self.extra_indent, 0) + line
@@ -499,7 +500,7 @@ class Expression(abc.ABC):
         """Stringify an expression for debug purposes. The output can change
         depending on when this is called, e.g. because of EvalOnceExpr state.
         To avoid using it by accident, output is quoted."""
-        fmt = Formatter()
+        fmt = Formatter(debug=True)
         return '"' + self.format(fmt) + '"'
 
 
@@ -522,7 +523,7 @@ class Statement(abc.ABC):
         """Stringify a statement for debug purposes. The output can change
         depending on when this is called, e.g. because of EvalOnceExpr state.
         To avoid using it by accident, output is quoted."""
-        fmt = Formatter()
+        fmt = Formatter(debug=True)
         return '"' + self.format(fmt) + '"'
 
 
