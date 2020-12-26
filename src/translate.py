@@ -903,8 +903,18 @@ class StructAccess(Expression):
         return self.field_name
 
     def late_has_known_type(self) -> bool:
-        # (Would be nice to include stores to known global vars as well)
-        return self.late_field_name() is not None
+        if self.late_field_name() is not None:
+            return True
+        if self.offset == 0 and self.stack_info.typemap:
+            var = late_unwrap(self.struct_var)
+            if (
+                not self.stack_info.has_nonzero_access(var)
+                and isinstance(var, AddressOf)
+                and isinstance(var.expr, GlobalSymbol)
+                and var.expr.symbol_name in self.stack_info.typemap.var_types
+            ):
+                return True
+        return False
 
     def format(self, fmt: Formatter) -> str:
         var = late_unwrap(self.struct_var)
