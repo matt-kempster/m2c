@@ -3,7 +3,7 @@ globali: int
 globalf: float
 extern_inner_struct_field: struct SubStruct
 func_decl: void (void)
-test: short (struct SomeStruct *arg, unsigned char should, union SomeUnion union_arg, ...)
+test: short (struct SomeStruct *, unsigned char, union SomeUnion, ...)
 
 Functions:
 func_decl: void(void)

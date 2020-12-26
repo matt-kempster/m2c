@@ -2,6 +2,7 @@
 based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
+import copy
 from typing import Any, Dict, Match, Set, List, Tuple, Optional, Union
 import re
 
@@ -93,6 +94,27 @@ def pointer_decay(type: CType, typemap: TypeMap) -> SimpleType:
         type, (ArrayDecl, FuncDecl)
     ), "resolve_typedefs can't hide arrays/functions"
     return type
+
+
+def type_from_global_decl(decl: ca.Decl) -> CType:
+    """Get the CType of a global Decl, stripping names of function parameters."""
+    tp = decl.type
+    if not isinstance(tp, ca.FuncDecl) or not tp.args:
+        return tp
+
+    def anonymize_param(param: ca.Decl) -> ca.Typename:
+        param = copy.deepcopy(param)
+        param.name = None
+        set_decl_name(param)
+        return ca.Typename(name=None, quals=param.quals, type=param.type)
+
+    new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
+        anonymize_param(param)
+        if isinstance(param, ca.Decl)
+        else param
+        for param in tp.args.params
+    ]
+    return ca.FuncDecl(args=ca.ParamList(new_params), type=tp.type)
 
 
 def deref_type(type: CType, typemap: TypeMap) -> CType:
@@ -572,7 +594,7 @@ def build_typemap(source: str) -> TypeMap:
 
         def visit_Decl(self, decl: ca.Decl) -> None:
             if decl.name is not None:
-                ret.var_types[decl.name] = decl.type
+                ret.var_types[decl.name] = type_from_global_decl(decl)
             if not isinstance(decl.type, FuncDecl):
                 self.visit(decl.type)
 
@@ -581,7 +603,7 @@ def build_typemap(source: str) -> TypeMap:
 
         def visit_FuncDef(self, fn: ca.FuncDef) -> None:
             if fn.decl.name is not None:
-                ret.var_types[fn.decl.name] = fn.decl.type
+                ret.var_types[fn.decl.name] = type_from_global_decl(fn.decl)
 
     Visitor().visit(ast)
     return ret
