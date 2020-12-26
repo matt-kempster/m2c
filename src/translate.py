@@ -3068,7 +3068,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_FN_CALL:
             if mnemonic == "jal":
                 fn_target = args.imm(0)
-                if isinstance(fn_target, AddressOf):
+                if isinstance(fn_target, GlobalSymbol):
+                    pass
+                elif isinstance(fn_target, AddressOf):
                     fn_target = fn_target.expr
                     assert isinstance(fn_target, GlobalSymbol)
                 else:

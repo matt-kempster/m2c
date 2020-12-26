@@ -255,8 +255,10 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
 
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(real_ctype, (ca.ArrayDecl)):
+    if isinstance(real_ctype, ca.ArrayDecl):
         return Type.ptr(real_ctype.type), True
+    if isinstance(real_ctype, ca.FuncDecl):
+        return Type.ptr(real_ctype), True
     return Type.ptr(ctype), False
 
 
