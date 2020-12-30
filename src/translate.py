@@ -2302,6 +2302,20 @@ def handle_add(args: InstrArgs) -> Expression:
     return expr
 
 
+def handle_add_float(args: InstrArgs) -> Expression:
+    if args.reg_ref(1) == args.reg_ref(2):
+        two = Literal(1 << 30, type=Type.f32())
+        return BinaryOp.f32(two, "*", args.reg(1))
+    return BinaryOp.f32(args.reg(1), "+", args.reg(2))
+
+
+def handle_add_double(args: InstrArgs) -> Expression:
+    if args.reg_ref(1) == args.reg_ref(2):
+        two = Literal(1 << 62, type=Type.f64())
+        return BinaryOp.f64(two, "*", args.dreg(1))
+    return BinaryOp.f64(args.dreg(1), "+", args.dreg(2))
+
+
 def handle_bgez(args: InstrArgs) -> Condition:
     expr = args.reg(0)
     uw_expr = early_unwrap(expr)
@@ -2599,7 +2613,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "mfhi": lambda a: a.regs[Register("hi")],
     "mflo": lambda a: a.regs[Register("lo")],
     # Floating point arithmetic
-    "add.s": lambda a: BinaryOp.f32(a.reg(1), "+", a.reg(2)),
+    "add.s": lambda a: handle_add_float(a),
     "sub.s": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
     "neg.s": lambda a: UnaryOp("-", as_f32(a.reg(1)), type=Type.f32()),
     "abs.s": lambda a: fn_op("fabsf", [as_f32(a.reg(1))], Type.f32()),
@@ -2607,7 +2621,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "div.s": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
     "mul.s": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
     # Double-precision arithmetic
-    "add.d": lambda a: BinaryOp.f64(a.dreg(1), "+", a.dreg(2)),
+    "add.d": lambda a: handle_add_double(a),
     "sub.d": lambda a: BinaryOp.f64(a.dreg(1), "-", a.dreg(2)),
     "neg.d": lambda a: UnaryOp("-", as_f64(a.dreg(1)), type=Type.f64()),
     "abs.d": lambda a: fn_op("fabs", [as_f64(a.dreg(1))], Type.f64()),
