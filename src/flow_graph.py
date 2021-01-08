@@ -801,7 +801,7 @@ def build_graph_from_block(
                         jtbl_names.append(arg.lhs.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
-                    "Unable to determine jump table for jr instruction.\n\n"
+                    f"Unable to determine jump table for jr instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable in the same block as\n"
                     'the instruction, which has a name starting with "jtbl"/"jpt_".'
                 )
@@ -809,9 +809,14 @@ def build_graph_from_block(
             jtbl_name = jtbl_names[0]
             if jtbl_name not in rodata.values:
                 raise DecompFailure(
-                    "Found jr instruction, but the corresponding jump table is not provided.\n\n"
-                    "Please pass a --rodata flag to mips_to_c, pointing to the right .s file.\n\n"
-                    "(You might need to pass --goto and --no-andor flags as well,\n"
+                    f"Found jr instruction {jump.meta.loc_str()}, but the "
+                    "corresponding jump table is not provided.\n"
+                    "\n"
+                    "Please include it in the input .s file, or in a separate .s "
+                    "file pointed to by --rodata.\n"
+                    'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
+                    "\n"
+                    "(You might need to pass --goto and --no-andor flags as well, "
                     "to get correct control flow for non-jtbl switch jumps.)"
                 )
 

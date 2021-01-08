@@ -344,7 +344,7 @@ class InstructionMeta:
 
     def loc_str(self) -> str:
         adj = "near" if self.synthetic else "at"
-        return f"{adj} {self.filename}:{self.lineno}"
+        return f"{adj} {self.filename} line {self.lineno}"
 
 
 @attr.s(frozen=True)
