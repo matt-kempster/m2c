@@ -7,7 +7,7 @@ import attr
 
 from .error import DecompFailure
 from .options import Options
-from .parse_instruction import Instruction, parse_instruction
+from .parse_instruction import Instruction, InstructionMeta, parse_instruction
 
 
 @attr.s(frozen=True)
@@ -164,7 +164,8 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
 
 
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
-    mips_file: MIPSFile = MIPSFile(options.filename)
+    filename = f.name
+    mips_file: MIPSFile = MIPSFile(filename)
     defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
@@ -192,7 +193,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
         except ValueError:
             raise DecompFailure(f"Could not parse rodata {directive}: {line}")
 
-    for line in f:
+    for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
 
@@ -308,7 +309,13 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 process_label(line.split()[1], glabel=True)
 
             elif curr_section == ".text":
-                instr: Instruction = parse_instruction(line, emit_goto)
+                meta = InstructionMeta(
+                    emit_goto=emit_goto,
+                    filename=filename,
+                    lineno=lineno,
+                    synthetic=False,
+                )
+                instr: Instruction = parse_instruction(line, meta)
                 mips_file.new_instruction(instr)
 
     return mips_file

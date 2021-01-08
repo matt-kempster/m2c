@@ -11,6 +11,7 @@ from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
+    InstructionMeta,
     JumpTarget,
     Macro,
     Register,
@@ -187,9 +188,10 @@ def normalize_likely_branches(function: Function) -> Function:
                 and item.mnemonic != "b"
             ):
                 mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-                item = Instruction(mn_inverted, item.args, item.emit_goto)
+                item = Instruction.derived(mn_inverted, item.args, item)
+                new_nop = Instruction.derived("nop", [], item)
                 new_body.append((orig_item, item))
-                new_body.append((Instruction("dummy", []), Instruction("nop", [])))
+                new_body.append((new_nop, new_nop))
                 new_body.append((orig_next_item, next_item))
             elif (
                 isinstance(next_item, Instruction)
@@ -204,10 +206,10 @@ def normalize_likely_branches(function: Function) -> Function:
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
                 mn_unlikely = item.mnemonic[:-1] or "b"
-                item = Instruction(
-                    mn_unlikely, item.args[:-1] + [new_target], item.emit_goto
+                item = Instruction.derived(
+                    mn_unlikely, item.args[:-1] + [new_target], item
                 )
-                next_item = Instruction("nop", [])
+                next_item = Instruction.derived("nop", [], item)
                 new_body.append((orig_item, item))
                 new_body.append((orig_next_item, next_item))
             else:
@@ -345,7 +347,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             if not isinstance(actual, Instruction):
                 return expected == ""
             ins = actual
-            exp = parse_instruction(expected, emit_goto=False)
+            exp = parse_instruction(expected, InstructionMeta.missing())
             if not exp.args:
                 if exp.mnemonic == "li" and ins.mnemonic in ["lui", "addiu"]:
                     return True
@@ -374,8 +376,8 @@ def simplify_standard_patterns(function: Function) -> Function:
     def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
         assert isinstance(sra.args[2], AsmLiteral)
         shift = sra.args[2].value & 0x1F
-        return Instruction(
-            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)]
+        return Instruction.derived(
+            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)], sra
         )
 
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
@@ -442,7 +444,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         if bgez.get_branch_target().target != label.name:
             return None
         cvt_instr = typing.cast(Instruction, actual[1])
-        new_instr = Instruction(mnemonic="cvt.s.u.fictive", args=cvt_instr.args)
+        new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
         return ([new_instr], i + len(utf_pattern) - 1)
 
     def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
@@ -460,9 +462,9 @@ def simplify_standard_patterns(function: Function) -> Function:
         fmt = sub.mnemonic.split(".")[-1]
         args = [cfc.args[0], sub.args[1]]
         if fmt == "s":
-            new_instr = Instruction(mnemonic="cvt.u.s.fictive", args=args)
+            new_instr = Instruction.derived("cvt.u.s.fictive", args, cfc)
         else:
-            new_instr = Instruction(mnemonic="cvt.u.d.fictive", args=args)
+            new_instr = Instruction.derived("cvt.u.d.fictive", args, cfc)
         return ([new_instr], i + consumed)
 
     def try_replace_mips1_double_load_store(
@@ -497,7 +499,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         # Store the even-numbered register (ra) into the low address (mb).
         new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
-        new_instr = Instruction(mnemonic=new_mn, args=new_args)
+        new_instr = Instruction.derived(new_mn, new_args, a)
         return ([new_instr], i + 2)
 
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
@@ -584,16 +586,19 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
             target = item.get_branch_target()
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
             temp_label = JumpTarget(target.target + "_branchlikelyskip")
-            branch_not = Instruction(mn_inverted, item.args[:-1] + [temp_label], False)
+            branch_not = Instruction.derived(
+                mn_inverted, item.args[:-1] + [temp_label], item
+            )
+            nop = Instruction.derived("nop", [], item)
             block_builder.add_instruction(branch_not)
-            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.add_instruction(nop)
             block_builder.new_block()
             block_builder.add_instruction(next_item)
-            block_builder.add_instruction(Instruction("b", [target], item.emit_goto))
-            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.add_instruction(Instruction.derived("b", [target], item))
+            block_builder.add_instruction(nop)
             block_builder.new_block()
             block_builder.set_label(Label(temp_label.target))
-            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.add_instruction(nop)
 
         elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
@@ -621,10 +626,14 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
         process(item)
 
     if block_builder.curr_label:
+        # As an easy-to-implement safeguard, check that the current block is
+        # anonymous ("jr" instructions create new anonymous blocks, so if it's
+        # not we must be missing a "jr $ra").
         label = block_builder.curr_label.name
         print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
-        block_builder.add_instruction(Instruction("jr", [Register("ra")]))
-        block_builder.add_instruction(Instruction("nop", []))
+        meta = InstructionMeta.missing()
+        block_builder.add_instruction(Instruction("jr", [Register("ra")], meta))
+        block_builder.add_instruction(Instruction("nop", [], meta))
         block_builder.new_block()
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
@@ -832,9 +841,10 @@ def build_graph_from_block(
             raise DecompFailure(f"Cannot find branch target {target}")
 
         is_constant_branch = jump.mnemonic in ["b", "j"]
+        emit_goto = jump.meta.emit_goto
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
-            new_node = BasicNode(block, jump.emit_goto, dummy_node)
+            new_node = BasicNode(block, emit_goto, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(
@@ -845,7 +855,7 @@ def build_graph_from_block(
         else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
-            new_node = ConditionalNode(block, jump.emit_goto, dummy_node, dummy_node)
+            new_node = ConditionalNode(block, emit_goto, dummy_node, dummy_node)
             nodes.append(new_node)
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
