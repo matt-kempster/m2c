@@ -176,7 +176,7 @@ def normalize_likely_branches(function: Function) -> Function:
             if (
                 item.mnemonic == "b"
                 and before_before_target is not None
-                and before_before_target.is_branch_instruction()
+                and before_before_target.is_delay_slot_instruction()
             ):
                 # Don't treat 'b' instructions as branch likelies if doing so would
                 # introduce a label in a delay slot.
