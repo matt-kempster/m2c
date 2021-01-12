@@ -1,6 +1,6 @@
 import copy
 import typing
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import Any, Counter, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
 
@@ -531,6 +531,7 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
+    branch_likely_counts: Counter[str] = Counter()
 
     def process(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
@@ -584,8 +585,10 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
 
         if item.is_branch_likely_instruction():
             target = item.get_branch_target()
+            branch_likely_counts[target.target] += 1
+            index = branch_likely_counts[target.target]
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-            temp_label = JumpTarget(target.target + "_branchlikelyskip")
+            temp_label = JumpTarget(f"{target.target}_branchlikelyskip_{index}")
             branch_not = Instruction.derived(
                 mn_inverted, item.args[:-1] + [temp_label], item
             )
