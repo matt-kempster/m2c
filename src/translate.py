@@ -56,6 +56,8 @@ SIMPLE_TEMP_REGS: List[Register] = list(
     map(
         Register,
         [
+            "v0",
+            "v1",
             "t0",
             "t1",
             "t2",
@@ -66,6 +68,8 @@ SIMPLE_TEMP_REGS: List[Register] = list(
             "t7",
             "t8",
             "t9",
+            "f0",
+            "f1",
             "f4",
             "f5",
             "f6",
@@ -94,10 +98,6 @@ TEMP_REGS: List[Register] = (
                 "at",
                 "hi",
                 "lo",
-                "v0",
-                "v1",
-                "f0",
-                "f1",
                 "condition_bit",
                 "return",
             ],
@@ -3011,18 +3011,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         nonlocal has_custom_return
-        dest = stack_info.maybe_get_register_var(reg)
-        if dest is not None:
-            stack_info.use_register_var(dest)
-            uw_expr = early_unwrap(expr)
-            # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
-            if not (isinstance(uw_expr, RegisterVar) and uw_expr.register == reg):
-                to_write.append(
-                    StoreStmt(source=as_type(expr, dest.type, True), dest=dest)
-                )
-            regs[reg] = dest
-        else:
-            regs[reg] = expr
+        regs[reg] = expr
         if reg.register_name in ["f0", "v0"]:
             regs[Register("return")] = expr
             has_custom_return = True
@@ -3054,6 +3043,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 orig_reg, orig_expr = local_var_writes[expr]
                 if orig_reg == reg:
                     expr = orig_expr
+
+        uw_expr = expr
         if not isinstance(expr, Literal):
             expr = eval_once(
                 expr,
@@ -3061,11 +3052,21 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 trivial=is_trivial_expression(expr),
                 prefix=reg.register_name,
             )
+
         if reg == Register("zero"):
             # Emit the expression as is. It's probably a volatile load.
             expr.use()
             to_write.append(ExprStmt(expr))
         else:
+            dest = stack_info.maybe_get_register_var(reg)
+            if dest is not None:
+                stack_info.use_register_var(dest)
+                # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
+                if not (isinstance(uw_expr, RegisterVar) and uw_expr.register == reg):
+                    to_write.append(
+                        StoreStmt(source=as_type(expr, dest.type, True), dest=dest)
+                    )
+                expr = dest
             set_reg_maybe_return(reg, expr)
 
     def clear_caller_save_regs() -> None:
@@ -3570,11 +3571,11 @@ def translate_to_ast(
         reg_vars = SAVED_REGS
     elif options.reg_vars == ["most"]:
         reg_vars = SAVED_REGS + SIMPLE_TEMP_REGS
+    elif options.reg_vars == ["all"]:
+        reg_vars = SAVED_REGS + SIMPLE_TEMP_REGS + ARGUMENT_REGS
     else:
         reg_vars = list(map(Register, options.reg_vars))
     for reg in reg_vars:
-        if reg not in SAVED_REGS + SIMPLE_TEMP_REGS:
-            raise DecompFailure(f"Using a var for {reg} is not supported.")
         stack_info.add_register_var(reg)
 
     if options.debug:
