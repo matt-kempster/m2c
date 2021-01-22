@@ -12,9 +12,11 @@ struct A {
 volatile int glob;
 
 void test(struct A *a, int b) {
-    glob = a->array[b];
+    glob = (int)a->array[b];
     glob = (int)&a->array[b];
     glob = a->array2[b].x;
     glob = (int)&a->array2[b].x;
     glob = a[b].y;
+    glob = a->array2[3].x;
+    glob = (int)&a->array2[3].x;
 }

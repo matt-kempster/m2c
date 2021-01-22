@@ -3,7 +3,7 @@ based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
 import copy
-from typing import Any, Dict, Match, Set, List, Tuple, Optional, Union
+from typing import Any, Dict, Iterator, Match, Set, List, Tuple, Optional, Union
 import re
 
 import attr
@@ -33,6 +33,17 @@ class Struct:
     # TODO: bitfields
     size: int = attr.ib()
     align: int = attr.ib()
+
+
+@attr.s
+class Array:
+    subtype: "DetailedStructMember" = attr.ib()
+    subctype: CType = attr.ib()
+    subsize: int = attr.ib()
+    dim: int = attr.ib()
+
+
+DetailedStructMember = Union[Array, Struct, None]
 
 
 @attr.s
@@ -109,9 +120,7 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
         return ca.Typename(name=None, quals=param.quals, type=param.type)
 
     new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
-        anonymize_param(param)
-        if isinstance(param, ca.Decl)
-        else param
+        anonymize_param(param) if isinstance(param, ca.Decl) else param
         for param in tp.args.params
     ]
     return ca.FuncDecl(args=ca.ParamList(new_params), type=tp.type)
@@ -375,7 +384,7 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
 
 def parse_struct_member(
     type: CType, field_name: str, typemap: TypeMap, *, allow_unsized: bool
-) -> Tuple[int, int, Optional[Struct]]:
+) -> Tuple[int, int, DetailedStructMember]:
     old_type = type
     type = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl):
@@ -384,10 +393,10 @@ def parse_struct_member(
         if type.dim is None:
             raise DecompFailure(f"Array field {field_name} must have a size")
         dim = parse_constant_int(type.dim, typemap)
-        size, align, _ = parse_struct_member(
+        size, align, substr = parse_struct_member(
             type.type, field_name, typemap, allow_unsized=False
         )
-        return size * dim, align, None
+        return size * dim, align, Array(substr, type.type, size, dim)
     if isinstance(type, FuncDecl):
         assert allow_unsized, "Struct can not contain a function"
         return 0, 0, None
@@ -402,6 +411,22 @@ def parse_struct_member(
     if size == 0 and not allow_unsized:
         raise DecompFailure(f"Field {field_name} cannot be void")
     return size, size, None
+
+
+def expand_detailed_struct_member(
+    substr: DetailedStructMember, type: CType, size: int
+) -> Iterator[Tuple[int, str, CType, int]]:
+    yield (0, "", type, size)
+    if isinstance(substr, Struct):
+        for off, sfields in substr.fields.items():
+            for field in sfields:
+                yield (off, "." + field.name, field.type, field.size)
+    elif isinstance(substr, Array) and substr.subsize != 1:
+        for i in range(substr.dim):
+            for (off, path, subtype, subsize) in expand_detailed_struct_member(
+                substr.subtype, substr.subctype, substr.subsize
+            ):
+                yield (substr.subsize * i + off, f"[{i}]" + path, subtype, subsize)
 
 
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
@@ -461,17 +486,12 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             )
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
-            fields[offset].append(StructField(type=type, size=ssize, name=decl.name))
-            if substr is not None:
-                for off, sfields in substr.fields.items():
-                    for field in sfields:
-                        fields[offset + off].append(
-                            StructField(
-                                type=field.type,
-                                size=field.size,
-                                name=decl.name + "." + field.name,
-                            )
-                        )
+            for off, path, ftype, fsize in expand_detailed_struct_member(
+                substr, type, ssize
+            ):
+                fields[offset + off].append(
+                    StructField(type=ftype, size=fsize, name=decl.name + path)
+                )
             if is_union:
                 union_size = max(union_size, ssize)
             else:

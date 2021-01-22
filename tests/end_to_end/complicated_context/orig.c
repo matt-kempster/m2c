@@ -81,6 +81,15 @@ struct SomeStruct
     char array_arithmetic_33[16 + (1 ? 2 : 3)];
     char array_arithmetic_34[16 + (0 ? 2 : 3)];
     char array_arithmetic_35[16 + (2, 3)];
+    char char_array[2];
+    int int_array[2];
+    struct {
+        int a;
+        struct {
+            int c;
+        } b[3];
+    } sub_array[2];
+    int multidim_array[2][3];
     char end;
 };
 

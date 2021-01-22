@@ -327,16 +327,18 @@ def find_substruct_array(
     struct = get_struct(ctype.type, typemap)
     if not struct:
         return None
-    try:
-        sub_offset = max(off for off in struct.fields.keys() if off <= offset)
-    except ValueError:
-        return None
-    for field in struct.fields[sub_offset]:
-        field_type = resolve_typedefs(field.type, typemap)
-        if isinstance(field_type, ca.ArrayDecl):
+    for off, fields in struct.fields.items():
+        if offset < off:
+            continue
+        for field in fields:
+            if offset >= off + field.size:
+                continue
+            field_type = resolve_typedefs(field.type, typemap)
+            if not isinstance(field_type, ca.ArrayDecl):
+                continue
             size = var_size_align(field_type.type, typemap)[0]
             if size == scale:
-                return field.name, sub_offset, field_type.type
+                return field.name, off, field_type.type
     return None
 
 
