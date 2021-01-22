@@ -132,6 +132,13 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
     )
     parser.add_argument(
+        "--reg-vars",
+        metavar="REGISTERS",
+        dest="reg_vars",
+        help="use single variables instead of temps/phis for the given "
+        "registers (comma separated)",
+    )
+    parser.add_argument(
         "--goto",
         metavar="PATTERN",
         dest="goto_patterns",
@@ -208,6 +215,7 @@ def parse_flags(flags: List[str]) -> Options:
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args(flags)
+    reg_vars = args.reg_vars.split(",") if args.reg_vars else []
     preproc_defines = {
         **{d: 0 for d in args.undefined},
         **{d.split("=")[0]: 1 for d in args.defined},
@@ -229,6 +237,7 @@ def parse_flags(flags: List[str]) -> Options:
         ifs=args.ifs,
         andor_detection=args.andor_detection,
         skip_casts=args.skip_casts,
+        reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
         rodata_files=args.rodata_files,
         stop_on_error=args.stop_on_error,

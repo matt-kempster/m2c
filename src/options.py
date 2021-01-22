@@ -19,6 +19,7 @@ class Options:
     ifs: bool = attr.ib()
     andor_detection: bool = attr.ib()
     skip_casts: bool = attr.ib()
+    reg_vars: List[str] = attr.ib()
     goto_patterns: List[str] = attr.ib()
     rodata_files: List[str] = attr.ib()
     stop_on_error: bool = attr.ib()

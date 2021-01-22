@@ -806,10 +806,14 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
+
     for local_var in function_info.stack_info.local_vars[::-1]:
         type_decl = local_var.type.to_decl(local_var.format(fmt))
         function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
+
+    # With reused temps (no longer used), we can get duplicate declarations,
+    # hence the use of a set here.
     temp_decls = set()
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
@@ -817,12 +821,19 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
             type_decl = expr.type.to_decl(expr.var.format(fmt))
             temp_decls.add(f"{type_decl};")
             any_decl = True
-    for decl in sorted(list(temp_decls)):
+    for decl in sorted(temp_decls):
         function_lines.append(SimpleStatement(1, decl).format(fmt))
+
     for phi_var in function_info.stack_info.phi_vars:
         type_decl = phi_var.type.to_decl(phi_var.get_var_name())
         function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
+
+    for reg_var in function_info.stack_info.reg_vars.values():
+        type_decl = reg_var.type.to_decl(reg_var.format(fmt))
+        function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
+        any_decl = True
+
     if any_decl:
         function_lines.append("")
 

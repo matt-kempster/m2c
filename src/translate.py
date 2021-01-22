@@ -52,11 +52,10 @@ ARGUMENT_REGS: List[Register] = list(
     map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
 )
 
-TEMP_REGS: List[Register] = ARGUMENT_REGS + list(
+SIMPLE_TEMP_REGS: List[Register] = list(
     map(
         Register,
         [
-            "at",
             "t0",
             "t1",
             "t2",
@@ -81,15 +80,28 @@ TEMP_REGS: List[Register] = ARGUMENT_REGS + list(
             "f17",
             "f18",
             "f19",
-            "hi",
-            "lo",
-            "v0",
-            "v1",
-            "f0",
-            "f1",
-            "condition_bit",
-            "return",
         ],
+    )
+)
+
+TEMP_REGS: List[Register] = (
+    ARGUMENT_REGS
+    + SIMPLE_TEMP_REGS
+    + list(
+        map(
+            Register,
+            [
+                "at",
+                "hi",
+                "lo",
+                "v0",
+                "v1",
+                "f0",
+                "f1",
+                "condition_bit",
+                "return",
+            ],
+        )
     )
 )
 
@@ -220,6 +232,8 @@ class StackInfo:
     local_vars: List["LocalVar"] = attr.ib(factory=list)
     temp_vars: List["EvalOnceStmt"] = attr.ib(factory=list)
     phi_vars: List["PhiExpr"] = attr.ib(factory=list)
+    reg_vars: Dict[Register, "RegisterVar"] = attr.ib(factory=dict)
+    used_reg_vars: Set[Register] = attr.ib(factory=set)
     arguments: List["PassedInArg"] = attr.ib(factory=list)
     temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
     nonzero_accesses: Set["Expression"] = attr.ib(factory=set)
@@ -332,6 +346,15 @@ class StackInfo:
             # Some annoying bookkeeping instruction. To avoid
             # further special-casing, just return whatever - it won't matter.
             return LocalVar(location, type=Type.any())
+
+    def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
+        return self.reg_vars.get(reg)
+
+    def add_register_var(self, reg: Register) -> None:
+        self.reg_vars[reg] = RegisterVar(reg, Type.any())
+
+    def use_register_var(self, var: "RegisterVar") -> None:
+        self.used_reg_vars.add(var.register)
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg.register_name == "sp":
@@ -838,6 +861,18 @@ class LocalVar(Expression):
         return f"sp{format_hex(self.value)}"
 
 
+@attr.s(frozen=True, eq=False)
+class RegisterVar(Expression):
+    register: Register = attr.ib()
+    type: Type = attr.ib()
+
+    def dependencies(self) -> List[Expression]:
+        return []
+
+    def format(self, fmt: Formatter) -> str:
+        return self.register.register_name
+
+
 @attr.s(frozen=True, eq=True)
 class PassedInArg(Expression):
     value: int = attr.ib()
@@ -1258,7 +1293,7 @@ class StoreStmt(Statement):
         source = self.source
         if (
             isinstance(self.dest, StructAccess) and self.dest.late_has_known_type()
-        ) or isinstance(self.dest, (ArrayAccess, LocalVar, SubroutineArg)):
+        ) or isinstance(self.dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_casts_for_store(source)
         return f"{self.dest.format(fmt)} = {format_expr(source, fmt)};"
@@ -1340,12 +1375,6 @@ class RegInfo:
 
     def get_raw(self, key: Register) -> Optional[Expression]:
         return self.contents.get(key, None)
-
-    def clear_caller_save_regs(self) -> None:
-        for reg in TEMP_REGS:
-            assert reg != Register("zero")
-            if reg in self.contents:
-                del self.contents[reg]
 
     def __str__(self) -> str:
         return ", ".join(
@@ -1579,6 +1608,7 @@ def is_trivial_expression(expr: Expression) -> bool:
             GlobalSymbol,
             LocalVar,
             PassedInArg,
+            RegisterVar,
             SubroutineArg,
         ),
     ):
@@ -1607,6 +1637,7 @@ def is_type_obvious(expr: Expression) -> bool:
             LocalVar,
             PhiExpr,
             PassedInArg,
+            RegisterVar,
             FuncCall,
         ),
     ):
@@ -2980,23 +3011,46 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         nonlocal has_custom_return
-        regs[reg] = expr
+        dest = stack_info.maybe_get_register_var(reg)
+        if dest is not None:
+            stack_info.use_register_var(dest)
+            uw_expr = early_unwrap(expr)
+            # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
+            if not (isinstance(uw_expr, RegisterVar) and uw_expr.register == reg):
+                to_write.append(
+                    StoreStmt(source=as_type(expr, dest.type, True), dest=dest)
+                )
+            regs[reg] = dest
+        else:
+            regs[reg] = expr
         if reg.register_name in ["f0", "v0"]:
             regs[Register("return")] = expr
             has_custom_return = True
 
+    def del_reg(reg: Register) -> None:
+        if reg in regs and not isinstance(regs.get_raw(reg), RegisterVar):
+            del regs[reg]
+
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is None:
-            if reg in regs:
-                del regs[reg]
+            del_reg(reg)
             return
 
-        if isinstance(expr, LocalVar) and expr in local_var_writes:
-            # Elide register restores (only for the same register for now, to
-            # be conversative).
-            orig_reg, orig_expr = local_var_writes[expr]
-            if orig_reg == reg:
-                expr = orig_expr
+        if isinstance(expr, LocalVar):
+            if (
+                stack_info.callee_save_reg_locations.get(reg) == expr.value
+                and isinstance(node, ReturnNode)
+                and stack_info.maybe_get_register_var(reg)
+            ):
+                # Elide saved register restores with --reg-vars (it doesn't
+                # matter in other cases).
+                return
+            if expr in local_var_writes:
+                # Elide register restores (only for the same register for now,
+                # to be conversative).
+                orig_reg, orig_expr = local_var_writes[expr]
+                if orig_reg == reg:
+                    expr = orig_expr
         if not isinstance(expr, Literal):
             expr = eval_once(
                 expr,
@@ -3010,6 +3064,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             to_write.append(ExprStmt(expr))
         else:
             set_reg_maybe_return(reg, expr)
+
+    def clear_caller_save_regs() -> None:
+        for reg in TEMP_REGS:
+            del_reg(reg)
 
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)
@@ -3031,10 +3089,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # overwrite. Doing this properly is hard, however -- it would
             # involve tracking "time" for uses, and sometimes moving timestamps
             # backwards when EvalOnceExpr's get emitted as vars.
-            if reg in regs:
-                # For ease of debugging, don't let prevent_later_value_uses see
-                # the register we're writing to.
-                del regs[reg]
+
+            # For ease of debugging, don't let prevent_later_value_uses see
+            # the register we're writing to.
+            del_reg(reg)
+
             prevent_later_value_uses(prev)
             set_reg_maybe_return(
                 reg,
@@ -3236,7 +3295,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             # Clear out caller-save registers, for clarity and to ensure that
             # argument regs don't get passed into the next function.
-            regs.clear_caller_save_regs()
+            clear_caller_save_regs()
 
             # Prevent reads and function calls from moving across this call.
             # This isn't really right, because this call might be moved later,
@@ -3426,9 +3485,13 @@ def translate_graph_from_block(
         phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:
             if reg_always_set(child, reg, typemap, dom_set=(reg in regs)):
-                new_contents[reg] = PhiExpr(
-                    reg=reg, node=child, used_phis=used_phis, type=Type.any()
-                )
+                var = stack_info.maybe_get_register_var(reg)
+                if var is not None:
+                    new_contents[reg] = var
+                else:
+                    new_contents[reg] = PhiExpr(
+                        reg=reg, node=child, used_phis=used_phis, type=Type.any()
+                    )
             elif reg in new_contents:
                 del new_contents[reg]
         new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
@@ -3498,6 +3561,12 @@ def translate_to_ast(
                 Register("f14"): make_arg(4, Type.f32()),
             }
         )
+
+    for reg_name in options.reg_vars:
+        reg = Register(reg_name)
+        if reg not in SAVED_REGS + SIMPLE_TEMP_REGS:
+            raise DecompFailure(f"Using a var for {reg} is not supported.")
+        stack_info.add_register_var(reg)
 
     if options.debug:
         print(stack_info)
