@@ -3027,20 +3027,23 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             regs[Register("return")] = expr
             has_custom_return = True
 
-    def del_reg(reg: Register) -> None:
-        if reg in regs and not isinstance(regs.get_raw(reg), RegisterVar):
-            del regs[reg]
-
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is None:
-            del_reg(reg)
+            if reg in regs:
+                del regs[reg]
             return
 
         if isinstance(expr, LocalVar):
             if (
-                stack_info.callee_save_reg_locations.get(reg) == expr.value
-                and isinstance(node, ReturnNode)
+                isinstance(node, ReturnNode)
                 and stack_info.maybe_get_register_var(reg)
+                and (
+                    stack_info.callee_save_reg_locations.get(reg) == expr.value
+                    or (
+                        reg == Register("ra")
+                        and stack_info.return_addr_location == expr.value
+                    )
+                )
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
@@ -3067,7 +3070,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     def clear_caller_save_regs() -> None:
         for reg in TEMP_REGS:
-            del_reg(reg)
+            if reg in regs:
+                del regs[reg]
 
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)
@@ -3089,10 +3093,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # overwrite. Doing this properly is hard, however -- it would
             # involve tracking "time" for uses, and sometimes moving timestamps
             # backwards when EvalOnceExpr's get emitted as vars.
-
-            # For ease of debugging, don't let prevent_later_value_uses see
-            # the register we're writing to.
-            del_reg(reg)
+            if reg in regs:
+                # For ease of debugging, don't let prevent_later_value_uses see
+                # the register we're writing to.
+                del regs[reg]
 
             prevent_later_value_uses(prev)
             set_reg_maybe_return(
@@ -3562,8 +3566,13 @@ def translate_to_ast(
             }
         )
 
-    for reg_name in options.reg_vars:
-        reg = Register(reg_name)
+    if options.reg_vars == ["saved"]:
+        reg_vars = SAVED_REGS
+    elif options.reg_vars == ["most"]:
+        reg_vars = SAVED_REGS + SIMPLE_TEMP_REGS
+    else:
+        reg_vars = list(map(Register, options.reg_vars))
+    for reg in reg_vars:
         if reg not in SAVED_REGS + SIMPLE_TEMP_REGS:
             raise DecompFailure(f"Using a var for {reg} is not supported.")
         stack_info.add_register_var(reg)
