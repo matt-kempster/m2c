@@ -3065,9 +3065,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 stack_info.use_register_var(dest)
                 # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
                 if not (isinstance(uw_expr, RegisterVar) and uw_expr.register == reg):
-                    to_write.append(
-                        StoreStmt(source=as_type(expr, dest.type, True), dest=dest)
-                    )
+                    source = as_type(expr, dest.type, True)
+                    source.use()
+                    to_write.append(StoreStmt(source=source, dest=dest))
                 expr = dest
             set_reg_maybe_return(reg, expr)
 
