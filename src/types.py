@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Union
+from typing import Optional, Set, Tuple, Union
 
 import attr
 import pycparser.c_ast as ca
@@ -124,7 +124,10 @@ class Type:
         prefix = ret if ret.endswith("*") else ret + " "
         return prefix + var
 
-    def __str__(self) -> str:
+    def _stringify(self, seen: Set["Type"]) -> str:
+        if self in seen:
+            return "?"
+        seen.add(self)
         type = self.get_representative()
         size = type.size or 32
         sign = "s" if type.sign & Type.SIGNED else "u"
@@ -135,12 +138,15 @@ class Type:
         if type.kind == Type.K_PTR:
             if type.ptr_to is not None:
                 if isinstance(type.ptr_to, Type):
-                    return (str(type.ptr_to) + " *").replace("* *", "**")
+                    return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
                 return type_to_string(ca.PtrDecl([], type.ptr_to))
             return "void *"
         if type.kind == Type.K_FLOAT:
             return f"f{size}"
         return f"{sign}{size}"
+
+    def __str__(self) -> str:
+        return self._stringify(set())
 
     def __repr__(self) -> str:
         type = self.get_representative()
