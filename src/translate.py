@@ -70,6 +70,8 @@ SIMPLE_TEMP_REGS: List[Register] = list(
             "t9",
             "f0",
             "f1",
+            "f2",
+            "f3",
             "f4",
             "f5",
             "f6",
@@ -430,7 +432,7 @@ def get_stack_info(
             info.return_addr_location = inst.args[1].lhs_as_literal()
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
-            and destination.is_callee_save()
+            and destination in SAVED_REGS
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs.register_name == "sp"
         ):
