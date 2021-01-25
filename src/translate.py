@@ -2476,6 +2476,7 @@ CASES_STORE: StoreInstrMap = {
     "sb": lambda a: make_store(a, type=Type.of_size(8)),
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
     "sw": lambda a: make_store(a, type=Type.of_size(32)),
+    "sd": lambda a: make_store(a, type=Type.of_size(64)),
     # Unaligned stores
     "swl": lambda a: handle_swl(a),
     "swr": lambda a: handle_swr(a),
