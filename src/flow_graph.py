@@ -335,6 +335,16 @@ def simplify_standard_patterns(function: Function) -> Function:
         "nop",
     ]
 
+    gcc_sqrt_pattern: List[str] = [
+        "sqrt.s",
+        "c.eq.s",
+        "nop",
+        "bc1t",
+        "?",
+        "jal sqrtf",
+        "nop",
+    ]
+
     def get_li_imm(ins: Instruction) -> Optional[int]:
         if ins.mnemonic == "li" and isinstance(ins.args[1], AsmLiteral):
             return ins.args[1].value & 0xFFFFFFFF
@@ -502,6 +512,14 @@ def simplify_standard_patterns(function: Function) -> Function:
         new_instr = Instruction.derived(new_mn, new_args, a)
         return ([new_instr], i + 2)
 
+    def try_replace_gcc_sqrt(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(gcc_sqrt_pattern)]
+        consumed = matches_pattern(actual, gcc_sqrt_pattern)
+        if not consumed:
+            return None
+        new_instr = Instruction.derived("sqrt.s", actual[0].args, actual[0])
+        return ([new_instr], i + consumed)
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
 
@@ -516,6 +534,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
             or try_replace_mips1_double_load_store(i)
+            or try_replace_gcc_sqrt(i)
             or no_replacement(i)
         )
         new_function.body.extend(repl)
