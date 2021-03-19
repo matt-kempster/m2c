@@ -109,32 +109,32 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-# Branch-likely instructions only evaluate their delay slots when they are
-# taken, making control flow more complex. However, on the IRIX compiler they
-# only occur in a very specific pattern:
-#
-# ...
-# <branch likely instr> .label
-#  X
-# ...
-# X
-# .label:
-# ...
-#
-# which this function transforms back into a regular branch pattern by moving
-# the label one step back and replacing the delay slot by a nop.
-#
-# Branch-likely instructions that do not appear in this pattern are kept.
-#
-# We also do this for b instructions, which sometimes occur in the same pattern,
-# and also fix up the pattern
-#
-# <branch likely instr> .label
-#  X
-# .label:
-#
-# which GCC emits.
 def normalize_likely_branches(function: Function) -> Function:
+    """Branch-likely instructions only evaluate their delay slots when they are
+    taken, making control flow more complex. However, on the IRIX compiler they
+    only occur in a very specific pattern:
+
+    ...
+    <branch likely instr> .label
+     X
+    ...
+    X
+    .label:
+    ...
+
+    which this function transforms back into a regular branch pattern by moving
+    the label one step back and replacing the delay slot by a nop.
+
+    Branch-likely instructions that do not appear in this pattern are kept.
+
+    We also do this for b instructions, which sometimes occur in the same pattern,
+    and also fix up the pattern
+
+    <branch likely instr> .label
+     X
+    .label:
+
+    which GCC emits."""
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
     instr_before_instr: Dict[int, Instruction] = {}
@@ -245,12 +245,13 @@ def prune_unreferenced_labels(function: Function, rodata: Rodata) -> Function:
     return new_function
 
 
-# Detect and simplify various standard patterns emitted by the IRIX compiler.
-# Currently handled:
-# - checks for x/0 and INT_MIN/-1 after division (removed)
-# - unsigned to float conversion (converted to a made-up instruction)
-# - float/double to unsigned conversion (converted to a made-up instruction)
 def simplify_standard_patterns(function: Function) -> Function:
+    """Detect and simplify various standard patterns emitted by IDO and GCC.
+    Currently handled:
+    - checks for x/0 and INT_MIN/-1 after division (removed)
+    - gcc sqrt nan check (removed)
+    - unsigned to float conversion (converted to a made-up instruction)
+    - float/double to unsigned conversion (converted to a made-up instruction)"""
     BodyPart = Union[Instruction, Label]
 
     div_pattern: List[str] = [
