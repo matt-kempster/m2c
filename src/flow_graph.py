@@ -93,6 +93,15 @@ class BlockBuilder:
         return self.blocks
 
 
+def verify_no_trailing_delay_slot(function: Function) -> None:
+    last_ins: Optional[Instruction] = None
+    for item in function.body:
+        if isinstance(item, Instruction):
+            last_ins = item
+    if last_ins and last_ins.is_delay_slot_instruction():
+        raise DecompFailure(f"Last instruction is missing a delay slot:\n{last_ins}")
+
+
 def invert_branch_mnemonic(mnemonic: str) -> str:
     inverses = {
         "beq": "bne",
@@ -111,7 +120,7 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
 
 def normalize_likely_branches(function: Function) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
-    taken, making control flow more complex. However, on the IRIX compiler they
+    taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
 
     ...
@@ -518,7 +527,9 @@ def simplify_standard_patterns(function: Function) -> Function:
         consumed = matches_pattern(actual, gcc_sqrt_pattern)
         if not consumed:
             return None
-        new_instr = Instruction.derived("sqrt.s", actual[0].args, actual[0])
+        sqrt = actual[0]
+        assert isinstance(sqrt, Instruction)
+        new_instr = Instruction.derived("sqrt.s", sqrt.args, sqrt)
         return ([new_instr], i + consumed)
 
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
@@ -543,6 +554,7 @@ def simplify_standard_patterns(function: Function) -> Function:
 
 
 def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
+    verify_no_trailing_delay_slot(function)
     function = normalize_likely_branches(function)
     function = prune_unreferenced_labels(function, rodata)
     function = simplify_standard_patterns(function)

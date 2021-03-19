@@ -37,7 +37,7 @@ Your commits will then be automatically formatted per commit. You can also manua
 
 There is a small test suite, which works as follows:
  - As you develop your commit, occasionally run `./run_tests.py` to see if any tests have changed output.
-   These tests run the decompiler on a small corpus of IRIX 5.3-compiled MIPS assembly.
+   These tests run the decompiler on a small corpus of IDO 5.3-compiled MIPS assembly.
  - Before pushing your commit, run `./run_tests.py --overwrite` to write changed tests to disk, and commit resultant changes.
 
 You are encouraged to add new tests using the `./tests/add_test.py` script.
