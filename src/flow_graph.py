@@ -259,6 +259,7 @@ def simplify_standard_patterns(function: Function) -> Function:
     Currently handled:
     - checks for x/0 and INT_MIN/-1 after division (removed)
     - gcc sqrt nan check (removed)
+    - division or modulo by power of two (converted to made-up instructions)
     - unsigned to float conversion (converted to a made-up instruction)
     - float/double to unsigned conversion (converted to a made-up instruction)"""
     BodyPart = Union[Instruction, Label]
@@ -281,6 +282,15 @@ def simplify_standard_patterns(function: Function) -> Function:
         "bnez",
         "nop",
         "break",
+        "",
+    ]
+
+    mod_p2_pattern: List[str] = [
+        "bgez",
+        "andi",
+        "beqz",
+        "nop",
+        "addiu",
         "",
     ]
 
@@ -455,6 +465,30 @@ def simplify_standard_patterns(function: Function) -> Function:
         div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
         return ([div], i + len(div_p2_pattern_2))
 
+    def try_replace_mod_p2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(mod_p2_pattern)]
+        if not matches_pattern(actual, mod_p2_pattern):
+            return None
+        bgez = typing.cast(Instruction, actual[0])
+        andi = typing.cast(Instruction, actual[1])
+        beqz = typing.cast(Instruction, actual[2])
+        addiu = typing.cast(Instruction, actual[4])
+        label = typing.cast(Label, actual[5])
+        if (
+            bgez.get_branch_target().target != label.name
+            or beqz.get_branch_target().target != label.name
+            or bgez.args[0] != andi.args[1]
+            or beqz.args[0] != andi.args[0]
+            or addiu.args[0] != andi.args[0]
+            or not isinstance(andi.args[2], AsmLiteral)
+        ):
+            return None
+        val = (andi.args[2].value & 0xFFFF) + 1
+        mod = Instruction.derived(
+            "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
+        )
+        return ([mod], i + len(mod_p2_pattern) - 1)
+
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
@@ -543,6 +577,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             or try_replace_divu(i)
             or try_replace_div_p2_1(i)
             or try_replace_div_p2_2(i)
+            or try_replace_mod_p2(i)
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
             or try_replace_mips1_double_load_store(i)

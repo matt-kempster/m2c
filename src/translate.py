@@ -2632,6 +2632,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
     ),
     "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
+    "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
     # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
     "daddi": lambda a: handle_addi(a),
     "daddiu": lambda a: handle_addi(a),
