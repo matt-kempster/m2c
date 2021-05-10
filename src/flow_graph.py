@@ -365,11 +365,6 @@ def simplify_standard_patterns(function: Function) -> Function:
         "nop",
     ]
 
-    def get_li_imm(ins: Instruction) -> Optional[int]:
-        if ins.mnemonic == "li" and isinstance(ins.args[1], AsmLiteral):
-            return ins.args[1].value & 0xFFFFFFFF
-        return None
-
     def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> int:
         def match_one(actual: BodyPart, expected: str) -> bool:
             if expected == "?":
@@ -379,18 +374,8 @@ def simplify_standard_patterns(function: Function) -> Function:
             ins = actual
             exp = parse_instruction(expected, InstructionMeta.missing())
             if not exp.args:
-                if exp.mnemonic == "li" and ins.mnemonic in ["lui", "addiu"]:
-                    return True
                 return ins.mnemonic == exp.mnemonic
-            if str(ins) == str(exp):
-                return True
-            # A bit of an ugly hack, but since 'li' can be spelled many ways...
-            return (
-                exp.mnemonic == "li"
-                and exp.args[0] == ins.args[0]
-                and isinstance(exp.args[1], AsmLiteral)
-                and (exp.args[1].value & 0xFFFFFFFF) == get_li_imm(ins)
-            )
+            return str(ins) == str(exp)
 
         actuali = 0
         for pat in pattern:
