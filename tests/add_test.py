@@ -103,7 +103,10 @@ def do_disassembly_step(
         break
 
     arg = f"{addr}:{index}+{size}"
-    logging.debug(f"Calling mipsdisasm with arg {arg} and entry point {entry_point}...")
+    entry_point_str = entry_point.decode("utf-8", "replace")
+    logging.debug(
+        f"Calling mipsdisasm with arg {arg} and entry point {entry_point_str}..."
+    )
     final_asm = subprocess.run(
         [env_vars.SM64_TOOLS + "/mipsdisasm", temp_out_file, arg],
         stdout=subprocess.PIPE,
