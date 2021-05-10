@@ -326,6 +326,20 @@ def simplify_standard_patterns(function: Function) -> Function:
         "sra $x, $at, LIT",
     )
 
+    div_2_s16_pattern = make_pattern(
+        "sll $x, $x, LIT",
+        "sra $y, $x, LIT",
+        "srl $x, $x, 0x1f",
+        "addu $y, $y, $x",
+        "sra $y, $y, 1",
+    )
+
+    div_2_s32_pattern = make_pattern(
+        "srl $x, $y, 0x1f",
+        "addu $x, $y, $x",
+        "sra $x, $x, 1",
+    )
+
     utf_pattern = make_pattern(
         "bgez $x, .A",
         "cvt.s.w",
@@ -477,6 +491,31 @@ def simplify_standard_patterns(function: Function) -> Function:
         div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
         return ([div], i + len(div_p2_pattern_2))
 
+    def try_replace_div_2_s16(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_2_s16_pattern)]
+        if not matches_pattern(actual, div_2_s16_pattern):
+            return None
+        sll1 = typing.cast(Instruction, actual[0])
+        sra1 = typing.cast(Instruction, actual[1])
+        sra = typing.cast(Instruction, actual[4])
+        if sll1.args[2] != sra1.args[2]:
+            return None
+        div = Instruction.derived(
+            "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
+        )
+        return ([sll1, sra1, div], i + len(div_2_s16_pattern))
+
+    def try_replace_div_2_s32(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_2_s32_pattern)]
+        if not matches_pattern(actual, div_2_s32_pattern):
+            return None
+        addu = typing.cast(Instruction, actual[1])
+        sra = typing.cast(Instruction, actual[2])
+        div = Instruction.derived(
+            "div.fictive", [sra.args[0], addu.args[1], AsmLiteral(2)], sra
+        )
+        return ([div], i + len(div_2_s32_pattern))
+
     def try_replace_mod_p2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(mod_p2_pattern)]
         if not matches_pattern(actual, mod_p2_pattern):
@@ -572,6 +611,8 @@ def simplify_standard_patterns(function: Function) -> Function:
             or try_replace_divu(i)
             or try_replace_div_p2_1(i)
             or try_replace_div_p2_2(i)
+            or try_replace_div_2_s32(i)
+            or try_replace_div_2_s16(i)
             or try_replace_mod_p2(i)
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
