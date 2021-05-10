@@ -263,65 +263,81 @@ def simplify_standard_patterns(function: Function) -> Function:
     - unsigned to float conversion (converted to a made-up instruction)
     - float/double to unsigned conversion (converted to a made-up instruction)"""
     BodyPart = Union[Instruction, Label]
+    PatternPart = Union[Instruction, Label, None]
+    Pattern = List[Tuple[PatternPart, bool]]
 
-    div_pattern: List[str] = [
-        "bnez",
+    def make_pattern(*parts: str) -> Pattern:
+        ret: Pattern = []
+        for part in parts:
+            optional = part.endswith("*")
+            part = part.rstrip("*")
+            if part == "?":
+                ret.append((None, optional))
+            elif part.endswith(":"):
+                ret.append((Label(""), optional))
+            else:
+                ins = parse_instruction(part, InstructionMeta.missing())
+                ret.append((ins, optional))
+        return ret
+
+    div_pattern = make_pattern(
+        "bnez $x, .A",
         "?",  # nop or div
         "break",
-        "",
+        ".A:",
         "li $at, -1",
-        "bne",
+        "bne $x, $at, .B",
         "li $at, 0x80000000",
-        "bne",
+        "bne $y, $at, .B",
         "nop",
         "break",
-        "",
-    ]
+        ".B:",
+    )
 
-    divu_pattern: List[str] = [
-        "bnez",
+    divu_pattern = make_pattern(
+        "bnez $x, .A",
         "nop",
         "break",
-        "",
-    ]
+        ".A:",
+    )
 
-    mod_p2_pattern: List[str] = [
-        "bgez",
-        "andi",
-        "beqz",
+    mod_p2_pattern = make_pattern(
+        "bgez $x, .A",
+        "andi $y, $x, LIT",
+        "beqz $y, .A",
         "nop",
-        "addiu",
-        "",
-    ]
+        "addiu $y, $y, LIT",
+        ".A:",
+    )
 
-    div_p2_pattern_1: List[str] = [
-        "bgez",
-        "sra",
-        "addiu",
-        "sra",
-        "",
-    ]
+    div_p2_pattern_1 = make_pattern(
+        "bgez $x, .A",
+        "sra $y, $x, LIT",
+        "addiu $at, $x, LIT",
+        "sra $y, $at, LIT",
+        ".A:",
+    )
 
-    div_p2_pattern_2: List[str] = [
-        "bgez",
-        "move",
-        "addiu",
-        "",
-        "sra",
-    ]
+    div_p2_pattern_2 = make_pattern(
+        "bgez $x, .A",
+        "move $at, $x",
+        "addiu $at, $x, LIT",
+        ".A:",
+        "sra $x, $at, LIT",
+    )
 
-    utf_pattern: List[str] = [
-        "bgez",
+    utf_pattern = make_pattern(
+        "bgez $x, .A",
         "cvt.s.w",
         "li $at, 0x4f800000",
         "mtc1",
         "nop",
         "add.s",
-        "",
-    ]
+        ".A:",
+    )
 
-    ftu_pattern: List[str] = [
-        "cfc1",  # cfc1 Y, $31
+    ftu_pattern = make_pattern(
+        "cfc1 $y, $31",
         "nop",
         "andi",
         "andi*",  # (skippable)
@@ -345,7 +361,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         "li",
         "b",
         "or",
-        "",
+        ".A:",
         "b",
         "li",
         "?",  # label: (moved one step down if bneql)
@@ -353,9 +369,12 @@ def simplify_standard_patterns(function: Function) -> Function:
         "nop",
         "bltz",
         "nop",
-    ]
+    )
 
-    gcc_sqrt_pattern: List[str] = [
+    lwc1_twice_pattern = make_pattern("lwc1", "lwc1")
+    swc1_twice_pattern = make_pattern("swc1", "swc1")
+
+    gcc_sqrt_pattern = make_pattern(
         "sqrt.s",
         "c.eq.s",
         "nop",
@@ -363,28 +382,61 @@ def simplify_standard_patterns(function: Function) -> Function:
         "?",
         "jal sqrtf",
         "nop",
-    ]
+    )
 
-    def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> int:
-        def match_one(actual: BodyPart, expected: str) -> bool:
-            if expected == "?":
+    def matches_pattern(actual: List[BodyPart], pattern: Pattern) -> int:
+        symbolic_registers: Dict[str, Register] = {}
+        symbolic_labels: Dict[str, str] = {}
+
+        def match_one(actual: BodyPart, exp: PatternPart) -> bool:
+            if exp is None:
                 return True
+            if isinstance(exp, Label):
+                name = symbolic_labels.get(exp.name)
+                return isinstance(actual, Label) and (
+                    name is None or actual.name == name
+                )
             if not isinstance(actual, Instruction):
-                return expected == ""
+                return False
             ins = actual
-            exp = parse_instruction(expected, InstructionMeta.missing())
-            if not exp.args:
-                return ins.mnemonic == exp.mnemonic
-            return str(ins) == str(exp)
+            if ins.mnemonic != exp.mnemonic:
+                return False
+            if exp.args:
+                if len(exp.args) != len(ins.args):
+                    return False
+                for (e, a) in zip(exp.args, ins.args):
+                    if isinstance(e, AsmLiteral):
+                        if not isinstance(a, AsmLiteral) or e.value != a.value:
+                            return False
+                    elif isinstance(e, Register):
+                        if not isinstance(a, Register):
+                            return False
+                        if len(e.register_name) <= 1:
+                            if e.register_name not in symbolic_registers:
+                                symbolic_registers[e.register_name] = a
+                            elif symbolic_registers[e.register_name] != a:
+                                return False
+                        elif e.register_name != a.register_name:
+                            return False
+                    elif isinstance(e, AsmGlobalSymbol):
+                        if e.symbol_name == "LIT" and not isinstance(a, AsmLiteral):
+                            return False
+                    elif isinstance(e, JumpTarget):
+                        if not isinstance(a, JumpTarget):
+                            return False
+                        if e.target not in symbolic_labels:
+                            symbolic_labels[e.target] = a.target
+                        elif symbolic_labels[e.target] != a.target:
+                            return False
+                    else:
+                        assert False, f"bad pattern part: {exp}"
+            return True
 
         actuali = 0
-        for pat in pattern:
-            matches = actuali < len(actual) and match_one(
-                actual[actuali], pat.rstrip("*")
-            )
-            if matches:
+        for (pat, optional) in pattern:
+            if actuali < len(actual) and match_one(actual[actuali], pat):
                 actuali += 1
-            elif not pat.endswith("*"):
+            elif not optional:
                 return 0
         return actuali
 
@@ -399,54 +451,29 @@ def simplify_standard_patterns(function: Function) -> Function:
         actual = function.body[i : i + len(div_pattern)]
         if not matches_pattern(actual, div_pattern):
             return None
-        label1 = typing.cast(Label, actual[3])
-        label2 = typing.cast(Label, actual[10])
-        bnez = typing.cast(Instruction, actual[0])
-        bne1 = typing.cast(Instruction, actual[5])
-        bne2 = typing.cast(Instruction, actual[7])
-        if (
-            bnez.get_branch_target().target != label1.name
-            or bne1.get_branch_target().target != label2.name
-            and bne2.get_branch_target().target != label2.name
-        ):
-            return None
         return ([actual[1]], i + len(div_pattern) - 1)
 
     def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(divu_pattern)]
         if not matches_pattern(actual, divu_pattern):
             return None
-        label = typing.cast(Label, actual[3])
-        bnez = typing.cast(Instruction, actual[0])
-        if bnez.get_branch_target().target != label.name:
-            return None
         return ([], i + len(divu_pattern) - 1)
 
     def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        # Division by power of two where input reg != output reg
         actual = function.body[i : i + len(div_p2_pattern_1)]
         if not matches_pattern(actual, div_p2_pattern_1):
             return None
-        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
-            return None
-        label = typing.cast(Label, actual[4])
         bnez = typing.cast(Instruction, actual[0])
-        if bnez.get_branch_target().target != label.name:
-            return None
         div = create_div_p2(bnez, typing.cast(Instruction, actual[3]))
         return ([div], i + len(div_p2_pattern_1) - 1)
 
     def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        # Division by power of two where input reg = output reg
         actual = function.body[i : i + len(div_p2_pattern_2)]
         if not matches_pattern(actual, div_p2_pattern_2):
             return None
-        if typing.cast(Instruction, actual[1]).args[0] != Register("at"):
-            return None
-        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
-            return None
-        label = typing.cast(Label, actual[3])
         bnez = typing.cast(Instruction, actual[0])
-        if bnez.get_branch_target().target != label.name:
-            return None
         div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
         return ([div], i + len(div_p2_pattern_2))
 
@@ -454,21 +481,8 @@ def simplify_standard_patterns(function: Function) -> Function:
         actual = function.body[i : i + len(mod_p2_pattern)]
         if not matches_pattern(actual, mod_p2_pattern):
             return None
-        bgez = typing.cast(Instruction, actual[0])
         andi = typing.cast(Instruction, actual[1])
-        beqz = typing.cast(Instruction, actual[2])
-        addiu = typing.cast(Instruction, actual[4])
-        label = typing.cast(Label, actual[5])
-        if (
-            bgez.get_branch_target().target != label.name
-            or beqz.get_branch_target().target != label.name
-            or bgez.args[0] != andi.args[1]
-            or beqz.args[0] != andi.args[0]
-            or addiu.args[0] != andi.args[0]
-            or not isinstance(andi.args[2], AsmLiteral)
-        ):
-            return None
-        val = (andi.args[2].value & 0xFFFF) + 1
+        val = (typing.cast(AsmLiteral, andi.args[2]).value & 0xFFFF) + 1
         mod = Instruction.derived(
             "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
         )
@@ -477,10 +491,6 @@ def simplify_standard_patterns(function: Function) -> Function:
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
-            return None
-        label = typing.cast(Label, actual[6])
-        bgez = typing.cast(Instruction, actual[0])
-        if bgez.get_branch_target().target != label.name:
             return None
         cvt_instr = typing.cast(Instruction, actual[1])
         new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
@@ -511,8 +521,8 @@ def simplify_standard_patterns(function: Function) -> Function:
     ) -> Optional[Tuple[List[BodyPart], int]]:
         # TODO: sometimes the instructions aren't consecutive.
         actual = function.body[i : i + 2]
-        if not matches_pattern(actual, ["lwc1", "lwc1"]) and not matches_pattern(
-            actual, ["swc1", "swc1"]
+        if not matches_pattern(actual, lwc1_twice_pattern) and not matches_pattern(
+            actual, swc1_twice_pattern
         ):
             return None
         a, b = actual
