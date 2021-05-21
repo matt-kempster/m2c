@@ -30,8 +30,8 @@ class Type:
     K_INT = 1
     K_PTR = 2
     K_FLOAT = 4
-    K_INTPTR = 3
-    K_ANY = 7
+    K_INTPTR = K_INT | K_PTR
+    K_ANY = K_INT | K_PTR | K_FLOAT
     SIGNED = 1
     UNSIGNED = 2
     ANY_SIGN = 3
@@ -41,6 +41,7 @@ class Type:
     sign: int = attr.ib()
     uf_parent: Optional["Type"] = attr.ib(default=None)
     ptr_to: Optional[Union["Type", CType]] = attr.ib(default=None)
+    typemap: Optional[TypeMap] = attr.ib(default=None)
 
     def unify(self, other: "Type") -> bool:
         """
@@ -73,6 +74,7 @@ class Type:
                 if not x.ptr_to.unify(y.ptr_to):
                     return False
             elif not isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
+                assert x.typemap == y.typemap and x.typemap
                 # TODO: deep resolve_typedefs (needs a typemap)
                 if not equal_types(x.ptr_to, y.ptr_to):
                     return False
@@ -82,15 +84,20 @@ class Type:
                 if isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
                     type = x.ptr_to
                     ctype = y.ptr_to
+                    typemap = y.typemap
                 elif isinstance(y.ptr_to, Type) and not isinstance(x.ptr_to, Type):
                     type = y.ptr_to
                     ctype = x.ptr_to
+                    typemap = x.typemap
                 else:
                     assert False, "unreachable"
+                assert typemap
                 if not (
-                    isinstance(ctype, ca.PtrDecl) and Type.ptr(ctype.type).unify(type)
+                    isinstance(ctype, ca.PtrDecl)
+                    and Type.ptr(ctype.type, typemap).unify(type)
                 ):
                     return False
+        x.typemap = x.typemap or y.typemap
         x.kind = kind
         x.size = size
         x.sign = sign
@@ -178,8 +185,14 @@ class Type:
         return Type(kind=Type.K_INTPTR, size=32, sign=Type.ANY_SIGN)
 
     @staticmethod
-    def ptr(type: Optional[Union["Type", CType]] = None) -> "Type":
-        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=type)
+    def ptr(
+        type: Optional[Union["Type", CType]] = None, typemap: Optional[TypeMap] = None
+    ) -> "Type":
+        if type is not None and not isinstance(type, Type):
+            assert typemap is not None, "typemap is required with type"
+        return Type(
+            kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=type, typemap=typemap
+        )
 
     @staticmethod
     def f32() -> "Type":
@@ -241,9 +254,9 @@ class Type:
 def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     ctype = resolve_typedefs(ctype, typemap)
     if isinstance(ctype, (ca.PtrDecl, ca.ArrayDecl)):
-        return Type.ptr(ctype.type)
+        return Type.ptr(ctype.type, typemap)
     if isinstance(ctype, ca.FuncDecl):
-        return Type.ptr(ctype)
+        return Type.ptr(ctype, typemap)
     if isinstance(ctype, ca.TypeDecl):
         if isinstance(ctype.type, (ca.Struct, ca.Union)):
             return Type.any()
@@ -256,16 +269,16 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         if not size:
             return Type.any()
         sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
-        return Type(kind=Type.K_INT, size=size, sign=sign)
+        return Type(kind=Type.K_INT, size=size, sign=sign, typemap=typemap)
 
 
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
-        return Type.ptr(real_ctype.type), True
+        return Type.ptr(real_ctype.type, typemap), True
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type.ptr(real_ctype), True
-    return Type.ptr(ctype), False
+        return Type.ptr(real_ctype, typemap), True
+    return Type.ptr(ctype, typemap), False
 
 
 def get_field(

@@ -1916,7 +1916,7 @@ def handle_addi_real(
         var = stack_info.get_stack_var(imm.value, store=False)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
-        return AddressOf(var, type=Type.ptr(var.type))
+        return AddressOf(var, type=Type.ptr(var.type, stack_info.typemap))
     else:
         return add_imm(source, imm, stack_info)
 
@@ -2279,7 +2279,7 @@ def array_access_from_add(
             target_size=None,
             field_name=sub_field_name,
             stack_info=stack_info,
-            type=Type.ptr(elem_type),
+            type=Type.ptr(elem_type, typemap),
         )
         offset -= sub_offset
         target_type = type_from_ctype(elem_type, typemap)
