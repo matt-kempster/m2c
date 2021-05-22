@@ -94,7 +94,7 @@ class Type:
                 assert typemap
                 if not (
                     isinstance(ctype, ca.PtrDecl)
-                    and Type.ptr(ctype.type, typemap).unify(type)
+                    and Type.cptr(ctype.type, typemap).unify(type)
                 ):
                     return False
         x.typemap = x.typemap or y.typemap
@@ -185,13 +185,13 @@ class Type:
         return Type(kind=Type.K_INTPTR, size=32, sign=Type.ANY_SIGN)
 
     @staticmethod
-    def ptr(
-        type: Optional[Union["Type", CType]] = None, typemap: Optional[TypeMap] = None
-    ) -> "Type":
-        if type is not None and not isinstance(type, Type):
-            assert typemap is not None, "typemap is required with type"
+    def ptr(type: Optional["Type"] = None) -> "Type":
+        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=type)
+
+    @staticmethod
+    def cptr(ctype: CType, typemap: TypeMap) -> "Type":
         return Type(
-            kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=type, typemap=typemap
+            kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=ctype, typemap=typemap
         )
 
     @staticmethod
@@ -254,9 +254,9 @@ class Type:
 def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     ctype = resolve_typedefs(ctype, typemap)
     if isinstance(ctype, (ca.PtrDecl, ca.ArrayDecl)):
-        return Type.ptr(ctype.type, typemap)
+        return Type.cptr(ctype.type, typemap)
     if isinstance(ctype, ca.FuncDecl):
-        return Type.ptr(ctype, typemap)
+        return Type.cptr(ctype, typemap)
     if isinstance(ctype, ca.TypeDecl):
         if isinstance(ctype.type, (ca.Struct, ca.Union)):
             return Type.any()
@@ -275,10 +275,10 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
-        return Type.ptr(real_ctype.type, typemap), True
+        return Type.cptr(real_ctype.type, typemap), True
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type.ptr(real_ctype, typemap), True
-    return Type.ptr(ctype, typemap), False
+        return Type.cptr(real_ctype, typemap), True
+    return Type.cptr(ctype, typemap), False
 
 
 def get_field(
