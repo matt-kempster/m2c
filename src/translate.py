@@ -2279,7 +2279,7 @@ def array_access_from_add(
             target_size=None,
             field_name=sub_field_name,
             stack_info=stack_info,
-            type=Type.ptr(elem_type),
+            type=Type.cptr(elem_type, typemap),
         )
         offset -= sub_offset
         target_type = type_from_ctype(elem_type, typemap)
