@@ -70,32 +70,27 @@ class Type:
         if sign != Type.ANY_SIGN:
             assert kind == Type.K_INT
         if x.ptr_to is not None and y.ptr_to is not None:
-            if isinstance(x.ptr_to, Type) and isinstance(y.ptr_to, Type):
-                if not x.ptr_to.unify(y.ptr_to):
-                    return False
-            elif not isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
-                assert x.typemap == y.typemap and x.typemap
-                # TODO: deep resolve_typedefs (needs a typemap)
-                if not equal_types(x.ptr_to, y.ptr_to):
+            if not isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
+                assert x.typemap is not None
+                assert y.typemap is not None
+                assert x.typemap == y.typemap
+                x_ctype = resolve_typedefs(x.ptr_to, x.typemap)
+                y_ctype = resolve_typedefs(y.ptr_to, y.typemap)
+                if not equal_types(x_ctype, y_ctype):
                     return False
             else:
-                # TODO: unify Type and CType (needs a typemap)
-                # Until we get that, let's handle some easy cases though:
-                if isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
-                    type = x.ptr_to
-                    ctype = y.ptr_to
-                    typemap = y.typemap
-                elif isinstance(y.ptr_to, Type) and not isinstance(x.ptr_to, Type):
-                    type = y.ptr_to
-                    ctype = x.ptr_to
-                    typemap = x.typemap
+                if isinstance(x.ptr_to, Type):
+                    x_type = x.ptr_to
                 else:
-                    assert False, "unreachable"
-                assert typemap
-                if not (
-                    isinstance(ctype, ca.PtrDecl)
-                    and Type.cptr(ctype.type, typemap).unify(type)
-                ):
+                    assert x.typemap is not None
+                    x_type = type_from_ctype(x.ptr_to, x.typemap)
+                if isinstance(y.ptr_to, Type):
+                    y_type = y.ptr_to
+                else:
+                    assert y.typemap is not None
+                    y_type = type_from_ctype(y.ptr_to, y.typemap)
+
+                if not x_type.unify(y_type):
                     return False
         x.typemap = x.typemap or y.typemap
         x.kind = kind
