@@ -78,17 +78,26 @@ class Type:
                 y_ctype = resolve_typedefs(y.ptr_to, y.typemap)
                 if not equal_types(x_ctype, y_ctype):
                     return False
+            elif isinstance(x.ptr_to, Type) and isinstance(y.ptr_to, Type):
+                if not x.ptr_to.unify(y.ptr_to):
+                    return False
             else:
                 if isinstance(x.ptr_to, Type):
+                    assert not isinstance(y.ptr_to, Type)
+                    assert y.typemap is not None
                     x_type = x.ptr_to
+                    y_type = type_from_ctype(y.ptr_to, y.typemap)
+                    # If the CType is not representable as a Type, it can't
+                    # soundly be unified with x_type
+                    if y_type.kind == Type.K_ANY:
+                        return False
                 else:
+                    assert isinstance(y.ptr_to, Type)
                     assert x.typemap is not None
                     x_type = type_from_ctype(x.ptr_to, x.typemap)
-                if isinstance(y.ptr_to, Type):
                     y_type = y.ptr_to
-                else:
-                    assert y.typemap is not None
-                    y_type = type_from_ctype(y.ptr_to, y.typemap)
+                    if x_type.kind == Type.K_ANY:
+                        return False
 
                 if not x_type.unify(y_type):
                     return False
