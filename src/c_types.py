@@ -3,6 +3,7 @@ based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
 import copy
+import functools
 from typing import Any, Dict, Iterator, Match, Set, List, Tuple, Optional, Union
 import re
 
@@ -584,6 +585,7 @@ def parse_c(source: str) -> ca.FileAST:
         raise DecompFailure(f"Syntax error when parsing C context.\n{msg}{posstr}")
 
 
+@functools.lru_cache(maxsize=4)
 def build_typemap(source: str) -> TypeMap:
     source = add_builtin_typedefs(source)
     source = strip_comments(source)

@@ -1,6 +1,7 @@
 import re
 import struct
 import typing
+from pathlib import Path
 from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
 
 import attr
@@ -24,7 +25,11 @@ class Function:
     body: List[Union[Instruction, Label]] = attr.ib(factory=list)
 
     def new_label(self, name: str) -> None:
-        self.body.append(Label(name))
+        label = Label(name)
+        if self.body and self.body[-1] == label:
+            # Skip repeated labels
+            return
+        self.body.append(label)
 
     def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
@@ -68,7 +73,15 @@ class MIPSFile:
         self.functions.append(self.current_function)
 
     def new_instruction(self, instruction: Instruction) -> None:
-        assert self.current_function is not None
+        if self.current_function is None:
+            # Allow (and ignore) nop instructions in the .text
+            # section before any function labels
+            if instruction.mnemonic == "nop":
+                return
+            else:
+                raise DecompFailure(
+                    "unsupported non-nop instruction outside of function"
+                )
         self.current_function.new_instruction(instruction)
 
     def new_label(self, label_name: str) -> None:
@@ -164,7 +177,7 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
 
 
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
-    filename = f.name
+    filename = Path(f.name).name
     mips_file: MIPSFile = MIPSFile(filename)
     defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0

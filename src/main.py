@@ -1,6 +1,7 @@
 import argparse
 import sys
 import traceback
+from pathlib import Path
 from typing import List, Optional
 
 from .error import DecompFailure
@@ -50,6 +51,9 @@ def run(options: Options) -> int:
     except (OSError, DecompFailure) as e:
         print(e)
         return 1
+    except Exception as e:
+        traceback.print_exc(file=sys.stdout)
+        return 1
 
     if options.dump_typemap:
         assert typemap
@@ -68,7 +72,7 @@ def run(options: Options) -> int:
                 has_error = True
             except Exception:
                 print(f"Internal error while decompiling function {fn.name}:\n")
-                traceback.print_exc()
+                traceback.print_exc(file=sys.stdout)
                 has_error = True
         if has_error:
             return 1
