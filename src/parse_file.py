@@ -25,7 +25,11 @@ class Function:
     body: List[Union[Instruction, Label]] = attr.ib(factory=list)
 
     def new_label(self, name: str) -> None:
-        self.body.append(Label(name))
+        label = Label(name)
+        if self.body and self.body[-1] == label:
+            # Skip repeated labels
+            return
+        self.body.append(label)
 
     def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
