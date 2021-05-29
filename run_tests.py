@@ -164,10 +164,10 @@ def run_project_tests(
         ):
             continue
 
+        has_context = context_file.exists()
         flags = []
-        if context_file.exists():
+        if has_context:
             flags.extend(["--context", str(context_file)])
-            name_prefix = f"{name_prefix}_ctx"
 
         # Guess the name of .rodata file(s) for the MM decomp project
         for candidate in [
@@ -188,7 +188,7 @@ def run_project_tests(
                 flags.extend(["--rodata", str(f)])
 
         test_path = asm_file.relative_to(asm_dir)
-        name = f"{name_prefix}:{test_path}"
+        name = f"{name_prefix}{'_ctx' if has_context else ''}:{test_path}"
         if filter_regex is not None and not re.search(filter_regex, name):
             continue
         if coverage:
