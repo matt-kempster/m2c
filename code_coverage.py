@@ -3,6 +3,7 @@ from coverage import Coverage  # type: ignore
 import sys
 import argparse
 import os
+from pathlib import Path
 
 parser = argparse.ArgumentParser(description="Compute code coverage for tests.")
 parser.add_argument(
@@ -17,6 +18,19 @@ parser.add_argument(
     help="emit a .coverage file",
     action="store_true",
 )
+parser.add_argument(
+    "--project",
+    dest="project_dirs",
+    action="append",
+    default=[],
+    type=Path,
+    help=(
+        "Run tests on the asm files from a decompilation project. "
+        "The zeldaret/oot and zeldaret/mm projects are supported. "
+        "If ctx.c exists in this directory, it will be used as context. "
+        "Can be specified multiple times."
+    ),
+)
 args = parser.parse_args()
 
 cov = Coverage(
@@ -27,7 +41,7 @@ cov.start()
 import run_tests
 
 run_tests.set_up_logging(debug=False)
-ret = run_tests.main(should_overwrite=False, coverage=cov)
+ret = run_tests.main(args.project_dirs, should_overwrite=False, coverage=cov)
 
 cov.stop()
 
