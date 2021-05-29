@@ -76,8 +76,12 @@ class MIPSFile:
         if self.current_function is None:
             # Allow (and ignore) nop instructions in the .text
             # section before any function labels
-            assert instruction.mnemonic == "nop"
-            return
+            if instruction.mnemonic == "nop":
+                return
+            else:
+                raise DecompFailure(
+                    "unsupported non-nop instruction outside of function"
+                )
         self.current_function.new_instruction(instruction)
 
     def new_label(self, label_name: str) -> None:

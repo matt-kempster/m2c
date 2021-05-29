@@ -48,8 +48,11 @@ def run(options: Options) -> int:
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
                 typemap = build_typemap(f.read())
-    except (AssertionError, OSError, DecompFailure) as e:
+    except (OSError, DecompFailure) as e:
         print(e)
+        return 1
+    except Exception as e:
+        traceback.print_exc(file=sys.stdout)
         return 1
 
     if options.dump_typemap:
