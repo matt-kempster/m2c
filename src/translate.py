@@ -731,6 +731,14 @@ class BinaryOp(Condition):
                 expr = BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
                 return expr.format(fmt)
 
+        if (
+            isinstance(self.right, Literal)
+            and self.right.value == -1
+            and self.op == "*"
+        ):
+            unary_expr = UnaryOp(op="-", expr=self.left, type=self.type)
+            return unary_expr.format(fmt)
+
         # For commutative, left-associative operations, strip unnecessary parentheses.
         left_expr = late_unwrap(self.left)
         lhs = left_expr.format(fmt)
@@ -2212,7 +2220,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             and not expr.forced_emit
         ):
             base, num = fold(expr.wrapped_expr, False, allow_sll)
-            if num != 1 and is_trivial_expression(base):
+            if num != 1:
                 return (base, num)
         return (expr, 1)
 
