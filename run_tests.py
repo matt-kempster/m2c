@@ -4,6 +4,7 @@ import contextlib
 import difflib
 import io
 import logging
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -104,16 +105,25 @@ def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
 
 
 def run_e2e_test(
-    e2e_top_dir: Path, e2e_test_path: Path, should_overwrite: bool, coverage: Any
+    e2e_top_dir: Path,
+    e2e_test_path: Path,
+    should_overwrite: bool,
+    filter_regex: Optional[str],
+    coverage: Any,
 ) -> bool:
-    logging.info(f"Running test: {e2e_test_path.name}")
 
     ret = True
     for asm_file_path in e2e_test_path.glob("*.s"):
         old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
         flags_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-flags.txt")
+
+        name = f"e2e:{asm_file_path.relative_to(e2e_top_dir)}"
+        if filter_regex is not None and not re.search(filter_regex, name):
+            continue
         if coverage:
-            coverage.switch_context(f"e2e:{asm_file_path.relative_to(e2e_top_dir)}")
+            coverage.switch_context(name)
+        logging.info(f"Running test: {name}")
+
         if not decompile_and_compare(
             asm_file_path,
             old_output_path,
@@ -130,8 +140,9 @@ def run_project_tests(
     base_dir: Path,
     output_dir: Path,
     should_overwrite: bool,
+    filter_regex: Optional[str],
+    name_prefix: str,
     coverage: Any,
-    cov_prefix: str,
 ) -> bool:
     ret = True
     asm_dir = base_dir / "asm"
@@ -156,7 +167,7 @@ def run_project_tests(
         flags = []
         if context_file.exists():
             flags.extend(["--context", str(context_file)])
-            cov_prefix = f"{cov_prefix}_ctx"
+            name_prefix = f"{name_prefix}_ctx"
 
         # Guess the name of .rodata file(s) for the MM decomp project
         for candidate in [
@@ -177,9 +188,12 @@ def run_project_tests(
                 flags.extend(["--rodata", str(f)])
 
         test_path = asm_file.relative_to(asm_dir)
-        logging.info(f"Running test: {test_path}")
+        name = f"{name_prefix}:{test_path}"
+        if filter_regex is not None and not re.search(filter_regex, name):
+            continue
         if coverage:
-            coverage.switch_context(f"{cov_prefix}:{test_path}")
+            coverage.switch_context(name)
+        logging.info(f"Running test: {name}")
 
         output_file = (output_dir / test_path).with_suffix(".c")
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -194,18 +208,25 @@ def run_project_tests(
     return ret
 
 
-def main(project_dirs: List[Path], should_overwrite: bool, coverage: Any) -> int:
+def main(
+    project_dirs: List[Path],
+    should_overwrite: bool,
+    filter_regex: Optional[str],
+    coverage: Any,
+) -> int:
     ret = 0
     e2e_top_dir = Path(__file__).parent / "tests" / "end_to_end"
     for e2e_test_path in e2e_top_dir.iterdir():
-        if not run_e2e_test(e2e_top_dir, e2e_test_path, should_overwrite, coverage):
+        if not run_e2e_test(
+            e2e_top_dir, e2e_test_path, should_overwrite, filter_regex, coverage
+        ):
             ret = 1
 
     for project_dir in project_dirs:
         name = project_dir.name
         output_dir = Path(__file__).parent / "tests" / "project" / name
         if not run_project_tests(
-            project_dir, output_dir, should_overwrite, coverage, name
+            project_dir, output_dir, should_overwrite, filter_regex, name, coverage
         ):
             ret = 1
 
@@ -229,6 +250,11 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--filter",
+        dest="filter",
+        help=("Only run tests matching this regular expression."),
+    )
+    parser.add_argument(
         "--project",
         dest="project_dirs",
         action="append",
@@ -246,5 +272,5 @@ if __name__ == "__main__":
 
     if args.should_overwrite:
         logging.info("Overwriting test output files.")
-    ret = main(args.project_dirs, args.should_overwrite, coverage=None)
+    ret = main(args.project_dirs, args.should_overwrite, args.filter, coverage=None)
     sys.exit(ret)

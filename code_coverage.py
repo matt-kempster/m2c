@@ -19,6 +19,11 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
+    "--filter",
+    dest="filter",
+    help=("Only run tests matching this regular expression."),
+)
+parser.add_argument(
     "--project",
     dest="project_dirs",
     action="append",
@@ -41,7 +46,9 @@ cov.start()
 import run_tests
 
 run_tests.set_up_logging(debug=False)
-ret = run_tests.main(args.project_dirs, should_overwrite=False, coverage=cov)
+ret = run_tests.main(
+    args.project_dirs, should_overwrite=False, filter_regex=args.filter, coverage=cov
+)
 
 cov.stop()
 
