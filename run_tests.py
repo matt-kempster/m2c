@@ -139,7 +139,7 @@ def run_e2e_test(
 def run_project_tests(
     base_dir: Path,
     output_dir: Path,
-    use_context: bool,
+    context_file: Optional[Path],
     should_overwrite: bool,
     filter_regex: Optional[str],
     name_prefix: str,
@@ -147,12 +147,6 @@ def run_project_tests(
 ) -> bool:
     ret = True
     asm_dir = base_dir / "asm"
-    context_file = base_dir / "ctx.c"
-    if use_context and not context_file.exists():
-        logging.error(
-            f"{name_prefix} tests require context file, but {context_file} does not exist"
-        )
-        return False
 
     for asm_file in asm_dir.rglob("*"):
         if asm_file.suffix not in (".asm", ".s"):
@@ -172,7 +166,7 @@ def run_project_tests(
             continue
 
         flags = []
-        if use_context:
+        if context_file is not None:
             flags.extend(["--context", str(context_file)])
 
         # Guess the name of .rodata file(s) for the MM decomp project
@@ -194,7 +188,7 @@ def run_project_tests(
                 flags.extend(["--rodata", str(f)])
 
         test_path = asm_file.relative_to(asm_dir)
-        name = f"{name_prefix}{'_ctx' if use_context else ''}:{test_path}"
+        name = f"{name_prefix}:{test_path}"
         if filter_regex is not None and not re.search(filter_regex, name):
             continue
         if coverage:
@@ -230,11 +224,23 @@ def main(
 
     for project_dir, use_context in project_dirs:
         name = project_dir.name
+        context_file: Optional[Path] = None
+
+        if use_context:
+            name = f"{name}_ctx"
+            context_file = project_dir / "ctx.c"
+            if not context_file.exists():
+                logging.error(
+                    f"{project_dir} tests require context file, but {context_file} does not exist"
+                )
+                ret = 1
+                continue
+
         output_dir = Path(__file__).parent / "tests" / "project" / name
         if not run_project_tests(
             project_dir,
             output_dir,
-            use_context,
+            context_file,
             should_overwrite,
             filter_regex,
             name,
