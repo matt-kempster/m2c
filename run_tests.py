@@ -8,7 +8,7 @@ import re
 import shlex
 import sys
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from src.main import parse_flags
 from src.main import run as decompile
@@ -139,6 +139,7 @@ def run_e2e_test(
 def run_project_tests(
     base_dir: Path,
     output_dir: Path,
+    use_context: bool,
     should_overwrite: bool,
     filter_regex: Optional[str],
     name_prefix: str,
@@ -147,6 +148,12 @@ def run_project_tests(
     ret = True
     asm_dir = base_dir / "asm"
     context_file = base_dir / "ctx.c"
+    if use_context and not context_file.exists():
+        logging.error(
+            f"{name_prefix} tests require context file, but {context_file} does not exist"
+        )
+        return False
+
     for asm_file in asm_dir.rglob("*"):
         if asm_file.suffix not in (".asm", ".s"):
             continue
@@ -164,9 +171,8 @@ def run_project_tests(
         ):
             continue
 
-        has_context = context_file.exists()
         flags = []
-        if has_context:
+        if use_context:
             flags.extend(["--context", str(context_file)])
 
         # Guess the name of .rodata file(s) for the MM decomp project
@@ -188,7 +194,7 @@ def run_project_tests(
                 flags.extend(["--rodata", str(f)])
 
         test_path = asm_file.relative_to(asm_dir)
-        name = f"{name_prefix}{'_ctx' if has_context else ''}:{test_path}"
+        name = f"{name_prefix}{'_ctx' if use_context else ''}:{test_path}"
         if filter_regex is not None and not re.search(filter_regex, name):
             continue
         if coverage:
@@ -209,7 +215,7 @@ def run_project_tests(
 
 
 def main(
-    project_dirs: List[Path],
+    project_dirs: List[Tuple[Path, bool]],
     should_overwrite: bool,
     filter_regex: Optional[str],
     coverage: Any,
@@ -222,11 +228,17 @@ def main(
         ):
             ret = 1
 
-    for project_dir in project_dirs:
+    for project_dir, use_context in project_dirs:
         name = project_dir.name
         output_dir = Path(__file__).parent / "tests" / "project" / name
         if not run_project_tests(
-            project_dir, output_dir, should_overwrite, filter_regex, name, coverage
+            project_dir,
+            output_dir,
+            use_context,
+            should_overwrite,
+            filter_regex,
+            name,
+            coverage,
         ):
             ret = 1
 
@@ -259,11 +271,22 @@ if __name__ == "__main__":
         dest="project_dirs",
         action="append",
         default=[],
-        type=Path,
+        type=lambda p: (Path(p), False),
         help=(
             "Run tests on the asm files from a decompilation project. "
             "The zeldaret/oot and zeldaret/mm projects are supported. "
-            "If ctx.c exists in this directory, it will be used as context. "
+            "Can be specified multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--project-with-context",
+        dest="project_dirs",
+        action="append",
+        default=[],
+        type=lambda p: (Path(p), True),
+        help=(
+            "Same as --project, but use the C context file `ctx.c` "
+            "from the base directory. "
             "Can be specified multiple times."
         ),
     )

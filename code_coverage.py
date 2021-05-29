@@ -28,11 +28,22 @@ parser.add_argument(
     dest="project_dirs",
     action="append",
     default=[],
-    type=Path,
+    type=lambda p: (Path(p), False),
     help=(
         "Run tests on the asm files from a decompilation project. "
         "The zeldaret/oot and zeldaret/mm projects are supported. "
-        "If ctx.c exists in this directory, it will be used as context. "
+        "Can be specified multiple times."
+    ),
+)
+parser.add_argument(
+    "--project-with-context",
+    dest="project_dirs",
+    action="append",
+    default=[],
+    type=lambda p: (Path(p), True),
+    help=(
+        "Same as --project, but use the C context file `ctx.c` "
+        "from the base directory. "
         "Can be specified multiple times."
     ),
 )
