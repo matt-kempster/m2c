@@ -82,7 +82,8 @@ class Register:
     register_name: str = attr.ib()
 
     def is_float(self) -> bool:
-        return self.register_name[0] == "f" and self.register_name != "fp"
+        name = self.register_name
+        return bool(name) and name[0] == "f" and name != "fp"
 
     def other_f64_reg(self) -> "Register":
         assert (
