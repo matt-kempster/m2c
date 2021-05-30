@@ -13,6 +13,26 @@ from .translate import translate_to_ast
 from .c_types import TypeMap, build_typemap, dump_typemap
 
 
+def print_exception(sanitize: bool) -> None:
+    """Print a traceback for the current exception to stdout.
+
+    If `sanitize` is true, the filename's full path is stripped,
+    and the line is set to 0. These changes make the test output
+    less brittle."""
+    if sanitize:
+        exc = sys.exc_info()
+        frames = traceback.extract_tb(exc[2])
+        for frame in frames:
+            frame.lineno = 0
+            frame.filename = Path(frame.filename).name
+
+        print("Traceback (most recent call last):")
+        print("".join(traceback.format_list(frames)))
+        print(traceback.format_exception_only(exc[0], exc[1]), end="")
+    else:
+        traceback.print_exc(file=sys.stdout)
+
+
 def decompile_function(
     options: Options, function: Function, rodata: Rodata, typemap: Optional[TypeMap]
 ) -> None:
@@ -52,7 +72,7 @@ def run(options: Options) -> int:
         print(e)
         return 1
     except Exception as e:
-        traceback.print_exc(file=sys.stdout)
+        print_exception(sanitize=options.sanitize_tracebacks)
         return 1
 
     if options.dump_typemap:
@@ -72,7 +92,7 @@ def run(options: Options) -> int:
                 has_error = True
             except Exception:
                 print(f"Internal error while decompiling function {fn.name}:\n")
-                traceback.print_exc(file=sys.stdout)
+                print_exception(sanitize=options.sanitize_tracebacks)
                 has_error = True
         if has_error:
             return 1
@@ -218,6 +238,12 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--sanitize-tracebacks",
+        dest="sanitize_tracebacks",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
     preproc_defines = {
@@ -252,6 +278,7 @@ def parse_flags(flags: List[str]) -> Options:
         pdb_translate=args.pdb_translate,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
+        sanitize_tracebacks=args.sanitize_tracebacks,
     )
 
 

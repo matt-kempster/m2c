@@ -30,6 +30,7 @@ class Options:
     pdb_translate: bool = attr.ib()
     preproc_defines: Dict[str, int] = attr.ib()
     coding_style: CodingStyle = attr.ib()
+    sanitize_tracebacks: bool = attr.ib()
 
 
 DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(

@@ -7,6 +7,7 @@ import logging
 import re
 import shlex
 import sys
+from coverage import Coverage  # type: ignore
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -58,10 +59,13 @@ def decompile_and_compare(
     try:
         original_contents = output_path.read_text()
     except FileNotFoundError:
+        if not should_overwrite:
+            logging.error(f"{output_path} does not exist. Skipping.")
+            return True
         logging.info(f"{output_path} does not exist. Creating...")
         original_contents = "(file did not exist)"
 
-    test_flags = ["--stop-on-error", str(asm_file_path)]
+    test_flags = ["--sanitize-tracebacks", "--stop-on-error", str(asm_file_path)]
     if flags is not None:
         test_flags.extend(flags)
     if flags_path is not None:
@@ -151,8 +155,6 @@ def run_project_tests(
     for asm_file in asm_dir.rglob("*"):
         if asm_file.suffix not in (".asm", ".s"):
             continue
-        if "non_matching" in str(asm_file):
-            continue
 
         asm_name = asm_file.name
         if (
@@ -162,6 +164,9 @@ def run_project_tests(
             or asm_name.startswith("boot_rodata")
             or asm_name.endswith("_data.asm")
             or asm_name.endswith("_rodata.asm")
+            or asm_name.endswith(".data.s")
+            or asm_name.endswith(".rodata.s")
+            or asm_name.endswith(".rodata2.s")
         ):
             continue
 
@@ -171,15 +176,18 @@ def run_project_tests(
 
         # Guess the name of .rodata file(s) for the MM decomp project
         for candidate in [
-            # code/*.asm
+            # mm code/*.asm
             "code_rodata_" + asm_name,
             asm_name.replace("code_", "code_rodata_"),
-            # boot/*.asm
+            # mm boot/*.asm
             "boot_rodata_" + asm_name,
             asm_name.replace("boot_", "boot_rodata_"),
-            # overlays/*.asm
+            # mm overlays/*.asm
             asm_name.rpartition("_0x")[0] + "_rodata.asm",
             asm_name.rpartition("_0x")[0] + "_late_rodata.asm",
+            # oot *.s
+            asm_name.replace(".s", ".rodata.s"),
+            asm_name.replace(".s", ".rodata2.s"),
         ]:
             if candidate == asm_name:
                 continue
@@ -224,8 +232,12 @@ def main(
 
     for project_dir, use_context in project_dirs:
         name = project_dir.name
-        context_file: Optional[Path] = None
+        if project_dir.match("papermario/ver/us"):
+            name = "papermario_us"
+        elif project_dir.match("papermario/ver/jp"):
+            name = "papermario_jp"
 
+        context_file: Optional[Path] = None
         if use_context:
             name = f"{name}_ctx"
             context_file = project_dir / "ctx.c"
@@ -296,10 +308,48 @@ if __name__ == "__main__":
             "Can be specified multiple times."
         ),
     )
+    cov_group = parser.add_argument_group("Coverage")
+    cov_group.add_argument(
+        "--coverage",
+        dest="coverage",
+        action="store_true",
+        help="Compute code coverage for tests",
+    )
+    cov_group.add_argument(
+        "--coverage-html",
+        dest="coverage_html",
+        help="Output coverage HTML report to directory",
+        default="htmlcov/",
+    )
+    cov_group.add_argument(
+        "--coverage-emit-data",
+        dest="coverage_emit_data",
+        action="store_true",
+        help="Emit a .coverage data file",
+    )
     args = parser.parse_args()
     set_up_logging(args.debug)
 
+    cov = None
+    if args.coverage:
+        logging.info("Computing code coverage.")
+        coverage_data_file = None
+        if args.coverage_emit_data:
+            coverage_data_file = ".coverage"
+            logging.info(f"Writing coverage data to {coverage_data_file}")
+        cov = Coverage(include="src/*", data_file=coverage_data_file, branch=True)
+        cov.start()
+
     if args.should_overwrite:
         logging.info("Overwriting test output files.")
-    ret = main(args.project_dirs, args.should_overwrite, args.filter, coverage=None)
+
+    ret = main(args.project_dirs, args.should_overwrite, args.filter, coverage=cov)
+
+    if cov is not None:
+        cov.stop()
+        cov.html_report(
+            directory=args.coverage_html, show_contexts=True, skip_empty=True
+        )
+        logging.info(f"Wrote html to {args.coverage_html}")
+
     sys.exit(ret)
