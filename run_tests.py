@@ -11,8 +11,6 @@ from coverage import Coverage  # type: ignore
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
-from src.main import parse_flags
-from src.main import run as decompile
 from src.options import Options
 
 CRASH_STRING = "CRASHED\n"
@@ -52,6 +50,9 @@ def decompile_and_compare(
     flags_path: Optional[Path] = None,
     flags: Optional[List[str]] = None,
 ) -> bool:
+    # This import is deferred so it can be profiled by the coverage tool
+    from src.main import parse_flags
+
     logging.debug(
         f"Decompiling {asm_file_path}"
         + (f" into {output_path}" if should_overwrite else "")
@@ -93,6 +94,9 @@ def decompile_and_compare(
 
 
 def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
+    # This import is deferred so it can be profiled by the coverage tool
+    from src.main import run as decompile
+
     out_string = io.StringIO()
     with contextlib.redirect_stdout(out_string):
         returncode = decompile(options)
