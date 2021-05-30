@@ -354,7 +354,8 @@ class StackInfo:
         return self.reg_vars.get(reg)
 
     def add_register_var(self, reg: Register) -> None:
-        self.reg_vars[reg] = RegisterVar(reg, Type.any())
+        type = Type.floatish() if reg.is_float() else Type.intptr()
+        self.reg_vars[reg] = RegisterVar(reg, type)
 
     def use_register_var(self, var: "RegisterVar") -> None:
         self.used_reg_vars.add(var.register)
