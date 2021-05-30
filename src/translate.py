@@ -823,6 +823,13 @@ class Cast(Expression):
             return True
         return False
 
+    def is_trivial(self) -> bool:
+        return (
+            self.reinterpret
+            and self.expr.type.is_float() == self.type.is_float()
+            and is_trivial_expression(self.expr)
+        )
+
     def format(self, fmt: Formatter) -> str:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
@@ -1601,7 +1608,7 @@ def deref(
 
 def is_trivial_expression(expr: Expression) -> bool:
     # Determine whether an expression should be evaluated only once or not.
-    if expr is None or isinstance(
+    if isinstance(
         expr,
         (
             EvalOnceExpr,
@@ -1617,6 +1624,8 @@ def is_trivial_expression(expr: Expression) -> bool:
         return True
     if isinstance(expr, AddressOf):
         return is_trivial_expression(expr.expr)
+    if isinstance(expr, Cast):
+        return expr.is_trivial()
     return False
 
 
