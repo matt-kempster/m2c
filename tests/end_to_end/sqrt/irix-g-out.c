@@ -10,6 +10,6 @@ f32 test(f32 arg0) {
     spC = (bitwise s32) sp4;
     spC = 0x5F3759DF - (spC >> 1);
     sp4 = (bitwise f32) spC;
-    sp4 = (sp0 - (sp8 * sp4 * sp4)) * sp4;
+    sp4 *= sp0 - (sp8 * sp4 * sp4);
     return sp4;
 }

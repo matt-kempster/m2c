@@ -47,6 +47,7 @@ from .types import (
 )
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
+COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
 
 ARGUMENT_REGS: List[Register] = list(
     map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
@@ -1299,13 +1300,22 @@ class StoreStmt(Statement):
         return True
 
     def format(self, fmt: Formatter) -> str:
-        source = self.source
+        dest = late_unwrap(self.dest)
+        source = late_unwrap(self.source)
         if (
-            isinstance(self.dest, StructAccess) and self.dest.late_has_known_type()
-        ) or isinstance(self.dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
+            isinstance(dest, StructAccess) and dest.late_has_known_type()
+        ) or isinstance(dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_casts_for_store(source)
-        return f"{self.dest.format(fmt)} = {format_expr(source, fmt)};"
+        if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
+            rhs = None
+            if late_unwrap(source.left) == dest:
+                rhs = source.right
+            elif late_unwrap(source.right) == dest and source.op in ASSOCIATIVE_OPS:
+                rhs = source.left
+            if rhs is not None:
+                return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
+        return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
 
 
 @attr.s
@@ -1724,7 +1734,7 @@ def elide_casts_for_store(expr: Expression) -> Expression:
         return elide_casts_for_store(uw_expr.expr)
     if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
         return Literal(uw_expr.value, type=Type.intish())
-    return expr
+    return uw_expr
 
 
 def uses_expr(expr: Expression, expr_filter: Callable[[Expression], bool]) -> bool:
