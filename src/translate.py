@@ -1276,8 +1276,7 @@ class SetPhiStmt(Statement):
         return True
 
     def format(self, fmt: Formatter) -> str:
-        val_str = format_expr(self.expr, fmt)
-        return f"{self.phi.propagates_to().get_var_name()} = {val_str};"
+        return format_assignment(self.phi.propagates_to(), self.expr, fmt)
 
 
 @attr.s
@@ -1300,22 +1299,14 @@ class StoreStmt(Statement):
         return True
 
     def format(self, fmt: Formatter) -> str:
-        dest = late_unwrap(self.dest)
-        source = late_unwrap(self.source)
+        dest = self.dest
+        source = self.source
         if (
             isinstance(dest, StructAccess) and dest.late_has_known_type()
         ) or isinstance(dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_casts_for_store(source)
-        if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
-            rhs = None
-            if late_unwrap(source.left) == dest:
-                rhs = source.right
-            elif late_unwrap(source.right) == dest and source.op in ASSOCIATIVE_OPS:
-                rhs = source.left
-            if rhs is not None:
-                return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
-        return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
+        return format_assignment(dest, source, fmt)
 
 
 @attr.s
@@ -1716,6 +1707,21 @@ def format_expr(expr: Expression, fmt: Formatter) -> str:
     if ret.startswith("(") and balanced_parentheses(ret[1:-1]):
         return ret[1:-1]
     return ret
+
+
+def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> str:
+    """Stringify `dest = source;`."""
+    dest = late_unwrap(dest)
+    source = late_unwrap(source)
+    if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
+        rhs = None
+        if late_unwrap(source.left) == dest:
+            rhs = source.right
+        elif late_unwrap(source.right) == dest and source.op in ASSOCIATIVE_OPS:
+            rhs = source.left
+        if rhs is not None:
+            return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
+    return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
 
 
 def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:

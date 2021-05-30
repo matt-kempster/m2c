@@ -20,7 +20,7 @@ s32 test(void *arg0, s32 arg1) {
 loop_3:
             temp_v0 = phi_v0 + 1;
             *phi_v1 = (u8)0;
-            phi_v1 = phi_v1 + 1;
+            phi_v1 += 1;
             phi_v0 = temp_v0;
             if (temp_a3 != temp_v0) {
                 goto loop_3;

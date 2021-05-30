@@ -35,9 +35,9 @@ loop_1:
                 phi_a2_2 = phi_v0 * 0;
 loop_4:
                 temp_v1 = phi_v1_4 + phi_a2_2;
-                phi_a3 = phi_a3 + 1;
+                phi_a3 += 1;
                 phi_v1_4 = temp_v1;
-                phi_a2_2 = phi_a2_2 + phi_v0;
+                phi_a2_2 += phi_v0;
                 if (temp_t1 != phi_a3) {
                     goto loop_4;
                 }
@@ -57,10 +57,10 @@ loop_7:
                     phi_a1 = temp_a1;
                     phi_v1_2 = temp_v1_2;
                     phi_v1_3 = temp_v1_2;
-                    phi_a2 = phi_a2 + (phi_v0 * 4);
-                    phi_a3_2 = phi_a3_2 + (phi_v0 * 4);
-                    phi_t0 = phi_t0 + (phi_v0 * 4);
-                    phi_t1 = phi_t1 + (phi_v0 * 4);
+                    phi_a2 += phi_v0 * 4;
+                    phi_a3_2 += phi_v0 * 4;
+                    phi_t0 += phi_v0 * 4;
+                    phi_t1 += phi_v0 * 4;
                     if (temp_a1 != arg0) {
                         goto loop_7;
                     }
