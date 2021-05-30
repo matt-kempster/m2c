@@ -9,7 +9,6 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 temp_v0;
     s32 temp_v0_2;
     s32 temp_v1;
-    s32 temp_v1_2;
     s32 phi_s0;
     s32 phi_t0;
     s32 phi_v1;
@@ -80,10 +79,10 @@ loop_12:
             }
         }
     }
-    if ((phi_s0_2 != 0) && (phi_t0_2 != 0) && (sp24 = phi_v1_3, temp_v1_2 = phi_v1_3, (func_00400090(phi_s0_2 + phi_t0_2) != 0)) && (arg3 != 0)) {
-        phi_v1_4 = temp_v1_2;
-        phi_v1_7 = temp_v1_2;
-        if (temp_v1_2 < 5) {
+    if ((phi_s0_2 != 0) && (phi_t0_2 != 0) && (sp24 = phi_v1_3, (func_00400090(phi_s0_2 + phi_t0_2) != 0)) && (arg3 != 0)) {
+        phi_v1_4 = phi_v1_3;
+        phi_v1_7 = phi_v1_3;
+        if (phi_v1_3 < 5) {
 loop_19:
             temp_t5 = (phi_v1_4 + 1) * 2;
             phi_v1_4 = temp_t5;

@@ -1617,6 +1617,7 @@ def is_trivial_expression(expr: Expression) -> bool:
             GlobalSymbol,
             LocalVar,
             PassedInArg,
+            PhiExpr,
             RegisterVar,
             SubroutineArg,
         ),
