@@ -462,23 +462,24 @@ def format_hex(val: int) -> str:
     return format(val, "x").upper()
 
 
-def escape_char(ch: str) -> str:
+def escape_byte(b: int) -> bytes:
     table = {
-        "\0": "\\0",
-        "\b": "\\b",
-        "\f": "\\f",
-        "\n": "\\n",
-        "\r": "\\r",
-        "\t": "\\t",
-        "\v": "\\v",
-        "\\": "\\\\",
-        '"': '\\"',
+        b"\0": b"\\0",
+        b"\b": b"\\b",
+        b"\f": b"\\f",
+        b"\n": b"\\n",
+        b"\r": b"\\r",
+        b"\t": b"\\t",
+        b"\v": b"\\v",
+        b"\\": b"\\\\",
+        b'"': b'\\"',
     }
-    if ch in table:
-        return table[ch]
-    if ord(ch) < 0x20 or ord(ch) in [0xFF, 0x7F]:
-        return "\\x{:02x}".format(ord(ch))
-    return ch
+    bs = bytes([b])
+    if bs in table:
+        return table[bs]
+    if b < 0x20 or b in (0xFF, 0x7F):
+        return f"\\x{b:02x}".encode("ascii")
+    return bs
 
 
 @attr.s(eq=False)
@@ -1059,15 +1060,14 @@ class StringLiteral(Expression):
 
     def format(self, fmt: Formatter) -> str:
         has_trailing_null = False
-        strdata: str
-        try:
-            strdata = self.data.decode("utf-8")
-        except UnicodeDecodeError:
-            strdata = self.data.decode("latin1")
-        while strdata and strdata[-1] == "\0":
-            strdata = strdata[:-1]
+        data = self.data
+        while data and data[-1] == 0:
+            data = data[:-1]
             has_trailing_null = True
-        ret = '"' + "".join(map(escape_char, strdata)) + '"'
+        data = b"".join(map(escape_byte, data))
+
+        strdata = data.decode("utf-8", "backslashreplace")
+        ret = f'"{strdata}"'
         if not has_trailing_null:
             ret += " /* not null-terminated */"
         return ret
