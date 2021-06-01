@@ -1,19 +1,40 @@
 #!/usr/bin/env python3
 import argparse
+import attr
 import contextlib
 import difflib
 import io
 import logging
+import multiprocessing
 import re
 import shlex
 import sys
 from coverage import Coverage  # type: ignore
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Pattern, Tuple
 
 from src.options import Options
 
 CRASH_STRING = "CRASHED\n"
+
+
+@attr.s(frozen=True, slots=True)
+class TestOptions:
+    should_overwrite: bool = attr.ib()
+    diff_context: int = attr.ib()
+    filter_re: Pattern[str] = attr.ib()
+    parallel: Optional[int] = attr.ib(default=None)
+    coverage: Any = attr.ib(default=None)
+
+
+@attr.s(frozen=True, slots=True)
+class TestCase:
+    name: str = attr.ib()
+    asm_file: Path = attr.ib()
+    output_file: Path = attr.ib()
+    brief_crashes: bool = attr.ib(default=True)
+    flags_path: Optional[Path] = attr.ib(default=None)
+    flags: List[str] = attr.ib(factory=list)
 
 
 def set_up_logging(debug: bool) -> None:
@@ -43,54 +64,48 @@ def get_test_flags(flags_path: Path) -> List[str]:
 
 
 def decompile_and_compare(
-    asm_file_path: Path,
-    output_path: Path,
-    should_overwrite: bool = False,
-    brief_crashes: bool = True,
-    flags_path: Optional[Path] = None,
-    flags: Optional[List[str]] = None,
-) -> bool:
+    test_case: TestCase, test_options: TestOptions
+) -> Tuple[Optional[bool], str]:
     # This import is deferred so it can be profiled by the coverage tool
     from src.main import parse_flags
 
     logging.debug(
-        f"Decompiling {asm_file_path}"
-        + (f" into {output_path}" if should_overwrite else "")
+        f"Decompiling {test_case.asm_file}"
+        + (f" into {test_case.output_file}" if test_options.should_overwrite else "")
     )
     try:
-        original_contents = output_path.read_text()
+        original_contents = test_case.output_file.read_text()
     except FileNotFoundError:
-        if not should_overwrite:
-            logging.error(f"{output_path} does not exist. Skipping.")
-            return True
-        logging.info(f"{output_path} does not exist. Creating...")
+        if not test_options.should_overwrite:
+            logging.error(f"{test_case.output_file} does not exist. Skipping.")
+            return None, f"{test_case.output_file} does not exist. Skippping."
         original_contents = "(file did not exist)"
 
-    test_flags = ["--sanitize-tracebacks", "--stop-on-error", str(asm_file_path)]
-    if flags is not None:
-        test_flags.extend(flags)
-    if flags_path is not None:
-        test_flags.extend(get_test_flags(flags_path))
+    test_flags = ["--sanitize-tracebacks", "--stop-on-error", str(test_case.asm_file)]
+    test_flags.extend(test_case.flags)
+    if test_case.flags_path is not None:
+        test_flags.extend(get_test_flags(test_case.flags_path))
     options = parse_flags(test_flags)
 
-    final_contents = decompile_and_capture_output(options, brief_crashes)
+    final_contents = decompile_and_capture_output(options, test_case.brief_crashes)
 
-    if should_overwrite:
-        output_path.write_text(final_contents)
+    if test_options.should_overwrite:
+        test_case.output_file.parent.mkdir(parents=True, exist_ok=True)
+        test_case.output_file.write_text(final_contents)
 
     changed = final_contents != original_contents
     if changed:
-        logging.info(
-            "\n".join(
-                [
-                    f"Output of {asm_file_path} changed! Diff:",
-                    *difflib.unified_diff(
-                        original_contents.splitlines(), final_contents.splitlines()
-                    ),
-                ]
-            )
+        return False, "\n".join(
+            [
+                f"Output of {test_case.asm_file} changed! Diff:",
+                *difflib.unified_diff(
+                    original_contents.splitlines(),
+                    final_contents.splitlines(),
+                    n=test_options.diff_context,
+                ),
+            ]
         )
-    return should_overwrite or not changed
+    return True, ""
 
 
 def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
@@ -112,50 +127,38 @@ def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
             return f"{CRASH_STRING}\n{out_text}"
 
 
-def run_e2e_test(
+def create_e2e_tests(
     e2e_top_dir: Path,
     e2e_test_path: Path,
-    should_overwrite: bool,
-    filter_regex: Optional[str],
-    coverage: Any,
-) -> bool:
+) -> List[TestCase]:
 
-    ret = True
-    for asm_file_path in e2e_test_path.glob("*.s"):
-        old_output_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-out.c")
-        flags_path = asm_file_path.parent.joinpath(asm_file_path.stem + "-flags.txt")
+    cases: List[TestCase] = []
+    for asm_file in e2e_test_path.glob("*.s"):
+        output_file = asm_file.parent.joinpath(asm_file.stem + "-out.c")
+        flags_path = asm_file.parent.joinpath(asm_file.stem + "-flags.txt")
+        name = f"e2e:{asm_file.relative_to(e2e_top_dir)}"
 
-        name = f"e2e:{asm_file_path.relative_to(e2e_top_dir)}"
-        if filter_regex is not None and not re.search(filter_regex, name):
-            continue
-        if coverage:
-            coverage.switch_context(name)
-        logging.info(f"Running test: {name}")
-
-        if not decompile_and_compare(
-            asm_file_path,
-            old_output_path,
-            brief_crashes=True,
-            should_overwrite=should_overwrite,
-            flags_path=flags_path,
-            flags=["test"],
-        ):
-            ret = False
-    return ret
+        cases.append(
+            TestCase(
+                name=name,
+                asm_file=asm_file,
+                output_file=output_file,
+                brief_crashes=True,
+                flags_path=flags_path,
+                flags=["test"],  # Decompile the function 'test'
+            )
+        )
+    return cases
 
 
-def run_project_tests(
+def create_project_tests(
     base_dir: Path,
     output_dir: Path,
     context_file: Optional[Path],
-    should_overwrite: bool,
-    filter_regex: Optional[str],
     name_prefix: str,
-    coverage: Any,
-) -> bool:
-    ret = True
+) -> List[TestCase]:
+    cases: List[TestCase] = []
     asm_dir = base_dir / "asm"
-
     for asm_file in asm_dir.rglob("*"):
         if asm_file.suffix not in (".asm", ".s"):
             continue
@@ -201,70 +204,108 @@ def run_project_tests(
 
         test_path = asm_file.relative_to(asm_dir)
         name = f"{name_prefix}:{test_path}"
-        if filter_regex is not None and not re.search(filter_regex, name):
-            continue
-        if coverage:
-            coverage.switch_context(name)
-        logging.info(f"Running test: {name}")
-
         output_file = (output_dir / test_path).with_suffix(".c")
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        if not decompile_and_compare(
-            asm_file,
-            output_file,
-            brief_crashes=False,
-            flags=flags,
-            should_overwrite=should_overwrite,
-        ):
-            ret = False
-    return ret
+
+        cases.append(
+            TestCase(
+                name=name,
+                asm_file=asm_file,
+                output_file=output_file,
+                brief_crashes=False,
+                flags=flags,
+            )
+        )
+    return cases
+
+
+def run_test(
+    test: Tuple[TestCase, TestOptions]
+) -> Tuple[TestCase, Optional[bool], str]:
+    test_case, test_options = test
+    if test_options.coverage:
+        test_options.coverage.switch_context(test_case.name)
+    did_pass, output = decompile_and_compare(test_case, test_options)
+    return test_case, did_pass, output
 
 
 def main(
     project_dirs: List[Tuple[Path, bool]],
-    should_overwrite: bool,
-    filter_regex: Optional[str],
-    coverage: Any,
+    test_options: TestOptions,
 ) -> int:
-    ret = 0
+    # Collect tests
+    test_cases: List[TestCase] = []
+
     e2e_top_dir = Path(__file__).parent / "tests" / "end_to_end"
     for e2e_test_path in e2e_top_dir.iterdir():
-        if not run_e2e_test(
-            e2e_top_dir, e2e_test_path, should_overwrite, filter_regex, coverage
-        ):
-            ret = 1
+        test_cases.extend(create_e2e_tests(e2e_top_dir, e2e_test_path))
 
     for project_dir, use_context in project_dirs:
-        name = project_dir.name
+        name_prefix = project_dir.name
         if project_dir.match("papermario/ver/us"):
-            name = "papermario_us"
+            name_prefix = "papermario_us"
         elif project_dir.match("papermario/ver/jp"):
-            name = "papermario_jp"
+            name_prefix = "papermario_jp"
 
         context_file: Optional[Path] = None
         if use_context:
-            name = f"{name}_ctx"
+            name_prefix = f"{name_prefix}_ctx"
             context_file = project_dir / "ctx.c"
             if not context_file.exists():
-                logging.error(
+                raise Exception(
                     f"{project_dir} tests require context file, but {context_file} does not exist"
                 )
-                ret = 1
-                continue
 
-        output_dir = Path(__file__).parent / "tests" / "project" / name
-        if not run_project_tests(
-            project_dir,
-            output_dir,
-            context_file,
-            should_overwrite,
-            filter_regex,
-            name,
-            coverage,
-        ):
-            ret = 1
+        output_dir = Path(__file__).parent / "tests" / "project" / name_prefix
 
-    return ret
+        test_cases.extend(
+            create_project_tests(
+                project_dir,
+                output_dir,
+                context_file,
+                name_prefix,
+            )
+        )
+
+    passed, failed = 0, 0
+    total = len(test_cases)
+    if test_options.filter_re is not None:
+        test_cases = [t for t in test_cases if test_options.filter_re.search(t.name)]
+    skipped = total - len(test_cases)
+
+    test_iterator: Iterator[Tuple[TestCase, Optional[bool], str]]
+    if test_options.parallel:
+        pool = multiprocessing.Pool(processes=test_options.parallel)
+        test_iterator = pool.imap_unordered(
+            run_test,
+            ((t, test_options) for t in test_cases),
+            chunksize=4,
+        )
+    else:
+        test_iterator = (run_test((t, test_options)) for t in test_cases)
+
+    for test_case, did_pass, output in test_iterator:
+        if did_pass is None:
+            logging.info(f"[SKIP] {test_case.name}")
+            skipped += 1
+        elif did_pass:
+            logging.info(f"[PASS] {test_case.name}")
+            passed += 1
+        else:
+            logging.info(f"[FAIL] {test_case.name}")
+            failed += 1
+        if output:
+            logging.info(output)
+
+    if test_options.parallel:
+        pool.terminate()
+
+    logging.info(
+        f"Test summary: {passed} passed, {skipped} skipped, {failed} failed, {passed + skipped + failed} total"
+    )
+
+    if failed > 0 and test_options.should_overwrite:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
@@ -273,6 +314,22 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--debug", dest="debug", help="print debug info", action="store_true"
+    )
+    parser.add_argument(
+        "-j",
+        "--parallel",
+        metavar="N",
+        dest="parallel",
+        type=int,
+        help=("Run tests in parallel, with this many processes."),
+    )
+    parser.add_argument(
+        "--diff-context",
+        metavar="N",
+        dest="diff_context",
+        default=3,
+        type=int,
+        help=("Number of lines of context to print with in diff output."),
     )
     parser.add_argument(
         "--overwrite",
@@ -285,11 +342,14 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--filter",
-        dest="filter",
+        metavar="REGEX",
+        dest="filter_re",
+        type=lambda x: re.compile(x),
         help=("Only run tests matching this regular expression."),
     )
     parser.add_argument(
         "--project",
+        metavar="DIR",
         dest="project_dirs",
         action="append",
         default=[],
@@ -302,6 +362,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--project-with-context",
+        metavar="DIR",
         dest="project_dirs",
         action="append",
         default=[],
@@ -321,6 +382,7 @@ if __name__ == "__main__":
     )
     cov_group.add_argument(
         "--coverage-html",
+        metavar="DIR",
         dest="coverage_html",
         help="Output coverage HTML report to directory",
         default="htmlcov/",
@@ -347,13 +409,20 @@ if __name__ == "__main__":
     if args.should_overwrite:
         logging.info("Overwriting test output files.")
 
-    ret = main(args.project_dirs, args.should_overwrite, args.filter, coverage=cov)
+    test_options = TestOptions(
+        should_overwrite=args.should_overwrite,
+        diff_context=args.diff_context,
+        filter_re=args.filter_re,
+        parallel=args.parallel,
+        coverage=cov,
+    )
+    ret = main(args.project_dirs, test_options)
 
     if cov is not None:
         cov.stop()
         cov.html_report(
             directory=args.coverage_html, show_contexts=True, skip_empty=True
         )
-        logging.info(f"Wrote html to {args.coverage_html}")
+        logging.info(f"Wrote html coverage report to {args.coverage_html}")
 
     sys.exit(ret)
