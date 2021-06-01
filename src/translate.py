@@ -228,9 +228,10 @@ class StackInfo:
     is_leaf: bool = attr.ib(default=True)
     is_variadic: bool = attr.ib(default=False)
     uses_framepointer: bool = attr.ib(default=False)
-    local_vars_region_bottom: int = attr.ib(default=0)
+    subroutine_arg_top: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
+    callee_save_reg_region: Tuple[int, int] = attr.ib(default=(0, 0))
     unique_type_map: Dict[Any, "Type"] = attr.ib(factory=dict)
     local_vars: List["LocalVar"] = attr.ib(factory=list)
     temp_vars: List["EvalOnceStmt"] = attr.ib(factory=list)
@@ -250,16 +251,12 @@ class StackInfo:
     def in_subroutine_arg_region(self, location: int) -> bool:
         if self.is_leaf:
             return False
-        subroutine_arg_top = self.return_addr_location
-        if self.callee_save_reg_locations:
-            subroutine_arg_top = min(
-                subroutine_arg_top, min(self.callee_save_reg_locations.values())
-            )
+        assert self.subroutine_arg_top is not None
+        return location < self.subroutine_arg_top
 
-        return location < subroutine_arg_top
-
-    def in_local_var_region(self, location: int) -> bool:
-        return self.local_vars_region_bottom <= location < self.allocated_stack_size
+    def in_callee_save_reg_region(self, location: int) -> bool:
+        lower_bound, upper_bound = self.callee_save_reg_region
+        return lower_bound <= location < upper_bound
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
@@ -336,19 +333,21 @@ class StackInfo:
         return False
 
     def get_stack_var(self, location: int, *, store: bool) -> "Expression":
-        if self.in_local_var_region(location):
-            return LocalVar(location, type=self.unique_type_for("stack", location))
-        elif self.location_above_stack(location):
+        # See `get_stack_info` for explanation
+        if self.location_above_stack(location):
             ret, arg = self.get_argument(location - self.allocated_stack_size)
             if not store:
                 self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any())
-        else:
+        elif self.in_callee_save_reg_region(location):
             # Some annoying bookkeeping instruction. To avoid
             # further special-casing, just return whatever - it won't matter.
             return LocalVar(location, type=Type.any())
+        else:
+            # Local variable
+            return LocalVar(location, type=self.unique_type_for("stack", location))
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
         return self.reg_vars.get(reg)
@@ -387,7 +386,7 @@ class StackInfo:
                 f"Stack info for function {self.function.name}:",
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
-                f"Bottom of local vars region: {self.local_vars_region_bottom}",
+                f"Bounds of callee-saved vars region: {self.callee_save_reg_locations}",
                 f"Location of return addr: {self.return_addr_location}",
                 f"Locations of callee save registers: {self.callee_save_reg_locations}",
             ]
@@ -395,13 +394,26 @@ class StackInfo:
 
 
 def get_stack_info(
-    function: Function, rodata: Rodata, start_node: Node, typemap: Optional[TypeMap]
+    function: Function,
+    rodata: Rodata,
+    flow_graph: FlowGraph,
+    typemap: Optional[TypeMap],
 ) -> StackInfo:
     info = StackInfo(function, rodata, typemap)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
-    for inst in start_node.block.instructions:
+    #
+    # IDO puts local variables *above* the saved registers on the stack, but
+    # GCC puts local variables *below* the saved registers.
+    # To support both, we explicitly determine both the upper & lower bounds of the
+    # saved registers. Then, we estimate the boundary of the subroutine arguments
+    # by finding the lowest stack offset that is loaded from or computed. (This
+    # assumes that the compiler will never reuse a section of stack for *both*
+    # a local variable *and* a subroutine argument.) Anything within the stack frame,
+    # but outside of these two regions, is considered a local variable.
+    callee_saved_offset_and_size: List[Tuple[int, int]] = []
+    for inst in flow_graph.entry_node().block.instructions:
         if not inst.args or not isinstance(inst.args[0], Register):
             continue
 
@@ -431,29 +443,87 @@ def get_stack_info(
         ):
             # Saving the return address on the stack.
             info.is_leaf = False
-            info.return_addr_location = inst.args[1].lhs_as_literal()
+            stack_offset = inst.args[1].lhs_as_literal()
+            info.return_addr_location = stack_offset
+            callee_saved_offset_and_size.append((stack_offset, 4))
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
             and destination in SAVED_REGS
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs.register_name == "sp"
+            and destination not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
-            info.callee_save_reg_locations[destination] = inst.args[1].lhs_as_literal()
-
-    # Find the region that contains local variables. It is above saved registers
-    # and the return address, if those exist. If they don't, the local variables
-    # can lie directly at the bottom of the stack.
-    info.local_vars_region_bottom = 0
+            stack_offset = inst.args[1].lhs_as_literal()
+            info.callee_save_reg_locations[destination] = stack_offset
+            callee_saved_offset_and_size.append(
+                (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
+            )
 
     if not info.is_leaf:
-        info.local_vars_region_bottom = info.return_addr_location + 4
+        # Iterate over the whole function, not just the first basic block,
+        # to estimate the boundary for the subroutine argument region
+        info.subroutine_arg_top = info.allocated_stack_size
+        for node in flow_graph.nodes:
+            for inst in node.block.instructions:
+                if not inst.args or not isinstance(inst.args[0], Register):
+                    continue
+                destination = inst.args[0]
 
-    if info.callee_save_reg_locations:
-        info.local_vars_region_bottom = max(
-            info.local_vars_region_bottom,
-            max(info.callee_save_reg_locations.values()) + 4,
-        )
+                if (
+                    inst.mnemonic in ["lw", "lwc1", "ldc1"]
+                    and isinstance(inst.args[1], AsmAddressMode)
+                    and inst.args[1].rhs.register_name == "sp"
+                    and inst.args[1].lhs_as_literal() > 16
+                ):
+                    info.subroutine_arg_top = min(
+                        info.subroutine_arg_top, inst.args[1].lhs_as_literal()
+                    )
+                elif (
+                    inst.mnemonic == "addiu"
+                    and destination.register_name != "sp"
+                    and inst.args[1] == Register("sp")
+                    and isinstance(inst.args[2], AsmLiteral)
+                    and inst.args[2].value < info.allocated_stack_size
+                ):
+                    info.subroutine_arg_top = min(
+                        info.subroutine_arg_top, inst.args[2].value
+                    )
+
+        # Compute the bounds of the callee-saved register region, including padding
+        callee_saved_offset_and_size.sort()
+        bottom, last_size = callee_saved_offset_and_size[0]
+
+        # Both IDO & GCC save registers in two subregions:
+        # (a) One for double-sized registers
+        # (b) One for word-sized registers, padded to a multiple of 8 bytes
+        # IDO has (a) lower than (b); GCC has (b) lower than (a)
+        # Check that there are no gaps in this region, other than a single
+        # 4-byte word between subregions.
+        top = bottom
+        internal_padding_added = False
+        for offset, size in callee_saved_offset_and_size:
+            if offset != top:
+                if (
+                    not internal_padding_added
+                    and size != last_size
+                    and offset == top + 4
+                ):
+                    internal_padding_added = True
+                else:
+                    raise DecompFailure(
+                        f"Gap in callee-saved word stack region. "
+                        f"Saved: {callee_saved_offset_and_size}, "
+                        f"gap at: {offset} != {top}."
+                    )
+            top = offset + size
+            last_size = size
+        # Expand boundaries to multiples of 8 bytes
+        info.callee_save_reg_region = (bottom, top)
+
+        # Subroutine arguments must be at the very bottom of the stack, so they
+        # must come after the callee-saved region
+        info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
 
     return info
 
@@ -3553,8 +3623,7 @@ def translate_to_ast(
     """
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, rodata)
-    start_node = flow_graph.entry_node()
-    stack_info = get_stack_info(function, rodata, start_node, typemap)
+    stack_info = get_stack_info(function, rodata, flow_graph, typemap)
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
@@ -3617,7 +3686,12 @@ def translate_to_ast(
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
-        start_node, start_reg, stack_info, used_phis, return_blocks, options
+        flow_graph.entry_node(),
+        start_reg,
+        stack_info,
+        used_phis,
+        return_blocks,
+        options,
     )
 
     # We mark the function as having a return type if all return nodes have
