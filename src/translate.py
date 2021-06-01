@@ -228,7 +228,7 @@ class StackInfo:
     is_leaf: bool = attr.ib(default=True)
     is_variadic: bool = attr.ib(default=False)
     uses_framepointer: bool = attr.ib(default=False)
-    subroutine_arg_top: Optional[int] = attr.ib(default=None)
+    subroutine_arg_top: int = attr.ib(default=0)
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
     callee_save_reg_region: Tuple[int, int] = attr.ib(default=(0, 0))
@@ -399,11 +399,6 @@ def get_stack_info(
     flow_graph: FlowGraph,
     typemap: Optional[TypeMap],
 ) -> StackInfo:
-    def update_min(old_or_none: Optional[int], new: int) -> int:
-        if old_or_none is None:
-            return new
-        return min(old_or_none, new)
-
     info = StackInfo(function, rodata, typemap)
 
     # The goal here is to pick out special instructions that provide information
@@ -465,35 +460,36 @@ def get_stack_info(
                 (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
             )
 
-    # Iterate over the whole function, not just the first basic block,
-    # to estimate the boundary for the subroutine argument region
-    for node in flow_graph.nodes:
-        for inst in node.block.instructions:
-            if not inst.args or not isinstance(inst.args[0], Register):
-                continue
-            destination = inst.args[0]
-
-            if (
-                inst.mnemonic in ["lw", "lwc1", "ldc1"]
-                and isinstance(inst.args[1], AsmAddressMode)
-                and inst.args[1].rhs.register_name == "sp"
-                and inst.args[1].lhs_as_literal() > 16
-            ):
-                info.subroutine_arg_top = update_min(
-                    info.subroutine_arg_top, inst.args[1].lhs_as_literal()
-                )
-            elif (
-                inst.mnemonic == "addiu"
-                and destination.register_name != "sp"
-                and inst.args[1] == Register("sp")
-                and isinstance(inst.args[2], AsmLiteral)
-                and inst.args[2].value < info.allocated_stack_size
-            ):
-                info.subroutine_arg_top = update_min(
-                    info.subroutine_arg_top, inst.args[2].value
-                )
-
     if not info.is_leaf:
+        # Iterate over the whole function, not just the first basic block,
+        # to estimate the boundary for the subroutine argument region
+        info.subroutine_arg_top = info.allocated_stack_size
+        for node in flow_graph.nodes:
+            for inst in node.block.instructions:
+                if not inst.args or not isinstance(inst.args[0], Register):
+                    continue
+                destination = inst.args[0]
+
+                if (
+                    inst.mnemonic in ["lw", "lwc1", "ldc1"]
+                    and isinstance(inst.args[1], AsmAddressMode)
+                    and inst.args[1].rhs.register_name == "sp"
+                    and inst.args[1].lhs_as_literal() > 16
+                ):
+                    info.subroutine_arg_top = min(
+                        info.subroutine_arg_top, inst.args[1].lhs_as_literal()
+                    )
+                elif (
+                    inst.mnemonic == "addiu"
+                    and destination.register_name != "sp"
+                    and inst.args[1] == Register("sp")
+                    and isinstance(inst.args[2], AsmLiteral)
+                    and inst.args[2].value < info.allocated_stack_size
+                ):
+                    info.subroutine_arg_top = min(
+                        info.subroutine_arg_top, inst.args[2].value
+                    )
+
         # Compute the bounds of the callee-saved register region, including padding
         callee_saved_offset_and_size.sort()
         bottom, last_size = callee_saved_offset_and_size[0]
@@ -513,7 +509,6 @@ def get_stack_info(
                     and size != last_size
                     and offset == top + 4
                 ):
-                    top += 4
                     internal_padding_added = True
                 else:
                     raise DecompFailure(
@@ -521,16 +516,14 @@ def get_stack_info(
                         f"Saved: {callee_saved_offset_and_size}, "
                         f"gap at: {offset} != {top}."
                     )
-            top += size
+            top = offset + size
             last_size = size
         # Expand boundaries to multiples of 8 bytes
-        bottom -= 4 if bottom % 8 == 4 else 0
-        top += 4 if top % 8 == 4 else 0
         info.callee_save_reg_region = (bottom, top)
 
         # Subroutine arguments must be at the very bottom of the stack, so they
         # must come after the callee-saved region
-        info.subroutine_arg_top = update_min(info.subroutine_arg_top, bottom)
+        info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
 
     return info
 
