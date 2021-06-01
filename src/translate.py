@@ -228,9 +228,10 @@ class StackInfo:
     is_leaf: bool = attr.ib(default=True)
     is_variadic: bool = attr.ib(default=False)
     uses_framepointer: bool = attr.ib(default=False)
-    local_vars_region_bottom: int = attr.ib(default=0)
+    subroutine_arg_top: Optional[int] = attr.ib(default=None)
     return_addr_location: int = attr.ib(default=0)
     callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
+    callee_save_reg_region: Tuple[int, int] = attr.ib(default=(0, 0))
     unique_type_map: Dict[Any, "Type"] = attr.ib(factory=dict)
     local_vars: List["LocalVar"] = attr.ib(factory=list)
     temp_vars: List["EvalOnceStmt"] = attr.ib(factory=list)
@@ -250,16 +251,12 @@ class StackInfo:
     def in_subroutine_arg_region(self, location: int) -> bool:
         if self.is_leaf:
             return False
-        subroutine_arg_top = self.return_addr_location
-        if self.callee_save_reg_locations:
-            subroutine_arg_top = min(
-                subroutine_arg_top, min(self.callee_save_reg_locations.values())
-            )
+        assert self.subroutine_arg_top is not None
+        return location < self.subroutine_arg_top
 
-        return location < subroutine_arg_top
-
-    def in_local_var_region(self, location: int) -> bool:
-        return self.local_vars_region_bottom <= location < self.allocated_stack_size
+    def in_callee_save_reg_region(self, location: int) -> bool:
+        lower_bound, upper_bound = self.callee_save_reg_region
+        return lower_bound <= location < upper_bound
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
@@ -336,19 +333,21 @@ class StackInfo:
         return False
 
     def get_stack_var(self, location: int, *, store: bool) -> "Expression":
-        if self.in_local_var_region(location):
-            return LocalVar(location, type=self.unique_type_for("stack", location))
-        elif self.location_above_stack(location):
+        # See `get_stack_info` for explanation
+        if self.location_above_stack(location):
             ret, arg = self.get_argument(location - self.allocated_stack_size)
             if not store:
                 self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any())
-        else:
+        elif self.in_callee_save_reg_region(location):
             # Some annoying bookkeeping instruction. To avoid
             # further special-casing, just return whatever - it won't matter.
             return LocalVar(location, type=Type.any())
+        else:
+            # Local variable
+            return LocalVar(location, type=self.unique_type_for("stack", location))
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
         return self.reg_vars.get(reg)
@@ -387,7 +386,7 @@ class StackInfo:
                 f"Stack info for function {self.function.name}:",
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
-                f"Bottom of local vars region: {self.local_vars_region_bottom}",
+                f"Bounds of callee-saved vars region: {self.callee_save_reg_locations}",
                 f"Location of return addr: {self.return_addr_location}",
                 f"Locations of callee save registers: {self.callee_save_reg_locations}",
             ]
@@ -397,10 +396,26 @@ class StackInfo:
 def get_stack_info(
     function: Function, rodata: Rodata, start_node: Node, typemap: Optional[TypeMap]
 ) -> StackInfo:
+    def update_min(old_or_none: Optional[int], new: int) -> int:
+        if old_or_none is None:
+            return new
+        return min(old_or_none, new)
+
     info = StackInfo(function, rodata, typemap)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
+    #
+    # IDO puts local variables *above* the saved registers on the stack, but
+    # GCC puts local variables *below* the saved registers.
+    # To support both, we explicitly determine both the upper & lower bounds of the
+    # saved registers. Then, we estimate the boundary of the subroutine arguments
+    # by finding the lowest stack offset that is loaded from or computed. (This
+    # assumes that the compiler will never reuse a section of stack for *both*
+    # a local variable *and* a subroutine argument.) Anything within the stack frame,
+    # but outside of these two regions, is considered a local variable.
+    callee_saved_words: List[int] = []
+    callee_saved_doubles: List[int] = []
     for inst in start_node.block.instructions:
         if not inst.args or not isinstance(inst.args[0], Register):
             continue
@@ -431,29 +446,78 @@ def get_stack_info(
         ):
             # Saving the return address on the stack.
             info.is_leaf = False
-            info.return_addr_location = inst.args[1].lhs_as_literal()
+            stack_offset = inst.args[1].lhs_as_literal()
+            info.return_addr_location = stack_offset
+            callee_saved_words.append(stack_offset)
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
             and destination in SAVED_REGS
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs.register_name == "sp"
+            and destination not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
-            info.callee_save_reg_locations[destination] = inst.args[1].lhs_as_literal()
-
-    # Find the region that contains local variables. It is above saved registers
-    # and the return address, if those exist. If they don't, the local variables
-    # can lie directly at the bottom of the stack.
-    info.local_vars_region_bottom = 0
+            stack_offset = inst.args[1].lhs_as_literal()
+            info.callee_save_reg_locations[destination] = stack_offset
+            if inst.mnemonic == "sdc1":
+                callee_saved_doubles.append(stack_offset)
+            else:
+                callee_saved_words.append(stack_offset)
+        elif (
+            inst.mnemonic in ["lw", "lwc1", "ldc1"]
+            and isinstance(inst.args[1], AsmAddressMode)
+            and inst.args[1].rhs.register_name == "sp"
+        ):
+            info.subroutine_arg_top = update_min(
+                info.subroutine_arg_top, inst.args[1].lhs_as_literal()
+            )
+        elif (
+            inst.mnemonic == "addiu"
+            and inst.args[1] == Register("sp")
+            and isinstance(inst.args[2], AsmLiteral)
+            and inst.args[2].value < info.allocated_stack_size
+        ):
+            info.subroutine_arg_top = update_min(
+                info.subroutine_arg_top, inst.args[2].value
+            )
 
     if not info.is_leaf:
-        info.local_vars_region_bottom = info.return_addr_location + 4
+        # Compute the bounds of the callee-saved register region, including padding
+        callee_saved_words.sort()
+        callee_saved_doubles.sort()
+        bottom = callee_saved_words[0]
 
-    if info.callee_save_reg_locations:
-        info.local_vars_region_bottom = max(
-            info.local_vars_region_bottom,
-            max(info.callee_save_reg_locations.values()) + 4,
-        )
+        # Both GCC & IDO save registers in two blocks: one for word-sized registers,
+        # followed by one for doubles. The word-sized block is also padded to a
+        # multiple of 8 bytes. Check that there are no gaps in either of these blocks.
+        top = bottom
+        for offset in callee_saved_words:
+            assert offset == top, DecompFailure(
+                f"Gap in callee-saved word stack region. "
+                f"Saved words: {callee_saved_words}, "
+                f"saved doubles: {callee_saved_doubles}, "
+                f"gap at: {offset} != {top}."
+            )
+            top += 4
+        # Padding: round up to multiple of 8
+        if (top % 8) == 4:
+            top += 4
+        for offset in callee_saved_doubles:
+            if offset < callee_saved_words[-1]:
+                # This offset is fake: it's a local variable; exclude it
+                continue
+            assert offset == top, DecompFailure(
+                f"Gap in callee-saved double stack region. "
+                f"Saved words: {callee_saved_words}, "
+                f"saved doubles: {callee_saved_doubles}, "
+                f"gap at: {offset} != {top}."
+            )
+            top += 8
+        info.callee_save_reg_region = (bottom, top)
+
+        # Subroutine arguments must be at the very bottom of the stack, so they
+        # must come after the callee-saved region
+        info.subroutine_arg_top = update_min(info.subroutine_arg_top, bottom)
 
     return info
 
