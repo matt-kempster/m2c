@@ -394,7 +394,10 @@ class StackInfo:
 
 
 def get_stack_info(
-    function: Function, rodata: Rodata, start_node: Node, typemap: Optional[TypeMap]
+    function: Function,
+    rodata: Rodata,
+    flow_graph: FlowGraph,
+    typemap: Optional[TypeMap],
 ) -> StackInfo:
     def update_min(old_or_none: Optional[int], new: int) -> int:
         if old_or_none is None:
@@ -414,9 +417,8 @@ def get_stack_info(
     # assumes that the compiler will never reuse a section of stack for *both*
     # a local variable *and* a subroutine argument.) Anything within the stack frame,
     # but outside of these two regions, is considered a local variable.
-    callee_saved_words: List[int] = []
-    callee_saved_doubles: List[int] = []
-    for inst in start_node.block.instructions:
+    callee_saved_offset_and_size: List[Tuple[int, int]] = []
+    for inst in flow_graph.entry_node().block.instructions:
         if not inst.args or not isinstance(inst.args[0], Register):
             continue
 
@@ -448,7 +450,7 @@ def get_stack_info(
             info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
             info.return_addr_location = stack_offset
-            callee_saved_words.append(stack_offset)
+            callee_saved_offset_and_size.append((stack_offset, 4))
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
             and destination in SAVED_REGS
@@ -459,60 +461,71 @@ def get_stack_info(
             # Initial saving of callee-save register onto the stack.
             stack_offset = inst.args[1].lhs_as_literal()
             info.callee_save_reg_locations[destination] = stack_offset
-            if inst.mnemonic == "sdc1":
-                callee_saved_doubles.append(stack_offset)
-            else:
-                callee_saved_words.append(stack_offset)
-        elif (
-            inst.mnemonic in ["lw", "lwc1", "ldc1"]
-            and isinstance(inst.args[1], AsmAddressMode)
-            and inst.args[1].rhs.register_name == "sp"
-        ):
-            info.subroutine_arg_top = update_min(
-                info.subroutine_arg_top, inst.args[1].lhs_as_literal()
+            callee_saved_offset_and_size.append(
+                (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
             )
-        elif (
-            inst.mnemonic == "addiu"
-            and inst.args[1] == Register("sp")
-            and isinstance(inst.args[2], AsmLiteral)
-            and inst.args[2].value < info.allocated_stack_size
-        ):
-            info.subroutine_arg_top = update_min(
-                info.subroutine_arg_top, inst.args[2].value
-            )
+
+    # Iterate over the whole function, not just the first basic block,
+    # to estimate the boundary for the subroutine argument region
+    for node in flow_graph.nodes:
+        for inst in node.block.instructions:
+            if not inst.args or not isinstance(inst.args[0], Register):
+                continue
+            destination = inst.args[0]
+
+            if (
+                inst.mnemonic in ["lw", "lwc1", "ldc1"]
+                and isinstance(inst.args[1], AsmAddressMode)
+                and inst.args[1].rhs.register_name == "sp"
+                and inst.args[1].lhs_as_literal() > 16
+            ):
+                info.subroutine_arg_top = update_min(
+                    info.subroutine_arg_top, inst.args[1].lhs_as_literal()
+                )
+            elif (
+                inst.mnemonic == "addiu"
+                and destination.register_name != "sp"
+                and inst.args[1] == Register("sp")
+                and isinstance(inst.args[2], AsmLiteral)
+                and inst.args[2].value < info.allocated_stack_size
+            ):
+                info.subroutine_arg_top = update_min(
+                    info.subroutine_arg_top, inst.args[2].value
+                )
 
     if not info.is_leaf:
         # Compute the bounds of the callee-saved register region, including padding
-        callee_saved_words.sort()
-        callee_saved_doubles.sort()
-        bottom = callee_saved_words[0]
+        callee_saved_offset_and_size.sort()
+        bottom, last_size = callee_saved_offset_and_size[0]
 
-        # Both GCC & IDO save registers in two blocks: one for word-sized registers,
-        # followed by one for doubles. The word-sized block is also padded to a
-        # multiple of 8 bytes. Check that there are no gaps in either of these blocks.
+        # Both IDO & GCC save registers in two subregions:
+        # (a) One for double-sized registers
+        # (b) One for word-sized registers, padded to a multiple of 8 bytes
+        # IDO has (a) lower than (b); GCC has (b) lower than (a)
+        # Check that there are no gaps in this region, other than a single
+        # 4-byte word between subregions.
         top = bottom
-        for offset in callee_saved_words:
-            assert offset == top, DecompFailure(
-                f"Gap in callee-saved word stack region. "
-                f"Saved words: {callee_saved_words}, "
-                f"saved doubles: {callee_saved_doubles}, "
-                f"gap at: {offset} != {top}."
-            )
-            top += 4
-        # Padding: round up to multiple of 8
-        if (top % 8) == 4:
-            top += 4
-        for offset in callee_saved_doubles:
-            if offset < callee_saved_words[-1]:
-                # This offset is fake: it's a local variable; exclude it
-                continue
-            assert offset == top, DecompFailure(
-                f"Gap in callee-saved double stack region. "
-                f"Saved words: {callee_saved_words}, "
-                f"saved doubles: {callee_saved_doubles}, "
-                f"gap at: {offset} != {top}."
-            )
-            top += 8
+        internal_padding_added = False
+        for offset, size in callee_saved_offset_and_size:
+            if offset != top:
+                if (
+                    not internal_padding_added
+                    and size != last_size
+                    and offset == top + 4
+                ):
+                    top += 4
+                    internal_padding_added = True
+                else:
+                    raise DecompFailure(
+                        f"Gap in callee-saved word stack region. "
+                        f"Saved: {callee_saved_offset_and_size}, "
+                        f"gap at: {offset} != {top}."
+                    )
+            top += size
+            last_size = size
+        # Expand boundaries to multiples of 8 bytes
+        bottom -= 4 if bottom % 8 == 4 else 0
+        top += 4 if top % 8 == 4 else 0
         info.callee_save_reg_region = (bottom, top)
 
         # Subroutine arguments must be at the very bottom of the stack, so they
@@ -3617,8 +3630,7 @@ def translate_to_ast(
     """
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, rodata)
-    start_node = flow_graph.entry_node()
-    stack_info = get_stack_info(function, rodata, start_node, typemap)
+    stack_info = get_stack_info(function, rodata, flow_graph, typemap)
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
@@ -3681,7 +3693,12 @@ def translate_to_ast(
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
-        start_node, start_reg, stack_info, used_phis, return_blocks, options
+        flow_graph.entry_node(),
+        start_reg,
+        stack_info,
+        used_phis,
+        return_blocks,
+        options,
     )
 
     # We mark the function as having a return type if all return nodes have
