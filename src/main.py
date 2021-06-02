@@ -27,8 +27,13 @@ def print_exception(sanitize: bool) -> None:
             frame.filename = Path(frame.filename).name
 
         print("Traceback (most recent call last):")
-        print("".join(traceback.format_list(frames)))
-        print(traceback.format_exception_only(exc[0], exc[1]), end="")
+        print(
+            "".join(
+                traceback.format_list(frames)
+                + traceback.format_exception_only(exc[0], exc[1])
+            ),
+            end="",
+        )
     else:
         traceback.print_exc(file=sys.stdout)
 

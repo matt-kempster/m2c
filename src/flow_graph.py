@@ -174,6 +174,10 @@ def normalize_likely_branches(function: Function) -> Function:
             item.is_branch_likely_instruction() or item.mnemonic == "b"
         ):
             old_label = item.get_branch_target().target
+            if old_label not in label_prev_instr:
+                raise DecompFailure(
+                    f"Unable to parse branch: label {old_label} does not exist in function {function.name}"
+                )
             before_target = label_prev_instr[old_label]
             before_before_target = (
                 instr_before_instr.get(id(before_target))
@@ -998,6 +1002,11 @@ def is_trivial_return_block(block: Block) -> bool:
 
 def build_nodes(function: Function, blocks: List[Block], rodata: Rodata) -> List[Node]:
     graph: List[Node] = []
+
+    if not blocks:
+        raise DecompFailure(
+            f"Function {function.name} contains no instructions. Maybe it is rodata?"
+        )
 
     # Traverse through the block tree.
     entry_block = blocks[0]
