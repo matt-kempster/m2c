@@ -9,7 +9,7 @@ f64 test(f32 arg0, s32 arg2, f64 arg4) {
         sp0 = 2.3125f;
         sp4 = 0.0f;
     } else {
-        sp0 = 0.0;
+        sp0 = 6.0;
     }
     D_4101B0 = sp0;
     return sp0;

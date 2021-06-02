@@ -2156,8 +2156,11 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     size = type.get_size_bits() // 8
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
-    source_val = args.reg(0)
     source_raw = args.regs.get_raw(source_reg)
+    if type.is_float() and type.get_size_bits() == 64:
+        source_val = args.dreg(0)
+    else:
+        source_val = args.reg(0)
     target = args.memory_ref(1)
     is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.rhs)
     if (
