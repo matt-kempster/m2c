@@ -1,7 +1,7 @@
 s32 test(s32 arg0, ? arg1) {
     s32 sp2C;
     s32 sp28;
-    s32 sp24;
+    ?32 sp24;
     s32 temp_a2;
     s32 temp_v0_2;
     void *temp_v0;
