@@ -1932,6 +1932,13 @@ def load_upper(args: InstrArgs) -> Expression:
     return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info)
 
 
+def handle_convert(expr: Expression, dest_type: Type, source_type: Type) -> Cast:
+    # int <-> float casts should be explicit
+    silent = dest_type.kind != source_type.kind
+    expr.type.unify(source_type)
+    return Cast(expr=expr, type=dest_type, silent=silent, reinterpret=False)
+
+
 def handle_la(args: InstrArgs) -> Expression:
     target = args.memory_ref(1)
     stack_info = args.stack_info
@@ -2763,17 +2770,17 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "div.d": lambda a: BinaryOp.f64(a.dreg(1), "/", a.dreg(2)),
     "mul.d": lambda a: BinaryOp.f64(a.dreg(1), "*", a.dreg(2)),
     # Floating point conversions
-    "cvt.d.s": lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.f64()),
-    "cvt.d.w": lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f64()),
-    "cvt.s.d": lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.f32()),
-    "cvt.s.w": lambda a: Cast(expr=as_intish(a.reg(1)), type=Type.f32()),
-    "cvt.w.d": lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
-    "cvt.w.s": lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
-    "cvt.s.u.fictive": lambda a: Cast(expr=as_u32(a.reg(1)), type=Type.f32()),
-    "cvt.u.d.fictive": lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.u32()),
-    "cvt.u.s.fictive": lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.u32()),
-    "trunc.w.s": lambda a: Cast(expr=as_f32(a.reg(1)), type=Type.s32()),
-    "trunc.w.d": lambda a: Cast(expr=as_f64(a.dreg(1)), type=Type.s32()),
+    "cvt.d.s": lambda a: handle_convert(a.reg(1), Type.f64(), Type.f32()),
+    "cvt.d.w": lambda a: handle_convert(a.reg(1), Type.f64(), Type.intish()),
+    "cvt.s.d": lambda a: handle_convert(a.dreg(1), Type.f32(), Type.f64()),
+    "cvt.s.w": lambda a: handle_convert(a.reg(1), Type.f32(), Type.intish()),
+    "cvt.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
+    "cvt.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
+    "cvt.s.u.fictive": lambda a: handle_convert(a.reg(1), Type.f32(), Type.u32()),
+    "cvt.u.d.fictive": lambda a: handle_convert(a.dreg(1), Type.u32(), Type.f64()),
+    "cvt.u.s.fictive": lambda a: handle_convert(a.reg(1), Type.u32(), Type.f32()),
+    "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
+    "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
     # Bit arithmetic
     "ori": lambda a: handle_ori(a),
     "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
@@ -3664,8 +3671,8 @@ def translate_to_ast(
                 Register("a1"): make_arg(4, Type.any()),
                 Register("a2"): make_arg(8, Type.any()),
                 Register("a3"): make_arg(12, Type.any()),
-                Register("f12"): make_arg(0, Type.f32()),
-                Register("f14"): make_arg(4, Type.f32()),
+                Register("f12"): make_arg(0, Type.floatish()),
+                Register("f14"): make_arg(4, Type.floatish()),
             }
         )
 
