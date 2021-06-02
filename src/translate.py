@@ -173,9 +173,8 @@ class Formatter:
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     if expr.type.unify(type):
-        if not silent and not isinstance(expr, Literal):
-            return Cast(expr=expr, reinterpret=True, silent=False, type=type)
-        return expr
+        if silent or isinstance(expr, Literal):
+            return expr
     return Cast(expr=expr, reinterpret=True, silent=False, type=type)
 
 
@@ -1641,7 +1640,7 @@ def deref(
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
     field_name: Optional[str] = None
-    type: Type = stack_info.unique_type_for("struct", (var, offset))
+    type: Type = stack_info.unique_type_for("struct", (uw_var, offset))
 
     # Struct access with type information.
     typemap = stack_info.typemap
