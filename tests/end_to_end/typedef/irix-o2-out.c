@@ -1,4 +1,4 @@
-void test(s32 arg0, int_t *arg1) {
+void test(s32 arg0, s32 *arg1) {
     s32 sp1C;
     s32 sp18;
 

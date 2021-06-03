@@ -55,6 +55,7 @@ class Param:
 
 @attr.s
 class Function:
+    type: CType = attr.ib()
     ret_type: Optional[CType] = attr.ib()
     params: Optional[List[Param]] = attr.ib()
     is_variadic: bool = attr.ib()
@@ -231,7 +232,9 @@ def get_primitive_list(type: CType, typemap: TypeMap) -> Optional[List[str]]:
     return None
 
 
-def parse_function(fn: FuncDecl) -> Function:
+def parse_function(fn: CType) -> Optional[Function]:
+    if not isinstance(fn, FuncDecl):
+        return None
     params: List[Param] = []
     is_variadic = False
     has_void = False
@@ -256,7 +259,9 @@ def parse_function(fn: FuncDecl) -> Function:
         # Function declaration without a parameter list
         maybe_params = None
     ret_type = None if is_void(fn.type) else fn.type
-    return Function(ret_type=ret_type, params=maybe_params, is_variadic=is_variadic)
+    return Function(
+        type=fn, ret_type=ret_type, params=maybe_params, is_variadic=is_variadic
+    )
 
 
 def divmod_towards_zero(lhs: int, rhs: int, op: str) -> int:
@@ -597,11 +602,14 @@ def build_typemap(source: str) -> TypeMap:
             ret.typedefs[item.name] = item.type
         if isinstance(item, ca.FuncDef):
             assert item.decl.name is not None, "cannot define anonymous function"
-            assert isinstance(item.decl.type, FuncDecl)
-            ret.functions[item.decl.name] = parse_function(item.decl.type)
+            fn = parse_function(item.decl.type)
+            assert fn is not None
+            ret.functions[item.decl.name] = fn
         if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
             assert item.name is not None, "cannot define anonymous function"
-            ret.functions[item.name] = parse_function(item.type)
+            fn = parse_function(item.type)
+            assert fn is not None
+            ret.functions[item.name] = fn
 
     defined_function_decls: Set[ca.Decl] = set()
 
@@ -639,7 +647,7 @@ def set_decl_name(decl: ca.Decl) -> None:
     type.declname = name
 
 
-def type_to_string(type: CType) -> str:
+def type_to_string(type: CType, name: str = "") -> str:
     if isinstance(type, TypeDecl) and isinstance(
         type.type, (ca.Struct, ca.Union, ca.Enum)
     ):
@@ -652,7 +660,9 @@ def type_to_string(type: CType) -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    decl = ca.Decl("", [], [], [], type, None, None)
+    if isinstance(type, FuncDecl) and not name:
+        name = "(*)"
+    decl = ca.Decl(name, [], [], [], type, None, None)
     set_decl_name(decl)
     return to_c(decl)
 
@@ -660,19 +670,11 @@ def type_to_string(type: CType) -> str:
 def dump_typemap(typemap: TypeMap) -> None:
     print("Variables:")
     for var, type in typemap.var_types.items():
-        print(f"{var}:", type_to_string(type))
+        print(f"{type_to_string(type, var)};")
     print()
     print("Functions:")
     for name, fn in typemap.functions.items():
-        if fn.params is None:
-            params_str = ""
-        else:
-            params = [type_to_string(arg.type) for arg in fn.params]
-            if fn.is_variadic:
-                params.append("...")
-            params_str = ", ".join(params) or "void"
-        ret_str = "void" if fn.ret_type is None else type_to_string(fn.ret_type)
-        print(f"{name}: {ret_str}({params_str})")
+        print(f"{type_to_string(fn.type, name)};")
     print()
     print("Structs:")
     for name, struct in typemap.named_structs.items():

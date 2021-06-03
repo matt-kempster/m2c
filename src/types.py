@@ -3,12 +3,15 @@ from typing import Optional, Set, Tuple, Union
 import attr
 import pycparser.c_ast as ca
 
+from .c_types import Function as CFunction
 from .c_types import (
     CType,
     TypeMap,
     equal_types,
     get_struct,
+    parse_function,
     primitive_size,
+    parse_struct,
     resolve_typedefs,
     type_to_string,
     var_size_align,
@@ -30,18 +33,23 @@ class Type:
     K_INT = 1
     K_PTR = 2
     K_FLOAT = 4
+    K_CTYPE = 8
     K_INTPTR = K_INT | K_PTR
-    K_ANY = K_INT | K_PTR | K_FLOAT
+    K_ANYREG = K_INT | K_PTR | K_FLOAT
+    K_ANY = K_INT | K_PTR | K_FLOAT | K_CTYPE
+
     SIGNED = 1
     UNSIGNED = 2
     ANY_SIGN = 3
 
-    kind: int = attr.ib()
-    size: Optional[int] = attr.ib()
-    sign: int = attr.ib()
+    kind: int = attr.ib(default=K_ANY)
+    size: Optional[int] = attr.ib(default=None)
     uf_parent: Optional["Type"] = attr.ib(default=None)
-    ptr_to: Optional[Union["Type", CType]] = attr.ib(default=None)
-    typemap: Optional[TypeMap] = attr.ib(default=None)
+
+    sign: int = attr.ib(default=ANY_SIGN)  # K_INT
+    ptr_to: Optional["Type"] = attr.ib(default=None)  # K_PTR
+    typemap: Optional[TypeMap] = attr.ib(default=None)  # K_CTYPE
+    ctype_ref: Optional[CType] = attr.ib(default=None)  # K_CTYPE
 
     def unify(self, other: "Type") -> bool:
         """
@@ -55,13 +63,16 @@ class Type:
             return True
         if x.size is not None and y.size is not None and x.size != y.size:
             return False
-        size = x.size if x.size is not None else y.size
-        ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
+
         kind = x.kind & y.kind
+        size = x.size if x.size is not None else y.size
+        typemap = x.typemap if x.typemap is not None else y.typemap
+        ctype_ref = x.ctype_ref if x.ctype_ref is not None else y.ctype_ref
+        ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
         sign = x.sign & y.sign
-        if size in [8, 16]:
+        if size not in (None, 32, 64):
             kind &= ~Type.K_FLOAT
-        if size in [8, 16, 64]:
+        if size not in (None, 32):
             kind &= ~Type.K_PTR
         if kind == 0 or sign == 0:
             return False
@@ -69,43 +80,21 @@ class Type:
             size = 32
         if sign != Type.ANY_SIGN:
             assert kind == Type.K_INT
+        if x.ctype_ref is not None and y.ctype_ref is not None:
+            assert typemap is not None
+            x_ctype = resolve_typedefs(x.ctype_ref, typemap)
+            y_ctype = resolve_typedefs(y.ctype_ref, typemap)
+            if not equal_types(x_ctype, y_ctype):
+                return False
         if x.ptr_to is not None and y.ptr_to is not None:
-            if not isinstance(x.ptr_to, Type) and not isinstance(y.ptr_to, Type):
-                assert x.typemap is not None
-                assert y.typemap is not None
-                assert x.typemap == y.typemap
-                x_ctype = resolve_typedefs(x.ptr_to, x.typemap)
-                y_ctype = resolve_typedefs(y.ptr_to, y.typemap)
-                if not equal_types(x_ctype, y_ctype):
-                    return False
-            elif isinstance(x.ptr_to, Type) and isinstance(y.ptr_to, Type):
-                if not x.ptr_to.unify(y.ptr_to):
-                    return False
-            else:
-                if isinstance(x.ptr_to, Type):
-                    assert not isinstance(y.ptr_to, Type)
-                    assert y.typemap is not None
-                    x_type = x.ptr_to
-                    y_type = type_from_ctype(y.ptr_to, y.typemap)
-                    # If the CType is not representable as a Type, it can't
-                    # soundly be unified with x_type
-                    if y_type.kind == Type.K_ANY:
-                        return False
-                else:
-                    assert isinstance(y.ptr_to, Type)
-                    assert x.typemap is not None
-                    x_type = type_from_ctype(x.ptr_to, x.typemap)
-                    y_type = y.ptr_to
-                    if x_type.kind == Type.K_ANY:
-                        return False
-
-                if not x_type.unify(y_type):
-                    return False
-        x.typemap = x.typemap or y.typemap
+            if not x.ptr_to.unify(y.ptr_to):
+                return False
         x.kind = kind
         x.size = size
         x.sign = sign
         x.ptr_to = ptr_to
+        x.typemap = typemap
+        x.ctype_ref = ctype_ref
         y.uf_parent = x
         return True
 
@@ -124,11 +113,20 @@ class Type:
     def is_int(self) -> bool:
         return self.get_representative().kind == Type.K_INT
 
+    def is_ctype(self) -> bool:
+        return self.get_representative().kind == Type.K_CTYPE
+
     def is_unsigned(self) -> bool:
         return self.get_representative().sign == Type.UNSIGNED
 
     def get_size_bits(self) -> int:
         return self.get_representative().size or 32
+
+    def parse_function(self) -> Optional[CFunction]:
+        type = self.get_representative()
+        if self.is_ctype() and type.ctype_ref is not None:
+            return parse_function(type.ctype_ref)
+        return None
 
     def to_decl(self, var: str) -> str:
         ret = str(self)
@@ -142,18 +140,22 @@ class Type:
         type = self.get_representative()
         size = type.size or 32
         sign = "s" if type.sign & Type.SIGNED else "u"
-        if type.kind == Type.K_ANY:
+        if type.kind in (Type.K_ANY, Type.K_ANYREG):
             if type.size is not None:
                 return f"?{size}"
             return "?"
         if type.kind == Type.K_PTR:
-            if type.ptr_to is not None:
-                if isinstance(type.ptr_to, Type):
-                    return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
-                return type_to_string(ca.PtrDecl([], type.ptr_to))
-            return "void *"
+            if type.ptr_to is None:
+                return "void *"
+            if type.ptr_to.is_ctype() and type.ptr_to.ctype_ref is not None:
+                return type_to_string(ca.PtrDecl(quals=[], type=type.ptr_to.ctype_ref))
+            return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
         if type.kind == Type.K_FLOAT:
             return f"f{size}"
+        if type.kind == Type.K_CTYPE:
+            if type.ctype_ref is None:
+                return "?"
+            return type_to_string(type.ctype_ref)
         return f"{sign}{size}"
 
     def __str__(self) -> str:
@@ -174,41 +176,44 @@ class Type:
 
     @staticmethod
     def any() -> "Type":
-        return Type(kind=Type.K_ANY, size=None, sign=Type.ANY_SIGN)
+        return Type()
+
+    @staticmethod
+    def any_reg() -> "Type":
+        return Type(kind=Type.K_ANYREG)
 
     @staticmethod
     def intish() -> "Type":
-        return Type(kind=Type.K_INT, size=None, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_INT)
 
     @staticmethod
     def intptr() -> "Type":
-        return Type(kind=Type.K_INTPTR, size=None, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_INTPTR)
 
     @staticmethod
     def intptr32() -> "Type":
-        return Type(kind=Type.K_INTPTR, size=32, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_INTPTR, size=32)
 
     @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
-        return Type(kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=type)
+        return Type(kind=Type.K_PTR, size=32, ptr_to=type)
 
     @staticmethod
-    def cptr(ctype: CType, typemap: TypeMap) -> "Type":
-        return Type(
-            kind=Type.K_PTR, size=32, sign=Type.ANY_SIGN, ptr_to=ctype, typemap=typemap
-        )
+    def ctype(ctype: CType, typemap: TypeMap, size: Optional[int]) -> "Type":
+        assert typemap is not None
+        return Type(kind=Type.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
 
     @staticmethod
     def f32() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=32, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_FLOAT, size=32)
 
     @staticmethod
     def floatish() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=None, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_FLOAT)
 
     @staticmethod
     def f64() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=64, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_FLOAT, size=64)
 
     @staticmethod
     def s8() -> "Type":
@@ -244,11 +249,11 @@ class Type:
 
     @staticmethod
     def int64() -> "Type":
-        return Type(kind=Type.K_INT, size=64, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_INT, size=64)
 
     @staticmethod
     def of_size(size: int) -> "Type":
-        return Type(kind=Type.K_ANY, size=size, sign=Type.ANY_SIGN)
+        return Type(kind=Type.K_ANY, size=size)
 
     @staticmethod
     def bool() -> "Type":
@@ -256,22 +261,25 @@ class Type:
 
 
 def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
-    ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(ctype, (ca.PtrDecl, ca.ArrayDecl)):
-        return Type.cptr(ctype.type, typemap)
-    if isinstance(ctype, ca.FuncDecl):
-        return Type.cptr(ctype, typemap)
-    if isinstance(ctype, ca.TypeDecl):
-        if isinstance(ctype.type, (ca.Struct, ca.Union)):
-            return Type.any()
-        names = ["int"] if isinstance(ctype.type, ca.Enum) else ctype.type.names
+    real_ctype = resolve_typedefs(ctype, typemap)
+    if isinstance(real_ctype, (ca.PtrDecl, ca.ArrayDecl)):
+        return Type.ptr(type_from_ctype(real_ctype.type, typemap))
+    if isinstance(real_ctype, ca.FuncDecl):
+        return Type.ctype(real_ctype, typemap, size=32)
+    if isinstance(real_ctype, ca.TypeDecl):
+        if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
+            struct = parse_struct(real_ctype.type, typemap)
+            return Type.ctype(ctype, typemap, size=struct.size * 8)
+        names = (
+            ["int"] if isinstance(real_ctype.type, ca.Enum) else real_ctype.type.names
+        )
         if "double" in names:
             return Type.f64()
         if "float" in names:
             return Type.f32()
-        size = 8 * primitive_size(ctype.type)
+        size = 8 * primitive_size(real_ctype.type)
         if not size:
-            return Type.any()
+            return Type.ctype(ctype, typemap, size=None)
         sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
         return Type(kind=Type.K_INT, size=size, sign=sign, typemap=typemap)
 
@@ -279,10 +287,10 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
-        return Type.cptr(real_ctype.type, typemap), True
+        return Type.ptr(type_from_ctype(real_ctype.type, typemap)), True
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type.cptr(real_ctype, typemap), True
-    return Type.cptr(ctype, typemap), False
+        return Type.ctype(ctype, typemap, size=32), True
+    return Type.ptr(type_from_ctype(ctype, typemap)), False
 
 
 def get_field(
@@ -295,9 +303,9 @@ def get_field(
         target_type = target[1] if target else Type.any()
         return None, target_type, type, False
     type = type.get_representative()
-    if not type.ptr_to or isinstance(type.ptr_to, Type):
+    if not type.ptr_to or not type.ptr_to.is_ctype() or type.ptr_to.ctype_ref is None:
         return None, Type.any(), Type.ptr(), False
-    ctype = resolve_typedefs(type.ptr_to, typemap)
+    ctype = resolve_typedefs(type.ptr_to.ctype_ref, typemap)
     if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
         struct = get_struct(ctype.type, typemap)
         if struct:
@@ -336,13 +344,13 @@ def get_field(
 
 def find_substruct_array(
     type: Type, offset: int, scale: int, typemap: TypeMap
-) -> Optional[Tuple[str, int, CType]]:
+) -> Optional[Tuple[str, int, Type]]:
     if scale <= 0:
         return None
     type = type.get_representative()
-    if not type.ptr_to or isinstance(type.ptr_to, Type):
+    if not type.ptr_to or not type.ptr_to.is_ctype() or type.ptr_to.ctype_ref is None:
         return None
-    ctype = resolve_typedefs(type.ptr_to, typemap)
+    ctype = resolve_typedefs(type.ptr_to.ctype_ref, typemap)
     if not isinstance(ctype, ca.TypeDecl):
         return None
     if not isinstance(ctype.type, (ca.Struct, ca.Union)):
@@ -361,7 +369,7 @@ def find_substruct_array(
                 continue
             size = var_size_align(field_type.type, typemap)[0]
             if size == scale:
-                return field.name, off, field_type.type
+                return field.name, off, type_from_ctype(field_type.type, typemap)
     return None
 
 
@@ -372,15 +380,15 @@ def get_pointer_target(
     target = type.ptr_to
     if target is None:
         return None
-    if isinstance(target, Type):
+    if not target.is_ctype() or target.ctype_ref is None:
         if target.size is None:
             return None
         return target.size // 8, target
     if typemap is None:
         # (shouldn't happen, but might as well handle it)
         return None
-    size, align = var_size_align(target, typemap)
+    size, align = var_size_align(target.ctype_ref, typemap)
     if align == 0:
         # void* or function pointer
         return None
-    return size, type_from_ctype(target, typemap)
+    return size, target

@@ -1,5 +1,5 @@
 void test(void) {
-    signed *sp1C;
+    s32 *sp1C;
 
     foo(&sp1C);
 }
