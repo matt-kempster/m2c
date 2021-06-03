@@ -1,4 +1,4 @@
-void test(void *arg0, void *arg1) {
+void test(s32 *arg0, s32 *arg1) {
     s32 temp_v1;
 
     temp_v1 = *arg0;

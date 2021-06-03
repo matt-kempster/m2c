@@ -1,4 +1,4 @@
-void *test(void) {
+u32 *test(void) {
     f32 temp_f8;
     f64 temp_f18;
     u32 temp_t0;

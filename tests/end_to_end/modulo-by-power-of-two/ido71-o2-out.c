@@ -1,4 +1,4 @@
-s32 test(void *arg0) {
+s32 test(s32 *arg0) {
     s32 temp_v0;
 
     temp_v0 = (s32) *arg0 % 2;

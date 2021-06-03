@@ -1,9 +1,9 @@
-s32 test(void *arg0, s32 arg1) {
+s32 test(s8 *arg0, s32 arg1) {
     s32 temp_a3;
     s32 temp_v0;
     s32 temp_v0_2;
     void *temp_v1;
-    void *phi_v1;
+    s8 *phi_v1;
     s32 phi_v0;
     void *phi_v1_2;
     s32 phi_v0_2;

@@ -1,4 +1,4 @@
-void *test(void) {
+s32 *test(void) {
     if ((D_410140 & 1) != 0) {
         D_410140 = 0;
     }

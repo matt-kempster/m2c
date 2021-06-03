@@ -369,15 +369,30 @@ class StackInfo:
         ent = self.rodata.values.get(sym.symbol_name)
         if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
             return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
-        type = Type.ptr()
+        type = Type.ptr(sym.type)
         typemap = self.typemap
         if typemap:
             ctype = typemap.var_types.get(sym.symbol_name)
             if ctype:
-                type, is_ptr = ptr_type_from_ctype(ctype, typemap)
+                ctype_type, is_ptr = ptr_type_from_ctype(ctype, typemap)
                 if is_ptr:
-                    return as_type(sym, type, True)
+                    ctype_type.unify(type)
+                    return as_type(sym, ctype_type, True)
+                else:
+                    type = ctype_type
         return AddressOf(sym, type=type)
+
+    def get_struct_type_map(self) -> Dict["Expression", Dict[int, Type]]:
+        """Reorganize struct information in unique_type_map by var & offset"""
+        struct_type_map: Dict[Expression, Dict[int, Type]] = {}
+        for (category, key), type in self.unique_type_map.items():
+            if category != "struct":
+                continue
+            var, offset = key
+            if var not in struct_type_map:
+                struct_type_map[var] = {}
+            struct_type_map[var][offset] = type
+        return struct_type_map
 
     def __str__(self) -> str:
         return "\n".join(
@@ -2088,7 +2103,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     # Detect rodata constants
-    if isinstance(expr, StructAccess):
+    if isinstance(expr, StructAccess) and expr.offset == 0:
         target = early_unwrap(expr.struct_var)
         if (
             isinstance(target, AddressOf)
@@ -3615,6 +3630,20 @@ def translate_graph_from_block(
         )
 
 
+def resolve_types_late(stack_info: StackInfo) -> None:
+    """
+    After translating a function, perform a final type-resolution pass.
+    """
+    struct_type_map = stack_info.get_struct_type_map()
+    for var, offset_type_map in struct_type_map.items():
+        if len(offset_type_map) == 1 and 0 in offset_type_map:
+            # var was probably a plain pointer, not a struct
+            # Try to unify it with the appropriate pointer type,
+            # to fill in the type if it does not already have one
+            type = offset_type_map[0]
+            var.type.unify(Type.ptr(type))
+
+
 @attr.s
 class FunctionInfo:
     stack_info: StackInfo = attr.ib()
@@ -3730,6 +3759,7 @@ def translate_to_ast(
             b.return_value = None
 
     assign_phis(used_phis, stack_info)
+    resolve_types_late(stack_info)
 
     if options.pdb_translate:
         import pdb
