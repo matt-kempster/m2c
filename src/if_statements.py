@@ -782,7 +782,7 @@ def build_body(context: Context, function_info: FunctionInfo, options: Options) 
 
 
 def get_function_text(function_info: FunctionInfo, options: Options) -> str:
-    fmt = Formatter(options.coding_style, skip_casts=options.skip_casts)
+    fmt = options.formatter()
     context = Context(flow_graph=function_info.flow_graph, options=options, fmt=fmt)
     body: Body = build_body(context, function_info, options)
 
@@ -791,7 +791,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for arg in function_info.stack_info.arguments:
-        arg_strs.append(arg.type.to_decl(arg.format(fmt)))
+        arg_strs.append(arg.type.to_decl(arg.format(fmt), fmt))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
@@ -801,14 +801,14 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     if context.is_void:
         fn_header = f"void {fn_header}"
     else:
-        fn_header = function_info.return_type.to_decl(fn_header)
+        fn_header = function_info.return_type.to_decl(fn_header, fmt)
     whitespace = "\n" if fmt.coding_style.newline_after_function else " "
     function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
 
     for local_var in function_info.stack_info.local_vars[::-1]:
-        type_decl = local_var.type.to_decl(local_var.format(fmt))
+        type_decl = local_var.type.to_decl(local_var.format(fmt), fmt)
         function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
 
@@ -818,21 +818,21 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     for temp_var in function_info.stack_info.temp_vars:
         if temp_var.need_decl():
             expr = temp_var.expr
-            type_decl = expr.type.to_decl(expr.var.format(fmt))
+            type_decl = expr.type.to_decl(expr.var.format(fmt), fmt)
             temp_decls.add(f"{type_decl};")
             any_decl = True
     for decl in sorted(temp_decls):
         function_lines.append(SimpleStatement(1, decl).format(fmt))
 
     for phi_var in function_info.stack_info.phi_vars:
-        type_decl = phi_var.type.to_decl(phi_var.get_var_name())
+        type_decl = phi_var.type.to_decl(phi_var.get_var_name(), fmt)
         function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
 
     for reg_var in function_info.stack_info.reg_vars.values():
         if reg_var.register not in function_info.stack_info.used_reg_vars:
             continue
-        type_decl = reg_var.type.to_decl(reg_var.format(fmt))
+        type_decl = reg_var.type.to_decl(reg_var.format(fmt), fmt)
         function_lines.append(SimpleStatement(1, f"{type_decl};").format(fmt))
         any_decl = True
 

@@ -13,6 +13,7 @@ from .c_types import (
     type_to_string,
     var_size_align,
 )
+from .options import Formatter
 
 
 @attr.s(eq=False, repr=False)
@@ -130,34 +131,40 @@ class Type:
     def get_size_bits(self) -> int:
         return self.get_representative().size or 32
 
-    def to_decl(self, var: str) -> str:
-        ret = str(self)
+    def to_decl(self, var: str, fmt: Formatter) -> str:
+        ret = self.format(fmt)
         prefix = ret if ret.endswith("*") else ret + " "
         return prefix + var
 
-    def _stringify(self, seen: Set["Type"]) -> str:
+    def _stringify(self, seen: Set["Type"], fmt: Formatter) -> str:
+        unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
         if self in seen:
-            return "?"
+            return unk_symbol
         seen.add(self)
         type = self.get_representative()
         size = type.size or 32
         sign = "s" if type.sign & Type.SIGNED else "u"
         if type.kind == Type.K_ANY:
             if type.size is not None:
-                return f"?{size}"
-            return "?"
+                return f"{unk_symbol}{size}"
+            return unk_symbol
         if type.kind == Type.K_PTR:
             if type.ptr_to is not None:
                 if isinstance(type.ptr_to, Type):
-                    return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
+                    return (type.ptr_to._stringify(seen, fmt) + " *").replace(
+                        "* *", "**"
+                    )
                 return type_to_string(ca.PtrDecl([], type.ptr_to))
             return "void *"
         if type.kind == Type.K_FLOAT:
             return f"f{size}"
         return f"{sign}{size}"
 
+    def format(self, fmt: Formatter) -> str:
+        return self._stringify(set(), fmt)
+
     def __str__(self) -> str:
-        return self._stringify(set())
+        return self._stringify(set(), Formatter(debug=True))
 
     def __repr__(self) -> str:
         type = self.get_representative()
