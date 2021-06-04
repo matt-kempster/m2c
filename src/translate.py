@@ -640,8 +640,8 @@ class ErrorExpr(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if self.desc is not None:
-            return f"ERROR({self.desc})"
-        return "ERROR"
+            return f"MIPS2C_ERROR({self.desc})"
+        return "MIPS2C_ERROR()"
 
 
 @attr.s(frozen=True, eq=False)
@@ -2583,7 +2583,7 @@ PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]]
 
 CASES_IGNORE: InstrSet = {
     # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
-    # FCSR gets are as well, but it's fine to read ERROR for those.
+    # FCSR gets are as well, but it's fine to read MIPS2C_ERROR for those.
     "ctc1",
     "nop",
     "b",
@@ -2629,21 +2629,45 @@ CASES_FN_CALL: InstrSet = {
 }
 CASES_NO_DEST: InstrMap = {
     # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
-    # output than ERROR(...))
-    "teq": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]),
-    "tne": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]),
-    "tlt": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]),
-    "tltu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]),
-    "tge": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]),
-    "tgeu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]),
-    "teqi": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]),
-    "tnei": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]),
-    "tlti": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]),
-    "tltiu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]),
-    "tgei": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]),
-    "tgeiu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]),
-    "break": lambda a: void_fn_op("BREAK", [a.imm(0)] if a.count() >= 1 else []),
-    "sync": lambda a: void_fn_op("SYNC", []),
+    # output than MIPS2C_ERROR(...))
+    "teq": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]
+    ),
+    "tne": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]
+    ),
+    "tlt": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]
+    ),
+    "tltu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]
+    ),
+    "tge": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]
+    ),
+    "tgeu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
+    ),
+    "teqi": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
+    ),
+    "tnei": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
+    ),
+    "tlti": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
+    ),
+    "tltiu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
+    ),
+    "tgei": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
+    ),
+    "tgeiu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
+    ),
+    "break": lambda a: void_fn_op("MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []),
+    "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
 }
 CASES_FLOAT_COMP: CmpInstrMap = {
     # Float comparisons that don't raise exception on nan
