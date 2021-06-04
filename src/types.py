@@ -122,6 +122,15 @@ class Type:
     def get_size_bits(self) -> int:
         return self.get_representative().size or 32
 
+    def get_pointer_to_ctype(self) -> Optional[CType]:
+        """If self is a pointer-to-a-CType, return the CType"""
+        type = self.get_representative()
+        if type.is_pointer() and type.ptr_to is not None:
+            ptr_to = type.ptr_to.get_representative()
+            if ptr_to.is_ctype() and ptr_to.ctype_ref:
+                return ptr_to.ctype_ref
+        return None
+
     def parse_function(self) -> Optional[CFunction]:
         type = self.get_representative()
         if self.is_ctype() and type.ctype_ref is not None:
@@ -147,8 +156,9 @@ class Type:
         if type.kind == Type.K_PTR:
             if type.ptr_to is None:
                 return "void *"
-            if type.ptr_to.is_ctype() and type.ptr_to.ctype_ref is not None:
-                return type_to_string(ca.PtrDecl(quals=[], type=type.ptr_to.ctype_ref))
+            ctype = type.get_pointer_to_ctype()
+            if ctype is not None:
+                return type_to_string(ca.PtrDecl(quals=[], type=ctype))
             return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
         if type.kind == Type.K_FLOAT:
             return f"f{size}"
@@ -199,8 +209,7 @@ class Type:
         return Type(kind=Type.K_PTR, size=32, ptr_to=type)
 
     @staticmethod
-    def ctype(ctype: CType, typemap: TypeMap, size: Optional[int]) -> "Type":
-        assert typemap is not None
+    def _ctype(ctype: CType, typemap: TypeMap, size: Optional[int]) -> "Type":
         return Type(kind=Type.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
 
     @staticmethod
@@ -265,11 +274,11 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     if isinstance(real_ctype, (ca.PtrDecl, ca.ArrayDecl)):
         return Type.ptr(type_from_ctype(real_ctype.type, typemap))
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type.ctype(real_ctype, typemap, size=32)
+        return Type._ctype(real_ctype, typemap, size=32)
     if isinstance(real_ctype, ca.TypeDecl):
         if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
             struct = parse_struct(real_ctype.type, typemap)
-            return Type.ctype(ctype, typemap, size=struct.size * 8)
+            return Type._ctype(ctype, typemap, size=struct.size * 8)
         names = (
             ["int"] if isinstance(real_ctype.type, ca.Enum) else real_ctype.type.names
         )
@@ -279,7 +288,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
             return Type.f32()
         size = 8 * primitive_size(real_ctype.type)
         if not size:
-            return Type.ctype(ctype, typemap, size=None)
+            return Type._ctype(ctype, typemap, size=None)
         sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
         return Type(kind=Type.K_INT, size=size, sign=sign, typemap=typemap)
 
@@ -289,7 +298,7 @@ def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     if isinstance(real_ctype, ca.ArrayDecl):
         return Type.ptr(type_from_ctype(real_ctype.type, typemap)), True
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type.ctype(ctype, typemap, size=32), True
+        return Type._ctype(ctype, typemap, size=32), True
     return Type.ptr(type_from_ctype(ctype, typemap)), False
 
 
@@ -302,10 +311,10 @@ def get_field(
         target = get_pointer_target(type, typemap)
         target_type = target[1] if target else Type.any()
         return None, target_type, type, False
-    type = type.get_representative()
-    if not type.ptr_to or not type.ptr_to.is_ctype() or type.ptr_to.ctype_ref is None:
+    ctype = type.get_pointer_to_ctype()
+    if ctype is None:
         return None, Type.any(), Type.ptr(), False
-    ctype = resolve_typedefs(type.ptr_to.ctype_ref, typemap)
+    ctype = resolve_typedefs(ctype, typemap)
     if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
         struct = get_struct(ctype.type, typemap)
         if struct:
@@ -347,10 +356,10 @@ def find_substruct_array(
 ) -> Optional[Tuple[str, int, Type]]:
     if scale <= 0:
         return None
-    type = type.get_representative()
-    if not type.ptr_to or not type.ptr_to.is_ctype() or type.ptr_to.ctype_ref is None:
+    ctype = type.get_pointer_to_ctype()
+    if ctype is None:
         return None
-    ctype = resolve_typedefs(type.ptr_to.ctype_ref, typemap)
+    ctype = resolve_typedefs(ctype, typemap)
     if not isinstance(ctype, ca.TypeDecl):
         return None
     if not isinstance(ctype.type, (ca.Struct, ca.Union)):
@@ -380,14 +389,16 @@ def get_pointer_target(
     target = type.ptr_to
     if target is None:
         return None
-    if not target.is_ctype() or target.ctype_ref is None:
+    target = target.get_representative()
+    ctype = type.get_pointer_to_ctype()
+    if not ctype:
         if target.size is None:
             return None
         return target.size // 8, target
     if typemap is None:
         # (shouldn't happen, but might as well handle it)
         return None
-    size, align = var_size_align(target.ctype_ref, typemap)
+    size, align = var_size_align(ctype, typemap)
     if align == 0:
         # void* or function pointer
         return None
