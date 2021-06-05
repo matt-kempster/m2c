@@ -14,6 +14,7 @@ from .c_types import (
     TypeMap,
     function_arg_size_align,
     get_primitive_list,
+    parse_function,
     is_struct_type,
 )
 from .error import DecompFailure
@@ -277,7 +278,7 @@ class StackInfo:
             real_location,
             copied=True,
             stack_info=self,
-            type=self.unique_type_for("arg", real_location),
+            type=self.unique_type_for("arg", real_location, Type.any_reg()),
         )
         if real_location == location - 3:
             return as_type(arg, Type.of_size(8), True), arg
@@ -292,16 +293,16 @@ class StackInfo:
     def has_nonzero_access(self, ptr: "Expression") -> bool:
         return unwrap_deep(ptr) in self.nonzero_accesses
 
-    def unique_type_for(self, category: str, key: Any) -> "Type":
+    def unique_type_for(self, category: str, key: Any, default: Type) -> "Type":
         key = (category, key)
         if key not in self.unique_type_map:
-            self.unique_type_map[key] = Type.any()
+            self.unique_type_map[key] = default
         return self.unique_type_map[key]
 
     def global_symbol(self, sym: AsmGlobalSymbol) -> "GlobalSymbol":
         return GlobalSymbol(
             symbol_name=sym.symbol_name,
-            type=self.unique_type_for("symbol", sym.symbol_name),
+            type=self.unique_type_for("symbol", sym.symbol_name, Type.any()),
         )
 
     def saved_reg_symbol(self, reg_name: str) -> "GlobalSymbol":
@@ -327,14 +328,16 @@ class StackInfo:
                 self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
-            return SubroutineArg(location, type=Type.any())
+            return SubroutineArg(location, type=Type.any_reg())
         elif self.in_callee_save_reg_region(location):
             # Some annoying bookkeeping instruction. To avoid
             # further special-casing, just return whatever - it won't matter.
-            return LocalVar(location, type=Type.any())
+            return LocalVar(location, type=Type.any_reg())
         else:
             # Local variable
-            return LocalVar(location, type=self.unique_type_for("stack", location))
+            return LocalVar(
+                location, type=self.unique_type_for("stack", location, Type.any_reg())
+            )
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
         return self.reg_vars.get(reg)
@@ -364,9 +367,9 @@ class StackInfo:
             if ctype:
                 ctype_type, is_ptr = ptr_type_from_ctype(ctype, typemap)
                 if is_ptr:
-                    ctype_type.unify(type)
                     return as_type(sym, ctype_type, True)
                 else:
+                    type.unify(ctype_type)
                     type = ctype_type
         return AddressOf(sym, type=type)
 
@@ -630,7 +633,7 @@ class Statement(abc.ABC):
 @attr.s(frozen=True, eq=False)
 class ErrorExpr(Condition):
     desc: Optional[str] = attr.ib(default=None)
-    type: Type = attr.ib(factory=Type.any)
+    type: Type = attr.ib(factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -646,7 +649,7 @@ class ErrorExpr(Condition):
 
 @attr.s(frozen=True, eq=False)
 class SecondF64Half(Expression):
-    type: Type = attr.ib(factory=Type.any)
+    type: Type = attr.ib(factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -802,7 +805,7 @@ class BinaryOp(Condition):
                 return sub.format(fmt)
             if self.op in ("&", "|"):
                 neg = Literal(value=~self.right.value, type=self.right.type)
-                right = UnaryOp("~", neg, type=Type.any())
+                right = UnaryOp("~", neg, type=Type.any_reg())
                 expr = BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
                 return expr.format(fmt)
 
@@ -1170,7 +1173,7 @@ class AddressOf(Expression):
 class Lwl(Expression):
     load_expr: Expression = attr.ib()
     key: Tuple[int, object] = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any)
+    type: Type = attr.ib(eq=False, factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
@@ -1182,7 +1185,7 @@ class Lwl(Expression):
 @attr.s(frozen=True)
 class Load3Bytes(Expression):
     load_expr: Expression = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any)
+    type: Type = attr.ib(eq=False, factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
@@ -1194,7 +1197,7 @@ class Load3Bytes(Expression):
 @attr.s(frozen=True)
 class UnalignedLoad(Expression):
     load_expr: Expression = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any)
+    type: Type = attr.ib(eq=False, factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
@@ -1652,7 +1655,7 @@ def deref(
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
     field_name: Optional[str] = None
-    type: Type = stack_info.unique_type_for("struct", (uw_var, offset))
+    type: Type = stack_info.unique_type_for("struct", (uw_var, offset), Type.any())
 
     # Struct access with type information.
     typemap = stack_info.typemap
@@ -1912,7 +1915,7 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
 
 
 def void_fn_op(fn_name: str, args: List[Expression]) -> FuncCall:
-    return fn_op(fn_name, args, Type.any())
+    return fn_op(fn_name, args, Type.any_reg())
 
 
 def load_upper(args: InstrArgs) -> Expression:
@@ -2397,10 +2400,10 @@ def array_access_from_add(
             target_size=None,
             field_name=sub_field_name,
             stack_info=stack_info,
-            type=Type.cptr(elem_type, typemap),
+            type=Type.ptr(elem_type),
         )
         offset -= sub_offset
-        target_type = type_from_ctype(elem_type, typemap)
+        target_type = elem_type
 
     # Add .field if necessary
     ret: Expression = ArrayAccess(base, index, type=target_type)
@@ -2552,7 +2555,7 @@ def function_abi(
                 reg2 = Register("f13" if ind == 0 else "f15")
                 slots.append(
                     AbiStackSlot(
-                        offset=offset + 4, reg=reg2, name=name2, type=Type.any()
+                        offset=offset + 4, reg=reg2, name=name2, type=Type.any_reg()
                     )
                 )
         else:
@@ -3361,9 +3364,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
 
             typemap = stack_info.typemap
-            c_fn: Optional[CFunction] = None
-            if typemap and isinstance(fn_target, GlobalSymbol):
-                c_fn = typemap.functions.get(fn_target.symbol_name)
+            c_fn = fn_target.type.parse_function()
 
             func_args: List[Expression] = []
             if typemap and c_fn and c_fn.params is not None:
@@ -3439,7 +3440,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if c_fn and c_fn.ret_type and typemap:
                 known_ret_type = type_from_ctype(c_fn.ret_type, typemap)
             else:
-                known_ret_type = Type.any()
+                known_ret_type = Type.any_reg()
 
             call: Expression = FuncCall(fn_target, func_args, known_ret_type)
             call = eval_once(call, emit_exactly_once=True, trivial=False, prefix="ret")
@@ -3641,7 +3642,7 @@ def translate_graph_from_block(
                     new_contents[reg] = var
                 else:
                     new_contents[reg] = PhiExpr(
-                        reg=reg, node=child, used_phis=used_phis, type=Type.any()
+                        reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
                     )
             elif reg in new_contents:
                 del new_contents[reg]
@@ -3655,6 +3656,7 @@ def resolve_types_late(stack_info: StackInfo) -> None:
     """
     After translating a function, perform a final type-resolution pass.
     """
+    # Use dereferences to determine pointer types
     struct_type_map = stack_info.get_struct_type_map()
     for var, offset_type_map in struct_type_map.items():
         if len(offset_type_map) == 1 and 0 in offset_type_map:
@@ -3696,7 +3698,7 @@ def translate_to_ast(
     c_fn: Optional[CFunction] = None
     known_params = False
     variadic = False
-    return_type = Type.any()
+    return_type = Type.any_reg()
     if typemap and function.name in typemap.functions:
         c_fn = typemap.functions[function.name]
         if c_fn.ret_type is not None:
@@ -3711,16 +3713,16 @@ def translate_to_ast(
                     initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
             for reg in possible_regs:
                 offset = 4 * int(reg.register_name[1])
-                initial_regs[reg] = make_arg(offset, Type.any())
+                initial_regs[reg] = make_arg(offset, Type.any_reg())
             known_params = True
 
     if not known_params:
         initial_regs.update(
             {
                 Register("a0"): make_arg(0, Type.intptr()),
-                Register("a1"): make_arg(4, Type.any()),
-                Register("a2"): make_arg(8, Type.any()),
-                Register("a3"): make_arg(12, Type.any()),
+                Register("a1"): make_arg(4, Type.any_reg()),
+                Register("a2"): make_arg(8, Type.any_reg()),
+                Register("a3"): make_arg(12, Type.any_reg()),
                 Register("f12"): make_arg(0, Type.floatish()),
                 Register("f14"): make_arg(4, Type.floatish()),
             }
