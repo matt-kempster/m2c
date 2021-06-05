@@ -948,11 +948,10 @@ class FuncCall(Expression):
         return f"{self.function.format(fmt)}({args})"
 
 
-@attr.s(eq=True, hash=True)
+@attr.s(frozen=True, eq=True)
 class LocalVar(Expression):
     value: int = attr.ib()
-    type: Type = attr.ib(eq=False, hash=False)
-    alias: Optional["LocalVar"] = attr.ib(eq=False, hash=False, default=None)
+    type: Type = attr.ib(eq=False)
 
     def dependencies(self) -> List[Expression]:
         return []
