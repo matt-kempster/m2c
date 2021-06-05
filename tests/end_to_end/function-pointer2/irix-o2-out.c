@@ -1,6 +1,6 @@
 void test(void) {
-    glob = (int (*)(float)) foo;
+    glob = foo;
     glob = &bar;
     glob2 = (int (*)(float)) foo;
-    glob2 = (int (*)(float)) &bar;
+    glob2 = &bar;
 }

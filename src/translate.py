@@ -379,9 +379,9 @@ class StackInfo:
             if ctype:
                 ctype_type, is_ptr = ptr_type_from_ctype(ctype, typemap)
                 if is_ptr:
-                    ctype_type.unify(type)
                     return as_type(sym, ctype_type, True)
                 else:
+                    type.unify(ctype_type)
                     type = ctype_type
         return AddressOf(sym, type=type)
 

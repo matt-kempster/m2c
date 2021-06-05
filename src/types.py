@@ -132,9 +132,9 @@ class Type:
         return None
 
     def parse_function(self) -> Optional[CFunction]:
-        type = self.get_representative()
-        if self.is_ctype() and type.ctype_ref is not None:
-            return parse_function(type.ctype_ref)
+        ctype = self.get_pointer_to_ctype()
+        if ctype is not None:
+            return parse_function(ctype)
         return None
 
     def to_decl(self, var: str) -> str:
@@ -157,7 +157,9 @@ class Type:
             if type.ptr_to is None:
                 return "void *"
             ctype = type.get_pointer_to_ctype()
-            if ctype is not None:
+            if isinstance(ctype, ca.FuncDecl):
+                return type_to_string(ctype)
+            elif ctype is not None:
                 return type_to_string(ca.PtrDecl(quals=[], type=ctype))
             return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
         if type.kind == Type.K_FLOAT:
@@ -274,7 +276,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     if isinstance(real_ctype, (ca.PtrDecl, ca.ArrayDecl)):
         return Type.ptr(type_from_ctype(real_ctype.type, typemap))
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type._ctype(real_ctype, typemap, size=32)
+        return Type._ctype(real_ctype, typemap, size=None)
     if isinstance(real_ctype, ca.TypeDecl):
         if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
             struct = parse_struct(real_ctype.type, typemap)
@@ -298,7 +300,7 @@ def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     if isinstance(real_ctype, ca.ArrayDecl):
         return Type.ptr(type_from_ctype(real_ctype.type, typemap)), True
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type._ctype(ctype, typemap, size=32), True
+        return Type.ptr(Type._ctype(ctype, typemap, size=None)), True
     return Type.ptr(type_from_ctype(ctype, typemap)), False
 
 
