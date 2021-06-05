@@ -2,14 +2,15 @@ import argparse
 import sys
 import traceback
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Union
 
 from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import Options, CodingStyle
 from .parse_file import Function, MIPSFile, Rodata, parse_file
-from .translate import translate_to_ast
+from .translate import FunctionInfo, translate_to_ast
+from .types import Type
 from .c_types import TypeMap, build_typemap, dump_typemap
 
 
@@ -36,22 +37,6 @@ def print_exception(sanitize: bool) -> None:
         )
     else:
         traceback.print_exc(file=sys.stdout)
-
-
-def decompile_function(
-    options: Options, function: Function, rodata: Rodata, typemap: Optional[TypeMap]
-) -> None:
-    if options.print_assembly:
-        print(function)
-        print()
-
-    if options.visualize_flowgraph:
-        visualize_flowgraph(build_flowgraph(function, rodata))
-        return
-
-    function_info = translate_to_ast(function, options, rodata, typemap)
-    function_text = get_function_text(function_info, options)
-    print(function_text)
 
 
 def run(options: Options) -> int:
@@ -86,21 +71,7 @@ def run(options: Options) -> int:
         return 0
 
     if options.function_index_or_name is None:
-        has_error = False
-        for index, fn in enumerate(mips_file.functions):
-            if index != 0:
-                print()
-            try:
-                decompile_function(options, fn, mips_file.rodata, typemap)
-            except DecompFailure as e:
-                print(f"Failed to decompile function {fn.name}:\n\n{e}")
-                has_error = True
-            except Exception:
-                print(f"Internal error while decompiling function {fn.name}:\n")
-                print_exception(sanitize=options.sanitize_tracebacks)
-                has_error = True
-        if has_error:
-            return 1
+        functions = mips_file.functions
     else:
         try:
             index = int(options.function_index_or_name)
@@ -112,21 +83,54 @@ def run(options: Options) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            function = mips_file.functions[index]
+            functions = [mips_file.functions[index]]
         except ValueError:
             name = options.function_index_or_name
-            try:
-                function = next(fn for fn in mips_file.functions if fn.name == name)
-            except StopIteration:
+            functions = [fn for fn in mips_file.functions if fn.name == name]
+            if not functions:
                 print(f"Function {name} not found.", file=sys.stderr)
                 return 1
 
+    return_code = 0
+    function_infos: List[Union[FunctionInfo, Exception]] = []
+    for function in functions:
         try:
-            decompile_function(options, function, mips_file.rodata, typemap)
+            if options.visualize_flowgraph:
+                visualize_flowgraph(build_flowgraph(function, mips_file.rodata))
+                continue
+
+            info = translate_to_ast(function, options, mips_file.rodata, typemap)
+            function_infos.append(info)
+        except Exception as e:
+            # Store the exception for later, to preserve the order in the output
+            function_infos.append(e)
+
+    if options.visualize_flowgraph:
+        return return_code
+
+    fmt = options.formatter()
+    for index, (function, function_info) in enumerate(zip(functions, function_infos)):
+        if index != 0:
+            print()
+        try:
+            if options.print_assembly:
+                print(function)
+                print()
+
+            if isinstance(function_info, Exception):
+                raise function_info
+
+            function_text = get_function_text(function_info, options)
+            print(function_text)
         except DecompFailure as e:
             print(f"Failed to decompile function {function.name}:\n\n{e}")
-            return 1
-    return 0
+            return_code = 1
+        except Exception:
+            print(f"Internal error while decompiling function {function.name}:\n")
+            print_exception(sanitize=options.sanitize_tracebacks)
+            return_code = 1
+
+    return return_code
 
 
 def parse_flags(flags: List[str]) -> Options:
