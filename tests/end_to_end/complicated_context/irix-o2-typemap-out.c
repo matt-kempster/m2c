@@ -1,13 +1,13 @@
 Variables:
-globali: int
-globalf: float
-extern_inner_struct_field: struct SubStruct
-func_decl: void (void)
-test: short (struct SomeStruct *, unsigned char, union SomeUnion, ...)
+int globali;
+float globalf;
+struct SubStruct;
+void func_decl(void);
+short test(struct SomeStruct *, unsigned char, union SomeUnion, ...);
 
 Functions:
-func_decl: void(void)
-test: short(struct SomeStruct *, unsigned char, union SomeUnion, ...)
+void func_decl(void);
+short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_arg, ...);
 
 Structs:
 SomeUnion: size 8, align 8
