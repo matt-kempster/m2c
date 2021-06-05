@@ -9,14 +9,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Un
 
 import attr
 
-from .c_types import Function as CFunction
-from .c_types import (
-    TypeMap,
-    function_arg_size_align,
-    get_primitive_list,
-    parse_function,
-    is_struct_type,
-)
+from .c_types import TypeMap
 from .error import DecompFailure
 from .flow_graph import (
     FlowGraph,
@@ -39,12 +32,12 @@ from .parse_instruction import (
     Register,
 )
 from .types import (
+    FunctionSignature,
+    FunctionParam,
     Type,
     find_substruct_array,
     get_field,
-    get_pointer_target,
     ptr_type_from_ctype,
-    type_from_ctype,
 )
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
@@ -205,6 +198,10 @@ def as_intptr(expr: "Expression") -> "Expression":
 
 def as_ptr(expr: "Expression") -> "Expression":
     return as_type(expr, Type.ptr(), True)
+
+
+def as_function_ptr(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.function_ptr(), True)
 
 
 @attr.s
@@ -936,8 +933,18 @@ class FuncCall(Expression):
         return self.args + [self.function]
 
     def format(self, fmt: Formatter) -> str:
+        if isinstance(self.function, Cast):
+            if self.function.type.is_function_variadic_with(
+                [arg.type for arg in self.args]
+            ):
+                # Strip cast entirely if the args up to the varargs match
+                fn = self.function.expr.format(fmt)
+            else:
+                fn = f"({fn})"
+        else:
+            fn = self.function.format(fmt)
         args = ", ".join(format_expr(arg, fmt) for arg in self.args)
-        return f"{self.function.format(fmt)}({args})"
+        return f"{fn}({args})"
 
 
 @attr.s(frozen=True, eq=True)
@@ -1054,7 +1061,7 @@ class StructAccess(Expression):
             offset_str = (
                 f"0x{format_hex(self.offset)}" if self.offset > 0 else f"{self.offset}"
             )
-            return f"MIPS2C_FIELD({var.format(fmt)}, {self.type.format(fmt)}, {offset_str})"
+            return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             field_name = "unk" + format_hex(self.offset)
 
@@ -1673,14 +1680,14 @@ def deref(
             type = new_type
 
     # Dereferencing pointers of known types
-    target = get_pointer_target(var.type, typemap)
-    if field_name is None and target is not None:
-        sub_size, sub_type = target
-        if sub_size == size and offset % size == 0:
+    target = var.type.get_pointer_target()
+    if field_name is None and target is not None and (target.size or target.is_ctype()):
+        sub_size, sub_align = target.get_size_align_bytes()
+        if sub_size == size and offset % size == 0 and sub_align != 0:
             if offset != 0:
                 index = Literal(value=offset // size, type=Type.s32())
-                return ArrayAccess(var, index, type=sub_type)
-            type = sub_type
+                return ArrayAccess(var, index, type=target)
+            type = target
 
     return StructAccess(
         struct_var=var,
@@ -1907,8 +1914,14 @@ def imm_add_32(expr: Expression) -> Expression:
 
 
 def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
+    fn_sig = FunctionSignature(
+        return_type=type,
+        params=[FunctionParam(type=arg.type) for arg in args],
+        params_known=True,
+        is_variadic=False,
+    )
     return FuncCall(
-        function=GlobalSymbol(symbol_name=fn_name, type=Type.any()),
+        function=GlobalSymbol(symbol_name=fn_name, type=Type.function_ptr(fn_sig)),
         args=args,
         type=type,
     )
@@ -2082,8 +2095,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
                         type=ptr_type,
                     )
         if isinstance(imm, Literal):
-            target = get_pointer_target(source.type, typemap)
-            if target and imm.value % target[0] == 0:
+            target = source.type.get_pointer_target()
+            if target and imm.value % target.get_size_align_bytes()[0] == 0:
                 # Pointer addition.
                 return BinaryOp(
                     left=source, op="+", right=as_intish(imm), type=source.type
@@ -2381,13 +2394,13 @@ def array_access_from_add(
         index = addend
         scale = 1
 
-    target = get_pointer_target(base.type, typemap)
-    if target is None:
+    target_type = base.type.get_pointer_target()
+    if target_type is None:
         return None
 
-    if target[0] == scale:
+    if target_type.get_size_align_bytes()[0] == scale:
         # base[index]
-        target_type = target[1]
+        pass
     else:
         # base->subarray[index]
         substr_array = find_substruct_array(base.type, offset, scale, typemap)
@@ -2514,19 +2527,21 @@ class AbiStackSlot:
 
 
 def function_abi(
-    fn: CFunction, typemap: TypeMap, *, for_call: bool
+    fn_sig: FunctionSignature, *, for_call: bool
 ) -> Tuple[List[AbiStackSlot], List[Register]]:
     """Compute stack positions/registers used by a function according to the o32 ABI,
     based on C type information. Additionally computes a list of registers that might
     contain arguments, if the function is a varargs function. (Additional varargs
     arguments may be passed on the stack; we could compute the offset at which that
     would start but right now don't care -- we just slurp up everything.)"""
-    assert fn.params is not None, "checked by caller"
+    if not fn_sig.params_known:
+        return [], [Register(r) for r in ["f12", "f13", "f14", "a0", "a1", "a2", "a3"]]
+
     offset = 0
     only_floats = True
     slots: List[AbiStackSlot] = []
     possible: List[Register] = []
-    if fn.ret_type is not None and is_struct_type(fn.ret_type, typemap):
+    if fn_sig.return_type.is_struct_type():
         # The ABI for struct returns is to pass a pointer to where it should be written
         # as the first argument.
         slots.append(
@@ -2537,19 +2552,19 @@ def function_abi(
         offset = 4
         only_floats = False
 
-    for ind, param in enumerate(fn.params):
-        size, align = function_arg_size_align(param.type, typemap)
+    for ind, param in enumerate(fn_sig.params):
+        size, align = param.type.get_size_align_bytes()
         size = (size + 3) & ~3
-        primitive_list = get_primitive_list(param.type, typemap)
-        only_floats = only_floats and (primitive_list in [["float"], ["double"]])
+        only_floats = only_floats and param.type.is_float()
         offset = (offset + align - 1) & -align
         name = param.name
         reg2: Optional[Register]
         if ind < 2 and only_floats:
             reg = Register("f12" if ind == 0 else "f14")
-            is_double = primitive_list == ["double"]
-            type = Type.f64() if is_double else Type.f32()
-            slots.append(AbiStackSlot(offset=offset, reg=reg, name=name, type=type))
+            is_double = param.type.is_float() and param.type.get_size_bits() == 64
+            slots.append(
+                AbiStackSlot(offset=offset, reg=reg, name=name, type=param.type)
+            )
             if is_double and not for_call:
                 name2 = f"{name}_lo" if name else None
                 reg2 = Register("f13" if ind == 0 else "f15")
@@ -2563,13 +2578,12 @@ def function_abi(
                 unk_offset = 4 * i - offset
                 name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}") if i < 4 else None
-                type2 = type_from_ctype(param.type, typemap)
                 slots.append(
-                    AbiStackSlot(offset=4 * i, reg=reg2, name=name2, type=type2)
+                    AbiStackSlot(offset=4 * i, reg=reg2, name=name2, type=param.type)
                 )
         offset += size
 
-    if fn.is_variadic:
+    if fn_sig.is_variadic:
         for i in range(offset // 4, 4):
             possible.append(Register(f"a{i}"))
 
@@ -3349,33 +3363,30 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     assert isinstance(fn_target, GlobalSymbol)
                 else:
                     assert isinstance(fn_target, Literal)
-                    fn_target = as_ptr(fn_target)
+                    fn_target = fn_target
             else:
                 assert mnemonic == "jalr"
                 if args.count() == 1:
-                    fn_target = as_ptr(args.reg(0))
+                    fn_target = args.reg(0)
                 elif args.count() == 2:
                     if args.reg_ref(0) != Register("ra"):
                         raise DecompFailure(
                             "Two-argument form of jalr is not supported."
                         )
-                    fn_target = as_ptr(args.reg(1))
+                    fn_target = args.reg(1)
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
 
             typemap = stack_info.typemap
-            c_fn = fn_target.type.parse_function()
+            fn_target = as_function_ptr(fn_target)
+            fn_sig = fn_target.type.get_function_signature()
+            assert fn_sig is not None, "known function pointers must have a signature"
+            abi_slots, possible_regs = function_abi(fn_sig, for_call=True)
 
             func_args: List[Expression] = []
-            if typemap and c_fn and c_fn.params is not None:
-                abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=True)
-                for slot in abi_slots:
-                    if slot.reg:
-                        func_args.append(as_type(regs[slot.reg], slot.type, True))
-            else:
-                possible_regs = list(
-                    map(Register, ["f12", "f13", "f14", "a0", "a1", "a2", "a3"])
-                )
+            for slot in abi_slots:
+                if slot.reg:
+                    func_args.append(as_type(regs[slot.reg], slot.type, True))
 
             valid_extra_regs: Set[str] = set()
             for register in possible_regs:
@@ -3434,15 +3445,18 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             for arg in subroutine_args:
                 func_args.append(arg[0])
 
+            if not fn_sig.params_known:
+                while len(func_args) > len(fn_sig.params):
+                    fn_sig.params.append(FunctionParam())
+                func_args = [
+                    as_type(arg, param.type, True)
+                    for arg, param in zip(func_args, fn_sig.params)
+                ]
+
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
-            if c_fn and c_fn.ret_type and typemap:
-                known_ret_type = type_from_ctype(c_fn.ret_type, typemap)
-            else:
-                known_ret_type = Type.any_reg()
-
-            call: Expression = FuncCall(fn_target, func_args, known_ret_type)
+            call: Expression = FuncCall(fn_target, func_args, fn_sig.return_type)
             call = eval_once(call, emit_exactly_once=True, trivial=False, prefix="ret")
 
             # Clear out caller-save registers, for clarity and to ensure that
@@ -3464,7 +3478,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
             # Note that this logic is duplicated in output_regs_for_instr.
-            if not c_fn or c_fn.ret_type:
+            if not fn_sig.return_type.is_void():
                 regs[Register("f0")] = eval_once(
                     Cast(
                         expr=call, reinterpret=True, silent=True, type=Type.floatish()
@@ -3685,6 +3699,7 @@ def translate_to_ast(
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, rodata)
     stack_info = get_stack_info(function, rodata, flow_graph, typemap)
+    function_sym = stack_info.global_symbol(AsmGlobalSymbol(function.name))
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
@@ -3695,28 +3710,27 @@ def translate_to_ast(
         assert offset % 4 == 0
         return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
 
-    c_fn: Optional[CFunction] = None
-    known_params = False
-    variadic = False
-    return_type = Type.any_reg()
     if typemap and function.name in typemap.functions:
-        c_fn = typemap.functions[function.name]
-        if c_fn.ret_type is not None:
-            return_type = type_from_ctype(c_fn.ret_type, typemap)
-        if c_fn.is_variadic:
-            stack_info.is_variadic = True
-        if c_fn.params is not None:
-            abi_slots, possible_regs = function_abi(c_fn, typemap, for_call=False)
-            for slot in abi_slots:
-                stack_info.add_known_param(slot.offset, slot.name, slot.type)
-                if slot.reg is not None:
-                    initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
-            for reg in possible_regs:
-                offset = 4 * int(reg.register_name[1])
-                initial_regs[reg] = make_arg(offset, Type.any_reg())
-            known_params = True
+        fn_type, _ = ptr_type_from_ctype(typemap.functions[function.name].type, typemap)
+    else:
+        fn_type = Type.function_ptr()
+    fn_type.unify(Type.ptr(function_sym.type))
 
-    if not known_params:
+    fn_sig = fn_type.get_function_signature()
+    assert fn_sig is not None, "fn_type is known to be a function pointer"
+    return_type = fn_sig.return_type
+    stack_info.is_variadic = fn_sig.is_variadic
+
+    if fn_sig.params_known:
+        abi_slots, possible_regs = function_abi(fn_sig, for_call=False)
+        for slot in abi_slots:
+            stack_info.add_known_param(slot.offset, slot.name, slot.type)
+            if slot.reg is not None:
+                initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
+        for reg in possible_regs:
+            offset = 4 * int(reg.register_name[1])
+            initial_regs[reg] = make_arg(offset, Type.any_reg())
+    else:
         initial_regs.update(
             {
                 Register("a0"): make_arg(0, Type.intptr()),
@@ -3765,11 +3779,8 @@ def translate_to_ast(
 
     if options.void:
         has_return = False
-    elif c_fn is not None:
-        if c_fn.ret_type is None:
-            has_return = False
-        else:
-            has_return = True
+    elif return_type.is_void():
+        has_return = False
 
     if has_return:
         for b in return_blocks:
