@@ -238,6 +238,13 @@ def parse_flags(flags: List[str]) -> Options:
         "context. Mainly useful for debugging.",
     )
     parser.add_argument(
+        "--valid-syntax",
+        dest="valid_syntax",
+        action="store_true",
+        help="emit valid C syntax, using macros to indicate unknown types or other "
+        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
+    )
+    parser.add_argument(
         "--pdb-translate",
         dest="pdb_translate",
         action="store_true",
@@ -284,6 +291,7 @@ def parse_flags(flags: List[str]) -> Options:
         preproc_defines=preproc_defines,
         coding_style=coding_style,
         sanitize_tracebacks=args.sanitize_tracebacks,
+        valid_syntax=args.valid_syntax,
     )
 
 

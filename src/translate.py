@@ -26,7 +26,7 @@ from .flow_graph import (
     SwitchNode,
     build_flowgraph,
 )
-from .options import CodingStyle, Options, DEFAULT_CODING_STYLE
+from .options import CodingStyle, Options, Formatter, DEFAULT_CODING_STYLE
 from .parse_file import Rodata
 from .parse_instruction import (
     Argument,
@@ -158,18 +158,6 @@ def current_instr(instr: Instruction) -> Iterator[None]:
         yield
     except Exception as e:
         raise InstrProcessingFailure(instr) from e
-
-
-@attr.s
-class Formatter:
-    coding_style: CodingStyle = attr.ib(default=DEFAULT_CODING_STYLE)
-    indent_step: str = attr.ib(default=" " * 4)
-    skip_casts: bool = attr.ib(default=False)
-    extra_indent: int = attr.ib(default=0)
-    debug: bool = attr.ib(default=False)
-
-    def indent(self, indent: int, line: str) -> str:
-        return self.indent_step * max(indent + self.extra_indent, 0) + line
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
@@ -655,8 +643,8 @@ class ErrorExpr(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if self.desc is not None:
-            return f"ERROR({self.desc})"
-        return "ERROR"
+            return f"MIPS2C_ERROR({self.desc})"
+        return "MIPS2C_ERROR()"
 
 
 @attr.s(frozen=True, eq=False)
@@ -923,7 +911,11 @@ class Cast(Expression):
     def format(self, fmt: Formatter) -> str:
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
-            return f"(bitwise {self.type}) {self.expr.format(fmt)}"
+            if fmt.valid_syntax:
+                return (
+                    f"MIPS2C_BITWISE({self.type.format(fmt)}, {self.expr.format(fmt)})"
+                )
+            return f"(bitwise {self.type.format(fmt)}) {self.expr.format(fmt)}"
         if self.reinterpret and (
             self.silent
             or (is_type_obvious(self.expr) and self.expr.type.unify(self.type))
@@ -931,7 +923,7 @@ class Cast(Expression):
             return self.expr.format(fmt)
         if fmt.skip_casts:
             return f"{self.expr.format(fmt)}"
-        return f"({self.type}) {self.expr.format(fmt)}"
+        return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
 
 
 @attr.s(frozen=True, eq=False)
@@ -1058,6 +1050,11 @@ class StructAccess(Expression):
 
         if field_name:
             has_nonzero_access = True
+        elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
+            offset_str = (
+                f"0x{format_hex(self.offset)}" if self.offset > 0 else f"{self.offset}"
+            )
+            return f"MIPS2C_FIELD({var.format(fmt)}, {self.type.format(fmt)}, {offset_str})"
         else:
             field_name = "unk" + format_hex(self.offset)
 
@@ -2589,7 +2586,7 @@ PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]]
 
 CASES_IGNORE: InstrSet = {
     # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
-    # FCSR gets are as well, but it's fine to read ERROR for those.
+    # FCSR gets are as well, but it's fine to read MIPS2C_ERROR for those.
     "ctc1",
     "nop",
     "b",
@@ -2635,21 +2632,45 @@ CASES_FN_CALL: InstrSet = {
 }
 CASES_NO_DEST: InstrMap = {
     # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
-    # output than ERROR(...))
-    "teq": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]),
-    "tne": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]),
-    "tlt": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]),
-    "tltu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]),
-    "tge": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]),
-    "tgeu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]),
-    "teqi": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]),
-    "tnei": lambda a: void_fn_op("TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]),
-    "tlti": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]),
-    "tltiu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]),
-    "tgei": lambda a: void_fn_op("TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]),
-    "tgeiu": lambda a: void_fn_op("TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]),
-    "break": lambda a: void_fn_op("BREAK", [a.imm(0)] if a.count() >= 1 else []),
-    "sync": lambda a: void_fn_op("SYNC", []),
+    # output than MIPS2C_ERROR(...))
+    "teq": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]
+    ),
+    "tne": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]
+    ),
+    "tlt": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]
+    ),
+    "tltu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]
+    ),
+    "tge": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]
+    ),
+    "tgeu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
+    ),
+    "teqi": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
+    ),
+    "tnei": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
+    ),
+    "tlti": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
+    ),
+    "tltiu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
+    ),
+    "tgei": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
+    ),
+    "tgeiu": lambda a: void_fn_op(
+        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
+    ),
+    "break": lambda a: void_fn_op("MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []),
+    "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
 }
 CASES_FLOAT_COMP: CmpInstrMap = {
     # Float comparisons that don't raise exception on nan
