@@ -157,9 +157,7 @@ class Type:
             if type.ptr_to is None:
                 return "void *"
             ctype = type.get_pointer_to_ctype()
-            if isinstance(ctype, ca.FuncDecl):
-                return type_to_string(ctype)
-            elif ctype is not None:
+            if ctype is not None:
                 return type_to_string(ca.PtrDecl(quals=[], type=ctype))
             return (type.ptr_to._stringify(seen) + " *").replace("* *", "**")
         if type.kind == Type.K_FLOAT:

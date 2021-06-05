@@ -660,8 +660,6 @@ def type_to_string(type: CType, name: str = "") -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    if isinstance(type, FuncDecl) and not name:
-        name = "(*)"
     decl = ca.Decl(name, [], [], [], type, None, None)
     set_decl_name(decl)
     return to_c(decl)
