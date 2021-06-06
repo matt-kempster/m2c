@@ -303,7 +303,7 @@ def main(
         f"Test summary: {passed} passed, {skipped} skipped, {failed} failed, {passed + skipped + failed} total"
     )
 
-    if failed > 0 and test_options.should_overwrite:
+    if failed > 0 and not test_options.should_overwrite:
         return 1
     return 0
 
