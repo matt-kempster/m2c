@@ -19,7 +19,7 @@ jobs:
         python-version: 3.6
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade mypy attrs pycparser
+        python -m pip install --upgrade mypy attrs pycparser coverage
     - name: Run tests
       run: |
         ./run_tests.py
