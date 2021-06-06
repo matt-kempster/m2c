@@ -147,10 +147,16 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
     )
     parser.add_argument(
-        "--no-ifs",
+        "--gotos-only",
         dest="ifs",
         help="disable control flow generation; emit gotos for everything",
         action="store_false",
+    )
+    parser.add_argument(
+        "--no-ifs",
+        dest="ifs",
+        action="store_false",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--no-andor",
