@@ -7,7 +7,7 @@ short test(struct SomeStruct *, unsigned char, union SomeUnion, ...);
 
 Functions:
 void func_decl(void);
-short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_arg, ...);
+short test(struct SomeStruct *, unsigned char should, union SomeUnion union_arg, ...);
 
 Structs:
 SomeUnion: size 8, align 8
