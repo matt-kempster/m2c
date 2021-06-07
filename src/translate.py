@@ -3705,7 +3705,12 @@ class GlobalInfo:
 
             is_static = name in self.rodata.values
             order = (is_static, name)
-            prefix = "static " if is_static else "extern "
+            prefix = ""
+            if is_static:
+                prefix = "static "
+            elif not type.is_function():
+                prefix = "extern "
+
             lines.append((order, f"{prefix}{type.to_decl(name, fmt)};\n"))
         lines.sort()
         return "".join(line for _, line in lines)

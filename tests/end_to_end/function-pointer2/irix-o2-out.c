@@ -1,5 +1,6 @@
-extern int (float) bar;
-extern int (*)(float) glob2;
+s32 bar(f32);
+extern s32 (*glob2)(f32);
+void test();
 
 void test(void) {
     glob = foo;
