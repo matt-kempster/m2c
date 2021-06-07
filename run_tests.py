@@ -148,6 +148,7 @@ def create_e2e_tests(
                 flags=["test"],  # Decompile the function 'test'
             )
         )
+    cases.sort()
     return cases
 
 
@@ -215,6 +216,7 @@ def create_project_tests(
                 flags=flags,
             )
         )
+    cases.sort()
     return cases
 
 
