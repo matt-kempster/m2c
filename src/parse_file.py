@@ -43,17 +43,27 @@ class Function:
 
 
 @attr.s
-class RodataEntry:
+class DataSectionEntry:
     data: List[Union[str, bytes]] = attr.ib(factory=list)
     is_string: bool = attr.ib(default=False)
+    is_readonly: bool = attr.ib(default=False)
+
+    def size_bytes(self) -> int:
+        size = 0
+        for x in self.data:
+            if isinstance(x, str):
+                size += 4
+            else:
+                size += len(x)
+        return size
 
 
 @attr.s
-class Rodata:
-    values: Dict[str, RodataEntry] = attr.ib(factory=dict)
+class DataSection:
+    values: Dict[str, DataSectionEntry] = attr.ib(factory=dict)
     mentioned_labels: Set[str] = attr.ib(factory=set)
 
-    def merge_into(self, other: "Rodata") -> None:
+    def merge_into(self, other: "DataSection") -> None:
         for (sym, value) in self.values.items():
             other.values[sym] = value
         for label in self.mentioned_labels:
@@ -64,9 +74,9 @@ class Rodata:
 class MIPSFile:
     filename: str = attr.ib()
     functions: List[Function] = attr.ib(factory=list)
-    rodata: Rodata = attr.ib(factory=Rodata)
+    data_section: DataSection = attr.ib(factory=DataSection)
     current_function: Optional[Function] = attr.ib(default=None, repr=False)
-    current_rodata: RodataEntry = attr.ib(factory=RodataEntry)
+    current_data: DataSectionEntry = attr.ib(factory=DataSectionEntry)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
@@ -88,21 +98,21 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_rodata_label(self, symbol_name: str) -> None:
-        self.current_rodata = RodataEntry()
-        self.rodata.values[symbol_name] = self.current_rodata
+    def new_data_label(self, symbol_name: str, is_readonly: bool) -> None:
+        self.current_data = DataSectionEntry(is_readonly=is_readonly)
+        self.data_section.values[symbol_name] = self.current_data
 
-    def new_rodata_sym(self, sym: str) -> None:
-        self.current_rodata.data.append(sym)
-        self.rodata.mentioned_labels.add(sym.lstrip("."))
+    def new_data_sym(self, sym: str) -> None:
+        self.current_data.data.append(sym)
+        self.data_section.mentioned_labels.add(sym.lstrip("."))
 
-    def new_rodata_bytes(self, data: bytes, *, is_string: bool = False) -> None:
-        if not self.current_rodata.data and is_string:
-            self.current_rodata.is_string = True
-        if self.current_rodata.data and isinstance(self.current_rodata.data[-1], bytes):
-            self.current_rodata.data[-1] += data
+    def new_data_bytes(self, data: bytes, *, is_string: bool = False) -> None:
+        if not self.current_data.data and is_string:
+            self.current_data.is_string = True
+        if self.current_data.data and isinstance(self.current_data.data[-1], bytes):
+            self.current_data.data[-1] += data
         else:
-            self.current_rodata.data.append(data)
+            self.current_data.data.append(data)
 
     def __str__(self) -> str:
         functions_str = "\n\n".join(str(function) for function in self.functions)
@@ -204,7 +214,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
         try:
             return parser()
         except ValueError:
-            raise DecompFailure(f"Could not parse rodata {directive}: {line}")
+            raise DecompFailure(
+                f"Could not parse data_section {directive} in {curr_section}: {line}"
+            )
 
     for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
@@ -217,7 +229,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
 
         def process_label(label: str, *, glabel: bool) -> None:
             if curr_section == ".rodata":
-                mips_file.new_rodata_label(label)
+                mips_file.new_data_label(label, is_readonly=True)
+            elif curr_section in (".data", ".bss"):
+                mips_file.new_data_label(label, is_readonly=False)
             elif curr_section == ".text":
                 re_local = re_local_glabel if glabel else re_local_label
                 if label.startswith("."):
@@ -281,40 +295,45 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             elif ifdef_level == 0:
                 if line.startswith(".section"):
                     curr_section = line.split(" ")[1].split(",")[0]
-                    if curr_section == ".late_rodata":
+                    if curr_section in (".rdata", ".late_rodata"):
                         curr_section = ".rodata"
                 elif (
                     line.startswith(".rdata")
                     or line.startswith(".rodata")
+                    or line.startswith(".rdata")
                     or line.startswith(".late_rodata")
                 ):
                     curr_section = ".rodata"
+                elif line.startswith(".data"):
+                    curr_section = ".data"
+                elif line.startswith(".bss"):
+                    curr_section = ".bss"
                 elif line.startswith(".text"):
                     curr_section = ".text"
-                elif curr_section == ".rodata":
+                elif curr_section in (".rodata", ".data", ".bss"):
                     if line.startswith(".word"):
                         for w in line[5:].split(","):
                             w = w.strip()
                             if not w or w[0].isdigit():
                                 ival = try_parse(lambda: int(w, 0), ".word")
-                                mips_file.new_rodata_bytes(struct.pack(">I", ival))
+                                mips_file.new_data_bytes(struct.pack(">I", ival))
                             else:
-                                mips_file.new_rodata_sym(w)
+                                mips_file.new_data_sym(w)
                     elif line.startswith(".byte"):
                         for w in line[5:].split(","):
                             ival = try_parse(lambda: int(w.strip(), 0), ".byte")
-                            mips_file.new_rodata_bytes(bytes([ival]))
+                            mips_file.new_data_bytes(bytes([ival]))
                     elif line.startswith(".float"):
                         for w in line[6:].split(","):
                             fval = try_parse(lambda: float(w.strip()), ".float")
-                            mips_file.new_rodata_bytes(struct.pack(">f", fval))
+                            mips_file.new_data_bytes(struct.pack(">f", fval))
                     elif line.startswith(".double"):
                         for w in line[7:].split(","):
                             fval = try_parse(lambda: float(w.strip()), ".double")
-                            mips_file.new_rodata_bytes(struct.pack(">d", fval))
+                            mips_file.new_data_bytes(struct.pack(">d", fval))
                     elif line.startswith(".asci"):
                         z = line.startswith(".asciz") or line.startswith(".asciiz")
-                        mips_file.new_rodata_bytes(
+                        mips_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
         elif ifdef_level == 0:

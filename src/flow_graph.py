@@ -5,7 +5,7 @@ from typing import Any, Counter, Dict, Iterator, List, Optional, Set, Tuple, Uni
 import attr
 
 from .error import DecompFailure
-from .parse_file import Function, Label, Rodata
+from .parse_file import Function, Label, DataSection
 from .parse_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -240,11 +240,13 @@ def normalize_likely_branches(function: Function) -> Function:
     return new_function
 
 
-def prune_unreferenced_labels(function: Function, rodata: Rodata) -> Function:
+def prune_unreferenced_labels(
+    function: Function, data_section: DataSection
+) -> Function:
     labels_used: Set[str] = {
         label.name
         for label in function.body
-        if isinstance(label, Label) and label.name in rodata.mentioned_labels
+        if isinstance(label, Label) and label.name in data_section.mentioned_labels
     }
     for item in function.body:
         if isinstance(item, Instruction) and item.is_branch_instruction():
@@ -628,12 +630,12 @@ def simplify_standard_patterns(function: Function) -> Function:
     return new_function
 
 
-def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
+def build_blocks(function: Function, data_section: DataSection) -> List[Block]:
     verify_no_trailing_delay_slot(function)
     function = normalize_likely_branches(function)
-    function = prune_unreferenced_labels(function, rodata)
+    function = prune_unreferenced_labels(function, data_section)
     function = simplify_standard_patterns(function)
-    function = prune_unreferenced_labels(function, rodata)
+    function = prune_unreferenced_labels(function, data_section)
 
     block_builder = BlockBuilder()
 
@@ -845,7 +847,7 @@ Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode]
 
 
 def build_graph_from_block(
-    block: Block, blocks: List[Block], nodes: List[Node], rodata: Rodata
+    block: Block, blocks: List[Block], nodes: List[Node], data_section: DataSection
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -874,7 +876,9 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes, rodata)
+        new_node.successor = build_graph_from_block(
+            next_block, blocks, nodes, data_section
+        )
 
         # Keep track of parents.
         new_node.successor.add_parent(new_node)
@@ -917,20 +921,27 @@ def build_graph_from_block(
                 )
 
             jtbl_name = jtbl_names[0]
-            if jtbl_name not in rodata.values:
+            if jtbl_name not in data_section.values:
                 raise DecompFailure(
                     f"Found jr instruction {jump.meta.loc_str()}, but the "
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file, or in a separate .s "
-                    "file pointed to by --rodata.\n"
+                    "file pointed to by --data.\n"
                     'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
                     "\n"
                     "(You might need to pass --goto and --no-andor flags as well, "
                     "to get correct control flow for non-jtbl switch jumps.)"
                 )
 
-            jtbl_entries = rodata.values[jtbl_name].data
+            jtbl_data_entry = data_section.values[jtbl_name]
+            if not jtbl_data_entry.is_readonly:
+                raise DecompFailure(
+                    f"Found jr instruction {jump.meta.loc_str()}, but the "
+                    "corresponding jump table was not in the .rodata section."
+                )
+
+            jtbl_entries = jtbl_data_entry.data
             for entry in jtbl_entries:
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
@@ -939,7 +950,9 @@ def build_graph_from_block(
                 case_block = find_block_by_label(entry)
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
-                case_node = build_graph_from_block(case_block, blocks, nodes, rodata)
+                case_node = build_graph_from_block(
+                    case_block, blocks, nodes, data_section
+                )
                 new_node.cases.append(case_node)
                 if new_node not in case_node.parents:
                     case_node.add_parent(new_node)
@@ -963,7 +976,7 @@ def build_graph_from_block(
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(
-                branch_block, blocks, nodes, rodata
+                branch_block, blocks, nodes, data_section
             )
             # Keep track of parents.
             new_node.successor.add_parent(new_node)
@@ -975,10 +988,10 @@ def build_graph_from_block(
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(
-                branch_block, blocks, nodes, rodata
+                branch_block, blocks, nodes, data_section
             )
             new_node.fallthrough_edge = build_graph_from_block(
-                next_block, blocks, nodes, rodata
+                next_block, blocks, nodes, data_section
             )
             # Keep track of parents.
             new_node.conditional_edge.add_parent(new_node)
@@ -1000,7 +1013,9 @@ def is_trivial_return_block(block: Block) -> bool:
     return True
 
 
-def build_nodes(function: Function, blocks: List[Block], rodata: Rodata) -> List[Node]:
+def build_nodes(
+    function: Function, blocks: List[Block], data_section: DataSection
+) -> List[Node]:
     graph: List[Node] = []
 
     if not blocks:
@@ -1010,7 +1025,7 @@ def build_nodes(function: Function, blocks: List[Block], rodata: Rodata) -> List
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph, rodata)
+    build_graph_from_block(entry_block, blocks, graph, data_section)
 
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
@@ -1160,9 +1175,9 @@ class FlowGraph:
         return max(candidates, key=lambda n: n.block.index)
 
 
-def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
-    blocks = build_blocks(function, rodata)
-    nodes = build_nodes(function, blocks, rodata)
+def build_flowgraph(function: Function, data_section: DataSection) -> FlowGraph:
+    blocks = build_blocks(function, data_section)
+    nodes = build_nodes(function, blocks, data_section)
     nodes = duplicate_premature_returns(nodes)
     ensure_fallthrough(nodes)
     compute_dominators(nodes)
