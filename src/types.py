@@ -387,7 +387,7 @@ class Type:
         return Type.intish()
 
     @staticmethod
-    def _void() -> "Type":
+    def void() -> "Type":
         return Type(kind=Type.K_VOID, size=0)
 
 
@@ -435,7 +435,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         fn = parse_function(real_ctype)
         assert fn is not None
         fn_sig = FunctionSignature(
-            return_type=Type._void(),
+            return_type=Type.void(),
             is_variadic=fn.is_variadic,
         )
         if fn.ret_type is not None:

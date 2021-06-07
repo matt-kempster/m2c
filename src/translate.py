@@ -2096,11 +2096,13 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
                     )
         if isinstance(imm, Literal):
             target = source.type.get_pointer_target()
-            if target and imm.value % target.get_size_align_bytes()[0] == 0:
-                # Pointer addition.
-                return BinaryOp(
-                    left=source, op="+", right=as_intish(imm), type=source.type
-                )
+            if target:
+                target_size, _ = target.get_size_align_bytes()
+                if target_size and imm.value % target_size == 0:
+                    # Pointer addition.
+                    return BinaryOp(
+                        left=source, op="+", right=as_intish(imm), type=source.type
+                    )
         return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
     elif isinstance(source, Literal) and isinstance(imm, Literal):
         return Literal(source.value + imm.value)
@@ -3791,6 +3793,15 @@ def translate_to_ast(
     else:
         for b in return_blocks:
             b.return_value = None
+        return_type.unify(Type.void())
+
+    if not fn_sig.params_known:
+        while len(fn_sig.params) < len(stack_info.arguments):
+            fn_sig.params.append(FunctionParam())
+        for param, arg in zip(fn_sig.params, stack_info.arguments):
+            param.type.unify(arg.type)
+            if not param.name:
+                param.name = arg.format(Formatter())
 
     assign_phis(used_phis, stack_info)
     resolve_types_late(stack_info)
