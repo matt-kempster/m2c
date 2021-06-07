@@ -27,7 +27,7 @@ from .flow_graph import (
     build_flowgraph,
 )
 from .options import CodingStyle, Options, Formatter, DEFAULT_CODING_STYLE
-from .parse_file import Rodata
+from .parse_file import Rodata, RodataEntry
 from .parse_instruction import (
     Argument,
     AsmAddressMode,
@@ -210,8 +210,7 @@ def as_ptr(expr: "Expression") -> "Expression":
 @attr.s
 class StackInfo:
     function: Function = attr.ib()
-    rodata: Rodata = attr.ib()
-    typemap: Optional[TypeMap] = attr.ib()
+    global_info: "GlobalInfo" = attr.ib()
     allocated_stack_size: int = attr.ib(default=0)
     is_leaf: bool = attr.ib(default=True)
     is_variadic: bool = attr.ib(default=False)
@@ -302,12 +301,13 @@ class StackInfo:
     def global_symbol(self, sym: AsmGlobalSymbol) -> "GlobalSymbol":
         return GlobalSymbol(
             symbol_name=sym.symbol_name,
-            type=self.unique_type_for("symbol", sym.symbol_name, Type.any()),
+            type=self.global_info.symbol_type(sym.symbol_name),
         )
 
     def saved_reg_symbol(self, reg_name: str) -> "GlobalSymbol":
         sym_name = "saved_reg_" + reg_name
-        return self.global_symbol(AsmGlobalSymbol(sym_name))
+        type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
+        return GlobalSymbol(symbol_name=sym_name, type=type)
 
     def should_save(self, expr: "Expression", offset: Optional[int]) -> bool:
         if isinstance(expr, GlobalSymbol) and expr.symbol_name.startswith("saved_reg_"):
@@ -357,11 +357,11 @@ class StackInfo:
         return False
 
     def address_of_gsym(self, sym: "GlobalSymbol") -> "Expression":
-        ent = self.rodata.values.get(sym.symbol_name)
+        ent = self.global_info.rodata_value(sym.symbol_name)
         if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
             return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
         type = Type.ptr(sym.type)
-        typemap = self.typemap
+        typemap = self.global_info.typemap
         if typemap:
             ctype = typemap.var_types.get(sym.symbol_name)
             if ctype:
@@ -400,11 +400,10 @@ class StackInfo:
 
 def get_stack_info(
     function: Function,
-    rodata: Rodata,
+    global_info: "GlobalInfo",
     flow_graph: FlowGraph,
-    typemap: Optional[TypeMap],
 ) -> StackInfo:
-    info = StackInfo(function, rodata, typemap)
+    info = StackInfo(function, global_info)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -1015,14 +1014,14 @@ class StructAccess(Expression):
         # constructed, but now we do, compute field name.
         if (
             self.field_name is None
-            and self.stack_info.typemap
+            and self.stack_info.global_info.typemap
             and not self.has_late_field_name
         ):
             var = late_unwrap(self.struct_var)
             self.field_name = get_field(
                 var.type,
                 self.offset,
-                self.stack_info.typemap,
+                self.stack_info.global_info.typemap,
                 target_size=self.target_size,
             )[0]
             self.has_late_field_name = True
@@ -1031,13 +1030,14 @@ class StructAccess(Expression):
     def late_has_known_type(self) -> bool:
         if self.late_field_name() is not None:
             return True
-        if self.offset == 0 and self.stack_info.typemap:
+        if self.offset == 0 and self.stack_info.global_info.typemap:
             var = late_unwrap(self.struct_var)
             if (
                 not self.stack_info.has_nonzero_access(var)
                 and isinstance(var, AddressOf)
                 and isinstance(var.expr, GlobalSymbol)
-                and var.expr.symbol_name in self.stack_info.typemap.var_types
+                and var.expr.symbol_name
+                in self.stack_info.global_info.typemap.var_types
             ):
                 return True
         return False
@@ -1658,7 +1658,7 @@ def deref(
     type: Type = stack_info.unique_type_for("struct", (uw_var, offset), Type.any())
 
     # Struct access with type information.
-    typemap = stack_info.typemap
+    typemap = stack_info.global_info.typemap
     if typemap:
         array_expr = array_access_from_add(
             var, offset, stack_info, typemap, target_size=size, ptr=False
@@ -2048,7 +2048,7 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
         # architecture.
-        typemap = stack_info.typemap
+        typemap = stack_info.global_info.typemap
         if typemap and isinstance(imm, Literal):
             array_access = array_access_from_add(
                 source, imm.value, stack_info, typemap, target_size=None, ptr=True
@@ -2111,7 +2111,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             and type.is_float()
         ):
             sym_name = target.expr.symbol_name
-            ent = args.stack_info.rodata.values.get(sym_name)
+            ent = args.stack_info.global_info.rodata_value(sym_name)
             if (
                 ent
                 and ent.data
@@ -2446,7 +2446,7 @@ def handle_add(args: InstrArgs) -> Expression:
     folded_expr = fold_mul_chains(expr)
     if folded_expr is not expr:
         return folded_expr
-    typemap = stack_info.typemap
+    typemap = stack_info.global_info.typemap
     if typemap is not None:
         array_expr = array_access_from_add(
             expr, 0, stack_info, typemap, target_size=None, ptr=True
@@ -3363,7 +3363,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
 
-            typemap = stack_info.typemap
+            typemap = stack_info.global_info.typemap
             c_fn = fn_target.type.parse_function()
 
             func_args: List[Expression] = []
@@ -3631,7 +3631,7 @@ def translate_graph_from_block(
 
     # Translate everything dominated by this node, now that we know our own
     # final register state. This will eventually reach every node.
-    typemap = stack_info.typemap
+    typemap = stack_info.global_info.typemap
     for child in node.immediately_dominates:
         new_contents = regs.contents.copy()
         phi_regs = regs_clobbered_until_dominator(child, typemap)
@@ -3668,6 +3668,34 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 
 
 @attr.s
+class GlobalInfo:
+    rodata: Rodata = attr.ib()
+    typemap: Optional[TypeMap] = attr.ib()
+    symbol_type_map: Dict[str, "Type"] = attr.ib(factory=dict)
+
+    def rodata_value(self, sym_name: str) -> Optional[RodataEntry]:
+        return self.rodata.values.get(sym_name)
+
+    def symbol_type(self, sym_name: str) -> Type:
+        if sym_name not in self.symbol_type_map:
+            self.symbol_type_map[sym_name] = Type.any()
+        return self.symbol_type_map[sym_name]
+
+    def global_decls(self, fmt: Formatter) -> str:
+        lines = []
+        for name, type in self.symbol_type_map.items():
+            if self.typemap and name in self.typemap.var_types:
+                continue
+
+            is_static = name in self.rodata.values
+            order = (is_static, name)
+            prefix = "static " if is_static else "extern "
+            lines.append((order, f"{prefix}{type.to_decl(name, fmt)};\n"))
+        lines.sort()
+        return "".join(line for _, line in lines)
+
+
+@attr.s
 class FunctionInfo:
     stack_info: StackInfo = attr.ib()
     flow_graph: FlowGraph = attr.ib()
@@ -3675,7 +3703,9 @@ class FunctionInfo:
 
 
 def translate_to_ast(
-    function: Function, options: Options, rodata: Rodata, typemap: Optional[TypeMap]
+    function: Function,
+    options: Options,
+    global_info: GlobalInfo,
 ) -> FunctionInfo:
     """
     Given a function, produce a FlowGraph that both contains control-flow
@@ -3683,8 +3713,9 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function, rodata)
-    stack_info = get_stack_info(function, rodata, flow_graph, typemap)
+    flow_graph: FlowGraph = build_flowgraph(function, global_info.rodata)
+    stack_info = get_stack_info(function, global_info, flow_graph)
+    typemap = global_info.typemap
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),

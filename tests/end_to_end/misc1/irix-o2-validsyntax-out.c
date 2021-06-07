@@ -1,3 +1,8 @@
+extern s32 D_410170;
+extern MIPS2C_UNK D_410178;
+extern MIPS2C_UNK func_00400140;
+extern MIPS2C_UNK func_00400158;
+
 s32 test(s32 arg0, MIPS2C_UNK arg1) {
     s32 sp2C;
     s32 sp28;

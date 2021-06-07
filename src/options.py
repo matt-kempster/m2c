@@ -32,6 +32,7 @@ class Options:
     coding_style: CodingStyle = attr.ib()
     sanitize_tracebacks: bool = attr.ib()
     valid_syntax: bool = attr.ib()
+    emit_globals: bool = attr.ib()
 
     def formatter(self) -> "Formatter":
         return Formatter(
