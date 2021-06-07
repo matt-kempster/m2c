@@ -9,7 +9,7 @@ from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import Options, CodingStyle
 from .parse_file import Function, MIPSFile, Rodata, parse_file
-from .translate import FunctionInfo, translate_to_ast
+from .translate import FunctionInfo, InstrProcessingFailure, translate_to_ast
 from .types import Type
 from .c_types import TypeMap, build_typemap, dump_typemap
 
