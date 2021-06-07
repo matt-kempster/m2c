@@ -9,7 +9,12 @@ from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import Options, CodingStyle
 from .parse_file import Function, MIPSFile, Rodata, parse_file
-from .translate import FunctionInfo, InstrProcessingFailure, translate_to_ast
+from .translate import (
+    FunctionInfo,
+    GlobalInfo,
+    InstrProcessingFailure,
+    translate_to_ast,
+)
 from .types import Type
 from .c_types import TypeMap, build_typemap, dump_typemap
 
@@ -86,6 +91,7 @@ def run(options: Options) -> int:
                 return 1
 
     return_code = 0
+    global_info = GlobalInfo(mips_file.rodata, typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
@@ -93,7 +99,7 @@ def run(options: Options) -> int:
                 visualize_flowgraph(build_flowgraph(function, mips_file.rodata))
                 continue
 
-            info = translate_to_ast(function, options, mips_file.rodata, typemap)
+            info = translate_to_ast(function, options, global_info)
             function_infos.append(info)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
@@ -103,6 +109,11 @@ def run(options: Options) -> int:
         return return_code
 
     fmt = options.formatter()
+    if options.emit_globals:
+        global_decls = global_info.global_decls(fmt)
+        if global_decls:
+            print(global_decls)
+
     for index, (function, function_info) in enumerate(zip(functions, function_infos)):
         if index != 0:
             print()
@@ -249,6 +260,12 @@ def parse_flags(flags: List[str]) -> Options:
         "unusual statements. Macro definitions are in `mips2c_macros.h`.",
     )
     parser.add_argument(
+        "--emit-globals",
+        dest="emit_globals",
+        action="store_true",
+        help="emit global declarations with inferred types.",
+    )
+    parser.add_argument(
         "--pdb-translate",
         dest="pdb_translate",
         action="store_true",
@@ -296,6 +313,7 @@ def parse_flags(flags: List[str]) -> Options:
         coding_style=coding_style,
         sanitize_tracebacks=args.sanitize_tracebacks,
         valid_syntax=args.valid_syntax,
+        emit_globals=args.emit_globals,
     )
 
 
