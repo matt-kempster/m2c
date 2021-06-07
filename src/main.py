@@ -21,20 +21,14 @@ def print_exception(sanitize: bool) -> None:
     and the line is set to 0. These changes make the test output
     less brittle."""
     if sanitize:
-        exc = sys.exc_info()
-        frames = traceback.extract_tb(exc[2])
-        for frame in frames:
+        tb = traceback.TracebackException(*sys.exc_info())
+        if tb.exc_type == InstrProcessingFailure and tb.__cause__:
+            tb = tb.__cause__
+        for frame in tb.stack:
             frame.lineno = 0
             frame.filename = Path(frame.filename).name
-
-        print("Traceback (most recent call last):")
-        print(
-            "".join(
-                traceback.format_list(frames)
-                + traceback.format_exception_only(exc[0], exc[1])
-            ),
-            end="",
-        )
+        for line in tb.format(chain=False):
+            print(line, end="")
     else:
         traceback.print_exc(file=sys.stdout)
 
