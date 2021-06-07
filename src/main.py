@@ -90,8 +90,8 @@ def run(options: Options) -> int:
                 print(f"Function {name} not found.", file=sys.stderr)
                 return 1
 
-    return_code = 0
-    global_info = GlobalInfo(mips_file.asm_data, typemap)
+    function_names = {fn.name for fn in mips_file.functions}
+    global_info = GlobalInfo(mips_file.asm_data, function_names, typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
@@ -106,7 +106,7 @@ def run(options: Options) -> int:
             function_infos.append(e)
 
     if options.visualize_flowgraph:
-        return return_code
+        return 0
 
     fmt = options.formatter()
     if options.emit_globals:
@@ -114,6 +114,7 @@ def run(options: Options) -> int:
         if global_decls:
             print(global_decls)
 
+    return_code = 0
     for index, (function, function_info) in enumerate(zip(functions, function_infos)):
         if index != 0:
             print()
@@ -128,11 +129,16 @@ def run(options: Options) -> int:
             function_text = get_function_text(function_info, options)
             print(function_text)
         except DecompFailure as e:
-            print(f"Failed to decompile function {function.name}:\n\n{e}")
+            print("/*")
+            print(f"Failed to decompile function {function.name}:\n")
+            print(e)
+            print("*/")
             return_code = 1
         except Exception:
+            print("/*")
             print(f"Internal error while decompiling function {function.name}:\n")
             print_exception(sanitize=options.sanitize_tracebacks)
+            print("*/")
             return_code = 1
 
     return return_code

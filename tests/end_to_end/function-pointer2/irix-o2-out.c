@@ -1,6 +1,6 @@
-s32 bar(f32);
+s32 bar(f32); /* extern */
+void test(); /* static */
 extern s32 (*glob2)(f32);
-void test();
 
 void test(void) {
     glob = foo;
