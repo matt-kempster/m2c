@@ -7,7 +7,7 @@ short test(struct SomeStruct *, unsigned char, union SomeUnion, ...);
 
 Functions:
 void func_decl(void);
-short test(struct SomeStruct *, unsigned char should, union SomeUnion union_arg, ...);
+short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_arg, ...);
 
 Structs:
 SomeUnion: size 8, align 8
@@ -82,7 +82,7 @@ SomeStruct: size 640, align 8
   0x250: sub_array[1] (anon struct) sub_array[1].a (int)
   0x254: sub_array[1].b (struct 
 {
-  int;
+  int c;
 } [3]) sub_array[1].b[0] (anon struct) sub_array[1].b[0].c (int)
   0x258: sub_array[1].b[1] (anon struct) sub_array[1].b[1].c (int)
   0x25c: sub_array[1].b[2] (anon struct) sub_array[1].b[2].c (int)

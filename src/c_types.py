@@ -660,7 +660,7 @@ def type_to_string(type: CType, name: str = "") -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    decl = ca.Decl(name, [], [], [], type, None, None)
+    decl = ca.Decl(name, [], [], [], copy.deepcopy(type), None, None)
     set_decl_name(decl)
     return to_c(decl)
 
