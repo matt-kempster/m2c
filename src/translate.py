@@ -1510,7 +1510,7 @@ class BlockInfo:
     branch_condition: Optional[Condition] = attr.ib()
     final_register_states: RegInfo = attr.ib()
     has_custom_return: bool = attr.ib()
-    has_function_call_return: bool = attr.ib()
+    has_function_call: bool = attr.ib()
 
     def __str__(self) -> str:
         newline = "\n\t"
@@ -1692,6 +1692,8 @@ def deref(
 
     # Dereferencing pointers of known types
     target = var.type.get_pointer_target()
+    # TODO: Remove special case for (target.size or target.is_ctype())
+    # Without this condition, more derefs are ArrayAccess than StructAccess
     if field_name is None and target is not None and (target.size or target.is_ctype()):
         sub_size, sub_align = target.get_size_align_bytes()
         if sub_size == size and offset % size == 0 and sub_align != 0:
@@ -3096,7 +3098,7 @@ def compute_has_custom_return(nodes: List[Node]) -> None:
         for n in nodes:
             block_info = n.block.block_info
             assert isinstance(block_info, BlockInfo)
-            if block_info.has_custom_return or block_info.has_function_call_return:
+            if block_info.has_custom_return or block_info.has_function_call:
                 continue
             for p in n.parents:
                 block_info2 = p.block.block_info
@@ -3118,7 +3120,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     branch_condition: Optional[Condition] = None
     switch_value: Optional[Expression] = None
     has_custom_return: bool = False
-    has_function_call_return: bool = False
+    has_function_call: bool = False
 
     def eval_once(
         expr: Expression,
@@ -3290,7 +3292,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_value, has_custom_return, has_function_call_return
+        nonlocal branch_condition, switch_value, has_custom_return, has_function_call
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
@@ -3519,9 +3521,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     prefix="v1",
                 )
                 regs[Register("return")] = call
-                has_function_call_return = True
 
             has_custom_return = False
+            has_function_call = True
 
         elif mnemonic in CASES_FLOAT_COMP:
             expr = CASES_FLOAT_COMP[mnemonic](args)
@@ -3595,7 +3597,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         branch_condition,
         regs,
         has_custom_return=has_custom_return,
-        has_function_call_return=has_function_call_return,
+        has_function_call=has_function_call,
     )
 
 
@@ -3652,7 +3654,7 @@ def translate_graph_from_block(
             ErrorExpr(),
             regs,
             has_custom_return=False,
-            has_function_call_return=False,
+            has_function_call=False,
         )
 
     node.block.add_block_info(block_info)
@@ -3751,7 +3753,6 @@ def translate_to_ast(
     flow_graph: FlowGraph = build_flowgraph(function, global_info.rodata)
     stack_info = get_stack_info(function, global_info, flow_graph)
     typemap = global_info.typemap
-    function_sym = stack_info.global_symbol(AsmGlobalSymbol(function.name))
 
     initial_regs: Dict[Register, Expression] = {
         Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
@@ -3768,10 +3769,10 @@ def translate_to_ast(
     else:
         fn_type = Type.function()
         fn_decl_provided = False
-    fn_type.unify(function_sym.type)
+    fn_type.unify(stack_info.global_symbol(AsmGlobalSymbol(function.name)).type)
 
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
-    assert fn_sig is not None, "fn_type is known to be a function pointer"
+    assert fn_sig is not None, "fn_type is known to be a function"
     return_type = fn_sig.return_type
     stack_info.is_variadic = fn_sig.is_variadic
 

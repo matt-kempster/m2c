@@ -172,8 +172,8 @@ class Type:
     def get_pointer_to_ctype(self) -> Optional[CType]:
         """If self is a pointer-to-a-CType, return the CType"""
         ptr_to = self.get_pointer_target()
-        if ptr_to is not None and ptr_to.is_ctype() and ptr_to.ctype_ref:
-            return ptr_to.ctype_ref
+        if ptr_to is not None and ptr_to.is_ctype():
+            return ptr_to.get_representative().ctype_ref
         return None
 
     def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
@@ -405,6 +405,9 @@ class FunctionSignature:
                 can_unify &= x.type.unify(y.type)
         can_unify &= self.return_type.unify(other.return_type)
 
+        # TODO: If neither params_known is true, can we try to unify up
+        # to the min of the two param lengths, and set both params equal
+        # to the longer one?
         if can_unify:
             if not self.params_known:
                 self.params = other.params
