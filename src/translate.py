@@ -926,11 +926,7 @@ class Cast(Expression):
         fn_sig = self.type.get_function_pointer_signature()
         if fn_sig:
             prototype_sig = self.expr.type.get_function_pointer_signature()
-            if (
-                not prototype_sig
-                or not prototype_sig.unify_with_args(fn_sig)
-                or not self.silent
-            ):
+            if not prototype_sig or not prototype_sig.unify_with_args(fn_sig):
                 # A function pointer cast is required if the inner expr is not
                 # a function pointer, or has incompatible argument types
                 return f"(({self.type.format(fmt)}) {self.expr.format(fmt)})"
@@ -2563,7 +2559,10 @@ def function_abi(
         # as the first argument.
         slots.append(
             AbiStackSlot(
-                offset=0, reg=Register("a0"), name="__return__", type=Type.ptr()
+                offset=0,
+                reg=Register("a0"),
+                name="__return__",
+                type=Type.ptr(fn_sig.return_type),
             )
         )
         offset = 4

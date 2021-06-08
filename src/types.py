@@ -158,7 +158,9 @@ class Type:
             return False
         assert type.typemap is not None
         ctype = resolve_typedefs(type.ctype_ref, type.typemap)
-        return isinstance(ctype, (ca.Struct, ca.Union))
+        if not isinstance(ctype, ca.TypeDecl):
+            return False
+        return isinstance(ctype.type, (ca.Struct, ca.Union))
 
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
