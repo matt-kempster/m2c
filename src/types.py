@@ -1,9 +1,9 @@
-from typing import Optional, Set, Tuple, Union
+from typing import List, Optional, Set, Tuple, Union
 
 import attr
+import copy
 import pycparser.c_ast as ca
 
-from .c_types import Function as CFunction
 from .c_types import (
     CType,
     TypeMap,
@@ -13,9 +13,12 @@ from .c_types import (
     primitive_size,
     parse_struct,
     resolve_typedefs,
+    set_decl_name,
+    to_c,
     type_to_string,
     var_size_align,
 )
+from .error import DecompFailure
 from .options import Formatter
 
 
@@ -35,9 +38,11 @@ class Type:
     K_PTR = 2
     K_FLOAT = 4
     K_CTYPE = 8
+    K_FN = 16
+    K_VOID = 32
     K_INTPTR = K_INT | K_PTR
     K_ANYREG = K_INT | K_PTR | K_FLOAT
-    K_ANY = K_INT | K_PTR | K_FLOAT | K_CTYPE
+    K_ANY = K_INT | K_PTR | K_FLOAT | K_CTYPE | K_FN | K_VOID
 
     SIGNED = 1
     UNSIGNED = 2
@@ -51,6 +56,7 @@ class Type:
     ptr_to: Optional["Type"] = attr.ib(default=None)  # K_PTR
     typemap: Optional[TypeMap] = attr.ib(default=None)  # K_CTYPE
     ctype_ref: Optional[CType] = attr.ib(default=None)  # K_CTYPE
+    fn_sig: Optional["FunctionSignature"] = attr.ib(default=None)  # K_FN
 
     def unify(self, other: "Type") -> bool:
         """
@@ -70,11 +76,16 @@ class Type:
         typemap = x.typemap if x.typemap is not None else y.typemap
         ctype_ref = x.ctype_ref if x.ctype_ref is not None else y.ctype_ref
         ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
+        fn_sig = x.fn_sig if x.fn_sig is not None else y.fn_sig
         sign = x.sign & y.sign
         if size not in (None, 32, 64):
             kind &= ~Type.K_FLOAT
         if size not in (None, 32):
             kind &= ~Type.K_PTR
+        if size not in (None,):
+            kind &= ~Type.K_FN
+        if size not in (None, 0):
+            kind &= ~Type.K_VOID
         if kind == 0 or sign == 0:
             return False
         if kind == Type.K_PTR:
@@ -90,12 +101,16 @@ class Type:
         if x.ptr_to is not None and y.ptr_to is not None:
             if not x.ptr_to.unify(y.ptr_to):
                 return False
+        if x.fn_sig is not None and y.fn_sig is not None:
+            if not x.fn_sig.unify(y.fn_sig):
+                return False
         x.kind = kind
         x.size = size
         x.sign = sign
         x.ptr_to = ptr_to
         x.typemap = typemap
         x.ctype_ref = ctype_ref
+        x.fn_sig = fn_sig
         y.uf_parent = x
         return True
 
@@ -117,64 +132,141 @@ class Type:
     def is_ctype(self) -> bool:
         return self.get_representative().kind == Type.K_CTYPE
 
+    def is_function(self) -> bool:
+        return self.get_representative().kind == Type.K_FN
+
+    def is_void(self) -> bool:
+        return self.get_representative().kind == Type.K_VOID
+
     def is_unsigned(self) -> bool:
         return self.get_representative().sign == Type.UNSIGNED
 
     def get_size_bits(self) -> int:
         return self.get_representative().size or 32
 
+    def get_size_align_bytes(self) -> Tuple[int, int]:
+        type = self.get_representative()
+        if type.is_ctype() and type.ctype_ref is not None:
+            assert type.typemap is not None
+            return var_size_align(type.ctype_ref, type.typemap)
+        size = type.get_size_bits() // 8
+        return size, size
+
+    def is_struct_type(self) -> bool:
+        type = self.get_representative()
+        if type.kind != Type.K_CTYPE or type.ctype_ref is None:
+            return False
+        assert type.typemap is not None
+        ctype = resolve_typedefs(type.ctype_ref, type.typemap)
+        if not isinstance(ctype, ca.TypeDecl):
+            return False
+        return isinstance(ctype.type, (ca.Struct, ca.Union))
+
+    def get_pointer_target(self) -> Optional["Type"]:
+        """If self is a pointer-to-a-Type, return the Type"""
+        type = self.get_representative()
+        if type.is_pointer() and type.ptr_to is not None:
+            return type.ptr_to
+        return None
+
     def get_pointer_to_ctype(self) -> Optional[CType]:
         """If self is a pointer-to-a-CType, return the CType"""
+        ptr_to = self.get_pointer_target()
+        if ptr_to is not None and ptr_to.is_ctype():
+            return ptr_to.get_representative().ctype_ref
+        return None
+
+    def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
+        """If self is a function pointer, return the FunctionSignature"""
         type = self.get_representative()
         if type.is_pointer() and type.ptr_to is not None:
             ptr_to = type.ptr_to.get_representative()
-            if ptr_to.is_ctype() and ptr_to.ctype_ref:
-                return ptr_to.ctype_ref
+            if ptr_to.kind == Type.K_FN:
+                return ptr_to.fn_sig
         return None
 
-    def parse_function(self) -> Optional[CFunction]:
-        ctype = self.get_pointer_to_ctype()
-        if ctype is not None:
-            return parse_function(ctype)
-        return None
+    def to_decl(self, name: str, fmt: Formatter) -> str:
+        decl = ca.Decl(
+            name=name,
+            type=self._to_ctype(set(), fmt),
+            quals=[],
+            storage=[],
+            funcspec=[],
+            init=None,
+            bitsize=None,
+        )
+        set_decl_name(decl)
+        return to_c(decl)
 
-    def to_decl(self, var: str, fmt: Formatter) -> str:
-        ret = self.format(fmt)
-        prefix = ret if ret.endswith("*") else ret + " "
-        return prefix + var
+    def _to_ctype(self, seen: Set["Type"], fmt: Formatter) -> CType:
+        def simple_ctype(typename: str) -> ca.TypeDecl:
+            return ca.TypeDecl(
+                type=ca.IdentifierType(names=[typename]), declname=None, quals=[]
+            )
 
-    def _stringify(self, seen: Set["Type"], fmt: Formatter) -> str:
         unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
-        if self in seen:
-            return unk_symbol
-        seen.add(self)
+
         type = self.get_representative()
+        if type in seen:
+            return simple_ctype(unk_symbol)
+        seen.add(type)
         size = type.size or 32
         sign = "s" if type.sign & Type.SIGNED else "u"
-        if type.kind in (Type.K_ANY, Type.K_ANYREG):
+
+        if (type.kind & Type.K_ANYREG) == Type.K_ANYREG:
             if type.size is not None:
-                return f"{unk_symbol}{size}"
-            return unk_symbol
+                return simple_ctype(f"{unk_symbol}{size}")
+            return simple_ctype(unk_symbol)
+
+        if type.kind == Type.K_FLOAT:
+            return simple_ctype(f"f{size}")
+
         if type.kind == Type.K_PTR:
             if type.ptr_to is None:
-                return "void *"
-            ctype = type.get_pointer_to_ctype()
-            if ctype is not None:
-                return type_to_string(ca.PtrDecl(quals=[], type=ctype))
-            return (type.ptr_to._stringify(seen, fmt) + " *").replace("* *", "**")
-        if type.kind == Type.K_FLOAT:
-            return f"f{size}"
+                return ca.PtrDecl(type=simple_ctype("void"), quals=[])
+            return ca.PtrDecl(type=type.ptr_to._to_ctype(seen, fmt), quals=[])
+
         if type.kind == Type.K_CTYPE:
             if type.ctype_ref is None:
-                return "?"
-            return type_to_string(type.ctype_ref)
-        return f"{sign}{size}"
+                return simple_ctype(unk_symbol)
+            return copy.deepcopy(type.ctype_ref)
+
+        if type.kind == Type.K_FN:
+            assert type.fn_sig is not None
+            return_ctype = type.fn_sig.return_type._to_ctype(seen.copy(), fmt)
+
+            params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = []
+            for param in type.fn_sig.params:
+                decl = ca.Decl(
+                    name=param.name,
+                    type=param.type._to_ctype(seen.copy(), fmt),
+                    quals=[],
+                    storage=[],
+                    funcspec=[],
+                    init=None,
+                    bitsize=None,
+                )
+                set_decl_name(decl)
+                params.append(decl)
+
+            if type.fn_sig.is_variadic:
+                params.append(ca.EllipsisParam())
+
+            return ca.FuncDecl(
+                type=return_ctype,
+                args=ca.ParamList(params),
+            )
+
+        if type.kind == Type.K_VOID:
+            return simple_ctype("void")
+
+        return simple_ctype(f"{sign}{size}")
 
     def format(self, fmt: Formatter) -> str:
-        return self._stringify(set(), fmt)
+        return self.to_decl("", fmt)
 
     def __str__(self) -> str:
-        return self._stringify(set(), Formatter(debug=True))
+        return self.format(Formatter(debug=True))
 
     def __repr__(self) -> str:
         type = self.get_representative()
@@ -185,6 +277,9 @@ class Type:
             ("I" if type.kind & Type.K_INT else "")
             + ("P" if type.kind & Type.K_PTR else "")
             + ("F" if type.kind & Type.K_FLOAT else "")
+            + ("C" if type.kind & Type.K_CTYPE else "")
+            + ("N" if type.kind & Type.K_FN else "")
+            + ("V" if type.kind & Type.K_VOID else "")
         )
         sizestr = str(type.size) if type.size is not None else "?"
         return f"Type({signstr + kindstr + sizestr})"
@@ -216,6 +311,12 @@ class Type:
     @staticmethod
     def _ctype(ctype: CType, typemap: TypeMap, size: Optional[int]) -> "Type":
         return Type(kind=Type.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
+
+    @staticmethod
+    def function(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
+        if fn_sig is None:
+            fn_sig = FunctionSignature()
+        return Type(kind=Type.K_FN, fn_sig=fn_sig)
 
     @staticmethod
     def f32() -> "Type":
@@ -273,13 +374,91 @@ class Type:
     def bool() -> "Type":
         return Type.intish()
 
+    @staticmethod
+    def void() -> "Type":
+        return Type(kind=Type.K_VOID, size=0)
+
+
+@attr.s(eq=False)
+class FunctionParam:
+    type: Type = attr.ib(factory=Type.any)
+    name: str = attr.ib(default="")
+
+
+@attr.s(eq=False)
+class FunctionSignature:
+    return_type: Type = attr.ib(factory=Type.any)
+    params: List[FunctionParam] = attr.ib(factory=list)
+    params_known: bool = attr.ib(default=False)
+    is_variadic: bool = attr.ib(default=False)
+
+    def unify(self, other: "FunctionSignature") -> bool:
+        if self.is_variadic != other.is_variadic:
+            return False
+
+        # Try to unify *all* ret/param types, without returning early
+        can_unify = True
+        if self.params_known and other.params_known:
+            if len(self.params) != len(other.params):
+                return False
+            for x, y in zip(self.params, other.params):
+                can_unify &= x.type.unify(y.type)
+        can_unify &= self.return_type.unify(other.return_type)
+
+        # TODO: If neither params_known is true, can we try to unify up
+        # to the min of the two param lengths, and set both params equal
+        # to the longer one?
+        if can_unify:
+            if not self.params_known:
+                self.params = other.params
+                self.params_known = other.params_known
+            elif not other.params_known:
+                other.params = self.params
+                other.params_known = self.params_known
+        return can_unify
+
+    def unify_with_args(self, concrete: "FunctionSignature") -> bool:
+        """
+        Unify a function's signature with a list of argument types.
+        This is more flexible than unify(), it allows variadic args and
+        does not check the return type.
+        This function is not symmetric; `self` represents the prototype
+        (e.g. with variadic args), whereas `concrete` represents the
+        set of arguments at the callsite.
+        """
+        if len(self.params) > len(concrete.params):
+            return False
+        if not self.is_variadic and len(self.params) != len(concrete.params):
+            return False
+        can_unify = True
+        for x, y in zip(self.params, concrete.params):
+            can_unify &= x.type.unify(y.type)
+        return can_unify
+
 
 def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, (ca.PtrDecl, ca.ArrayDecl)):
-        return Type.ptr(type_from_ctype(real_ctype.type, typemap))
+        return ptr_type_from_ctype(real_ctype.type, typemap)[0]
     if isinstance(real_ctype, ca.FuncDecl):
-        return Type._ctype(real_ctype, typemap, size=None)
+        fn = parse_function(real_ctype)
+        assert fn is not None
+        fn_sig = FunctionSignature(
+            return_type=Type.void(),
+            is_variadic=fn.is_variadic,
+        )
+        if fn.ret_type is not None:
+            fn_sig.return_type = type_from_ctype(fn.ret_type, typemap)
+        if fn.params is not None:
+            fn_sig.params = [
+                FunctionParam(
+                    name=param.name or "",
+                    type=type_from_ctype(param.type, typemap),
+                )
+                for param in fn.params
+            ]
+            fn_sig.params_known = True
+        return Type.function(fn_sig)
     if isinstance(real_ctype, ca.TypeDecl):
         if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
             struct = parse_struct(real_ctype.type, typemap)
@@ -301,9 +480,8 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
+        # Array to pointer decay
         return Type.ptr(type_from_ctype(real_ctype.type, typemap)), True
-    if isinstance(real_ctype, ca.FuncDecl):
-        return Type.ptr(Type._ctype(ctype, typemap, size=None)), True
     return Type.ptr(type_from_ctype(ctype, typemap)), False
 
 
@@ -313,9 +491,8 @@ def get_field(
     """Returns field name, target type, target pointer type, and whether the field is an array."""
     if target_size is None and offset == 0:
         # We might as well take a pointer to the whole struct
-        target = get_pointer_target(type, typemap)
-        target_type = target[1] if target else Type.any()
-        return None, target_type, type, False
+        target = type.get_pointer_target() or Type.any()
+        return None, target, type, False
     ctype = type.get_pointer_to_ctype()
     if ctype is None:
         return None, Type.any(), Type.ptr(), False
@@ -385,26 +562,3 @@ def find_substruct_array(
             if size == scale:
                 return field.name, off, type_from_ctype(field_type.type, typemap)
     return None
-
-
-def get_pointer_target(
-    type: Type, typemap: Optional[TypeMap]
-) -> Optional[Tuple[int, Type]]:
-    type = type.get_representative()
-    target = type.ptr_to
-    if target is None:
-        return None
-    target = target.get_representative()
-    ctype = type.get_pointer_to_ctype()
-    if not ctype:
-        if target.size is None:
-            return None
-        return target.size // 8, target
-    if typemap is None:
-        # (shouldn't happen, but might as well handle it)
-        return None
-    size, align = var_size_align(ctype, typemap)
-    if align == 0:
-        # void* or function pointer
-        return None
-    return size, target

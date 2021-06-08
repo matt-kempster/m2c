@@ -1,5 +1,5 @@
 void test(void) {
-    ? sp18;
+    ?32 sp18;
 
     sp18.unk0 = (?32) D_400170.unk0;
     sp18.unk4 = (first 3 bytes) D_400170.unk4;

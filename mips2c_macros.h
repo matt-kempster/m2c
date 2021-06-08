@@ -19,8 +19,8 @@
 /* Bitwise (reinterpret) cast */
 #define MIPS2C_BITWISE(type, expr) ((type)(expr))
 
-/* Unknown field access, like `(type) expr->unk_offset` */
-#define MIPS2C_FIELD(expr, type, offset) (*(type *)((s8 *)(expr) + (offset)))
+/* Unknown field access, like `*(type_ptr) &expr->unk_offset` */
+#define MIPS2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
 
 /* Unhandled instructions */
 #define MIPS2C_ERROR(desc) (0)
