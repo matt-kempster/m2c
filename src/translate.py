@@ -38,6 +38,7 @@ from .types import (
     find_substruct_array,
     get_field,
     ptr_type_from_ctype,
+    type_from_ctype,
 )
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
@@ -201,7 +202,7 @@ def as_ptr(expr: "Expression") -> "Expression":
 
 
 def as_function_ptr(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.function_ptr(), True)
+    return as_type(expr, Type.ptr(Type.function()), True)
 
 
 @attr.s
@@ -918,7 +919,27 @@ class Cast(Expression):
         ):
             return self.expr.format(fmt)
         if fmt.skip_casts:
-            return f"{self.expr.format(fmt)}"
+            return self.expr.format(fmt)
+
+        # Function casts require special logic because function calls have
+        # higher precedence than casts
+        fn_sig = self.type.get_function_pointer_signature()
+        if fn_sig:
+            prototype_sig = self.expr.type.get_function_pointer_signature()
+            if (
+                not prototype_sig
+                or not prototype_sig.unify_with_args(fn_sig)
+                or not self.silent
+            ):
+                # A function pointer cast is required if the inner expr is not
+                # a function pointer, or has incompatible argument types
+                return f"(({self.type.format(fmt)}) {self.expr.format(fmt)})"
+            if not prototype_sig.return_type.unify(fn_sig.return_type):
+                # Only cast the return value of the call
+                return f"({fn_sig.return_type.format(fmt)}) {self.expr.format(fmt)}"
+            # No cast needed
+            return self.expr.format(fmt)
+
         return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
 
 
@@ -932,18 +953,8 @@ class FuncCall(Expression):
         return self.args + [self.function]
 
     def format(self, fmt: Formatter) -> str:
-        if isinstance(self.function, Cast):
-            if self.function.type.is_function_variadic_with(
-                [arg.type for arg in self.args]
-            ):
-                # Strip cast entirely if the args up to the varargs match
-                fn = self.function.expr.format(fmt)
-            else:
-                fn = f"({fn})"
-        else:
-            fn = self.function.format(fmt)
         args = ", ".join(format_expr(arg, fmt) for arg in self.args)
-        return f"{fn}({args})"
+        return f"{self.function.format(fmt)}({args})"
 
 
 @attr.s(frozen=True, eq=True)
@@ -1173,6 +1184,10 @@ class AddressOf(Expression):
         return [self.expr]
 
     def format(self, fmt: Formatter) -> str:
+        if self.expr.type.is_function():
+            # Functions are automatically converted to function pointers
+            # without an explicit `&` by the compiler
+            return f"{self.expr.format(fmt)}"
         return f"&{self.expr.format(fmt)}"
 
 
@@ -1499,7 +1514,7 @@ class BlockInfo:
     branch_condition: Optional[Condition] = attr.ib()
     final_register_states: RegInfo = attr.ib()
     has_custom_return: bool = attr.ib()
-    has_function_call: bool = attr.ib()
+    has_function_call_return: bool = attr.ib()
 
     def __str__(self) -> str:
         newline = "\n\t"
@@ -1921,7 +1936,7 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
         is_variadic=False,
     )
     return FuncCall(
-        function=GlobalSymbol(symbol_name=fn_name, type=Type.function_ptr(fn_sig)),
+        function=GlobalSymbol(symbol_name=fn_name, type=Type.function(fn_sig)),
         args=args,
         type=type,
     )
@@ -3082,7 +3097,7 @@ def compute_has_custom_return(nodes: List[Node]) -> None:
         for n in nodes:
             block_info = n.block.block_info
             assert isinstance(block_info, BlockInfo)
-            if block_info.has_custom_return or block_info.has_function_call:
+            if block_info.has_custom_return or block_info.has_function_call_return:
                 continue
             for p in n.parents:
                 block_info2 = p.block.block_info
@@ -3104,7 +3119,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     branch_condition: Optional[Condition] = None
     switch_value: Optional[Expression] = None
     has_custom_return: bool = False
-    has_function_call: bool = False
+    has_function_call_return: bool = False
 
     def eval_once(
         expr: Expression,
@@ -3276,7 +3291,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_value, has_custom_return, has_function_call
+        nonlocal branch_condition, switch_value, has_custom_return, has_function_call_return
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
@@ -3358,14 +3373,14 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_FN_CALL:
             if mnemonic == "jal":
                 fn_target = args.imm(0)
-                if isinstance(fn_target, GlobalSymbol):
+                if isinstance(fn_target, AddressOf) and isinstance(
+                    fn_target.expr, GlobalSymbol
+                ):
                     pass
-                elif isinstance(fn_target, AddressOf):
-                    fn_target = fn_target.expr
-                    assert isinstance(fn_target, GlobalSymbol)
+                elif isinstance(fn_target, Literal):
+                    pass
                 else:
-                    assert isinstance(fn_target, Literal)
-                    fn_target = fn_target
+                    raise DecompFailure("The target of jal must be a label, not {arg}")
             else:
                 assert mnemonic == "jalr"
                 if args.count() == 1:
@@ -3381,7 +3396,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             typemap = stack_info.global_info.typemap
             fn_target = as_function_ptr(fn_target)
-            fn_sig = fn_target.type.get_function_signature()
+            fn_sig = fn_target.type.get_function_pointer_signature()
             assert fn_sig is not None, "known function pointers must have a signature"
             abi_slots, possible_regs = function_abi(fn_sig, for_call=True)
 
@@ -3505,9 +3520,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     prefix="v1",
                 )
                 regs[Register("return")] = call
+                has_function_call_return = True
 
             has_custom_return = False
-            has_function_call = True
 
         elif mnemonic in CASES_FLOAT_COMP:
             expr = CASES_FLOAT_COMP[mnemonic](args)
@@ -3581,7 +3596,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         branch_condition,
         regs,
         has_custom_return=has_custom_return,
-        has_function_call=has_function_call,
+        has_function_call_return=has_function_call_return,
     )
 
 
@@ -3638,7 +3653,7 @@ def translate_graph_from_block(
             ErrorExpr(),
             regs,
             has_custom_return=False,
-            has_function_call=False,
+            has_function_call_return=False,
         )
 
     node.block.add_block_info(block_info)
@@ -3749,12 +3764,14 @@ def translate_to_ast(
         return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
 
     if typemap and function.name in typemap.functions:
-        fn_type, _ = ptr_type_from_ctype(typemap.functions[function.name].type, typemap)
+        fn_type = type_from_ctype(typemap.functions[function.name].type, typemap)
+        fn_decl_provided = True
     else:
-        fn_type = Type.function_ptr()
-    fn_type.unify(Type.ptr(function_sym.type))
+        fn_type = Type.function()
+        fn_decl_provided = False
+    fn_type.unify(function_sym.type)
 
-    fn_sig = fn_type.get_function_signature()
+    fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function pointer"
     return_type = fn_sig.return_type
     stack_info.is_variadic = fn_sig.is_variadic
@@ -3807,17 +3824,20 @@ def translate_to_ast(
         options,
     )
 
-    # We mark the function as having a return type if all return nodes have
-    # return values, and not all those values are trivial (e.g. from function
-    # calls). TODO: check that the values aren't read from for some other purpose.
+    # A function can have a return type if all return nodes have return values.
+    # But without a provided signature, we only mark a function has having a
+    # return type if there is a nontrivial ("custom") return value (e.g. one
+    # not from a function call)
+    # TODO: check that the values aren't read from for some other purpose.
     compute_has_custom_return(flow_graph.nodes)
-    has_return = all(b.return_value is not None for b in return_blocks) and any(
-        b.has_custom_return for b in return_blocks
-    )
+    could_have_return = all(b.return_value is not None for b in return_blocks)
+    has_custom_return = any(b.has_custom_return for b in return_blocks)
 
-    if options.void:
+    if options.void or return_type.is_void():
         has_return = False
-    elif return_type.is_void():
+    elif could_have_return and (fn_decl_provided or has_custom_return):
+        has_return = True
+    else:
         has_return = False
 
     if has_return:

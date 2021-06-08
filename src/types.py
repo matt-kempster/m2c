@@ -164,7 +164,7 @@ class Type:
         """If self is a pointer-to-a-Type, return the Type"""
         type = self.get_representative()
         if type.is_pointer() and type.ptr_to is not None:
-            return type.ptr_to.get_representative()
+            return type.ptr_to
         return None
 
     def get_pointer_to_ctype(self) -> Optional[CType]:
@@ -174,7 +174,7 @@ class Type:
             return ptr_to.ctype_ref
         return None
 
-    def get_function_signature(self) -> Optional["FunctionSignature"]:
+    def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
         """If self is a function pointer, return the FunctionSignature"""
         type = self.get_representative()
         if type.is_pointer() and type.ptr_to is not None:
@@ -183,23 +183,10 @@ class Type:
                 return ptr_to.fn_sig
         return None
 
-    def is_function_variadic_with(self, param_types: List["Type"]) -> bool:
-        fn_sig = self.get_function_signature()
-        if not fn_sig:
-            return False
-        if len(param_types) < len(fn_sig.params):
-            return False
-        if not fn_sig.is_variadic and len(param_types) != len(fn_sig.params):
-            return False
-        for type_x, param_y in zip(param_types, fn_sig.params):
-            if not type_x.unify(param_y.type):
-                return False
-        return True
-
     def to_decl(self, name: str, fmt: Formatter) -> str:
         decl = ca.Decl(
             name=name,
-            type=copy.deepcopy(self._to_ctype(set(), fmt)),
+            type=self._to_ctype(set(), fmt),
             quals=[],
             storage=[],
             funcspec=[],
@@ -217,10 +204,10 @@ class Type:
 
         unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
 
-        if self in seen:
-            return simple_ctype(unk_symbol)
-        seen.add(self)
         type = self.get_representative()
+        if type in seen:
+            return simple_ctype(unk_symbol)
+        seen.add(type)
         size = type.size or 32
         sign = "s" if type.sign & Type.SIGNED else "u"
 
@@ -240,11 +227,10 @@ class Type:
         if type.kind == Type.K_CTYPE:
             if type.ctype_ref is None:
                 return simple_ctype(unk_symbol)
-            return type.ctype_ref
+            return copy.deepcopy(type.ctype_ref)
 
         if type.kind == Type.K_FN:
-            if type.fn_sig is None:
-                return simple_ctype(unk_symbol)
+            assert type.fn_sig is not None
             return_ctype = type.fn_sig.return_type._to_ctype(seen.copy(), fmt)
 
             params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = []
@@ -278,7 +264,7 @@ class Type:
         return self.to_decl("", fmt)
 
     def __str__(self) -> str:
-        return self.format(Formatter())
+        return self.format(Formatter(debug=True))
 
     def __repr__(self) -> str:
         type = self.get_representative()
@@ -325,10 +311,10 @@ class Type:
         return Type(kind=Type.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
 
     @staticmethod
-    def function_ptr(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
+    def function(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
         if fn_sig is None:
             fn_sig = FunctionSignature()
-        return Type.ptr(Type(kind=Type.K_FN, fn_sig=fn_sig))
+        return Type(kind=Type.K_FN, fn_sig=fn_sig)
 
     @staticmethod
     def f32() -> "Type":
@@ -414,8 +400,8 @@ class FunctionSignature:
             if len(self.params) != len(other.params):
                 return False
             for x, y in zip(self.params, other.params):
-                can_unify |= x.type.unify(y.type)
-        can_unify |= self.return_type.unify(other.return_type)
+                can_unify &= x.type.unify(y.type)
+        can_unify &= self.return_type.unify(other.return_type)
 
         if can_unify:
             if not self.params_known:
@@ -424,6 +410,24 @@ class FunctionSignature:
             elif not other.params_known:
                 other.params = self.params
                 other.params_known = self.params_known
+        return can_unify
+
+    def unify_with_args(self, concrete: "FunctionSignature") -> bool:
+        """
+        Unify a function's signature with a list of argument types.
+        This is more flexible than unify(), it allows variadic args and
+        does not check the return type.
+        This function is not symmetric; `self` represents the prototype
+        (e.g. with variadic args), whereas `concrete` represents the
+        set of arguments at the callsite.
+        """
+        if len(self.params) < len(concrete.params):
+            return False
+        if not self.is_variadic and len(self.params) != len(concrete.params):
+            return False
+        can_unify = True
+        for x, y in zip(self.params, concrete.params):
+            can_unify &= x.type.unify(y.type)
         return can_unify
 
 
@@ -449,7 +453,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
                 for param in fn.params
             ]
             fn_sig.params_known = True
-        return Type.function_ptr(fn_sig)
+        return Type.function(fn_sig)
     if isinstance(real_ctype, ca.TypeDecl):
         if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
             struct = parse_struct(real_ctype.type, typemap)
@@ -471,9 +475,8 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
+        # Array to pointer decay
         return Type.ptr(type_from_ctype(real_ctype.type, typemap)), True
-    if isinstance(real_ctype, ca.FuncDecl):
-        return type_from_ctype(ctype, typemap), True
     return Type.ptr(type_from_ctype(ctype, typemap)), False
 
 
