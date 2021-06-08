@@ -421,7 +421,7 @@ class FunctionSignature:
         (e.g. with variadic args), whereas `concrete` represents the
         set of arguments at the callsite.
         """
-        if len(self.params) < len(concrete.params):
+        if len(self.params) > len(concrete.params):
             return False
         if not self.is_variadic and len(self.params) != len(concrete.params):
             return False
