@@ -1692,12 +1692,13 @@ def deref(
 
     # Dereferencing pointers of known types
     target = var.type.get_pointer_target()
-    # TODO: Remove special case for (target.size or target.is_ctype())
-    # Without this condition, more derefs are ArrayAccess than StructAccess
-    if field_name is None and target is not None and (target.size or target.is_ctype()):
+    if field_name is None and target is not None:
         sub_size, sub_align = target.get_size_align_bytes()
         if sub_size == size and offset % size == 0 and sub_align != 0:
-            if offset != 0:
+            # TODO: This only turns the deref into an ArrayAccess if the type
+            # is *known* to be an array (CType). This could be expanded to support
+            # arrays of other types.
+            if offset != 0 and target.is_ctype():
                 index = Literal(value=offset // size, type=Type.s32())
                 return ArrayAccess(var, index, type=target)
             type = target
