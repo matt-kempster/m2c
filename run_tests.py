@@ -206,7 +206,7 @@ def create_project_tests(
                 continue
             f = asm_file.parent / candidate
             if f.exists():
-                flags.extend(["--data", str(f)])
+                flags.extend(["--rodata", str(f)])
 
         test_path = asm_file.relative_to(asm_dir)
         name = f"{name_prefix}:{test_path}"

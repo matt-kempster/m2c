@@ -21,7 +21,7 @@ class Options:
     skip_casts: bool = attr.ib()
     reg_vars: List[str] = attr.ib()
     goto_patterns: List[str] = attr.ib()
-    data_files: List[str] = attr.ib()
+    asm_data_files: List[str] = attr.ib()
     stop_on_error: bool = attr.ib()
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()

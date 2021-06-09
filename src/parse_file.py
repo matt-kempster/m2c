@@ -43,7 +43,7 @@ class Function:
 
 
 @attr.s
-class DataSectionEntry:
+class AsmDataEntry:
     data: List[Union[str, bytes]] = attr.ib(factory=list)
     is_string: bool = attr.ib(default=False)
     is_readonly: bool = attr.ib(default=False)
@@ -59,11 +59,11 @@ class DataSectionEntry:
 
 
 @attr.s
-class DataSection:
-    values: Dict[str, DataSectionEntry] = attr.ib(factory=dict)
+class AsmData:
+    values: Dict[str, AsmDataEntry] = attr.ib(factory=dict)
     mentioned_labels: Set[str] = attr.ib(factory=set)
 
-    def merge_into(self, other: "DataSection") -> None:
+    def merge_into(self, other: "AsmData") -> None:
         for (sym, value) in self.values.items():
             other.values[sym] = value
         for label in self.mentioned_labels:
@@ -74,9 +74,9 @@ class DataSection:
 class MIPSFile:
     filename: str = attr.ib()
     functions: List[Function] = attr.ib(factory=list)
-    data_section: DataSection = attr.ib(factory=DataSection)
+    asm_data: AsmData = attr.ib(factory=AsmData)
     current_function: Optional[Function] = attr.ib(default=None, repr=False)
-    current_data: DataSectionEntry = attr.ib(factory=DataSectionEntry)
+    current_data: AsmDataEntry = attr.ib(factory=AsmDataEntry)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
@@ -99,12 +99,12 @@ class MIPSFile:
         self.current_function.new_label(label_name)
 
     def new_data_label(self, symbol_name: str, is_readonly: bool) -> None:
-        self.current_data = DataSectionEntry(is_readonly=is_readonly)
-        self.data_section.values[symbol_name] = self.current_data
+        self.current_data = AsmDataEntry(is_readonly=is_readonly)
+        self.asm_data.values[symbol_name] = self.current_data
 
     def new_data_sym(self, sym: str) -> None:
         self.current_data.data.append(sym)
-        self.data_section.mentioned_labels.add(sym.lstrip("."))
+        self.asm_data.mentioned_labels.add(sym.lstrip("."))
 
     def new_data_bytes(self, data: bytes, *, is_string: bool = False) -> None:
         if not self.current_data.data and is_string:
@@ -215,7 +215,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             return parser()
         except ValueError:
             raise DecompFailure(
-                f"Could not parse data_section {directive} in {curr_section}: {line}"
+                f"Could not parse asm_data {directive} in {curr_section}: {line}"
             )
 
     for lineno, line in enumerate(f, 1):

@@ -48,11 +48,11 @@ def run(options: Options) -> int:
             with open(options.filename, "r", encoding="utf-8-sig") as f:
                 mips_file = parse_file(f, options)
 
-        # Move over jtbl rodata from files given by --rodata & --data
-        for data_file in options.data_files:
-            with open(data_file, "r", encoding="utf-8-sig") as f:
+        # Move over jtbl rodata from files given by --rodata
+        for asm_data_file in options.asm_data_files:
+            with open(asm_data_file, "r", encoding="utf-8-sig") as f:
                 sub_file = parse_file(f, options)
-                sub_file.data_section.merge_into(mips_file.data_section)
+                sub_file.asm_data.merge_into(mips_file.asm_data)
 
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
@@ -91,12 +91,12 @@ def run(options: Options) -> int:
                 return 1
 
     return_code = 0
-    global_info = GlobalInfo(mips_file.data_section, typemap)
+    global_info = GlobalInfo(mips_file.asm_data, typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
             if options.visualize_flowgraph:
-                visualize_flowgraph(build_flowgraph(function, mips_file.data_section))
+                visualize_flowgraph(build_flowgraph(function, mips_file.asm_data))
                 continue
 
             info = translate_to_ast(function, options, global_info)
@@ -193,18 +193,9 @@ def parse_flags(flags: List[str]) -> Options:
         "patterns are allowed.",
     )
     parser.add_argument(
-        # Deprecated, provided for backwards compatability. Use --data instead
         "--rodata",
         metavar="ASM_FILE",
-        dest="data_files",
-        action="append",
-        default=[],
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--data",
-        metavar="ASM_FILE",
-        dest="data_files",
+        dest="asm_data_files",
         action="append",
         default=[],
         help="read jump table, constant, and global variable information from this file",
@@ -311,7 +302,7 @@ def parse_flags(flags: List[str]) -> Options:
         skip_casts=args.skip_casts,
         reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
-        data_files=args.data_files,
+        asm_data_files=args.asm_data_files,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
