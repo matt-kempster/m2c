@@ -417,28 +417,30 @@ class FunctionSignature:
         can_unify = self.return_type.unify(other.return_type)
         for x, y in zip(self.params, other.params):
             can_unify &= x.type.unify(y.type)
+        if not can_unify:
+            return False
 
-        if can_unify:
-            # If one side has fewer params (and params_known is not True), then
-            # extend its param list to match the other side
-            if not self.params_known:
-                self.is_variadic |= other.is_variadic
-                self.params_known |= other.params_known
-                while len(other.params) > len(self.params):
-                    self.params.append(other.params[len(self.params)])
-            if not other.params_known:
-                other.is_variadic |= self.is_variadic
-                other.params_known |= self.params_known
-                while len(self.params) > len(other.params):
-                    other.params.append(self.params[len(other.params)])
+        # If one side has fewer params (and params_known is not True), then
+        # extend its param list to match the other side
+        if not self.params_known:
+            self.is_variadic |= other.is_variadic
+            self.params_known |= other.params_known
+            while len(other.params) > len(self.params):
+                self.params.append(other.params[len(self.params)])
+        if not other.params_known:
+            other.is_variadic |= self.is_variadic
+            other.params_known |= self.params_known
+            while len(self.params) > len(other.params):
+                other.params.append(self.params[len(other.params)])
 
-            # If any parameter names are missing, try to fill them in
-            for x, y in zip(self.params, other.params):
-                if not x.name and y.name:
-                    x.name = y.name
-                elif not y.name and x.name:
-                    y.name = x.name
-        return can_unify
+        # If any parameter names are missing, try to fill them in
+        for x, y in zip(self.params, other.params):
+            if not x.name and y.name:
+                x.name = y.name
+            elif not y.name and x.name:
+                y.name = x.name
+
+        return True
 
     def unify_with_args(self, concrete: "FunctionSignature") -> bool:
         """
