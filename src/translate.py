@@ -2144,7 +2144,6 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             if (
                 ent
                 and ent.data
-                and ent.is_readonly
                 and isinstance(ent.data[0], bytes)
                 and len(ent.data[0]) >= size
             ):

@@ -300,7 +300,6 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 elif (
                     line.startswith(".rdata")
                     or line.startswith(".rodata")
-                    or line.startswith(".rdata")
                     or line.startswith(".late_rodata")
                 ):
                     curr_section = ".rodata"

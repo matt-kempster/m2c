@@ -934,14 +934,7 @@ def build_graph_from_block(
                     "to get correct control flow for non-jtbl switch jumps.)"
                 )
 
-            jtbl_data_entry = data_section.values[jtbl_name]
-            if not jtbl_data_entry.is_readonly:
-                raise DecompFailure(
-                    f"Found jr instruction {jump.meta.loc_str()}, but the "
-                    "corresponding jump table was not in the .rodata section."
-                )
-
-            jtbl_entries = jtbl_data_entry.data
+            jtbl_entries = data_section.values[jtbl_name].data
             for entry in jtbl_entries:
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
