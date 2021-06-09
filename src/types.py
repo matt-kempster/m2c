@@ -406,35 +406,46 @@ class FunctionSignature:
     is_variadic: bool = attr.ib(default=False)
 
     def unify(self, other: "FunctionSignature") -> bool:
-        if self.is_variadic != other.is_variadic:
-            return False
-
-        # Try to unify *all* ret/param types, without returning early
-        can_unify = True
         if self.params_known and other.params_known:
+            if self.is_variadic != other.is_variadic:
+                return False
             if len(self.params) != len(other.params):
                 return False
-            for x, y in zip(self.params, other.params):
-                can_unify &= x.type.unify(y.type)
-        can_unify &= self.return_type.unify(other.return_type)
 
-        # TODO: If neither params_known is true, can we try to unify up
-        # to the min of the two param lengths, and set both params equal
-        # to the longer one?
+        # Try to unify *all* ret/param types, without returning early
+        # TODO: If not all the types unify, roll back any changes made
+        can_unify = self.return_type.unify(other.return_type)
+        for x, y in zip(self.params, other.params):
+            can_unify &= x.type.unify(y.type)
+
         if can_unify:
+            # If one side has fewer params (and params_known is not True), then
+            # extend its param list to match the other side
             if not self.params_known:
-                self.params = other.params
-                self.params_known = other.params_known
-            elif not other.params_known:
-                other.params = self.params
-                other.params_known = self.params_known
+                self.is_variadic |= other.is_variadic
+                self.params_known |= other.params_known
+                while len(other.params) > len(self.params):
+                    self.params.append(other.params[len(self.params)])
+            if not other.params_known:
+                other.is_variadic |= self.is_variadic
+                other.params_known |= self.params_known
+                while len(self.params) > len(other.params):
+                    other.params.append(self.params[len(other.params)])
+
+            # If any parameter names are missing, try to fill them in
+            for x, y in zip(self.params, other.params):
+                if not x.name and y.name:
+                    x.name = y.name
+                elif not y.name and x.name:
+                    y.name = x.name
         return can_unify
 
     def unify_with_args(self, concrete: "FunctionSignature") -> bool:
         """
         Unify a function's signature with a list of argument types.
-        This is more flexible than unify(), it allows variadic args and
-        does not check the return type.
+        This is more flexible than unify() and is intended to check
+        the function's type at a specific callsite.
+
         This function is not symmetric; `self` represents the prototype
         (e.g. with variadic args), whereas `concrete` represents the
         set of arguments at the callsite.
@@ -443,7 +454,7 @@ class FunctionSignature:
             return False
         if not self.is_variadic and len(self.params) != len(concrete.params):
             return False
-        can_unify = True
+        can_unify = self.return_type.unify(concrete.return_type)
         for x, y in zip(self.params, concrete.params):
             can_unify &= x.type.unify(y.type)
         return can_unify
