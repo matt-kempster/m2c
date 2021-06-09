@@ -949,6 +949,9 @@ class FuncCall(Expression):
         return self.args + [self.function]
 
     def format(self, fmt: Formatter) -> str:
+        # TODO: The function type may have a different number of params than it had
+        # when the FuncCall was created. Should we warn that there may be the wrong
+        # number of arguments at this callsite?
         args = ", ".join(format_expr(arg, fmt) for arg in self.args)
         return f"{self.function.format(fmt)}({args})"
 
@@ -3396,7 +3399,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
 
-            typemap = stack_info.global_info.typemap
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
             assert fn_sig is not None, "known function pointers must have a signature"
@@ -3467,10 +3469,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
                     fn_sig.params.append(FunctionParam())
-                func_args = [
-                    as_type(arg, param.type, True)
-                    for arg, param in zip(func_args, fn_sig.params)
-                ]
+            for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
+                func_args[i] = as_type(arg_expr, param.type, True)
 
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
