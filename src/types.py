@@ -22,18 +22,8 @@ from .error import DecompFailure
 from .options import Formatter
 
 
-@attr.s(eq=False, repr=False)
-class Type:
-    """
-    Type information for an expression, which may improve over time. The least
-    specific type is any (initially the case for e.g. arguments); this might
-    get refined into intish if the value gets used for e.g. an integer add
-    operation, or into u32 if it participates in a logical right shift.
-    Types cannot change except for improvements of this kind -- thus concrete
-    types like u32 can never change into anything else, and e.g. ints can't
-    become floats.
-    """
-
+@attr.s(eq=False)
+class TypeData:
     K_INT = 1
     K_PTR = 2
     K_FLOAT = 4
@@ -50,7 +40,7 @@ class Type:
 
     kind: int = attr.ib(default=K_ANY)
     size: Optional[int] = attr.ib(default=None)
-    uf_parent: Optional["Type"] = attr.ib(default=None)
+    uf_parent: Optional["TypeData"] = attr.ib(default=None)
 
     sign: int = attr.ib(default=ANY_SIGN)  # K_INT
     ptr_to: Optional["Type"] = attr.ib(default=None)  # K_PTR
@@ -58,14 +48,35 @@ class Type:
     ctype_ref: Optional[CType] = attr.ib(default=None)  # K_CTYPE
     fn_sig: Optional["FunctionSignature"] = attr.ib(default=None)  # K_FN
 
+    def get_representative(self) -> "TypeData":
+        if self.uf_parent is None:
+            return self
+        self.uf_parent = self.uf_parent.get_representative()
+        return self.uf_parent
+
+
+@attr.s(eq=False, repr=False)
+class Type:
+    """
+    Type information for an expression, which may improve over time. The least
+    specific type is any (initially the case for e.g. arguments); this might
+    get refined into intish if the value gets used for e.g. an integer add
+    operation, or into u32 if it participates in a logical right shift.
+    Types cannot change except for improvements of this kind -- thus concrete
+    types like u32 can never change into anything else, and e.g. ints can't
+    become floats.
+    """
+
+    _data: TypeData = attr.ib()
+
     def unify(self, other: "Type") -> bool:
         """
         Try to set this type equal to another. Returns true on success.
         Once set equal, the types will always be equal (we use a union-find
         structure to ensure this).
         """
-        x = self.get_representative()
-        y = other.get_representative()
+        x = self.data()
+        y = other.data()
         if x is y:
             return True
         if x.size is not None and y.size is not None and x.size != y.size:
@@ -79,19 +90,19 @@ class Type:
         fn_sig = x.fn_sig if x.fn_sig is not None else y.fn_sig
         sign = x.sign & y.sign
         if size not in (None, 32, 64):
-            kind &= ~Type.K_FLOAT
+            kind &= ~TypeData.K_FLOAT
         if size not in (None, 32):
-            kind &= ~Type.K_PTR
+            kind &= ~TypeData.K_PTR
         if size not in (None,):
-            kind &= ~Type.K_FN
+            kind &= ~TypeData.K_FN
         if size not in (None, 0):
-            kind &= ~Type.K_VOID
+            kind &= ~TypeData.K_VOID
         if kind == 0 or sign == 0:
             return False
-        if kind == Type.K_PTR:
+        if kind == TypeData.K_PTR:
             size = 32
-        if sign != Type.ANY_SIGN:
-            assert kind == Type.K_INT
+        if sign != TypeData.ANY_SIGN:
+            assert kind == TypeData.K_INT
         if x.ctype_ref is not None and y.ctype_ref is not None:
             assert typemap is not None
             x_ctype = resolve_typedefs(x.ctype_ref, typemap)
@@ -114,74 +125,74 @@ class Type:
         y.uf_parent = x
         return True
 
-    def get_representative(self) -> "Type":
-        if self.uf_parent is None:
-            return self
-        self.uf_parent = self.uf_parent.get_representative()
-        return self.uf_parent
+    def data(self) -> "TypeData":
+        if self._data.uf_parent is None:
+            return self._data
+        self._data = self._data.get_representative()
+        return self._data
 
     def is_float(self) -> bool:
-        return self.get_representative().kind == Type.K_FLOAT
+        return self.data().kind == TypeData.K_FLOAT
 
     def is_pointer(self) -> bool:
-        return self.get_representative().kind == Type.K_PTR
+        return self.data().kind == TypeData.K_PTR
 
     def is_int(self) -> bool:
-        return self.get_representative().kind == Type.K_INT
+        return self.data().kind == TypeData.K_INT
 
     def is_ctype(self) -> bool:
-        return self.get_representative().kind == Type.K_CTYPE
+        return self.data().kind == TypeData.K_CTYPE
 
     def is_function(self) -> bool:
-        return self.get_representative().kind == Type.K_FN
+        return self.data().kind == TypeData.K_FN
 
     def is_void(self) -> bool:
-        return self.get_representative().kind == Type.K_VOID
+        return self.data().kind == TypeData.K_VOID
 
     def is_unsigned(self) -> bool:
-        return self.get_representative().sign == Type.UNSIGNED
+        return self.data().sign == TypeData.UNSIGNED
 
     def get_size_bits(self) -> int:
-        return self.get_representative().size or 32
+        return self.data().size or 32
 
     def get_size_align_bytes(self) -> Tuple[int, int]:
-        type = self.get_representative()
-        if type.is_ctype() and type.ctype_ref is not None:
-            assert type.typemap is not None
-            return var_size_align(type.ctype_ref, type.typemap)
-        size = type.get_size_bits() // 8
+        data = self.data()
+        if data.kind == TypeData.K_CTYPE and data.ctype_ref is not None:
+            assert data.typemap is not None
+            return var_size_align(data.ctype_ref, data.typemap)
+        size = self.get_size_bits() // 8
         return size, size
 
     def is_struct_type(self) -> bool:
-        type = self.get_representative()
-        if type.kind != Type.K_CTYPE or type.ctype_ref is None:
+        data = self.data()
+        if data.kind != TypeData.K_CTYPE or data.ctype_ref is None:
             return False
-        assert type.typemap is not None
-        ctype = resolve_typedefs(type.ctype_ref, type.typemap)
+        assert data.typemap is not None
+        ctype = resolve_typedefs(data.ctype_ref, data.typemap)
         if not isinstance(ctype, ca.TypeDecl):
             return False
         return isinstance(ctype.type, (ca.Struct, ca.Union))
 
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
-        type = self.get_representative()
-        if type.is_pointer() and type.ptr_to is not None:
-            return type.ptr_to
+        data = self.data()
+        if self.is_pointer() and data.ptr_to is not None:
+            return data.ptr_to
         return None
 
     def get_pointer_to_ctype(self) -> Optional[CType]:
         """If self is a pointer-to-a-CType, return the CType"""
         ptr_to = self.get_pointer_target()
         if ptr_to is not None and ptr_to.is_ctype():
-            return ptr_to.get_representative().ctype_ref
+            return ptr_to.data().ctype_ref
         return None
 
     def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
         """If self is a function pointer, return the FunctionSignature"""
-        type = self.get_representative()
-        if type.is_pointer() and type.ptr_to is not None:
-            ptr_to = type.ptr_to.get_representative()
-            if ptr_to.kind == Type.K_FN:
+        data = self.data()
+        if self.is_pointer() and data.ptr_to is not None:
+            ptr_to = data.ptr_to.data()
+            if ptr_to.kind == TypeData.K_FN:
                 return ptr_to.fn_sig
         return None
 
@@ -198,7 +209,7 @@ class Type:
         set_decl_name(decl)
         return to_c(decl)
 
-    def _to_ctype(self, seen: Set["Type"], fmt: Formatter) -> CType:
+    def _to_ctype(self, seen: Set["TypeData"], fmt: Formatter) -> CType:
         def simple_ctype(typename: str) -> ca.TypeDecl:
             return ca.TypeDecl(
                 type=ca.IdentifierType(names=[typename]), declname=None, quals=[]
@@ -206,37 +217,37 @@ class Type:
 
         unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
 
-        type = self.get_representative()
-        if type in seen:
+        data = self.data()
+        if data in seen:
             return simple_ctype(unk_symbol)
-        seen.add(type)
-        size = type.size or 32
-        sign = "s" if type.sign & Type.SIGNED else "u"
+        seen.add(data)
+        size = data.size or 32
+        sign = "s" if data.sign & TypeData.SIGNED else "u"
 
-        if (type.kind & Type.K_ANYREG) == Type.K_ANYREG:
-            if type.size is not None:
+        if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG:
+            if data.size is not None:
                 return simple_ctype(f"{unk_symbol}{size}")
             return simple_ctype(unk_symbol)
 
-        if type.kind == Type.K_FLOAT:
+        if data.kind == TypeData.K_FLOAT:
             return simple_ctype(f"f{size}")
 
-        if type.kind == Type.K_PTR:
-            if type.ptr_to is None:
+        if data.kind == TypeData.K_PTR:
+            if data.ptr_to is None:
                 return ca.PtrDecl(type=simple_ctype("void"), quals=[])
-            return ca.PtrDecl(type=type.ptr_to._to_ctype(seen, fmt), quals=[])
+            return ca.PtrDecl(type=data.ptr_to._to_ctype(seen, fmt), quals=[])
 
-        if type.kind == Type.K_CTYPE:
-            if type.ctype_ref is None:
+        if data.kind == TypeData.K_CTYPE:
+            if data.ctype_ref is None:
                 return simple_ctype(unk_symbol)
-            return copy.deepcopy(type.ctype_ref)
+            return copy.deepcopy(data.ctype_ref)
 
-        if type.kind == Type.K_FN:
-            assert type.fn_sig is not None
-            return_ctype = type.fn_sig.return_type._to_ctype(seen.copy(), fmt)
+        if data.kind == TypeData.K_FN:
+            assert data.fn_sig is not None
+            return_ctype = data.fn_sig.return_type._to_ctype(seen.copy(), fmt)
 
             params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = []
-            for param in type.fn_sig.params:
+            for param in data.fn_sig.params:
                 decl = ca.Decl(
                     name=param.name,
                     type=param.type._to_ctype(seen.copy(), fmt),
@@ -249,7 +260,7 @@ class Type:
                 set_decl_name(decl)
                 params.append(decl)
 
-            if type.fn_sig.is_variadic:
+            if data.fn_sig.is_variadic:
                 params.append(ca.EllipsisParam())
 
             return ca.FuncDecl(
@@ -257,7 +268,7 @@ class Type:
                 args=ca.ParamList(params),
             )
 
-        if type.kind == Type.K_VOID:
+        if data.kind == TypeData.K_VOID:
             return simple_ctype("void")
 
         return simple_ctype(f"{sign}{size}")
@@ -269,106 +280,108 @@ class Type:
         return self.format(Formatter(debug=True))
 
     def __repr__(self) -> str:
-        type = self.get_representative()
-        signstr = ("+" if type.sign & Type.SIGNED else "") + (
-            "-" if type.sign & Type.UNSIGNED else ""
+        data = self.data()
+        signstr = ("+" if data.sign & TypeData.SIGNED else "") + (
+            "-" if data.sign & TypeData.UNSIGNED else ""
         )
         kindstr = (
-            ("I" if type.kind & Type.K_INT else "")
-            + ("P" if type.kind & Type.K_PTR else "")
-            + ("F" if type.kind & Type.K_FLOAT else "")
-            + ("C" if type.kind & Type.K_CTYPE else "")
-            + ("N" if type.kind & Type.K_FN else "")
-            + ("V" if type.kind & Type.K_VOID else "")
+            ("I" if data.kind & TypeData.K_INT else "")
+            + ("P" if data.kind & TypeData.K_PTR else "")
+            + ("F" if data.kind & TypeData.K_FLOAT else "")
+            + ("C" if data.kind & TypeData.K_CTYPE else "")
+            + ("N" if data.kind & TypeData.K_FN else "")
+            + ("V" if data.kind & TypeData.K_VOID else "")
         )
-        sizestr = str(type.size) if type.size is not None else "?"
+        sizestr = str(data.size) if data.size is not None else "?"
         return f"Type({signstr + kindstr + sizestr})"
 
     @staticmethod
     def any() -> "Type":
-        return Type()
+        return Type(TypeData())
 
     @staticmethod
     def any_reg() -> "Type":
-        return Type(kind=Type.K_ANYREG)
+        return Type(TypeData(kind=TypeData.K_ANYREG))
 
     @staticmethod
     def intish() -> "Type":
-        return Type(kind=Type.K_INT)
+        return Type(TypeData(kind=TypeData.K_INT))
 
     @staticmethod
     def intptr() -> "Type":
-        return Type(kind=Type.K_INTPTR)
+        return Type(TypeData(kind=TypeData.K_INTPTR))
 
     @staticmethod
     def intptr32() -> "Type":
-        return Type(kind=Type.K_INTPTR, size=32)
+        return Type(TypeData(kind=TypeData.K_INTPTR, size=32))
 
     @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
-        return Type(kind=Type.K_PTR, size=32, ptr_to=type)
+        return Type(TypeData(kind=TypeData.K_PTR, size=32, ptr_to=type))
 
     @staticmethod
     def _ctype(ctype: CType, typemap: TypeMap, size: Optional[int]) -> "Type":
-        return Type(kind=Type.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
+        return Type(
+            TypeData(kind=TypeData.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
+        )
 
     @staticmethod
     def function(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
         if fn_sig is None:
             fn_sig = FunctionSignature()
-        return Type(kind=Type.K_FN, fn_sig=fn_sig)
+        return Type(TypeData(kind=TypeData.K_FN, fn_sig=fn_sig))
 
     @staticmethod
     def f32() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=32)
+        return Type(TypeData(kind=TypeData.K_FLOAT, size=32))
 
     @staticmethod
     def floatish() -> "Type":
-        return Type(kind=Type.K_FLOAT)
+        return Type(TypeData(kind=TypeData.K_FLOAT))
 
     @staticmethod
     def f64() -> "Type":
-        return Type(kind=Type.K_FLOAT, size=64)
+        return Type(TypeData(kind=TypeData.K_FLOAT, size=64))
 
     @staticmethod
     def s8() -> "Type":
-        return Type(kind=Type.K_INT, size=8, sign=Type.SIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=8, sign=TypeData.SIGNED))
 
     @staticmethod
     def u8() -> "Type":
-        return Type(kind=Type.K_INT, size=8, sign=Type.UNSIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=8, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s16() -> "Type":
-        return Type(kind=Type.K_INT, size=16, sign=Type.SIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=16, sign=TypeData.SIGNED))
 
     @staticmethod
     def u16() -> "Type":
-        return Type(kind=Type.K_INT, size=16, sign=Type.UNSIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=16, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s32() -> "Type":
-        return Type(kind=Type.K_INT, size=32, sign=Type.SIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=32, sign=TypeData.SIGNED))
 
     @staticmethod
     def u32() -> "Type":
-        return Type(kind=Type.K_INT, size=32, sign=Type.UNSIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=32, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s64() -> "Type":
-        return Type(kind=Type.K_INT, size=64, sign=Type.SIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=64, sign=TypeData.SIGNED))
 
     @staticmethod
     def u64() -> "Type":
-        return Type(kind=Type.K_INT, size=64, sign=Type.UNSIGNED)
+        return Type(TypeData(kind=TypeData.K_INT, size=64, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def int64() -> "Type":
-        return Type(kind=Type.K_INT, size=64)
+        return Type(TypeData(kind=TypeData.K_INT, size=64))
 
     @staticmethod
     def of_size(size: int) -> "Type":
-        return Type(kind=Type.K_ANY, size=size)
+        return Type(TypeData(kind=TypeData.K_ANY, size=size))
 
     @staticmethod
     def bool() -> "Type":
@@ -376,7 +389,7 @@ class Type:
 
     @staticmethod
     def void() -> "Type":
-        return Type(kind=Type.K_VOID, size=0)
+        return Type(TypeData(kind=TypeData.K_VOID, size=0))
 
 
 @attr.s(eq=False)
@@ -473,8 +486,10 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         size = 8 * primitive_size(real_ctype.type)
         if not size:
             return Type._ctype(ctype, typemap, size=None)
-        sign = Type.UNSIGNED if "unsigned" in names else Type.SIGNED
-        return Type(kind=Type.K_INT, size=size, sign=sign, typemap=typemap)
+        sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
+        return Type(
+            TypeData(kind=TypeData.K_INT, size=size, sign=sign, typemap=typemap)
+        )
 
 
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:

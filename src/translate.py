@@ -1976,7 +1976,7 @@ def load_upper(args: InstrArgs) -> Expression:
 
 def handle_convert(expr: Expression, dest_type: Type, source_type: Type) -> Cast:
     # int <-> float casts should be explicit
-    silent = dest_type.kind != source_type.kind
+    silent = dest_type.data().kind != source_type.data().kind
     expr.type.unify(source_type)
     return Cast(expr=expr, type=dest_type, silent=silent, reinterpret=False)
 
