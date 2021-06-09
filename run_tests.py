@@ -182,15 +182,20 @@ def create_project_tests(
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 
-        # Guess the name of .rodata file(s) for the MM decomp project
+        # Guess the name of .data/.rodata file(s) for the OOT/MM decomp projects
         for candidate in [
             # mm code/*.asm
+            "code_data_" + asm_name,
             "code_rodata_" + asm_name,
+            asm_name.replace("code_", "code_data_"),
             asm_name.replace("code_", "code_rodata_"),
             # mm boot/*.asm
+            "boot_data_" + asm_name,
             "boot_rodata_" + asm_name,
+            asm_name.replace("boot_", "boot_data_"),
             asm_name.replace("boot_", "boot_rodata_"),
             # mm overlays/*.asm
+            asm_name.rpartition("_0x")[0] + "_data.asm",
             asm_name.rpartition("_0x")[0] + "_rodata.asm",
             asm_name.rpartition("_0x")[0] + "_late_rodata.asm",
             # oot *.s

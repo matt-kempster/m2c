@@ -8,7 +8,7 @@ from .error import DecompFailure
 from .flow_graph import build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import Options, CodingStyle
-from .parse_file import Function, MIPSFile, Rodata, parse_file
+from .parse_file import Function, MIPSFile, parse_file
 from .translate import (
     FunctionInfo,
     GlobalInfo,
@@ -49,10 +49,10 @@ def run(options: Options) -> int:
                 mips_file = parse_file(f, options)
 
         # Move over jtbl rodata from files given by --rodata
-        for rodata_file in options.rodata_files:
-            with open(rodata_file, "r", encoding="utf-8-sig") as f:
+        for asm_data_file in options.asm_data_files:
+            with open(asm_data_file, "r", encoding="utf-8-sig") as f:
                 sub_file = parse_file(f, options)
-                sub_file.rodata.merge_into(mips_file.rodata)
+                sub_file.asm_data.merge_into(mips_file.asm_data)
 
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
@@ -91,12 +91,12 @@ def run(options: Options) -> int:
                 return 1
 
     return_code = 0
-    global_info = GlobalInfo(mips_file.rodata, typemap)
+    global_info = GlobalInfo(mips_file.asm_data, typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
             if options.visualize_flowgraph:
-                visualize_flowgraph(build_flowgraph(function, mips_file.rodata))
+                visualize_flowgraph(build_flowgraph(function, mips_file.asm_data))
                 continue
 
             info = translate_to_ast(function, options, global_info)
@@ -195,10 +195,10 @@ def parse_flags(flags: List[str]) -> Options:
     parser.add_argument(
         "--rodata",
         metavar="ASM_FILE",
-        dest="rodata_files",
+        dest="asm_data_files",
         action="append",
         default=[],
-        help="read jump table data from this file",
+        help="read jump table, constant, and global variable information from this file",
     )
     parser.add_argument(
         "--stop-on-error",
@@ -302,7 +302,7 @@ def parse_flags(flags: List[str]) -> Options:
         skip_casts=args.skip_casts,
         reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
-        rodata_files=args.rodata_files,
+        asm_data_files=args.asm_data_files,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,

@@ -20,7 +20,7 @@ from .flow_graph import (
     build_flowgraph,
 )
 from .options import CodingStyle, Options, Formatter, DEFAULT_CODING_STYLE
-from .parse_file import Rodata, RodataEntry
+from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
     AsmAddressMode,
@@ -3702,12 +3702,15 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 
 @attr.s
 class GlobalInfo:
-    rodata: Rodata = attr.ib()
+    asm_data: AsmData = attr.ib()
     typemap: Optional[TypeMap] = attr.ib()
     symbol_type_map: Dict[str, "Type"] = attr.ib(factory=dict)
 
-    def rodata_value(self, sym_name: str) -> Optional[RodataEntry]:
-        return self.rodata.values.get(sym_name)
+    def rodata_value(self, sym_name: str) -> Optional[AsmDataEntry]:
+        entry = self.asm_data.values.get(sym_name)
+        if entry and entry.is_readonly:
+            return entry
+        return None
 
     def symbol_type(self, sym_name: str) -> Type:
         if sym_name not in self.symbol_type_map:
@@ -3719,8 +3722,7 @@ class GlobalInfo:
         for name, type in self.symbol_type_map.items():
             if self.typemap and name in self.typemap.var_types:
                 continue
-
-            is_static = name in self.rodata.values
+            is_static = name in self.asm_data.values
             order = (is_static, name)
             prefix = ""
             if is_static:
@@ -3751,7 +3753,7 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function, global_info.rodata)
+    flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
     typemap = global_info.typemap
 
