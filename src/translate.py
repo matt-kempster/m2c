@@ -1404,7 +1404,7 @@ class CommentStmt(Statement):
         return True
 
     def format(self, fmt: Formatter) -> str:
-        return f"/* {self.contents} */"
+        return f"// {self.contents}"
 
 
 @attr.s(frozen=True)
@@ -3835,7 +3835,7 @@ class GlobalInfo:
 
                 qualifier = f"{qualifier} " if qualifier else ""
                 initializer = f" = {initializer}" if initializer else ""
-                comment = f" /* {'; '.join(comments)} */" if comments else ""
+                comment = f" // {'; '.join(comments)}" if comments else ""
                 lines.append(
                     (
                         sort_order,
