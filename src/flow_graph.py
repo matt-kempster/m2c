@@ -923,7 +923,7 @@ def build_graph_from_block(
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file, or in a separate .s "
-                    "file pointed to by --data.\n"
+                    "file pointed to by --rodata.\n"
                     'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
                     "\n"
                     "(You might need to pass --goto and --no-andor flags as well, "
