@@ -476,7 +476,7 @@ def get_stack_info(
                     inst.mnemonic in ["lw", "lwc1", "ldc1"]
                     and isinstance(inst.args[1], AsmAddressMode)
                     and inst.args[1].rhs.register_name == "sp"
-                    and inst.args[1].lhs_as_literal() > 16
+                    and inst.args[1].lhs_as_literal() >= 16
                 ):
                     info.subroutine_arg_top = min(
                         info.subroutine_arg_top, inst.args[1].lhs_as_literal()
