@@ -2337,10 +2337,11 @@ def fold_mul_chains(expr: Expression) -> Expression:
                 and (allow_sll or expr.right.value % 2 != 0)
             ):
                 return (lbase, lnum * expr.right.value)
-            if expr.op == "+" and lbase == rbase:
-                return (lbase, lnum + rnum)
-            if expr.op == "-" and lbase == rbase:
-                return (lbase, lnum - rnum)
+            if early_unwrap(lbase) == early_unwrap(rbase):
+                if expr.op == "+":
+                    return (lbase, lnum + rnum)
+                if expr.op == "-":
+                    return (lbase, lnum - rnum)
         if isinstance(expr, UnaryOp) and not toplevel:
             base, num = fold(expr.expr, False, True)
             return (base, -num)
@@ -2349,7 +2350,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             and not expr.emit_exactly_once
             and not expr.forced_emit
         ):
-            base, num = fold(expr.wrapped_expr, False, allow_sll)
+            base, num = fold(early_unwrap(expr), False, allow_sll)
             if num != 1 and is_trivial_expression(base):
                 return (base, num)
         return (expr, 1)
