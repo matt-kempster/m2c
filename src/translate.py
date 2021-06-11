@@ -1053,15 +1053,24 @@ class StructAccess(Expression):
             field_name = "unk" + format_hex(self.offset)
 
         if isinstance(var, AddressOf):
-            if self.offset == 0 and not has_nonzero_access:
-                return f"{var.expr.format(fmt)}"
+            if isinstance(var.expr, GlobalSymbol) and var.expr.array_dim is not None:
+                needs_deref = True
             else:
-                return f"{parenthesize_for_struct_access(var.expr, fmt)}.{field_name}"
+                needs_deref = False
+                var = var.expr
         else:
+            needs_deref = True
+
+        if needs_deref:
             if self.offset == 0 and not has_nonzero_access:
                 return f"*{var.format(fmt)}"
             else:
                 return f"{parenthesize_for_struct_access(var, fmt)}->{field_name}"
+        else:
+            if self.offset == 0 and not has_nonzero_access:
+                return f"{var.format(fmt)}"
+            else:
+                return f"{parenthesize_for_struct_access(var, fmt)}.{field_name}"
 
 
 @attr.s(frozen=True, eq=True)
@@ -1080,13 +1089,46 @@ class ArrayAccess(Expression):
         return f"{base}[{index}]"
 
 
-@attr.s(frozen=True, eq=True)
+@attr.s(eq=True, hash=True)
 class GlobalSymbol(Expression):
     symbol_name: str = attr.ib()
     type: Type = attr.ib(eq=False)
+    asm_data_entry: Optional[AsmDataEntry] = attr.ib(default=None, eq=False)
+    # `array_dim=None` indicates that the symbol is not an array
+    # `array_dim=0` indicates that it *is* an array, but the dimension is unknown
+    # Otherwise, it is the dimension of the array.
+    array_dim: Optional[int] = attr.ib(default=None, eq=False)
 
     def dependencies(self) -> List[Expression]:
         return []
+
+    def is_string_constant(self) -> bool:
+        ent = self.asm_data_entry
+        if not ent or not ent.is_string:
+            return False
+        if len(ent.data) != 1 or not isinstance(ent.data[0], bytes):
+            return False
+        return True
+
+    def format_string_constant(self, fmt: Formatter) -> str:
+        if not self.is_string_constant():
+            raise DecompFailure(
+                "GlobalSymbol.is_string_constant() should be checked by caller"
+            )
+        assert self.asm_data_entry and isinstance(self.asm_data_entry.data[0], bytes)
+
+        has_trailing_null = False
+        data = self.asm_data_entry.data[0]
+        while data and data[-1] == 0:
+            data = data[:-1]
+            has_trailing_null = True
+        data = b"".join(map(escape_byte, data))
+
+        strdata = data.decode("utf-8", "backslashreplace")
+        ret = f'"{strdata}"'
+        if not has_trailing_null:
+            ret += " /* not null-terminated */"
+        return ret
 
     def format(self, fmt: Formatter) -> str:
         return self.symbol_name
@@ -1128,29 +1170,6 @@ class Literal(Expression):
         return prefix + mid + suffix
 
 
-@attr.s(frozen=True)
-class StringLiteral(Expression):
-    data: bytes = attr.ib()
-    type: Type = attr.ib()
-
-    def dependencies(self) -> List[Expression]:
-        return []
-
-    def format(self, fmt: Formatter) -> str:
-        has_trailing_null = False
-        data = self.data
-        while data and data[-1] == 0:
-            data = data[:-1]
-            has_trailing_null = True
-        data = b"".join(map(escape_byte, data))
-
-        strdata = data.decode("utf-8", "backslashreplace")
-        ret = f'"{strdata}"'
-        if not has_trailing_null:
-            ret += " /* not null-terminated */"
-        return ret
-
-
 @attr.s(frozen=True, eq=True)
 class AddressOf(Expression):
     expr: Expression = attr.ib()
@@ -1160,6 +1179,12 @@ class AddressOf(Expression):
         return [self.expr]
 
     def format(self, fmt: Formatter) -> str:
+        if isinstance(self.expr, GlobalSymbol):
+            if self.expr.is_string_constant():
+                return self.expr.format_string_constant(fmt)
+            if self.expr.array_dim is not None:
+                return f"{self.expr.format(fmt)}"
+
         if self.expr.type.is_function():
             # Functions are automatically converted to function pointers
             # without an explicit `&` by the compiler
@@ -1562,8 +1587,6 @@ class InstrArgs:
     def full_imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_arg(index))
         ret = literal_expr(arg, self.stack_info)
-        if isinstance(ret, GlobalSymbol):
-            return self.stack_info.global_info.address_of_gsym(ret.symbol_name)
         return ret
 
     def imm(self, index: int) -> Expression:
@@ -1735,7 +1758,6 @@ def is_type_obvious(expr: Expression) -> bool:
         (
             Cast,
             Literal,
-            StringLiteral,
             AddressOf,
             LocalVar,
             PhiExpr,
@@ -1894,7 +1916,7 @@ def unwrap_deep(expr: Expression) -> Expression:
 
 def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     if isinstance(arg, AsmGlobalSymbol):
-        return stack_info.global_info.global_symbol(arg.symbol_name)
+        return stack_info.global_info.address_of_gsym(arg.symbol_name)
     if isinstance(arg, AsmLiteral):
         return Literal(arg.value)
     if isinstance(arg, BinOp):
@@ -2067,11 +2089,11 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
             if array_access is not None:
                 return array_access
 
-            field_name, subtype, ptr_type, is_array = get_field(
+            field_name, subtype, ptr_type, array_dim = get_field(
                 source.type, imm.value, typemap, target_size=None
             )
             if field_name is not None:
-                if is_array:
+                if array_dim is not None:
                     return StructAccess(
                         struct_var=source,
                         offset=imm.value,
@@ -3685,138 +3707,80 @@ def resolve_types_late(stack_info: StackInfo) -> None:
             var.type.unify(Type.ptr(type))
 
 
+class Initializer(abc.ABC):
+    @abc.abstractmethod
+    def for_symbol(self, sym: "GlobalSymbol") -> Optional[str]:
+        ...
+
+
 @attr.s
 class GlobalInfo:
     asm_data: AsmData = attr.ib()
     local_functions: Set[str] = attr.ib()
     typemap: Optional[TypeMap] = attr.ib()
-    symbol_type_map: Dict[str, "Type"] = attr.ib(factory=dict)
+    global_symbol_map: Dict[str, GlobalSymbol] = attr.ib(factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         entry = self.asm_data.values.get(sym_name)
-        if entry and entry.is_readonly:
+        if entry:
             return entry
         return None
 
-    def symbol_type(self, sym_name: str) -> Type:
-        if sym_name not in self.symbol_type_map:
-            self.symbol_type_map[sym_name] = Type.any()
-        return self.symbol_type_map[sym_name]
-
-    def global_symbol(self, sym_name: str) -> "GlobalSymbol":
-        return GlobalSymbol(
-            symbol_name=sym_name,
-            type=self.symbol_type(sym_name),
-        )
+    def global_symbol(self, sym_name: str) -> GlobalSymbol:
+        if sym_name not in self.global_symbol_map:
+            self.global_symbol_map[sym_name] = GlobalSymbol(
+                symbol_name=sym_name,
+                type=Type.any(),
+                asm_data_entry=self.asm_data_value(sym_name),
+            )
+        return self.global_symbol_map[sym_name]
 
     def address_of_gsym(self, sym_name: str) -> Expression:
-        ent = self.asm_data_value(sym_name)
-        if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
-            return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
         sym = self.global_symbol(sym_name)
         type = Type.ptr(sym.type)
         if self.typemap:
             ctype = self.typemap.var_types.get(sym_name)
             if ctype:
-                ctype_type, is_ptr = ptr_type_from_ctype(ctype, self.typemap)
-                if is_ptr:
-                    return as_type(sym, ctype_type, True)
-                else:
-                    type.unify(ctype_type)
-                    type = ctype_type
+                ctype_type, dim = ptr_type_from_ctype(ctype, self.typemap)
+                sym.array_dim = dim
+                type.unify(ctype_type)
+                type = ctype_type
         return AddressOf(sym, type=type)
 
-    def data_to_initializer(
-        self, type: Type, data: List[Union[str, bytes]], fmt: Formatter
-    ) -> Optional[str]:
-        data = data[:]
-
-        def read_uint(n: int) -> Optional[int]:
-            """Read the next `n` bytes from `data` as an (long) integer"""
-            assert 0 < n <= 8
-            if not data or not isinstance(data[0], bytes):
-                return None
-            if len(data[0]) < n:
-                return None
-            bs = data[0][:n]
-            data[0] = data[0][n:]
-            if not data[0]:
-                del data[0]
-            value = 0
-            for b in bs:
-                value = (value << 8) | b
-            return value
-
-        def read_pointer() -> Optional[Expression]:
-            """Read the next label from `data`"""
-            if not data:
-                return None
-
-            if not isinstance(data[0], str):
-                # Bare pointer
-                value = read_uint(4)
-                if value is None:
-                    return None
-                return Literal(value=value)
-
-            # Pointer label
-            label = data.pop(0)
-            assert isinstance(label, str)
-            return self.address_of_gsym(label)
-
-        if type.is_int() or type.is_float():
-            size_bits = type.get_size_bits()
-            if size_bits == 0:
-                return None
-            elif size_bits is None:
-                # Unknown size; guess 32 bits
-                size_bits = 32
-            value = read_uint(size_bits // 8)
-            if value is not None:
-                return Literal(value, type).format(fmt)
-
-        if type.is_pointer():
-            ptr = read_pointer()
-            if ptr is not None:
-                return as_type(ptr, type, True).format(fmt)
-
-        if type.is_ctype():
-            # TODO: Generate initializers for structs/arrays/etc.
-            return None
-
-        # Type kinds K_FN and K_VOID do not have initializers
-        return None
-
-    def global_decls(self, fmt: Formatter) -> str:
-        # Format labels from symbol_type_map into global declarations.
+    def global_decls(self, initializer: "Initializer", fmt: Formatter) -> str:
+        # Format symbols from global_symbol_map into global declarations.
         # As the initializers are formatted, this may cause more symbols
-        # to be added to the symbol_type_map.
+        # to be added to the global_symbol_map.
         lines = []
         processed_names: Set[str] = set()
         while True:
-            names = self.symbol_type_map.keys() - processed_names
+            names = self.global_symbol_map.keys() - processed_names
             if not names:
                 break
             for name in sorted(names):
                 processed_names.add(name)
-                type = self.symbol_type_map[name]
+                sym = self.global_symbol_map[name]
 
                 # Is the label defined in this unit (in the active AsmData file(s))
-                is_in_file = (
-                    name in self.asm_data.values or name in self.local_functions
+                is_in_file = (sym.asm_data_entry is not None) or (
+                    name in self.local_functions
                 )
                 # Is the label externally visible (mentioned in the context file)
-                is_global = self.typemap and name in self.typemap.var_types
-                if not is_in_file and is_global:
-                    # Skip externally-declared symbols that are defined in other files
-                    continue
-                if is_in_file and is_global and type.is_function():
-                    # Skip externally-declared functions that are defined here
-                    continue
+                is_global = self.typemap and (name in self.typemap.var_types)
+                # Is the label a symbol in .rodata?
+                is_const = (
+                    sym.asm_data_entry is not None
+                ) and sym.asm_data_entry.is_readonly
 
-                sort_order = (not type.is_function(), is_global, is_in_file, name)
+                sort_order = (
+                    not sym.type.is_function(),
+                    is_global,
+                    is_in_file,
+                    is_const,
+                    name,
+                )
                 qualifier = ""
-                initializer = ""
+                value = ""
                 comments = []
 
                 # Determine type qualifier: static, extern, or neither
@@ -3827,36 +3791,62 @@ class GlobalInfo:
                 else:
                     qualifier = "extern"
 
-                if type.is_function():
+                if sym.type.is_function():
                     comments.append(qualifier)
                     qualifier = ""
 
                 # Try to convert the data from .data/.rodata into an initializer
-                entry = self.asm_data.values.get(name)
-                if entry is not None:
-                    if entry.is_readonly:
-                        comments.append("const")
-                    data_size = entry.size_bytes()
-                    type_size_bits = type.get_size_bits()
-                    if type_size_bits and data_size != type_size_bits // 8:
-                        # TODO: Use heuristic to detect padding
+                if sym.asm_data_entry is not None:
+                    min_data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
+                    type_size_bits = sym.type.get_size_bits()
+                    if type_size_bits and max_data_size != type_size_bits // 8:
                         type_size = type_size_bits // 8
-                        if data_size // type_size > 1:
-                            comments.append(f"array: [{data_size // type_size}]")
-                        if data_size % type_size != 0:
-                            comments.append(f"extra bytes: {data_size % type_size}")
-                    elif entry.is_readonly and type.is_float():
-                        # Float constants are almost always inlined and can be skipped
+                        if max_data_size < type_size:
+                            comments.append(
+                                f"type too large by {type_size - max_data_size}"
+                            )
+                        else:
+                            if min_data_size % type_size != 0:
+                                added_size = type_size - (min_data_size % type_size)
+                                if min_data_size + added_size <= max_data_size:
+                                    min_data_size += added_size
+                                else:
+                                    comments.append(
+                                        f"extra bytes: {min_data_size % type_size}"
+                                    )
+                            if min_data_size // type_size > 1:
+                                if sym.array_dim is None:
+                                    sym.array_dim = max_data_size // type_size
+                                elif sym.array_dim != max_data_size // type_size:
+                                    comments.append(
+                                        f"array [{max_data_size // type_size}]"
+                                    )
+
+                    value = initializer.for_symbol(sym) or ""
+
+                if not is_in_file and is_global:
+                    # Skip externally-declared symbols that are defined in other files
+                    continue
+                if is_in_file and is_global and sym.type.is_function():
+                    # Skip externally-declared functions that are defined here
+                    continue
+                if is_const:
+                    comments.append("const")
+
+                    # Float & string constants are almost always inlined and can be omitted
+                    if sym.is_string_constant():
                         continue
-                    initializer = self.data_to_initializer(type, entry.data, fmt) or ""
+                    if sym.array_dim is None and sym.type.is_float():
+                        continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
-                initializer = f" = {initializer}" if initializer else ""
+                name = f"{name}[{sym.array_dim}]" if sym.array_dim is not None else name
+                value = f" = {value}" if value else ""
                 comment = f" // {'; '.join(comments)}" if comments else ""
                 lines.append(
                     (
                         sort_order,
-                        f"{qualifier}{type.to_decl(name, fmt)}{initializer};{comment}\n",
+                        f"{qualifier}{sym.type.to_decl(name, fmt)}{value};{comment}\n",
                     )
                 )
         lines.sort()
@@ -3900,7 +3890,7 @@ def translate_to_ast(
     else:
         fn_type = Type.function()
         fn_decl_provided = False
-    fn_type.unify(global_info.symbol_type(function.name))
+    fn_type.unify(global_info.global_symbol(function.name).type)
 
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"

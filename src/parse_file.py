@@ -48,14 +48,31 @@ class AsmDataEntry:
     is_string: bool = attr.ib(default=False)
     is_readonly: bool = attr.ib(default=False)
 
-    def size_bytes(self) -> int:
-        size = 0
+    def size_range_bytes(self) -> Tuple[int, int]:
+        """Return the range of possible sizes, if padding were stripped."""
+        # TODO: The data address could be used to only strip padding
+        # that ends on 16-byte boundaries and is at the end of a section
+        max_size = 0
         for x in self.data:
             if isinstance(x, str):
-                size += 4
+                max_size += 4
             else:
-                size += len(x)
-        return size
+                max_size += len(x)
+
+        padding_size = 0
+        if self.data and isinstance(self.data[-1], bytes):
+            if not len(self.data) == 1 and not isinstance(self.data[-2], str):
+                raise DecompFailure(
+                    "Invalid AsmDataEntry created with two `bytes` back-to-back"
+                )
+            for b in self.data[-1][::-1]:
+                if b != 0:
+                    break
+                padding_size += 1
+        padding_size = min(padding_size, 15)
+        assert padding_size <= max_size
+
+        return max_size - padding_size, max_size
 
 
 @attr.s
@@ -318,6 +335,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
                             else:
                                 mips_file.new_data_sym(w)
+                    elif line.startswith(".short"):
+                        for w in line[6:].split(","):
+                            ival = try_parse(lambda: int(w.strip(), 0), ".short")
+                            mips_file.new_data_bytes(struct.pack(">H", ival))
                     elif line.startswith(".byte"):
                         for w in line[5:].split(","):
                             ival = try_parse(lambda: int(w.strip(), 0), ".byte")
