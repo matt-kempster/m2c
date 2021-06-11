@@ -2112,7 +2112,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     # For now, make the cast silent so that output doesn't become cluttered.
     # Though really, it would be great to expose the load types somehow...
-    size = type.get_size_bits() // 8
+    # If the type size is unknown, default to 32 bits
+    size = (type.get_size_bits() or 32) // 8
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     # Detect rodata constants
@@ -2189,7 +2190,8 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
-    size = type.get_size_bits() // 8
+    # If the type size is unknown, default to 32 bits
+    size = (type.get_size_bits() or 32) // 8
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_raw = args.regs.get_raw(source_reg)
@@ -3729,7 +3731,7 @@ class GlobalInfo:
     ) -> Optional[str]:
         data = data[:]
 
-        def read_bytes(n: int) -> Optional[int]:
+        def read_uint(n: int) -> Optional[int]:
             """Read the next `n` bytes from `data` as an (long) integer"""
             assert 0 < n <= 8
             if not data or not isinstance(data[0], bytes):
@@ -3747,15 +3749,29 @@ class GlobalInfo:
 
         def read_pointer() -> Optional[Expression]:
             """Read the next label from `data`"""
-            if not data or not isinstance(data[0], str):
+            if not data:
                 return None
+
+            if not isinstance(data[0], str):
+                # Bare pointer
+                value = read_uint(4)
+                if value is None:
+                    return None
+                return Literal(value=value)
+
+            # Pointer label
             label = data.pop(0)
             assert isinstance(label, str)
             return self.address_of_gsym(label)
 
         if type.is_int() or type.is_float():
-            size = type.get_size_bits() // 8
-            value = read_bytes(size)
+            size_bits = type.get_size_bits()
+            if size_bits == 0:
+                return None
+            elif size_bits is None:
+                # Unknown size; guess 32 bits
+                size_bits = 32
+            value = read_uint(size_bits // 8)
             if value is not None:
                 return Literal(value, type).format(fmt)
 
@@ -3781,7 +3797,7 @@ class GlobalInfo:
             names = self.symbol_type_map.keys() - processed_names
             if not names:
                 break
-            for name in names:
+            for name in sorted(names):
                 processed_names.add(name)
                 type = self.symbol_type_map[name]
 
@@ -3821,9 +3837,10 @@ class GlobalInfo:
                     if entry.is_readonly:
                         comments.append("const")
                     data_size = entry.size_bytes()
-                    type_size = type.get_size_bits() // 8
-                    if data_size != type_size:
+                    type_size_bits = type.get_size_bits()
+                    if type_size_bits and data_size != type_size_bits // 8:
                         # TODO: Use heuristic to detect padding
+                        type_size = type_size_bits // 8
                         if data_size // type_size > 1:
                             comments.append(f"array: [{data_size // type_size}]")
                         if data_size % type_size != 0:
