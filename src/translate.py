@@ -296,12 +296,6 @@ class StackInfo:
             self.unique_type_map[key] = default
         return self.unique_type_map[key]
 
-    def global_symbol(self, sym: AsmGlobalSymbol) -> "GlobalSymbol":
-        return GlobalSymbol(
-            symbol_name=sym.symbol_name,
-            type=self.global_info.symbol_type(sym.symbol_name),
-        )
-
     def saved_reg_symbol(self, reg_name: str) -> "GlobalSymbol":
         sym_name = "saved_reg_" + reg_name
         type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
@@ -353,23 +347,6 @@ class StackInfo:
         if reg.register_name == "fp":
             return self.uses_framepointer
         return False
-
-    def address_of_gsym(self, sym: "GlobalSymbol") -> "Expression":
-        ent = self.global_info.rodata_value(sym.symbol_name)
-        if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
-            return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
-        type = Type.ptr(sym.type)
-        typemap = self.global_info.typemap
-        if typemap:
-            ctype = typemap.var_types.get(sym.symbol_name)
-            if ctype:
-                ctype_type, is_ptr = ptr_type_from_ctype(ctype, typemap)
-                if is_ptr:
-                    return as_type(sym, ctype_type, True)
-                else:
-                    type.unify(ctype_type)
-                    type = ctype_type
-        return AddressOf(sym, type=type)
 
     def get_struct_type_map(self) -> Dict["Expression", Dict[int, Type]]:
         """Reorganize struct information in unique_type_map by var & offset"""
@@ -1200,7 +1177,7 @@ class Lwl(Expression):
         return [self.load_expr]
 
     def format(self, fmt: Formatter) -> str:
-        return f"LWL({self.load_expr.format(fmt)})"
+        return f"MIPS2C_LWL({self.load_expr.format(fmt)})"
 
 
 @attr.s(frozen=True)
@@ -1212,6 +1189,8 @@ class Load3Bytes(Expression):
         return [self.load_expr]
 
     def format(self, fmt: Formatter) -> str:
+        if fmt.valid_syntax:
+            return f"MIPS2C_FIRST3BYTES({self.load_expr.format(fmt)})"
         return f"(first 3 bytes) {self.load_expr.format(fmt)}"
 
 
@@ -1224,6 +1203,8 @@ class UnalignedLoad(Expression):
         return [self.load_expr]
 
     def format(self, fmt: Formatter) -> str:
+        if fmt.valid_syntax:
+            return f"MIPS2C_UNALIGNED32({self.load_expr.format(fmt)})"
         return f"(unaligned s32) {self.load_expr.format(fmt)}"
 
 
@@ -1582,7 +1563,7 @@ class InstrArgs:
         arg = strip_macros(self.raw_arg(index))
         ret = literal_expr(arg, self.stack_info)
         if isinstance(ret, GlobalSymbol):
-            return self.stack_info.address_of_gsym(ret)
+            return self.stack_info.global_info.address_of_gsym(ret.symbol_name)
         return ret
 
     def imm(self, index: int) -> Expression:
@@ -1651,7 +1632,7 @@ def deref(
             return stack_info.get_stack_var(offset, store=store)
         var = regs[arg.rhs]
     else:
-        var = stack_info.address_of_gsym(stack_info.global_symbol(arg.sym))
+        var = stack_info.global_info.address_of_gsym(arg.sym.symbol_name)
 
     # Struct member is being dereferenced.
 
@@ -1913,7 +1894,7 @@ def unwrap_deep(expr: Expression) -> Expression:
 
 def literal_expr(arg: Argument, stack_info: StackInfo) -> Expression:
     if isinstance(arg, AsmGlobalSymbol):
-        return stack_info.global_symbol(arg)
+        return stack_info.global_info.global_symbol(arg.symbol_name)
     if isinstance(arg, AsmLiteral):
         return Literal(arg.value)
     if isinstance(arg, BinOp):
@@ -1972,7 +1953,7 @@ def load_upper(args: InstrArgs) -> Expression:
         raise DecompFailure(f"Invalid %hi argument {hi_arg}")
 
     stack_info = args.stack_info
-    source = stack_info.address_of_gsym(stack_info.global_symbol(sym))
+    source = stack_info.global_info.address_of_gsym(sym.symbol_name)
     imm = Literal(offset)
     return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info)
 
@@ -1995,7 +1976,7 @@ def handle_la(args: InstrArgs) -> Expression:
                 stack_info=args.stack_info,
             )
         )
-    var = stack_info.address_of_gsym(stack_info.global_symbol(target.sym))
+    var = stack_info.global_info.address_of_gsym(target.sym.symbol_name)
     return add_imm(var, Literal(target.offset), stack_info)
 
 
@@ -2131,7 +2112,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     # For now, make the cast silent so that output doesn't become cluttered.
     # Though really, it would be great to expose the load types somehow...
-    size = type.get_size_bits() // 8
+    # If the type size is unknown, default to 32 bits
+    size = (type.get_size_bits() or 32) // 8
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     # Detect rodata constants
@@ -2143,12 +2125,14 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             and type.is_float()
         ):
             sym_name = target.expr.symbol_name
-            ent = args.stack_info.global_info.rodata_value(sym_name)
+            ent = args.stack_info.global_info.asm_data_value(sym_name)
             if (
                 ent
                 and ent.data
                 and isinstance(ent.data[0], bytes)
                 and len(ent.data[0]) >= size
+                and ent.is_readonly
+                and type.unify(target.expr.type)
             ):
                 data = ent.data[0][:size]
                 val: int
@@ -2206,7 +2190,8 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
-    size = type.get_size_bits() // 8
+    # If the type size is unknown, default to 32 bits
+    size = (type.get_size_bits() or 32) // 8
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_raw = args.regs.get_raw(source_reg)
@@ -3703,10 +3688,11 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 @attr.s
 class GlobalInfo:
     asm_data: AsmData = attr.ib()
+    local_functions: Set[str] = attr.ib()
     typemap: Optional[TypeMap] = attr.ib()
     symbol_type_map: Dict[str, "Type"] = attr.ib(factory=dict)
 
-    def rodata_value(self, sym_name: str) -> Optional[AsmDataEntry]:
+    def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         entry = self.asm_data.values.get(sym_name)
         if entry and entry.is_readonly:
             return entry
@@ -3717,20 +3703,162 @@ class GlobalInfo:
             self.symbol_type_map[sym_name] = Type.any()
         return self.symbol_type_map[sym_name]
 
-    def global_decls(self, fmt: Formatter) -> str:
-        lines = []
-        for name, type in self.symbol_type_map.items():
-            if self.typemap and name in self.typemap.var_types:
-                continue
-            is_static = name in self.asm_data.values
-            order = (is_static, name)
-            prefix = ""
-            if is_static:
-                prefix = "static "
-            elif not type.is_function():
-                prefix = "extern "
+    def global_symbol(self, sym_name: str) -> "GlobalSymbol":
+        return GlobalSymbol(
+            symbol_name=sym_name,
+            type=self.symbol_type(sym_name),
+        )
 
-            lines.append((order, f"{prefix}{type.to_decl(name, fmt)};\n"))
+    def address_of_gsym(self, sym_name: str) -> Expression:
+        ent = self.asm_data_value(sym_name)
+        if ent and ent.is_string and ent.data and isinstance(ent.data[0], bytes):
+            return StringLiteral(ent.data[0], type=Type.ptr(Type.s8()))
+        sym = self.global_symbol(sym_name)
+        type = Type.ptr(sym.type)
+        if self.typemap:
+            ctype = self.typemap.var_types.get(sym_name)
+            if ctype:
+                ctype_type, is_ptr = ptr_type_from_ctype(ctype, self.typemap)
+                if is_ptr:
+                    return as_type(sym, ctype_type, True)
+                else:
+                    type.unify(ctype_type)
+                    type = ctype_type
+        return AddressOf(sym, type=type)
+
+    def data_to_initializer(
+        self, type: Type, data: List[Union[str, bytes]], fmt: Formatter
+    ) -> Optional[str]:
+        data = data[:]
+
+        def read_uint(n: int) -> Optional[int]:
+            """Read the next `n` bytes from `data` as an (long) integer"""
+            assert 0 < n <= 8
+            if not data or not isinstance(data[0], bytes):
+                return None
+            if len(data[0]) < n:
+                return None
+            bs = data[0][:n]
+            data[0] = data[0][n:]
+            if not data[0]:
+                del data[0]
+            value = 0
+            for b in bs:
+                value = (value << 8) | b
+            return value
+
+        def read_pointer() -> Optional[Expression]:
+            """Read the next label from `data`"""
+            if not data:
+                return None
+
+            if not isinstance(data[0], str):
+                # Bare pointer
+                value = read_uint(4)
+                if value is None:
+                    return None
+                return Literal(value=value)
+
+            # Pointer label
+            label = data.pop(0)
+            assert isinstance(label, str)
+            return self.address_of_gsym(label)
+
+        if type.is_int() or type.is_float():
+            size_bits = type.get_size_bits()
+            if size_bits == 0:
+                return None
+            elif size_bits is None:
+                # Unknown size; guess 32 bits
+                size_bits = 32
+            value = read_uint(size_bits // 8)
+            if value is not None:
+                return Literal(value, type).format(fmt)
+
+        if type.is_pointer():
+            ptr = read_pointer()
+            if ptr is not None:
+                return as_type(ptr, type, True).format(fmt)
+
+        if type.is_ctype():
+            # TODO: Generate initializers for structs/arrays/etc.
+            return None
+
+        # Type kinds K_FN and K_VOID do not have initializers
+        return None
+
+    def global_decls(self, fmt: Formatter) -> str:
+        # Format labels from symbol_type_map into global declarations.
+        # As the initializers are formatted, this may cause more symbols
+        # to be added to the symbol_type_map.
+        lines = []
+        processed_names: Set[str] = set()
+        while True:
+            names = self.symbol_type_map.keys() - processed_names
+            if not names:
+                break
+            for name in sorted(names):
+                processed_names.add(name)
+                type = self.symbol_type_map[name]
+
+                # Is the label defined in this unit (in the active AsmData file(s))
+                is_in_file = (
+                    name in self.asm_data.values or name in self.local_functions
+                )
+                # Is the label externally visible (mentioned in the context file)
+                is_global = self.typemap and name in self.typemap.var_types
+                if not is_in_file and is_global:
+                    # Skip externally-declared symbols that are defined in other files
+                    continue
+                if is_in_file and is_global and type.is_function():
+                    # Skip externally-declared functions that are defined here
+                    continue
+
+                sort_order = (not type.is_function(), is_global, is_in_file, name)
+                qualifier = ""
+                initializer = ""
+                comments = []
+
+                # Determine type qualifier: static, extern, or neither
+                if is_in_file and is_global:
+                    qualifier = ""
+                elif is_in_file:
+                    qualifier = "static"
+                else:
+                    qualifier = "extern"
+
+                if type.is_function():
+                    comments.append(qualifier)
+                    qualifier = ""
+
+                # Try to convert the data from .data/.rodata into an initializer
+                entry = self.asm_data.values.get(name)
+                if entry is not None:
+                    if entry.is_readonly:
+                        comments.append("const")
+                    data_size = entry.size_bytes()
+                    type_size_bits = type.get_size_bits()
+                    if type_size_bits and data_size != type_size_bits // 8:
+                        # TODO: Use heuristic to detect padding
+                        type_size = type_size_bits // 8
+                        if data_size // type_size > 1:
+                            comments.append(f"array: [{data_size // type_size}]")
+                        if data_size % type_size != 0:
+                            comments.append(f"extra bytes: {data_size % type_size}")
+                    elif entry.is_readonly and type.is_float():
+                        # Float constants are almost always inlined and can be skipped
+                        continue
+                    initializer = self.data_to_initializer(type, entry.data, fmt) or ""
+
+                qualifier = f"{qualifier} " if qualifier else ""
+                initializer = f" = {initializer}" if initializer else ""
+                comment = f" // {'; '.join(comments)}" if comments else ""
+                lines.append(
+                    (
+                        sort_order,
+                        f"{qualifier}{type.to_decl(name, fmt)}{initializer};{comment}\n",
+                    )
+                )
         lines.sort()
         return "".join(line for _, line in lines)
 
@@ -3772,7 +3900,7 @@ def translate_to_ast(
     else:
         fn_type = Type.function()
         fn_decl_provided = False
-    fn_type.unify(stack_info.global_symbol(AsmGlobalSymbol(function.name)).type)
+    fn_type.unify(global_info.symbol_type(function.name))
 
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"

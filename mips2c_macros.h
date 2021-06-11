@@ -16,11 +16,16 @@
 #define MIPS2C_UNK32 s32
 #define MIPS2C_UNK64 s64
 
+/* Unknown field access, like `*(type_ptr) &expr->unk_offset` */
+#define MIPS2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
+
 /* Bitwise (reinterpret) cast */
 #define MIPS2C_BITWISE(type, expr) ((type)(expr))
 
-/* Unknown field access, like `*(type_ptr) &expr->unk_offset` */
-#define MIPS2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
+/* Unaligned reads */
+#define MIPS2C_LWL(expr) (expr)
+#define MIPS2C_FIRST3BYTES(expr) (expr)
+#define MIPS2C_UNALIGNED32(expr) (expr)
 
 /* Unhandled instructions */
 #define MIPS2C_ERROR(desc) (0)

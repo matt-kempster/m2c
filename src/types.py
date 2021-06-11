@@ -152,15 +152,15 @@ class Type:
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
 
-    def get_size_bits(self) -> int:
-        return self.data().size or 32
+    def get_size_bits(self) -> Optional[int]:
+        return self.data().size
 
     def get_size_align_bytes(self) -> Tuple[int, int]:
         data = self.data()
         if data.kind == TypeData.K_CTYPE and data.ctype_ref is not None:
             assert data.typemap is not None
             return var_size_align(data.ctype_ref, data.typemap)
-        size = self.get_size_bits() // 8
+        size = (self.get_size_bits() or 32) // 8
         return size, size
 
     def is_struct_type(self) -> bool:
