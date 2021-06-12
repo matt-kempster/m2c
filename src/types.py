@@ -265,7 +265,14 @@ class Type:
         if data.kind == TypeData.K_CTYPE:
             if data.ctype_ref is None:
                 return simple_ctype(unk_symbol)
-            return copy.deepcopy(data.ctype_ref)
+            ctype = copy.deepcopy(data.ctype_ref)
+            if isinstance(ctype, ca.TypeDecl) and isinstance(
+                ctype.type, (ca.Struct, ca.Union)
+            ):
+                if ctype.type.name is not None:
+                    # Remove struct field declarations for named structs
+                    ctype.type.decls = None
+            return ctype
 
         if data.kind == TypeData.K_FN:
             assert data.fn_sig is not None
@@ -513,7 +520,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
     if isinstance(real_ctype, ca.TypeDecl):
         if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
             struct = parse_struct(real_ctype.type, typemap)
-            return Type._ctype(ctype, typemap, size=struct.size * 8)
+            return Type._ctype(struct.type, typemap, size=struct.size * 8)
         names = (
             ["int"] if isinstance(real_ctype.type, ca.Enum) else real_ctype.type.names
         )
