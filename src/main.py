@@ -95,10 +95,6 @@ def run(options: Options) -> int:
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
-            if options.visualize_flowgraph:
-                visualize_flowgraph(build_flowgraph(function, mips_file.asm_data))
-                continue
-
             info = translate_to_ast(function, options, global_info)
             function_infos.append(info)
         except Exception as e:
@@ -106,6 +102,10 @@ def run(options: Options) -> int:
             function_infos.append(e)
 
     if options.visualize_flowgraph:
+        fn_info = function_infos[0]
+        if isinstance(fn_info, Exception):
+            raise fn_info
+        visualize_flowgraph(fn_info.flow_graph)
         return 0
 
     fmt = options.formatter()
