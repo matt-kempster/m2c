@@ -5,6 +5,7 @@ from typing import Any, Counter, Dict, Iterator, List, Optional, Set, Tuple, Uni
 import attr
 
 from .error import DecompFailure
+from .options import Formatter
 from .parse_file import Function, Label, AsmData
 from .parse_instruction import (
     AsmAddressMode,
@@ -1174,16 +1175,47 @@ def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
 def visualize_flowgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
 
-    dot = g.Digraph()
+    fmt = Formatter(debug=True)
+    dot = g.Digraph(
+        node_attr={
+            "shape": "rect",
+            "fontname": "Monospace",
+        },
+        edge_attr={
+            "fontname": "Monospace",
+        },
+    )
     for node in flow_graph.nodes:
-        dot.node(node.name())
+        block_info = node.block.block_info
+        # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
+        label = f"// Node {node.name()}\l"
+        if block_info:
+            label += "".join(
+                w.format(fmt) + "\l" for w in block_info.to_write if w.should_write()
+            )
+        dot.node(node.name(), shape="rect", fontname="Monospace")
         if isinstance(node, BasicNode):
-            dot.edge(node.name(), node.successor.name(), color="green")
+            dot.edge(node.name(), node.successor.name(), color="black")
         elif isinstance(node, ConditionalNode):
-            dot.edge(node.name(), node.fallthrough_edge.name(), color="blue")
-            dot.edge(node.name(), node.conditional_edge.name(), color="red")
+            if block_info:
+                label += f"if ({block_info.branch_condition.format(fmt)})\l"
+            dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
+            dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
+        elif isinstance(node, ReturnNode):
+            if block_info and block_info.return_value:
+                label += f"return ({block_info.return_value.format(fmt)});\l"
+            else:
+                label += f"return;\l"
+            dot.node(node.name(), shape="rect")
         else:
-            pass
+            assert isinstance(node, SwitchNode)
+            if block_info:
+                label += f"switch ({block_info.switch_value.format(fmt)})\l"
+            for i, case in enumerate(node.cases):
+                dot.edge(node.name(), case.name(), label=str(i), color="green")
+        dot.node(node.name(), label=label)
     dot.render("graphviz_render.gv")
     print("Rendered to graphviz_render.gv.pdf")
-    print("Key: green = successor, red = conditional edge, blue = fallthrough edge")
+    print(
+        "Key: black = successor, red = conditional edge, blue = fallthrough edge, green = switch case"
+    )
