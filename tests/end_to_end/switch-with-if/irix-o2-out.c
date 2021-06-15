@@ -9,14 +9,15 @@ void test(s32 arg0) {
         D_4101D0 = 1;
         if (arg0 == 1) {
             D_4101D0 = 2;
-            goto block_7;
-        case 1: // switch 1
-            if (arg0 == 1) {
-                D_4101D0 = 1;
-            } else {
-                D_4101D0 = 2;
-            }
         }
+        goto block_7;
+    case 1: // switch 1
+        if (arg0 == 1) {
+            D_4101D0 = 1;
+        } else {
+            D_4101D0 = 2;
+        }
+        goto block_7;
     }
 block_7:
     temp_t1 = arg0 - 1;
@@ -27,12 +28,14 @@ block_7:
         if (arg0 == 1) {
             D_4101D0 = 2;
             return;
-        case 1: // switch 2
-            if (arg0 == 1) {
-                D_4101D0 = 1;
-                return;
-            }
-            D_4101D0 = 2;
         }
+        return;
+    case 1: // switch 2
+        if (arg0 == 1) {
+            D_4101D0 = 1;
+            return;
+        }
+        D_4101D0 = 2;
+        return;
     }
 }

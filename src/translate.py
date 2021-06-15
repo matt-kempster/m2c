@@ -17,6 +17,7 @@ from .flow_graph import (
     Node,
     ReturnNode,
     SwitchNode,
+    TerminalNode,
     build_flowgraph,
 )
 from .options import CodingStyle, Options, Formatter, DEFAULT_CODING_STYLE
@@ -3086,6 +3087,8 @@ def compute_has_custom_return(nodes: List[Node]) -> None:
     while changed:
         changed = False
         for n in nodes:
+            if isinstance(n, TerminalNode):
+                continue
             block_info = n.block.block_info
             assert isinstance(block_info, BlockInfo)
             if block_info.has_custom_return or block_info.has_function_call:
@@ -3652,6 +3655,8 @@ def translate_graph_from_block(
     # final register state. This will eventually reach every node.
     typemap = stack_info.global_info.typemap
     for child in node.immediately_dominates:
+        if isinstance(child, TerminalNode):
+            continue
         new_contents = regs.contents.copy()
         phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:
