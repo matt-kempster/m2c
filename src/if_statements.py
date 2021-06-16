@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
+from .error import DecompFailure
 from .flow_graph import (
     BasicNode,
     ConditionalNode,
@@ -639,7 +640,11 @@ def build_flowgraph_between(context: Context, start: Node, end: Node) -> Body:
             body.add_switch(build_switch_between(context, curr_start, curr_end))
         else:
             # No branch, but check that we didn't skip any nodes
-            assert curr_start.children() == {curr_end}
+            if curr_start.children() != {curr_end}:
+                raise DecompFailure(
+                    f"While emitting flowgraph between {start.name()}:{end.name()}, "
+                    f"skipped nodes while stepping from {curr_start.name()} to {curr_end.name()}."
+                )
 
         # Move on.
         curr_start = curr_end

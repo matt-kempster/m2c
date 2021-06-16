@@ -1287,7 +1287,6 @@ class FlowGraph:
 
         https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility
         """
-
         # Kahn's Algorithm, with backedges excluded
         # https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm
         seen = set()
@@ -1312,6 +1311,20 @@ class FlowGraph:
             return False
         if len(seen) != len(self.nodes):
             # Not all nodes are reachable from the entry node
+            return False
+
+        # Traverse the graph again, but starting at the terminal and following
+        # all edges backwards, to ensure that it is possible to reach the exit
+        # from every node. We don't need to look for loops this time.
+        seen = set()
+        queue = {self.terminal_node()}
+        while queue:
+            n = queue.pop()
+            seen.add(n)
+            queue.update(n.children() - seen)
+
+        if len(seen) != len(self.nodes):
+            # Not all nodes can reach the terminal node
             return False
         return True
 
