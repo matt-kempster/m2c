@@ -289,6 +289,7 @@ def emit_node(context: Context, node: Node, body: Body) -> bool:
 
 
 def emit_goto(context: Context, target: Node, body: Body) -> None:
+    assert not isinstance(target, TerminalNode), "cannot goto a TerminalNode"
     label = label_for_node(context, target)
     context.goto_nodes.add(target)
     body.add_statement(SimpleStatement(f"goto {label};", is_jump=True))
@@ -312,11 +313,7 @@ def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> Non
     This is similar to `emit_node`, but won't write the node body here unless
     the node is a return.
     """
-    if isinstance(target, TerminalNode):
-        # Terminal nodes have no explicit C representation,
-        # they are always reached by going through a return node
-        pass
-    elif isinstance(target, ReturnNode):
+    if isinstance(target, ReturnNode):
         emit_node(context, target, body)
     else:
         emit_goto(context, target, body)
