@@ -574,16 +574,22 @@ def build_switch_between(
     end: Node,
 ) -> SwitchStatement:
     """Output the subgraph between `start` and `end`, including the jump
-    in the SwitchStatement `start`."""
+    in the SwitchStatement `start`, but not including `end`"""
     body = Body(print_node_comment=context.options.debug)
     jump = switch_jump(context, start)
+    emitted_cases: Set[Node] = set()
 
     for case in start.cases:
         if case in context.emitted_nodes:
             continue
+        if case == end:
+            # We are not responsible for emitting `end`
+            continue
+
         body.extend(build_flowgraph_between(context, case, end))
         # TODO: This could be a `break;` statement
-        emit_goto_or_early_return(context, end, body)
+        if not body.ends_in_jump():
+            emit_goto_or_early_return(context, end, body)
     return SwitchStatement(jump, body)
 
 
@@ -741,7 +747,7 @@ def build_body(context: Context, options: Options) -> Body:
         - {context.flow_graph.terminal_node()}
     )
     for node in unemitted_nodes:
-        body.add_comment("bug: did not emit code for node #{node.name()}")
+        body.add_comment(f"bug: did not emit code for node #{node.name()}")
 
     return body
 
