@@ -1287,6 +1287,7 @@ class FlowGraph:
 
         https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility
         """
+
         # Kahn's Algorithm, with backedges excluded
         # https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm
         seen = set()
@@ -1321,7 +1322,7 @@ class FlowGraph:
         while queue:
             n = queue.pop()
             seen.add(n)
-            queue.update(n.children() - seen)
+            queue.update(set(n.parents) - seen)
 
         if len(seen) != len(self.nodes):
             # Not all nodes can reach the terminal node
