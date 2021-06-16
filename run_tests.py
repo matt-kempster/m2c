@@ -182,7 +182,7 @@ def create_project_tests(
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 
-        # Guess the name of .data/.rodata file(s) for the OOT/MM decomp projects
+        # Guess the name of .data/.rodata file(s) for various decomp projects
         for candidate in [
             # mm code/*.asm
             "code_data_" + asm_name,
@@ -207,6 +207,14 @@ def create_project_tests(
             f = asm_file.parent / candidate
             if f.exists():
                 flags.extend(["--rodata", str(f)])
+        # papermario
+        papermario_data_path = Path(
+            str(asm_file).replace("/nonmatchings/", "/data/")
+        ).parent.parent
+        for f in papermario_data_path.glob("*.data.s"):
+            flags.extend(["--rodata", str(f)])
+        for f in papermario_data_path.glob("*.rodata.s"):
+            flags.extend(["--rodata", str(f)])
 
         test_path = asm_file.relative_to(asm_dir)
         name = f"{name_prefix}:{test_path}"
