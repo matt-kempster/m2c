@@ -20,10 +20,13 @@ from .translate import (
     Expression,
     Formatter,
     FunctionInfo,
+    Statement as TrStatement,
+    SwitchControl,
+    format_expr,
     get_block_info,
+    simplify_condition,
 )
-from .translate import Statement as TrStatement
-from .translate import Type, format_expr, simplify_condition
+from .types import Type
 
 
 @dataclass
@@ -37,7 +40,6 @@ class Context:
         default_factory=lambda: defaultdict(list)
     )
     goto_nodes: Set[Node] = field(default_factory=set)
-    loop_nodes: Set[Node] = field(default_factory=set)
     emitted_nodes: Set[Node] = field(default_factory=set)
     has_warned: bool = False
 
@@ -85,17 +87,33 @@ class IfElseStatement:
 
 @dataclass
 class SwitchStatement:
-    jump: "SimpleStatement"
+    # If `jump` is a `SwitchControl`, then we can emit a proper `switch (...) { ... }`
+    # block. Otherwise, it is a `SimpleStatement` with a `goto ...;`.
+    jump: Union[SwitchControl, "SimpleStatement"]
     body: "Body"
+    # If there are multiple switch statements in a single function, each is given a
+    # unique index starting at 1. This is used in comments to make control flow clear.
+    index: int = 0
 
     def should_write(self) -> bool:
         return True
 
     def format(self, fmt: Formatter) -> str:
-        lines = [
-            self.jump.format(fmt),
-            self.body.format(fmt),
-        ]
+        lines = []
+        comment = f" // switch {self.index}" if self.index > 0 else ""
+        if isinstance(self.jump, SimpleStatement):
+            # We weren't able to parse the switch control expression, so emit a goto
+            lines.append(f"{self.jump.format(fmt)}{comment}")
+            lines.append(fmt.indent("{"))
+        else:
+            lines.append(
+                fmt.indent(
+                    f"switch ({format_expr(self.jump, fmt)}) {{{comment}",
+                )
+            )
+        with fmt.indented():
+            lines.append(self.body.format(fmt))
+        lines.append(fmt.indent("}"))
         return "\n".join(lines)
 
 
@@ -273,7 +291,7 @@ class Body:
 
 
 def label_for_node(context: Context, node: Node) -> str:
-    if node in context.loop_nodes:
+    if node.loop:
         return f"loop_{node.block.index}"
     else:
         return f"block_{node.block.index}"
@@ -320,15 +338,45 @@ def emit_goto(context: Context, target: Node, body: Body) -> None:
     body.add_statement(SimpleStatement(f"goto {label};", is_jump=True))
 
 
+def add_labels_for_switch(
+    context: Context, node: SwitchNode, default_node: Optional[Node]
+) -> None:
+    assert node.cases, "jtbl list must not be empty"
+    if node not in context.switch_nodes:
+        if sum(isinstance(n, SwitchNode) for n in context.flow_graph.nodes) == 1:
+            # There is only one switch in this function (no need to label)
+            context.switch_nodes[node] = 0
+        else:
+            context.switch_nodes[node] = len(context.switch_nodes) + 1
+    switch_index = context.switch_nodes[node]
+
+    # Determine offset
+    offset = 0
+    switch_control = get_block_info(node).switch_value
+    if isinstance(switch_control, SwitchControl):
+        offset = switch_control.offset
+
+    # Mark which labels we need to emit
+    if default_node is not None:
+        # `-1` is a sentinel value to mark the `default:` block
+        context.case_nodes[default_node].append((switch_index, -1))
+    for index, target in enumerate(node.cases):
+        # Do not emit extra `case N:` labels for the `default:` block
+        if target == default_node:
+            continue
+        # Do not emit labels that skip the switch block entirely
+        if target == node.immediate_postdominator:
+            continue
+        context.case_nodes[target].append((switch_index, index + offset))
+
+
 def switch_jump(context: Context, node: SwitchNode) -> SimpleStatement:
+    switch_index = context.switch_nodes[node]
     block_info = get_block_info(node)
     expr = block_info.switch_value
     assert expr is not None
-    switch_index = context.switch_nodes.get(node, 0)
-    comment = f" // switch {switch_index}" if switch_index else ""
-    return SimpleStatement(
-        f"goto *{format_expr(expr, context.fmt)};{comment}", is_jump=True
-    )
+
+    return SimpleStatement(f"goto *{format_expr(expr, context.fmt)};", is_jump=True)
 
 
 def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> None:
@@ -600,27 +648,56 @@ def emit_return(context: Context, node: ReturnNode, body: Body) -> None:
 
 def build_switch_between(
     context: Context,
-    start: SwitchNode,
+    switch: SwitchNode,
     end: Node,
 ) -> SwitchStatement:
-    """Output the subgraph between `start` and `end`, including the jump
-    in the SwitchStatement `start`, but not including `end`"""
-    body = Body(print_node_comment=context.options.debug)
-    jump = switch_jump(context, start)
-    emitted_cases: Set[Node] = set()
+    """
+    Output the subgraph between `switch` and `end`, but not including `end`.
+    The returned SwitchStatement starts with the jump to the switch's value.
+    """
+    # Try to detect the default node by looking at the switch's parent
+    default_node: Optional[Node] = None
+    if (
+        len(switch.parents) == 1
+        and isinstance(switch.parents[0], ConditionalNode)
+        and switch.parents[0].fallthrough_edge is switch
+        and switch.parents[0].conditional_edge is not end
+    ):
+        default_node = switch.parents[0].conditional_edge
 
-    for case in start.cases:
-        if case in context.emitted_nodes:
-            continue
-        if case == end:
-            # We are not responsible for emitting `end`
-            continue
+    add_labels_for_switch(context, switch, default_node)
+    switch_index = context.switch_nodes[switch]
+    comment = f" // switch {switch_index}" if switch_index else ""
 
-        body.extend(build_flowgraph_between(context, case, end))
-        # TODO: This could be a `break;` statement
-        if not body.ends_in_jump():
-            emit_goto_or_early_return(context, end, body)
-    return SwitchStatement(jump, body)
+    jump: Optional[Union[Expression, SimpleStatement]]
+    jump = get_block_info(switch).switch_value
+    if not isinstance(jump, SwitchControl):
+        jump = switch_jump(context, switch)
+
+    switch_body = Body(print_node_comment=context.options.debug)
+
+    # Order case blocks by their position in the asm, not by their order in the jump table
+    sorted_cases = sorted(set(switch.cases), key=lambda node: node.block.index)
+    next_sorted_cases: List[Optional[Node]] = []
+    next_sorted_cases.extend(sorted_cases[1:])
+    next_sorted_cases.append(None)
+    for case, next_case in zip(sorted_cases, next_sorted_cases):
+        if case in context.emitted_nodes or case is end:
+            pass
+        elif (
+            next_case is not None
+            and next_case not in context.emitted_nodes
+            and next_case is not end
+            and next_case in case.postdominators
+        ):
+            switch_body.extend(build_flowgraph_between(context, case, next_case))
+            if not switch_body.ends_in_jump():
+                switch_body.add_comment(f"fallthrough")
+        else:
+            switch_body.extend(build_flowgraph_between(context, case, end))
+            if not switch_body.ends_in_jump():
+                switch_body.add_statement(SimpleStatement("break;", is_jump=True))
+    return SwitchStatement(jump, switch_body, switch_index)
 
 
 def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoop]:
@@ -767,6 +844,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             emit_node(context, node, body)
             emit_successor(node.successor, i)
         elif isinstance(node, SwitchNode):
+            add_labels_for_switch(context, node, None)
             emit_node(context, node, body)
             body.add_statement(switch_jump(context, node))
         elif isinstance(node, ConditionalNode):
@@ -793,30 +871,6 @@ def build_body(context: Context, options: Options) -> Body:
     start_node: Node = context.flow_graph.entry_node()
     terminal_node: Node = context.flow_graph.terminal_node()
     is_reducible = context.flow_graph.is_reducible()
-
-    num_switches = len(
-        [node for node in context.flow_graph.nodes if isinstance(node, SwitchNode)]
-    )
-    switch_index = 0
-    for node in context.flow_graph.nodes:
-        if node.loop is not None:
-            context.loop_nodes.add(node)
-        if isinstance(node, SwitchNode):
-            assert node.cases, "jtbl list must not be empty"
-            if num_switches > 1:
-                switch_index += 1
-            context.switch_nodes[node] = switch_index
-            most_common = max(node.cases, key=node.cases.count)
-            has_common = False
-            if node.cases.count(most_common) > 1:
-                context.case_nodes[most_common].append((switch_index, -1))
-                has_common = True
-            for index, target in enumerate(node.cases):
-                # (jump table entry 0 is never covered by 'default'; the compiler would
-                # do 'switch (x - 1)' in that case)
-                if has_common and target == most_common and index != 0:
-                    continue
-                context.case_nodes[target].append((switch_index, index))
 
     if options.debug:
         print("Here's the whole function!\n")

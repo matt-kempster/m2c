@@ -1356,6 +1356,64 @@ class PhiExpr(Expression):
 
 
 @dataclass
+class SwitchControl(Expression):
+    jump_table: GlobalSymbol
+    control_expr: Expression
+    offset: int = 0
+
+    def dependencies(self) -> List[Expression]:
+        return [self.jump_table, self.control_expr]
+
+    def format(self, fmt: Formatter) -> str:
+        return self.control_expr.format(fmt)
+
+    @staticmethod
+    def try_from_expr(expr: Expression) -> Optional["SwitchControl"]:
+        """
+        Try to convert `expr` into a SwitchControl from one of the following forms:
+            - `*(&jump_table + (control_expr * 4))`
+            - `*(&jump_table + ((control_expr + (-offset)) * 4))`
+        If `expr` does not match, return `None`. If `offset` is not present, it defaults to 0.
+        """
+        # Match `*(&jump_table + (control_expr * 4))`
+        struct_expr = early_unwrap(expr)
+        if not isinstance(struct_expr, StructAccess) or struct_expr.offset != 0:
+            return None
+        add_expr = early_unwrap(struct_expr.struct_var)
+        if not isinstance(add_expr, BinaryOp) or add_expr.op != "+":
+            return None
+        jtbl_addr_expr = early_unwrap(add_expr.left)
+        if not isinstance(jtbl_addr_expr, AddressOf) or not isinstance(
+            jtbl_addr_expr.expr, GlobalSymbol
+        ):
+            return None
+        jump_table = jtbl_addr_expr.expr
+        mul_expr = early_unwrap(add_expr.right)
+        if (
+            not isinstance(mul_expr, BinaryOp)
+            or mul_expr.op != "*"
+            or early_unwrap(mul_expr.right) != Literal(4)
+        ):
+            return None
+        control_expr = mul_expr.left
+
+        # Optionally match `control_expr + (-offset)`
+        offset = 0
+        uw_control_expr = early_unwrap(control_expr)
+        if isinstance(uw_control_expr, BinaryOp) and uw_control_expr.op == "+":
+            offset_lit = early_unwrap(uw_control_expr.right)
+            if isinstance(offset_lit, Literal):
+                control_expr = uw_control_expr.left
+                offset = -offset_lit.value
+
+        # Check that it is really a jump table (these prefixes are copied from `build_graph_from_block`)
+        if not jump_table.symbol_name[:4] in ("jtbl", "jpt_"):
+            return None
+
+        return SwitchControl(jump_table, control_expr, offset)
+
+
+@dataclass
 class EvalOnceStmt(Statement):
     expr: EvalOnceExpr
 
@@ -3608,6 +3666,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     if branch_condition is not None:
         branch_condition.use()
     if switch_value is not None:
+        switch_control = SwitchControl.try_from_expr(switch_value)
+        if switch_control is not None:
+            switch_value = switch_control
         switch_value.use()
     return_value: Optional[Expression] = None
     if isinstance(node, ReturnNode):
