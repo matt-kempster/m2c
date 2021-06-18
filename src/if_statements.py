@@ -644,11 +644,10 @@ def build_flowgraph_between(context: Context, start: Node, end: Node) -> Body:
         else:
             # No branch, but double check that we didn't skip any nodes.
             # If the check fails, then the immediate_postdominator computation was wrong
-            if curr_start.children() != [curr_end]:
-                raise DecompFailure(
-                    f"While emitting flowgraph between {start.name()}:{end.name()}, "
-                    f"skipped nodes while stepping from {curr_start.name()} to {curr_end.name()}."
-                )
+            assert curr_start.children() == [curr_end], (
+                f"While emitting flowgraph between {start.name()}:{end.name()}, "
+                f"skipped nodes while stepping from {curr_start.name()} to {curr_end.name()}."
+            )
 
         # Move on.
         curr_start = curr_end
