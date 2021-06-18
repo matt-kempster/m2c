@@ -64,6 +64,8 @@ class Formatter:
 
     @contextlib.contextmanager
     def indented(self) -> Iterator[None]:
-        self.extra_indent += 1
-        yield
-        self.extra_indent -= 1
+        try:
+            self.extra_indent += 1
+            yield
+        finally:
+            self.extra_indent -= 1

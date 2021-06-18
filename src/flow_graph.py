@@ -1,3 +1,4 @@
+import abc
 import copy
 import typing
 from typing import (
@@ -763,7 +764,7 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
 
 
 @attr.s(eq=False)
-class BaseNode:
+class BaseNode(abc.ABC):
     block: Block = attr.ib()
     emit_goto: bool = attr.ib()
     parents: List["Node"] = attr.ib(init=False, factory=list)
@@ -781,17 +782,17 @@ class BaseNode:
     def name(self) -> str:
         return str(self.block.index)
 
-    def children(self) -> Set["Node"]:
-        # Must be implemented by subclass
-        raise NotImplementedError
+    @abc.abstractmethod
+    def children(self) -> List["Node"]:
+        ...
 
 
 @attr.s(eq=False)
 class BasicNode(BaseNode):
     successor: "Node" = attr.ib()
 
-    def children(self) -> Set["Node"]:
-        return {self.successor}
+    def children(self) -> List["Node"]:
+        return [self.successor]
 
     def __str__(self) -> str:
         return "".join(
@@ -809,8 +810,10 @@ class ConditionalNode(BaseNode):
     conditional_edge: "Node" = attr.ib()
     fallthrough_edge: "Node" = attr.ib()
 
-    def children(self) -> Set["Node"]:
-        return {self.conditional_edge, self.fallthrough_edge}
+    def children(self) -> List["Node"]:
+        if self.conditional_edge == self.fallthrough_edge:
+            return [self.conditional_edge]
+        return [self.conditional_edge, self.fallthrough_edge]
 
     def __str__(self) -> str:
         return "".join(
@@ -831,8 +834,8 @@ class ReturnNode(BaseNode):
     index: int = attr.ib()
     terminal: "TerminalNode" = attr.ib()
 
-    def children(self) -> Set["Node"]:
-        return {self.terminal}
+    def children(self) -> List["Node"]:
+        return [self.terminal]
 
     def name(self) -> str:
         name = super().name()
@@ -855,8 +858,15 @@ class ReturnNode(BaseNode):
 class SwitchNode(BaseNode):
     cases: List["Node"] = attr.ib()
 
-    def children(self) -> Set["Node"]:
-        return set(self.cases)
+    def children(self) -> List["Node"]:
+        # Deduplicate nodes in `self.cases`
+        seen = set()
+        children = []
+        for node in self.cases:
+            if node not in seen:
+                seen.add(node)
+                children.append(node)
+        return children
 
     def __str__(self) -> str:
         targets = ", ".join(str(c.block.index) for c in self.cases)
@@ -865,12 +875,21 @@ class SwitchNode(BaseNode):
 
 @attr.s(eq=False)
 class TerminalNode(BaseNode):
+    """
+    This is a fictive node that acts as a common postdominator for every node
+    in the flowgraph. There should be exactly one TerminalNode per flowgraph.
+    This is sometimes referred to as the "exit node", and having it makes it
+    easier to perform interval/structural analysis on the flowgraph.
+    This node has no `block_info` or contents: it has no corresponding assembly
+    and emits no C code.
+    """
+
     @staticmethod
     def terminal() -> "TerminalNode":
         return TerminalNode(Block(-1, None, "", []), False)
 
-    def children(self) -> Set["Node"]:
-        return set()
+    def children(self) -> List["Node"]:
+        return []
 
     def __str__(self) -> str:
         return "return"
@@ -1068,7 +1087,7 @@ def reachable_without(start: Node, end: Node, without: Node) -> bool:
         if node == without or node in reachable:
             continue
         reachable.add(node)
-        stack.extend(list(node.children()))
+        stack.extend(node.children())
 
     return end in reachable
 
@@ -1089,7 +1108,7 @@ def build_nodes(
     build_graph_from_block(entry_block, blocks, graph, asm_data)
 
     # Give the TerminalNode a new index so that it sorts to the end of the list
-    assert len([n for n in graph if isinstance(n, TerminalNode)]) == 1
+    assert [n for n in graph if isinstance(n, TerminalNode)] == [terminal_node]
     terminal_node.block.index = max(n.block.index for n in graph) + 1
 
     # Sort the nodes by index.
@@ -1169,7 +1188,7 @@ def compute_relations(nodes: List[Node]) -> None:
 
     def compute_dominators(
         entry: Node,
-        parents: Callable[[Node], Set[Node]],
+        parents: Callable[[Node], List[Node]],
         dominators: Callable[[Node], Set[Node]],
         immediately_dominates: Callable[[Node], List[Node]],
         set_immediate_dominator: Callable[[Node, Optional[Node]], None],
@@ -1227,7 +1246,7 @@ def compute_relations(nodes: List[Node]) -> None:
     # Compute dominators & immediate dominators
     compute_dominators(
         entry=entry,
-        parents=lambda n: set(n.parents),
+        parents=lambda n: n.parents,
         dominators=lambda n: n.dominators,
         immediately_dominates=lambda n: n.immediately_dominates,
         set_immediate_dominator=_set_immediate_dominator,

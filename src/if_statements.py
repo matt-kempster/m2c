@@ -206,8 +206,10 @@ class Body:
 
     def ends_in_jump(self) -> bool:
         """
-        Returns True if the body ends in an unconditional jump, which
-        may allow for some syntax transformations.
+        Returns True if the body ends in an unconditional jump (`goto` or `return`),
+        which may allow for some syntax transformations.
+        For example, this is True for bodies ending in a ReturnNode, because
+        `return ...;` statements are marked with is_jump.
         This function is conservative: it only returns True if we're
         *sure* if the control flow won't continue past the Body boundary.
         """
@@ -273,9 +275,11 @@ def emit_node(context: Context, node: Node, body: Body) -> bool:
     Since nodes represent positions in assembly, and we use phi's for preserved
     variable contents, this will end up semantically equivalent. This can happen
     sometimes when early returns/continues/|| are not detected correctly, and
-    this hints at that situation better than if we just blindly duplciate the block
+    this hints at that situation better than if we just blindly duplicate the block
     """
     if node in context.emitted_nodes:
+        # TODO: Treating ReturnNode as a special case and emitting it repeatedly
+        # hides the fact that we failed to fold the control flow. Maybe remove?
         if not isinstance(node, ReturnNode):
             emit_goto(context, node, body)
             return False
@@ -284,7 +288,7 @@ def emit_node(context: Context, node: Node, body: Body) -> bool:
         context.emitted_nodes.add(node)
 
     body.add_node(node, comment_empty=True)
-    if isinstance(node, ReturnNode):  # and not node.is_real():
+    if isinstance(node, ReturnNode):
         emit_return(context, node, body)
     return True
 
@@ -617,7 +621,6 @@ def build_flowgraph_between(context: Context, start: Node, end: Node) -> Body:
         if curr_start.emit_goto:
             # If we have decided to emit a goto here, then we should just fall
             # through to the next node by index, after writing a goto.
-            print(f">>> GOTO {curr_start.name()}")
             emit_goto(context, curr_start, body)
 
             # Advance to the next node in block order. This may skip over
@@ -639,8 +642,9 @@ def build_flowgraph_between(context: Context, start: Node, end: Node) -> Body:
         elif isinstance(curr_start, SwitchNode):
             body.add_switch(build_switch_between(context, curr_start, curr_end))
         else:
-            # No branch, but check that we didn't skip any nodes
-            if curr_start.children() != {curr_end}:
+            # No branch, but double check that we didn't skip any nodes.
+            # If the check fails, then the immediate_postdominator computation was wrong
+            if curr_start.children() != [curr_end]:
                 raise DecompFailure(
                     f"While emitting flowgraph between {start.name()}:{end.name()}, "
                     f"skipped nodes while stepping from {curr_start.name()} to {curr_end.name()}."
