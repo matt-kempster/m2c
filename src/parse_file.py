@@ -61,10 +61,7 @@ class AsmDataEntry:
 
         padding_size = 0
         if self.data and isinstance(self.data[-1], bytes):
-            if not len(self.data) == 1 and not isinstance(self.data[-2], str):
-                raise DecompFailure(
-                    "Invalid AsmDataEntry created with two `bytes` back-to-back"
-                )
+            assert len(self.data) == 1 or isinstance(self.data[-2], str)
             for b in self.data[-1][::-1]:
                 if b != 0:
                     break

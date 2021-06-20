@@ -523,7 +523,8 @@ def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[
 def get_field(
     type: Type, offset: int, typemap: TypeMap, *, target_size: Optional[int]
 ) -> Tuple[Optional[str], Type, Type, Optional[int]]:
-    """Returns field name, target type, target pointer type, and whether the field is an array."""
+    """Returns field name, target type, target pointer type, and
+    the field's array size (or None if the field is not an array)."""
     if target_size is None and offset == 0:
         # We might as well take a pointer to the whole struct
         target = type.get_pointer_target() or Type.any()

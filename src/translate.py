@@ -3721,10 +3721,7 @@ class GlobalInfo:
     global_symbol_map: Dict[str, GlobalSymbol] = attr.ib(factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
-        entry = self.asm_data.values.get(sym_name)
-        if entry:
-            return entry
-        return None
+        return self.asm_data.values.get(sym_name)
 
     def global_symbol(self, sym_name: str) -> GlobalSymbol:
         if sym_name not in self.global_symbol_map:
