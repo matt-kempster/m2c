@@ -830,7 +830,84 @@ class BinaryOp(Condition):
     def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
+    def simplify_gcc_divmod(self) -> Optional["BinaryOp"]:
+        if self.is_floating():
+            return None
+
+        uw = unwrap_casts_for_store
+        expr = self
+        left_expr = uw(expr.left)
+        right_expr = uw(expr.right)
+        shift = 0
+
+        if expr.op == "-" and isinstance(right_expr, BinaryOp) and right_expr.op == "*":
+            var = left_expr
+            mult_left_expr = uw(right_expr.left)
+            mod_base = uw(right_expr.right)
+            if not (
+                isinstance(mult_left_expr, BinaryOp) and isinstance(mod_base, Literal)
+            ):
+                return None
+            div_expr = mult_left_expr.simplify_gcc_divmod()
+            if not (
+                div_expr is not None
+                and div_expr.left == var
+                and div_expr.right == mod_base
+            ):
+                return None
+            return BinaryOp.int(
+                left=var,
+                op="%",
+                right=mod_base,
+            )
+
+        if (
+            expr.op == "-"
+            and isinstance(left_expr, BinaryOp)
+            and isinstance(right_expr, BinaryOp)
+            and right_expr.op == ">>"
+            and right_expr.right == Literal(31)
+        ):
+            div_expr = left_expr.simplify_gcc_divmod()
+            if div_expr is None:
+                return None
+            if uw(div_expr.left) != uw(right_expr.left):
+                return None
+            return div_expr
+
+        if (
+            expr.op == ">>"
+            and isinstance(left_expr, BinaryOp)
+            and isinstance(right_expr, Literal)
+        ):
+            shift += right_expr.value
+            expr = left_expr
+            left_expr = uw(expr.left)
+            right_expr = uw(expr.right)
+
+        if (
+            isinstance(left_expr, BinaryOp)
+            and left_expr.op == ">>"
+            and isinstance(left_expr.right, Literal)
+        ):
+            shift += left_expr.right.value
+            left_expr = uw(left_expr.left)
+
+        if expr.op in ("MULT_HI", "MULTU_HI") and isinstance(right_expr, Literal):
+            denom = round((1 << (32 + shift)) / right_expr.value)
+            return BinaryOp.int(
+                left=left_expr,
+                op="/",
+                right=Literal(denom),
+            )
+
+        return None
+
     def format(self, fmt: Formatter) -> str:
+        div_op = self.simplify_gcc_divmod()
+        if div_op is not None:
+            return div_op.format(fmt)
+
         left_expr = late_unwrap(self.left)
         right_expr = late_unwrap(self.right)
         if (
@@ -869,6 +946,8 @@ class BinaryOp(Condition):
         ):
             lhs = lhs[1:-1]
 
+        if self.op in ("MULT_HI", "MULTU_HI"):
+            return f"{self.op}({lhs}, {right_expr.format(fmt)})"
         return f"({lhs} {self.op} {right_expr.format(fmt)})"
 
 
@@ -1602,7 +1681,7 @@ class EvalOnceStmt(Statement):
             return self.need_decl()
 
     def format(self, fmt: Formatter) -> str:
-        val_str = format_expr(elide_casts_for_store(self.expr.wrapped_expr), fmt)
+        val_str = format_expr(unwrap_casts_for_store(self.expr.wrapped_expr), fmt)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
         return f"{self.expr.var.format(fmt)} = {val_str};"
@@ -1656,7 +1735,7 @@ class StoreStmt(Statement):
             isinstance(dest, StructAccess) and dest.late_has_known_type()
         ) or isinstance(dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
-            source = elide_casts_for_store(source)
+            source = unwrap_casts_for_store(source)
         return format_assignment(dest, source, fmt)
 
 
@@ -2115,10 +2194,10 @@ def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     return s
 
 
-def elide_casts_for_store(expr: Expression) -> Expression:
+def unwrap_casts_for_store(expr: Expression) -> Expression:
     uw_expr = late_unwrap(expr)
     if isinstance(uw_expr, Cast) and not uw_expr.needed_for_store():
-        return elide_casts_for_store(uw_expr.expr)
+        return unwrap_casts_for_store(uw_expr.expr)
     if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
         # Avoid suffixes for unsigned ints
         return Literal(uw_expr.value, type=Type.intish())
@@ -3069,14 +3148,12 @@ CASES_HI_LO: PairInstrMap = {
         BinaryOp.u64(a.reg(0), "%", a.reg(1)),
         BinaryOp.u64(a.reg(0), "/", a.reg(1)),
     ),
-    # GCC uses the high part of multiplication to optimize division/modulo
-    # by constant. Output some nonsense to avoid an error.
     "mult": lambda a: (
-        fn_op("MULT_HI", [a.reg(0), a.reg(1)], Type.s32()),
+        BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1)),
         BinaryOp.int(a.reg(0), "*", a.reg(1)),
     ),
     "multu": lambda a: (
-        fn_op("MULTU_HI", [a.reg(0), a.reg(1)], Type.u32()),
+        BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1)),
         BinaryOp.int(a.reg(0), "*", a.reg(1)),
     ),
     "dmult": lambda a: (
@@ -4209,7 +4286,7 @@ class GlobalInfo:
                 value = read_uint(size)
                 if value is not None:
                     expr = as_type(Literal(value), type, True)
-                    return elide_casts_for_store(expr).format(fmt)
+                    return unwrap_casts_for_store(expr).format(fmt)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None
