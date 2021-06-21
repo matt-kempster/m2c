@@ -54,7 +54,7 @@ class IfElseStatement:
         return True
 
     def format(self, fmt: Formatter) -> str:
-        space = fmt.indent(0, "")
+        space = fmt.indent("")
         condition = simplify_condition(self.condition)
         cond_str = format_expr(condition, fmt)
         after_ifelse = f"\n{space}" if fmt.coding_style.newline_after_if else " "
@@ -114,17 +114,22 @@ class SwitchStatement:
 
 @attr.s
 class SimpleStatement:
-    contents: Union[str, TrStatement] = attr.ib()
+    contents: Optional[Union[str, TrStatement]] = attr.ib()
     is_jump: bool = attr.ib(default=False)
 
     def should_write(self) -> bool:
-        return bool(self.contents)
+        return self.contents is not None
 
     def format(self, fmt: Formatter) -> str:
-        if isinstance(self.contents, str):
-            return fmt.indent(0, self.contents)
+        if self.contents is None:
+            return ""
+        elif isinstance(self.contents, str):
+            return fmt.indent(self.contents)
         else:
-            return fmt.indent(0, self.contents.format(fmt))
+            return fmt.indent(self.contents.format(fmt))
+
+    def clear(self) -> None:
+        self.contents = None
 
 
 @attr.s
@@ -143,7 +148,7 @@ class LabelStatement:
             for (switch, case) in self.context.case_nodes[self.node]:
                 case_str = f"case {case}" if case != -1 else "default"
                 switch_str = f" // switch {switch}" if switch != 0 else ""
-                lines.append(fmt.indent(-1, f"{case_str}:{switch_str}"))
+                lines.append(fmt.indent(f"{case_str}:{switch_str}", -1))
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
         return "\n".join(lines)
@@ -237,7 +242,7 @@ class Body:
                 isinstance(statement, SimpleStatement)
                 and statement.contents == "return;"
             ):
-                statement.contents = ""
+                statement.clear()
             if not statement.should_write():
                 continue
             if isinstance(statement, IfElseStatement):

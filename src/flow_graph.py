@@ -774,6 +774,8 @@ class BaseNode(abc.ABC):
     postdominators: Set["Node"] = attr.ib(init=False, factory=set)
     immediate_postdominator: Optional["Node"] = attr.ib(init=False, default=None)
     immediately_postdominates: List["Node"] = attr.ib(init=False, factory=list)
+    # This is only populated on the head node of the loop,
+    # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
     loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
 
     def add_parent(self, parent: "Node") -> None:
@@ -792,6 +794,7 @@ class BasicNode(BaseNode):
     successor: "Node" = attr.ib()
 
     def children(self) -> List["Node"]:
+        # TODO: Should we also include the fallthrough node if `emit_goto` is True?
         return [self.successor]
 
     def __str__(self) -> str:
@@ -1170,6 +1173,7 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
     nodes += extra_nodes
     nodes.sort(key=lambda node: node.block.index)
     # Filter out unreachable nodes (except the entry & terminal nodes)
+    # TODO: In principle, this should be repeated until convergence
     nodes = [
         n for n in nodes if n.parents or n == nodes[0] or isinstance(n, TerminalNode)
     ]
@@ -1184,6 +1188,7 @@ def compute_relations(nodes: List[Node]) -> None:
     Compute dominators, postdominators, and backedges for the set of nodes.
     These are properties of control-flow graphs, for example see:
     https://en.wikipedia.org/wiki/Control-flow_graph
+    https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
     """
 
     def compute_dominators(
@@ -1194,6 +1199,8 @@ def compute_relations(nodes: List[Node]) -> None:
         set_immediate_dominator: Callable[[Node, Optional[Node]], None],
     ) -> None:
         # See https://en.wikipedia.org/wiki/Dominator_(graph_theory)#Algorithms
+        # Note: if `n` is unreachable from `entry`, then *every* node will
+        # vacuously belong to `n`'s dominator set.
         for n in nodes:
             dominators(n).clear()
             if n == entry:
@@ -1304,7 +1311,14 @@ class FlowGraph:
         the code either needs a `goto` or an infinite loop, which is rare in
         practice.
 
+        Having a reducible control flow graphs allows us to perform interval analysis:
+        we can examine a section of the graph bounded by entry & exit nodes, where
+        the exit node postdominates the entry node. In a reducible graph, the backedges
+        in loops are unambiguous.
+
         https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility
+        https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
+        https://www.cs.columbia.edu/~suman/secure_sw_devel/Basic_Program_Analysis_CF.pdf
         """
 
         # Kahn's Algorithm, with backedges excluded

@@ -59,7 +59,7 @@ class Formatter:
     debug: bool = attr.ib(default=False)
     valid_syntax: bool = attr.ib(default=False)
 
-    def indent(self, indent: int, line: str) -> str:
+    def indent(self, line: str, indent: int = 0) -> str:
         return self.indent_step * max(indent + self.extra_indent, 0) + line
 
     @contextlib.contextmanager
