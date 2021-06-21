@@ -20,10 +20,12 @@ s32 test(s32 arg0) {
     case 4:
 block_7:
         phi_a0 = arg0 / 2;
+        // Duplicate return node #8. Try simplifying control flow for better match
         D_410170 = phi_a0;
         return 2;
     default:
         phi_a0 = arg0 * 2;
+        // Duplicate return node #8. Try simplifying control flow for better match
         D_410170 = phi_a0;
         return 2;
     } else {

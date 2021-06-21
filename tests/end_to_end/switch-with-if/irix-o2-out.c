@@ -36,6 +36,9 @@ block_7:
             return;
         }
         D_4101D0 = 2;
+        // Duplicate return node #14. Try simplifying control flow for better match
         return;
+    } else {
+        // Duplicate return node #14. Try simplifying control flow for better match
     }
 }

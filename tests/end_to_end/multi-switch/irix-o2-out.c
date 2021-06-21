@@ -38,10 +38,12 @@ block_21:
                 phi_a0_3 = phi_a0_5 - 1;
                 goto block_23;
             }
+            // Duplicate return node #24. Try simplifying control flow for better match
             D_410210 = phi_a0;
             return 2;
         case 6: // switch 1
             phi_a0 = arg0 + 1;
+            // Duplicate return node #24. Try simplifying control flow for better match
             D_410210 = phi_a0;
             return 2;
         } else {
@@ -54,6 +56,7 @@ block_21:
                 goto block_23;
             }
             phi_a0 = arg0 + 1;
+            // Duplicate return node #24. Try simplifying control flow for better match
             D_410210 = phi_a0;
             return 2;
         }
@@ -68,6 +71,7 @@ block_21:
                 return arg0 * arg0;
             case 1: // switch 2
                 phi_a0_2 = arg0 - 1;
+                // Duplicate return node #16. Try simplifying control flow for better match
                 return (phi_a0_2 + 1) ^ phi_a0_2;
             case 5: // switch 2
             case 6: // switch 2
@@ -82,6 +86,7 @@ block_21:
                 goto block_23;
             }
             phi_a0 = arg0 - 1;
+            // Duplicate return node #24. Try simplifying control flow for better match
             D_410210 = phi_a0;
             return 2;
         }
