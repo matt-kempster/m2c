@@ -288,6 +288,10 @@ def emit_node(context: Context, node: Node, body: Body) -> bool:
         if not isinstance(node, ReturnNode):
             emit_goto(context, node, body)
             return False
+        else:
+            body.add_comment(
+                f"Duplicate return node #{node.name()}. Try simplifying control flow for better match"
+            )
     else:
         body.add_statement(LabelStatement(context, node))
         context.emitted_nodes.add(node)
@@ -757,7 +761,12 @@ def build_body(context: Context, options: Options) -> Body:
         - {context.flow_graph.terminal_node()}
     )
     for node in unemitted_nodes:
-        body.add_comment(f"bug: did not emit code for node #{node.name()}")
+        if isinstance(node, ReturnNode) and not node.is_real():
+            continue
+        body.add_comment(
+            f"bug: did not emit code for node #{node.name()}; contents below:"
+        )
+        emit_node(context, node, body)
 
     return body
 

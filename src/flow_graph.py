@@ -1211,40 +1211,40 @@ def compute_relations(nodes: List[Node]) -> None:
         changes = True
         while changes:
             changes = False
-            for n in nodes:
-                if n == entry:
+            for node in nodes:
+                if node == entry:
                     continue
-                nset = dominators(n)
-                for p in parents(n):
-                    nset = nset.intersection(dominators(p))
-                nset.add(n)
-                if len(nset) < len(dominators(n)):
-                    assert nset.issubset(dominators(n))
-                    dominators(n).intersection_update(nset)
+                nset = dominators(node)
+                for parent in parents(node):
+                    nset = nset.intersection(dominators(parent))
+                nset.add(node)
+                if len(nset) < len(dominators(node)):
+                    assert nset.issubset(dominators(node))
+                    dominators(node).intersection_update(nset)
                     changes = True
 
         # Compute immediate dominator, and the inverse relation
-        for n in nodes:
-            immediately_dominates(n).clear()
-        for n in nodes:
-            doms = dominators(n).difference({n})
-            # If `n == entry` or the flow graph is not reducible, `doms` may be empty.
+        for node in nodes:
+            immediately_dominates(node).clear()
+        for node in nodes:
+            doms = dominators(node).difference({node})
+            # If `node == entry` or the flow graph is not reducible, `doms` may be empty.
             # TODO: Infinite loops could be made reducible by introducing
             # branches like `if (false) { return; }` without breaking semantics
             if doms:
                 imdom = max(doms, key=lambda d: len(dominators(d)))
-                immediately_dominates(imdom).append(n)
-                set_immediate_dominator(n, imdom)
+                immediately_dominates(imdom).append(node)
+                set_immediate_dominator(node, imdom)
             else:
-                set_immediate_dominator(n, None)
-        for n in nodes:
-            immediately_dominates(n).sort(key=lambda x: x.block.index)
+                set_immediate_dominator(node, None)
+        for node in nodes:
+            immediately_dominates(node).sort(key=lambda x: x.block.index)
 
-    def _set_immediate_dominator(n: Node, imdom: Optional[Node]) -> None:
-        n.immediate_dominator = imdom
+    def _set_immediate_dominator(node: Node, imdom: Optional[Node]) -> None:
+        node.immediate_dominator = imdom
 
-    def _set_immediate_postdominator(n: Node, impdom: Optional[Node]) -> None:
-        n.immediate_postdominator = impdom
+    def _set_immediate_postdominator(node: Node, impdom: Optional[Node]) -> None:
+        node.immediate_postdominator = impdom
 
     entry = nodes[0]
     terminal = nodes[-1]
@@ -1270,18 +1270,18 @@ def compute_relations(nodes: List[Node]) -> None:
     )
 
     # Iterate over all edges n -> c and check for backedges, which define natural loops
-    for n in nodes:
-        for c in n.children():
-            if c not in n.dominators:
+    for node in nodes:
+        for child in node.children():
+            if child not in node.dominators:
                 continue
-            # Found a backedge n -> c where c dominates n; c is the "head" of the loop
-            if c.loop is None:
-                c.loop = NaturalLoop(c)
-            c.loop.nodes |= {c, n}
-            c.loop.backedges.add(n)
-            for p in nodes:
-                if reachable_without(p, n, c):
-                    c.loop.nodes.add(p)
+            # Found a backedge node -> child where child dominates node; child is the "head" of the loop
+            if child.loop is None:
+                child.loop = NaturalLoop(child)
+            child.loop.nodes |= {child, node}
+            child.loop.backedges.add(node)
+            for parent in nodes:
+                if reachable_without(parent, node, child):
+                    child.loop.nodes.add(parent)
 
 
 @attr.s(frozen=True)
