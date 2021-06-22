@@ -60,7 +60,25 @@ block_21:
         return 2;
     } else {
         temp_t7 = arg0 - 1;
-        if (arg0 < -0x31) {
+        if (arg0 >= -0x31) {
+            phi_a0_4 = arg0;
+            if (temp_t7 >= 7U) {
+                goto block_23;
+            }
+            phi_a0_2 = arg0;
+            phi_a0_4 = arg0;
+            goto **(&jtbl_4001EC + (temp_t7 * 4)); // switch 2
+        case 0: // switch 2
+            return arg0 * arg0;
+        case 1: // switch 2
+            phi_a0_2 = arg0 - 1;
+            // Duplicate return node #16. Try simplifying control flow for better match
+            return (phi_a0_2 + 1) ^ phi_a0_2;
+        case 5: // switch 2
+        case 6: // switch 2
+            phi_a0_3 = arg0 * 2;
+            goto block_21;
+        } else {
             if (arg0 != -0x32) {
                 phi_a0_4 = arg0;
                 goto block_23;
@@ -70,22 +88,5 @@ block_21:
             D_410210 = phi_a0;
             return 2;
         }
-        phi_a0_4 = arg0;
-        if (temp_t7 >= 7U) {
-            goto block_23;
-        }
-        phi_a0_2 = arg0;
-        phi_a0_4 = arg0;
-        goto **(&jtbl_4001EC + (temp_t7 * 4)); // switch 2
-    case 0: // switch 2
-        return arg0 * arg0;
-    case 1: // switch 2
-        phi_a0_2 = arg0 - 1;
-        // Duplicate return node #16. Try simplifying control flow for better match
-        return (phi_a0_2 + 1) ^ phi_a0_2;
-    case 5: // switch 2
-    case 6: // switch 2
-        phi_a0_3 = arg0 * 2;
-        goto block_21;
     }
 }

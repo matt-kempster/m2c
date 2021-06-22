@@ -19,7 +19,6 @@ from .translate import (
     BlockInfo,
     CommaConditionExpr,
     Condition,
-    Expression,
     Formatter,
     FunctionInfo,
     Statement as TrStatement,
@@ -55,23 +54,8 @@ class IfElseStatement:
         return True
 
     def format(self, fmt: Formatter, can_elide_else: bool = True) -> str:
-        condition: Expression = self.condition
-        if_body = self.if_body
-        else_body = self.else_body
-        if (
-            else_body
-            and else_body.ends_in_jump()
-            and not if_body.ends_in_jump()
-            and can_elide_else
-        ):
-            # Transform `if (A) { B; } else { C; goto D; }`
-            # into `if (!A) { C; goto D; } else { B; }`,
-            # if this could allow the `else { ... }` to be elided
-            condition = self.condition.negated()
-            if_body, else_body = else_body, if_body
-
         space = fmt.indent("")
-        condition = simplify_condition(condition)
+        condition = simplify_condition(self.condition)
         cond_str = format_expr(condition, fmt)
         after_ifelse = f"\n{space}" if fmt.coding_style.newline_after_if else " "
         before_else = f"\n{space}" if fmt.coding_style.newline_before_else else " "
@@ -79,26 +63,26 @@ class IfElseStatement:
             if_str = "\n".join(
                 [
                     f"{space}if ({cond_str}){after_ifelse}{{",
-                    if_body.format(fmt),  # has its own indentation
+                    self.if_body.format(fmt),  # has its own indentation
                     f"{space}}}",
                 ]
             )
-        if else_body is not None and not else_body.is_empty():
-            sub_if = else_body.get_lone_if_statement()
-            can_elide_else = can_elide_else and if_body.ends_in_jump()
+        if self.else_body is not None and not self.else_body.is_empty():
+            sub_if = self.else_body.get_lone_if_statement()
+            can_elide_else = can_elide_else and self.if_body.ends_in_jump()
             if can_elide_else:
-                # All of the previous if/else-if blocks ended in a jump,
-                # so we don't need to wrap `else_body` in `else {...}`
-                else_str = f"\n{else_body.format(fmt)}"
+                # All previous if/else-if blocks ended in a jump,
+                # so we don't need to wrap `else_body` in `else { ... }`
+                else_str = f"\n{self.else_body.format(fmt)}"
             elif sub_if:
-                sub_if_str = sub_if.format(fmt, can_elide_else).lstrip()
+                sub_if_str = sub_if.format(fmt, can_elide_else=False).lstrip()
                 else_str = f"{before_else}else {sub_if_str}"
             else:
                 with fmt.indented():
                     else_str = "\n".join(
                         [
                             f"{before_else}else{after_ifelse}{{",
-                            else_body.format(fmt),
+                            self.else_body.format(fmt),
                             f"{space}}}",
                         ]
                     )
@@ -347,6 +331,29 @@ def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> Non
         emit_goto(context, target, body)
 
 
+def build_if_else(
+    context: Context,
+    condition: Condition,
+    if_node: Node,
+    else_node: Optional[Node],
+    end: Node,
+) -> IfElseStatement:
+    if_body = build_flowgraph_between(context, if_node, end)
+    else_body: Optional[Body] = None
+    if else_node is not None:
+        else_already_emitted = else_node in context.emitted_nodes
+        else_body = build_flowgraph_between(context, else_node, end)
+        if else_already_emitted and not if_body.ends_in_jump():
+            # When the `else_node` has already been emitted, the else body
+            # will just be a `goto` or `return`. We can reduce nesting by
+            # negating the IfElseStatement, making `if_body` just the jump
+            # Flipping the bodies like this also makes it more likely that
+            # the goto to `else_node` will be forward instead of backwards.
+            condition = condition.negated()
+            if_body, else_body = else_body, if_body
+    return IfElseStatement(condition, if_body, else_body)
+
+
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node
 ) -> IfElseStatement:
@@ -359,7 +366,6 @@ def build_conditional_subgraph(
     assert isinstance(if_block_info, BlockInfo)
     assert if_block_info.branch_condition is not None
 
-    else_body: Optional[Body] = None
     fallthrough_node: Node = start.fallthrough_edge
     conditional_node: Node = start.conditional_edge
 
@@ -370,7 +376,7 @@ def build_conditional_subgraph(
         # been seen and emit a goto, but in rare cases this might not happen.
         # If so it seems fine to emit the loop here.
         if_condition = if_block_info.branch_condition
-        if_body = build_flowgraph_between(context, conditional_node, end)
+        return build_if_else(context, if_condition, conditional_node, None, end)
     elif (
         isinstance(fallthrough_node, ConditionalNode)
         and (
@@ -393,11 +399,9 @@ def build_conditional_subgraph(
         assert start.block.block_info
         assert start.block.block_info.branch_condition
         if_condition = start.block.block_info.branch_condition.negated()
-
-        if_body = build_flowgraph_between(context, fallthrough_node, end)
-        else_body = build_flowgraph_between(context, conditional_node, end)
-
-    return IfElseStatement(if_condition, if_body, else_body)
+        return build_if_else(
+            context, if_condition, fallthrough_node, conditional_node, end
+        )
 
 
 def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
@@ -523,25 +527,25 @@ def get_andor_if_statement(
 
                 if index is not None:
                     context.emitted_nodes |= set(condition_nodes[:index])
-                    if_body = build_flowgraph_between(
-                        context, condition_nodes[index], end
-                    )
-                    return IfElseStatement(
+                    return build_if_else(
+                        context,
                         join_conditions(
                             [cond.negated() for cond in conditions[:index]], "&&"
                         ),
-                        if_body=if_body,
+                        if_node=condition_nodes[index],
+                        else_node=None,
+                        end=end,
                     )
 
             context.emitted_nodes |= set(condition_nodes)
-            if_body = build_flowgraph_between(context, next_node, end)
-            else_body = build_flowgraph_between(context, bottom, end)
-            return IfElseStatement(
-                # We negate everything, because the conditional edges will jump
-                # OVER the if body.
+            # We negate everything, because the conditional edges will jump
+            # OVER the if body.
+            return build_if_else(
+                context,
                 join_conditions([cond.negated() for cond in conditions], "&&"),
-                if_body=if_body,
-                else_body=else_body,
+                if_node=next_node,
+                else_node=bottom,
+                end=end,
             )
 
         if next_node.fallthrough_edge is bottom:
@@ -551,18 +555,16 @@ def get_andor_if_statement(
                 next_node.block.block_info
             )
             context.emitted_nodes |= set(condition_nodes) | {next_node}
-            if_body = build_flowgraph_between(context, bottom, end)
-            else_body = build_flowgraph_between(
-                context, next_node.conditional_edge, end
-            )
-            return IfElseStatement(
+            return build_if_else(
+                context,
                 # Negate the last condition, for it must fall-through to the
                 # body instead of jumping to it, hence it must jump OVER the body.
                 join_conditions(conditions + [next_node_condition.negated()], "||"),
-                if_body=if_body,
+                if_node=bottom,
                 # The else-body is wherever the code jumps to instead of the
                 # fallthrough (i.e. if-body).
-                else_body=else_body,
+                else_node=next_node.conditional_edge,
+                end=end,
             )
 
         # Otherwise, still in the middle of an &&/|| condition.
