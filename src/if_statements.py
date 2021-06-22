@@ -19,6 +19,7 @@ from .translate import (
     BlockInfo,
     CommaConditionExpr,
     Condition,
+    Expression,
     Formatter,
     FunctionInfo,
     Statement as TrStatement,
@@ -53,9 +54,24 @@ class IfElseStatement:
     def should_write(self) -> bool:
         return True
 
-    def format(self, fmt: Formatter) -> str:
+    def format(self, fmt: Formatter, can_elide_else: bool = True) -> str:
+        condition: Expression = self.condition
+        if_body = self.if_body
+        else_body = self.else_body
+        if (
+            else_body
+            and else_body.ends_in_jump()
+            and not if_body.ends_in_jump()
+            and can_elide_else
+        ):
+            # Transform `if (A) { B; } else { C; goto D; }`
+            # into `if (!A) { C; goto D; } else { B; }`,
+            # if this could allow the `else { ... }` to be elided
+            condition = self.condition.negated()
+            if_body, else_body = else_body, if_body
+
         space = fmt.indent("")
-        condition = simplify_condition(self.condition)
+        condition = simplify_condition(condition)
         cond_str = format_expr(condition, fmt)
         after_ifelse = f"\n{space}" if fmt.coding_style.newline_after_if else " "
         before_else = f"\n{space}" if fmt.coding_style.newline_before_else else " "
@@ -63,21 +79,26 @@ class IfElseStatement:
             if_str = "\n".join(
                 [
                     f"{space}if ({cond_str}){after_ifelse}{{",
-                    self.if_body.format(fmt),  # has its own indentation
+                    if_body.format(fmt),  # has its own indentation
                     f"{space}}}",
                 ]
             )
-        if self.else_body is not None and not self.else_body.is_empty():
-            sub_if = self.else_body.get_lone_if_statement()
-            if sub_if:
-                sub_if_str = sub_if.format(fmt).lstrip()
+        if else_body is not None and not else_body.is_empty():
+            sub_if = else_body.get_lone_if_statement()
+            can_elide_else = can_elide_else and if_body.ends_in_jump()
+            if can_elide_else:
+                # All of the previous if/else-if blocks ended in a jump,
+                # so we don't need to wrap `else_body` in `else {...}`
+                else_str = f"\n{else_body.format(fmt)}"
+            elif sub_if:
+                sub_if_str = sub_if.format(fmt, can_elide_else).lstrip()
                 else_str = f"{before_else}else {sub_if_str}"
             else:
                 with fmt.indented():
                     else_str = "\n".join(
                         [
                             f"{before_else}else{after_ifelse}{{",
-                            self.else_body.format(fmt),
+                            else_body.format(fmt),
                             f"{space}}}",
                         ]
                     )
@@ -192,15 +213,6 @@ class Body:
         self.add_statement(SimpleStatement(f"// {contents}"))
 
     def add_if_else(self, if_else: IfElseStatement) -> None:
-        if if_else.if_body.ends_in_jump():
-            # Transform `if (A) { B; return C; } else { D; }`
-            # into `if (A) { B; return C; } D;`,
-            # which reduces indentation to make the output more readable
-            self.statements.append(attr.evolve(if_else, else_body=None))
-            if if_else.else_body is not None:
-                self.extend(if_else.else_body)
-            return
-
         self.statements.append(if_else)
 
     def add_switch(self, switch: SwitchStatement) -> None:
@@ -327,7 +339,9 @@ def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> Non
     This is similar to `emit_node`, but won't write the node body here unless
     the node is a return.
     """
-    if isinstance(target, ReturnNode):
+    if isinstance(target, TerminalNode):
+        pass
+    elif isinstance(target, ReturnNode):
         emit_node(context, target, body)
     elif not isinstance(target, TerminalNode):
         emit_goto(context, target, body)
