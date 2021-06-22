@@ -778,9 +778,6 @@ class BaseNode(abc.ABC):
     # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
     loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
 
-    def add_parent(self, parent: "Node") -> None:
-        self.parents.append(parent)
-
     def name(self) -> str:
         return str(self.block.index)
 
@@ -954,9 +951,6 @@ def build_graph_from_block(
         # Recursively analyze.
         next_block = blocks[block.index + 1]
         new_node.successor = build_graph_from_block(next_block, blocks, nodes, asm_data)
-
-        # Keep track of parents.
-        new_node.successor.add_parent(new_node)
     elif len(jumps) == 1:
         # There is a jump. This is either:
         # - a ReturnNode, if it's "jr $ra",
@@ -967,7 +961,6 @@ def build_graph_from_block(
 
         if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
             new_node = ReturnNode(block, False, index=0, terminal=terminal_node)
-            terminal_node.add_parent(new_node)
             nodes.append(new_node)
             return new_node
 
@@ -1021,9 +1014,6 @@ def build_graph_from_block(
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
                 case_node = build_graph_from_block(case_block, blocks, nodes, asm_data)
                 new_node.cases.append(case_node)
-                if new_node not in case_node.parents:
-                    case_node.add_parent(new_node)
-
             return new_node
 
         assert jump.is_branch_instruction()
@@ -1045,8 +1035,6 @@ def build_graph_from_block(
             new_node.successor = build_graph_from_block(
                 branch_block, blocks, nodes, asm_data
             )
-            # Keep track of parents.
-            new_node.successor.add_parent(new_node)
         else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
@@ -1060,10 +1048,6 @@ def build_graph_from_block(
             new_node.fallthrough_edge = build_graph_from_block(
                 next_block, blocks, nodes, asm_data
             )
-            # Keep track of parents.
-            new_node.conditional_edge.add_parent(new_node)
-            new_node.fallthrough_edge.add_parent(new_node)
-
     return new_node
 
 
@@ -1157,7 +1141,6 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
             and is_premature_return(node, node.successor, nodes)
         ):
             assert isinstance(node.successor, ReturnNode)
-            node.successor.parents.remove(node)
             index += 1
             n = ReturnNode(
                 node.successor.block.clone(),
@@ -1166,20 +1149,17 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
                 terminal=node.successor.terminal,
             )
             node.successor = n
-            n.add_parent(node)
-            n.terminal.add_parent(n)
             extra_nodes.append(n)
 
-    nodes += extra_nodes
-    nodes.sort(key=lambda node: node.block.index)
-    # Filter out unreachable nodes (except the entry & terminal nodes)
-    # TODO: In principle, this should be repeated until convergence
-    nodes = [
-        n for n in nodes if n.parents or n == nodes[0] or isinstance(n, TerminalNode)
-    ]
-    # Clean up each node's parents, so that it only contains nodes that still exist
-    for node in nodes:
-        node.parents = [p for p in node.parents if p in nodes]
+    # Filter nodes to only include ones reachable from the entry node
+    queue = {nodes[0]}
+    # Always include the TerminalNode (even if it isn't reachable right now)
+    reachable_nodes: Set[Node] = {n for n in nodes if isinstance(n, TerminalNode)}
+    while queue:
+        node = queue.pop()
+        reachable_nodes.add(node)
+        queue.update(set(node.children()) - reachable_nodes)
+    nodes = sorted(reachable_nodes, key=lambda node: node.block.index)
     return nodes
 
 
@@ -1190,6 +1170,12 @@ def compute_relations(nodes: List[Node]) -> None:
     https://en.wikipedia.org/wiki/Control-flow_graph
     https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
     """
+    # Calculate parents
+    for node in nodes:
+        node.parents = []
+    for node in nodes:
+        for child in node.children():
+            child.parents.append(node)
 
     def compute_dominators(
         entry: Node,
