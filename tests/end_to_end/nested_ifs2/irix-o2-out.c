@@ -9,7 +9,7 @@ void test(s32 arg0) {
             func_004000F0(2, arg0);
         }
         func_004000F0(3);
-        return;
+    } else {
+        func_004000F0(4, temp_a1);
     }
-    func_004000F0(4, temp_a1);
 }
