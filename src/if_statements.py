@@ -329,7 +329,7 @@ def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> Non
     """
     if isinstance(target, ReturnNode):
         emit_node(context, target, body)
-    else:
+    elif not isinstance(target, TerminalNode):
         emit_goto(context, target, body)
 
 
