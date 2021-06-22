@@ -12,10 +12,10 @@ s32 test(s32 arg0) {
         if (arg0 >= 0x6C) {
             phi_a0_2 = arg0;
             if (arg0 != 0xC8) {
-                phi_a0_3 = arg0;
+                phi_a0_4 = arg0;
             default: // switch 2
 block_23:
-                phi_a0 = phi_a0_3 / 2;
+                phi_a0 = phi_a0_4 / 2;
                 D_410210 = phi_a0;
                 return 2;
             }
@@ -23,19 +23,19 @@ block_23:
         case 2: // switch 2
             return (phi_a0_2 + 1) ^ phi_a0_2;
         }
-        phi_a0_3 = arg0;
+        phi_a0_4 = arg0;
         if (temp_t6 < 7U) {
             phi_a0_2 = arg0;
-            phi_a0_4 = arg0;
+            phi_a0_3 = arg0;
             phi_a0_5 = arg0;
             goto **(&jtbl_4001D0 + (temp_t6 * 4)); // switch 1
         case 1: // switch 1
 block_21:
-            phi_a0 = phi_a0_4;
-            phi_a0_5 = phi_a0_4;
+            phi_a0 = phi_a0_3;
+            phi_a0_5 = phi_a0_3;
             if (D_410210 == 0) {
             default: // switch 1
-                phi_a0_3 = phi_a0_5 - 1;
+                phi_a0_4 = phi_a0_5 - 1;
                 goto block_23;
             }
             // Duplicate return node #24. Try simplifying control flow for better match
@@ -52,7 +52,7 @@ block_21:
     } else {
         if (arg0 >= 8) {
             if (arg0 != 0x32) {
-                phi_a0_3 = arg0;
+                phi_a0_4 = arg0;
                 goto block_23;
             }
             phi_a0 = arg0 + 1;
@@ -62,10 +62,10 @@ block_21:
         }
         temp_t7 = arg0 - 1;
         if (arg0 >= -0x31) {
-            phi_a0_3 = arg0;
+            phi_a0_4 = arg0;
             if (temp_t7 < 7U) {
                 phi_a0_2 = arg0;
-                phi_a0_3 = arg0;
+                phi_a0_4 = arg0;
                 goto **(&jtbl_4001EC + (temp_t7 * 4)); // switch 2
             case 0: // switch 2
                 return arg0 * arg0;
@@ -75,14 +75,14 @@ block_21:
                 return (phi_a0_2 + 1) ^ phi_a0_2;
             case 5: // switch 2
             case 6: // switch 2
-                phi_a0_4 = arg0 * 2;
+                phi_a0_3 = arg0 * 2;
                 goto block_21;
             } else {
                 goto block_23;
             }
         } else {
             if (arg0 != -0x32) {
-                phi_a0_3 = arg0;
+                phi_a0_4 = arg0;
                 goto block_23;
             }
             phi_a0 = arg0 - 1;
