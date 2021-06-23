@@ -21,9 +21,7 @@ void test(s32 arg0) {
     }
 block_7:
     temp_t1 = arg0 - 1;
-    if (temp_t1 >= 6U) {
-        // Duplicate return node #14. Try simplifying control flow for better match
-    } else {
+    if (temp_t1 < 6U) {
         goto **(&jtbl_4001B8 + (temp_t1 * 4)); // switch 2
     case 0: // switch 2
         D_4101D0 = 1;
@@ -40,5 +38,7 @@ block_7:
         D_4101D0 = 2;
         // Duplicate return node #14. Try simplifying control flow for better match
         return;
+    } else {
+        // Duplicate return node #14. Try simplifying control flow for better match
     }
 }

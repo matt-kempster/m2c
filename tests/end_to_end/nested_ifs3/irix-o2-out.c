@@ -9,12 +9,12 @@ void test(s32 arg0) {
             func_00400114(2, arg0);
         }
         func_00400114(3);
-    } else {
-        arg0 = temp_a1;
-        func_00400114(4, temp_a1);
-        if (arg0 == 9) {
-            func_00400114(5, arg0);
-        }
-        func_00400114(6);
+        return;
     }
+    arg0 = temp_a1;
+    func_00400114(4, temp_a1);
+    if (arg0 == 9) {
+        func_00400114(5, arg0);
+    }
+    func_00400114(6);
 }
