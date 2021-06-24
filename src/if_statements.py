@@ -3,7 +3,6 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
-from .error import DecompFailure
 from .flow_graph import (
     BasicNode,
     ConditionalNode,

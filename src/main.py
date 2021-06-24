@@ -2,20 +2,19 @@ import argparse
 import sys
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 from .error import DecompFailure
-from .flow_graph import build_flowgraph, visualize_flowgraph
+from .flow_graph import visualize_flowgraph
 from .if_statements import get_function_text
 from .options import Options, CodingStyle
-from .parse_file import Function, MIPSFile, parse_file
+from .parse_file import MIPSFile, parse_file
 from .translate import (
     FunctionInfo,
     GlobalInfo,
     InstrProcessingFailure,
     translate_to_ast,
 )
-from .types import Type
 from .c_types import TypeMap, build_typemap, dump_typemap
 
 

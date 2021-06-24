@@ -3,7 +3,6 @@ import math
 import struct
 import sys
 import traceback
-import typing
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
@@ -20,7 +19,7 @@ from .flow_graph import (
     TerminalNode,
     build_flowgraph,
 )
-from .options import CodingStyle, Options, Formatter, DEFAULT_CODING_STYLE
+from .options import Options, Formatter
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,

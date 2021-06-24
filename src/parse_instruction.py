@@ -1,8 +1,6 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
-import re
 import string
-import sys
 from typing import List, Optional, Set, Union
 
 import attr
