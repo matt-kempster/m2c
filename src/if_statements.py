@@ -151,11 +151,34 @@ class LabelStatement:
         return "\n".join(lines)
 
 
+@attr.s
+class DoWhileLoop:
+    body: "Body" = attr.ib()
+    condition: Optional[Condition] = attr.ib(default=None)
+
+    def should_write(self) -> bool:
+        return True
+
+    def format(self, fmt: Formatter) -> str:
+        space = fmt.indent("")
+        after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
+        cond = format_expr(self.condition, fmt) if self.condition else ""
+        with fmt.indented():
+            return "\n".join(
+                [
+                    f"{space}do{after_do}{{",
+                    self.body.format(fmt),
+                    f"{space}}} while ({cond});",
+                ]
+            )
+
+
 Statement = Union[
     SimpleStatement,
     IfElseStatement,
     LabelStatement,
     SwitchStatement,
+    DoWhileLoop,
 ]
 
 
@@ -199,6 +222,9 @@ class Body:
             return
 
         self.statements.append(if_else)
+
+    def add_do_while_loop(self, do_while_loop: DoWhileLoop) -> None:
+        self.statements.append(do_while_loop)
 
     def add_switch(self, switch: SwitchStatement) -> None:
         self.add_statement(switch)
@@ -265,7 +291,7 @@ def label_for_node(context: Context, node: Node) -> str:
         return f"block_{node.block.index}"
 
 
-def emit_node(context: Context, node: Node, body: Body) -> bool:
+def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) -> bool:
     """
     Try to emit a node for the first time, together with a label for it.
     The label is only printed if something jumps to it, e.g. a loop.
@@ -291,7 +317,8 @@ def emit_node(context: Context, node: Node, body: Body) -> bool:
             )
     else:
         body.add_statement(LabelStatement(context, node))
-        context.emitted_nodes.add(node)
+        if not secretly:
+            context.emitted_nodes.add(node)
 
     body.add_node(node, comment_empty=True)
     if isinstance(node, ReturnNode):
@@ -601,7 +628,54 @@ def build_switch_between(
     return SwitchStatement(jump, body)
 
 
-def build_flowgraph_between(context: Context, start: Node, end: Node) -> Body:
+def detect_loop(
+    context: Context, start: ConditionalNode, end: Node
+) -> Optional[DoWhileLoop]:
+    # We detect edges that are accompanied by their reverse as loops.
+    # breakpoint()
+    imm_pdom: Node
+    if start.loop and start.loop.is_self_loop():
+        imm_pdom = start
+    else:
+        # imm_pdom = immediate_postdominator(context, start, end)
+        assert start.immediate_postdominator
+        imm_pdom = start.immediate_postdominator
+
+    if not (
+        isinstance(imm_pdom, ConditionalNode) and imm_pdom.conditional_edge is start
+    ):
+        return None
+
+    loop_body = Body(False, [])
+    emit_node(
+        context,
+        start,
+        loop_body,
+        secretly=(bool(start.loop and not start.loop.is_self_loop())),
+    )
+
+    if not start.loop or not start.loop.is_self_loop():
+        # There are more nodes to emit, "between" the start node
+        # and the loop edge that it connects to:
+        loop_body = build_flowgraph_between(
+            context,
+            start,
+            imm_pdom,
+            skip_loop_detection=True,
+        )
+        emit_node(context, imm_pdom, loop_body)
+
+    assert imm_pdom.block.block_info
+    assert imm_pdom.block.block_info.branch_condition
+    return DoWhileLoop(
+        loop_body,
+        imm_pdom.block.block_info.branch_condition,
+    )
+
+
+def build_flowgraph_between(
+    context: Context, start: Node, end: Node, skip_loop_detection: bool = False
+) -> Body:
     """
     Output a section of a flow graph that has already been translated to our
     symbolic AST. All nodes between start and end, including start but NOT end,
@@ -616,6 +690,22 @@ def build_flowgraph_between(context: Context, start: Node, end: Node) -> Body:
     # which are commonly referred to as articulation nodes.
     while curr_start != end:
         assert not isinstance(curr_start, TerminalNode)
+
+        if not skip_loop_detection and isinstance(curr_start, ConditionalNode):
+            # breakpoint()
+            do_while_loop = detect_loop(context, curr_start, end)
+            if do_while_loop:
+                # breakpoint()
+                body.add_do_while_loop(do_while_loop)
+                # Move past the loop:
+                if curr_start.loop and curr_start.loop.is_self_loop():
+                    curr_start = curr_start.fallthrough_edge
+                else:
+                    # imm_pdom = immediate_postdominator(context, curr_start, end)
+                    imm_pdom = curr_start.immediate_postdominator
+                    assert isinstance(imm_pdom, ConditionalNode)
+                    curr_start = imm_pdom.fallthrough_edge
+                continue
 
         # Write the current node, or a goto, to the body
         if not emit_node(context, curr_start, body):

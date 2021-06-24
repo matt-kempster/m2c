@@ -915,6 +915,9 @@ class NaturalLoop:
     nodes: Set[Node] = attr.ib(factory=set)
     backedges: Set[Node] = attr.ib(factory=set)
 
+    def is_self_loop(self) -> bool:
+        return len(self.nodes) == 1
+
 
 def build_graph_from_block(
     block: Block, blocks: List[Block], nodes: List[Node], asm_data: AsmData
