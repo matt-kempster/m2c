@@ -3712,12 +3712,6 @@ def resolve_types_late(stack_info: StackInfo) -> None:
             var.type.unify(Type.ptr(type))
 
 
-class Initializer(abc.ABC):
-    @abc.abstractmethod
-    def for_symbol(self, sym: "GlobalSymbol") -> Optional[str]:
-        ...
-
-
 @attr.s
 class GlobalInfo:
     asm_data: AsmData = attr.ib()
@@ -3749,8 +3743,83 @@ class GlobalInfo:
                 type = ctype_type
         return AddressOf(sym, type=type)
 
-    def global_decls(self, initializer: "Initializer", fmt: Formatter) -> str:
-        # Format symbols from global_symbol_map into global declarations.
+    def initializer_for_symbol(
+        self, sym: GlobalSymbol, fmt: Formatter
+    ) -> Optional[str]:
+        if not sym.asm_data_entry:
+            return None
+        data = sym.asm_data_entry.data[:]
+
+        def read_uint(n: int) -> Optional[int]:
+            """Read the next `n` bytes from `data` as an (long) integer"""
+            assert 0 < n <= 8
+            if not data or not isinstance(data[0], bytes):
+                return None
+            if len(data[0]) < n:
+                return None
+            bs = data[0][:n]
+            data[0] = data[0][n:]
+            if not data[0]:
+                del data[0]
+            value = 0
+            for b in bs:
+                value = (value << 8) | b
+            return value
+
+        def read_pointer() -> Optional[Expression]:
+            """Read the next label from `data`"""
+            if not data:
+                return None
+
+            if not isinstance(data[0], str):
+                # Bare pointer
+                value = read_uint(4)
+                if value is None:
+                    return None
+                return Literal(value=value)
+
+            # Pointer label
+            label = data.pop(0)
+            assert isinstance(label, str)
+            return self.address_of_gsym(label)
+
+        def for_type(type: Type) -> Optional[str]:
+            if type.is_int() or type.is_float():
+                size_bits = type.get_size_bits()
+                if size_bits == 0:
+                    return None
+                elif size_bits is None:
+                    # Unknown size; guess 32 bits
+                    size_bits = 32
+                value = read_uint(size_bits // 8)
+                if value is not None:
+                    return Literal(value, type).format(fmt)
+
+            if type.is_pointer():
+                ptr = read_pointer()
+                if ptr is not None:
+                    return as_type(ptr, type, True).format(fmt)
+
+            if type.is_ctype():
+                # TODO: Generate initializers for structs/arrays/etc.
+                return None
+
+            # Type kinds K_FN and K_VOID do not have initializers
+            return None
+
+        if sym.array_dim is None:
+            return for_type(sym.type)
+        else:
+            elements: List[str] = []
+            for _ in range(sym.array_dim):
+                el = for_type(sym.type)
+                if el is None:
+                    return None
+                elements.append(el)
+            return f"{{{', '.join(elements)}}}"
+
+    def global_decls(self, fmt: Formatter) -> str:
+        # Format labels from symbol_type_map into global declarations.
         # As the initializers are formatted, this may cause more symbols
         # to be added to the global_symbol_map.
         lines = []
@@ -3824,7 +3893,7 @@ class GlobalInfo:
                                         f"array [{max_data_size // type_size}]"
                                     )
 
-                    value = initializer.for_symbol(sym) or ""
+                    value = self.initializer_for_symbol(sym, fmt) or ""
 
                 if not is_in_file and is_global:
                     # Skip externally-declared symbols that are defined in other files

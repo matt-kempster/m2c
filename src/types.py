@@ -18,6 +18,7 @@ from .c_types import (
     to_c,
     var_size_align,
 )
+from .error import DecompFailure
 from .options import Formatter
 
 

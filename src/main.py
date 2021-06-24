@@ -8,7 +8,6 @@ from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import visualize_flowgraph
 from .if_statements import get_function_text
-from .initializers import GenericInitializer
 from .options import CodingStyle, Options
 from .parse_file import MIPSFile, parse_file
 from .translate import (
@@ -109,8 +108,7 @@ def run(options: Options) -> int:
         return 0
 
     fmt = options.formatter()
-    initializer = GenericInitializer(global_info, fmt)
-    global_decls = global_info.global_decls(initializer, fmt)
+    global_decls = global_info.global_decls(fmt)
     if options.emit_globals and global_decls:
         print(global_decls)
 
