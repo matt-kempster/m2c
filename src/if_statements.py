@@ -164,13 +164,23 @@ class DoWhileLoop:
         after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
         cond = format_expr(self.condition, fmt) if self.condition else ""
         with fmt.indented():
-            return "\n".join(
-                [
-                    f"{space}do{after_do}{{",
-                    self.body.format(fmt),
-                    f"{space}}} while ({cond});",
-                ]
-            )
+            if cond:
+                return "\n".join(
+                    [
+                        f"{space}do{after_do}{{",
+                        self.body.format(fmt),
+                        f"{space}}} while ({cond});",
+                    ]
+                )
+            else:
+                return "\n".join(
+                    [
+                        f"{space}while (true) {{",
+                        self.body.format(fmt),
+                        fmt.indent("break;"),
+                        f"{space}}}",
+                    ]
+                )
 
 
 Statement = Union[
@@ -628,48 +638,37 @@ def build_switch_between(
     return SwitchStatement(jump, body)
 
 
-def detect_loop(
-    context: Context, start: ConditionalNode, end: Node
-) -> Optional[DoWhileLoop]:
-    # We detect edges that are accompanied by their reverse as loops.
-    # breakpoint()
-    imm_pdom: Node
-    if start.loop and start.loop.is_self_loop():
-        imm_pdom = start
-    else:
-        # imm_pdom = immediate_postdominator(context, start, end)
-        assert start.immediate_postdominator
-        imm_pdom = start.immediate_postdominator
+def detect_loop(context: Context, start: Node, end: Node) -> DoWhileLoop:
+    assert start.loop
 
-    if not (
-        isinstance(imm_pdom, ConditionalNode) and imm_pdom.conditional_edge is start
-    ):
-        return None
+    # Find the the condition for the do-while, if it exists
+    condition: Optional[Condition] = None
+    for node in start.loop.backedges:
+        if (
+            node in start.postdominators
+            and isinstance(node, ConditionalNode)
+            and node.fallthrough_edge == end
+        ):
+            assert node.block.block_info
+            assert node.block.block_info.branch_condition
+            condition = node.block.block_info.branch_condition
+            end = node
+            break
 
-    loop_body = Body(False, [])
-    emit_node(
+    loop_body = build_flowgraph_between(
         context,
         start,
-        loop_body,
-        secretly=(bool(start.loop and not start.loop.is_self_loop())),
+        end,
+        skip_loop_detection=True,
     )
+    if condition:
+        # If we are using a loop node as the condition, we need to include the node's
+        # body inside the loop
+        emit_node(context, end, loop_body)
 
-    if not start.loop or not start.loop.is_self_loop():
-        # There are more nodes to emit, "between" the start node
-        # and the loop edge that it connects to:
-        loop_body = build_flowgraph_between(
-            context,
-            start,
-            imm_pdom,
-            skip_loop_detection=True,
-        )
-        emit_node(context, imm_pdom, loop_body)
-
-    assert imm_pdom.block.block_info
-    assert imm_pdom.block.block_info.branch_condition
     return DoWhileLoop(
         loop_body,
-        imm_pdom.block.block_info.branch_condition,
+        condition,
     )
 
 
@@ -691,21 +690,25 @@ def build_flowgraph_between(
     while curr_start != end:
         assert not isinstance(curr_start, TerminalNode)
 
-        if not skip_loop_detection and isinstance(curr_start, ConditionalNode):
-            # breakpoint()
-            do_while_loop = detect_loop(context, curr_start, end)
-            if do_while_loop:
-                # breakpoint()
-                body.add_do_while_loop(do_while_loop)
-                # Move past the loop:
-                if curr_start.loop and curr_start.loop.is_self_loop():
-                    curr_start = curr_start.fallthrough_edge
-                else:
-                    # imm_pdom = immediate_postdominator(context, curr_start, end)
-                    imm_pdom = curr_start.immediate_postdominator
-                    assert isinstance(imm_pdom, ConditionalNode)
-                    curr_start = imm_pdom.fallthrough_edge
-                continue
+        if (
+            not skip_loop_detection
+            and curr_start.loop
+            and not curr_start in context.emitted_nodes
+        ):
+            # Find the immediate postdominator to the whole loop,
+            # i.e. the first node outside the loop body
+            imm_pdom: Node = curr_start
+            while imm_pdom in curr_start.loop.nodes:
+                assert imm_pdom.immediate_postdominator is not None
+                imm_pdom = imm_pdom.immediate_postdominator
+
+            # Construct the while(true) or do-while loop
+            do_while_loop = detect_loop(context, curr_start, imm_pdom)
+            body.add_do_while_loop(do_while_loop)
+
+            # Move on.
+            curr_start = imm_pdom
+            continue
 
         # Write the current node, or a goto, to the body
         if not emit_node(context, curr_start, body):
