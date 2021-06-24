@@ -18,7 +18,7 @@ import attr
 
 from .error import DecompFailure
 from .options import Formatter
-from .parse_file import Function, Label, AsmData
+from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,

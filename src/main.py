@@ -4,10 +4,11 @@ import traceback
 from pathlib import Path
 from typing import List, Optional, Union
 
+from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import visualize_flowgraph
 from .if_statements import get_function_text
-from .options import Options, CodingStyle
+from .options import CodingStyle, Options
 from .parse_file import MIPSFile, parse_file
 from .translate import (
     FunctionInfo,
@@ -15,7 +16,6 @@ from .translate import (
     InstrProcessingFailure,
     translate_to_ast,
 )
-from .c_types import TypeMap, build_typemap, dump_typemap
 
 
 def print_exception(sanitize: bool) -> None:

@@ -20,11 +20,9 @@ from .translate import (
     Condition,
     Formatter,
     FunctionInfo,
-    Statement as TrStatement,
-    Type,
-    simplify_condition,
-    format_expr,
 )
+from .translate import Statement as TrStatement
+from .translate import Type, format_expr, simplify_condition
 
 
 @attr.s

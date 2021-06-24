@@ -1,15 +1,15 @@
 """This file handles variable types, function signatures and struct layouts
 based on a C AST. Based on the pycparser library."""
 
-from collections import defaultdict
 import copy
 import functools
-from typing import Any, Dict, Iterator, Match, Set, List, Tuple, Optional, Union
 import re
+from collections import defaultdict
+from typing import Any, Dict, Iterator, List, Match, Optional, Set, Tuple, Union
 
 import attr
 from pycparser import c_ast as ca
-from pycparser.c_ast import ArrayDecl, TypeDecl, PtrDecl, FuncDecl, IdentifierType
+from pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
 from pycparser.c_generator import CGenerator
 from pycparser.c_parser import CParser
 from pycparser.plyparser import ParseError

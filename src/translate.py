@@ -19,7 +19,7 @@ from .flow_graph import (
     TerminalNode,
     build_flowgraph,
 )
-from .options import Options, Formatter
+from .options import Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
@@ -32,8 +32,8 @@ from .parse_instruction import (
     Register,
 )
 from .types import (
-    FunctionSignature,
     FunctionParam,
+    FunctionSignature,
     Type,
     find_substruct_array,
     get_field,
