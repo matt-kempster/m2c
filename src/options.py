@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional
+import contextlib
+from typing import Dict, Iterator, List, Optional
 
 import attr
 
@@ -20,8 +21,9 @@ class Options:
     andor_detection: bool = attr.ib()
     loop_rerolling: bool = attr.ib()
     skip_casts: bool = attr.ib()
+    reg_vars: List[str] = attr.ib()
     goto_patterns: List[str] = attr.ib()
-    rodata_files: List[str] = attr.ib()
+    asm_data_files: List[str] = attr.ib()
     stop_on_error: bool = attr.ib()
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()
@@ -30,6 +32,16 @@ class Options:
     pdb_translate: bool = attr.ib()
     preproc_defines: Dict[str, int] = attr.ib()
     coding_style: CodingStyle = attr.ib()
+    sanitize_tracebacks: bool = attr.ib()
+    valid_syntax: bool = attr.ib()
+    emit_globals: bool = attr.ib()
+
+    def formatter(self) -> "Formatter":
+        return Formatter(
+            self.coding_style,
+            skip_casts=self.skip_casts,
+            valid_syntax=self.valid_syntax,
+        )
 
 
 DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
@@ -37,3 +49,24 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     newline_after_if=False,
     newline_before_else=False,
 )
+
+
+@attr.s
+class Formatter:
+    coding_style: CodingStyle = attr.ib(default=DEFAULT_CODING_STYLE)
+    indent_step: str = attr.ib(default=" " * 4)
+    skip_casts: bool = attr.ib(default=False)
+    extra_indent: int = attr.ib(default=0)
+    debug: bool = attr.ib(default=False)
+    valid_syntax: bool = attr.ib(default=False)
+
+    def indent(self, line: str, indent: int = 0) -> str:
+        return self.indent_step * max(indent + self.extra_indent, 0) + line
+
+    @contextlib.contextmanager
+    def indented(self) -> Iterator[None]:
+        try:
+            self.extra_indent += 1
+            yield
+        finally:
+            self.extra_indent -= 1

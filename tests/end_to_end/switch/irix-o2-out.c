@@ -6,7 +6,7 @@ s32 test(s32 arg0) {
     temp_t6 = arg0 - 1;
     if (temp_t6 < 7U) {
         phi_a0_2 = arg0;
-        goto **(&jtbl_400130 + (temp_t6 * 4));
+        goto **(&jpt_400130 + (temp_t6 * 4));
     case 0:
         return arg0 * arg0;
     case 1:
@@ -15,14 +15,20 @@ s32 test(s32 arg0) {
         return phi_a0_2 * 2;
     case 3:
         phi_a0 = arg0 + 1;
-        goto block_8;
+        D_410150 = phi_a0;
+        return 2;
+    case 4:
+block_7:
+        phi_a0 = arg0 / 2;
+        // Duplicate return node #8. Try simplifying control flow for better match
+        D_410150 = phi_a0;
+        return 2;
     default:
         phi_a0 = arg0 * 2;
+        // Duplicate return node #8. Try simplifying control flow for better match
+        D_410150 = phi_a0;
+        return 2;
     } else {
-    case 4:
-        phi_a0 = arg0 / 2;
+        goto block_7;
     }
-block_8:
-    D_410150 = phi_a0;
-    return 2;
 }

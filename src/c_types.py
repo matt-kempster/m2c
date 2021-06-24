@@ -2,7 +2,9 @@
 based on a C AST. Based on the pycparser library."""
 
 from collections import defaultdict
-from typing import Any, Dict, Match, Set, List, Tuple, Optional, Union
+import copy
+import functools
+from typing import Any, Dict, Iterator, Match, Set, List, Tuple, Optional, Union
 import re
 
 import attr
@@ -35,6 +37,17 @@ class Struct:
 
 
 @attr.s
+class Array:
+    subtype: "DetailedStructMember" = attr.ib()
+    subctype: CType = attr.ib()
+    subsize: int = attr.ib()
+    dim: int = attr.ib()
+
+
+DetailedStructMember = Union[Array, Struct, None]
+
+
+@attr.s
 class Param:
     type: CType = attr.ib()
     name: Optional[str] = attr.ib()
@@ -42,6 +55,7 @@ class Param:
 
 @attr.s
 class Function:
+    type: CType = attr.ib()
     ret_type: Optional[CType] = attr.ib()
     params: Optional[List[Param]] = attr.ib()
     is_variadic: bool = attr.ib()
@@ -93,6 +107,25 @@ def pointer_decay(type: CType, typemap: TypeMap) -> SimpleType:
         type, (ArrayDecl, FuncDecl)
     ), "resolve_typedefs can't hide arrays/functions"
     return type
+
+
+def type_from_global_decl(decl: ca.Decl) -> CType:
+    """Get the CType of a global Decl, stripping names of function parameters."""
+    tp = decl.type
+    if not isinstance(tp, ca.FuncDecl) or not tp.args:
+        return tp
+
+    def anonymize_param(param: ca.Decl) -> ca.Typename:
+        param = copy.deepcopy(param)
+        param.name = None
+        set_decl_name(param)
+        return ca.Typename(name=None, quals=param.quals, type=param.type)
+
+    new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
+        anonymize_param(param) if isinstance(param, ca.Decl) else param
+        for param in tp.args.params
+    ]
+    return ca.FuncDecl(args=ca.ParamList(new_params), type=tp.type)
 
 
 def deref_type(type: CType, typemap: TypeMap) -> CType:
@@ -199,7 +232,9 @@ def get_primitive_list(type: CType, typemap: TypeMap) -> Optional[List[str]]:
     return None
 
 
-def parse_function(fn: FuncDecl) -> Function:
+def parse_function(fn: CType) -> Optional[Function]:
+    if not isinstance(fn, FuncDecl):
+        return None
     params: List[Param] = []
     is_variadic = False
     has_void = False
@@ -224,7 +259,21 @@ def parse_function(fn: FuncDecl) -> Function:
         # Function declaration without a parameter list
         maybe_params = None
     ret_type = None if is_void(fn.type) else fn.type
-    return Function(ret_type=ret_type, params=maybe_params, is_variadic=is_variadic)
+    return Function(
+        type=fn, ret_type=ret_type, params=maybe_params, is_variadic=is_variadic
+    )
+
+
+def divmod_towards_zero(lhs: int, rhs: int, op: str) -> int:
+    if rhs < 0:
+        rhs = -rhs
+        lhs = -lhs
+    if lhs < 0:
+        return -divmod_towards_zero(-lhs, rhs, op)
+    if op == "/":
+        return lhs // rhs
+    else:
+        return lhs % rhs
 
 
 def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
@@ -237,18 +286,62 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
         if expr.name in typemap.enum_values:
             return typemap.enum_values[expr.name]
     if isinstance(expr, ca.BinaryOp):
+        op = expr.op
         lhs = parse_constant_int(expr.left, typemap)
+        if op == "&&" and lhs == 0:
+            return 0
+        if op == "||" and lhs != 0:
+            return 1
         rhs = parse_constant_int(expr.right, typemap)
-        if expr.op == "+":
+        if op == "+":
             return lhs + rhs
-        if expr.op == "-":
+        if op == "-":
             return lhs - rhs
-        if expr.op == "*":
+        if op == "*":
             return lhs * rhs
-        if expr.op == "<<":
+        if op == "<<":
             return lhs << rhs
-        if expr.op == ">>":
+        if op == ">>":
             return lhs >> rhs
+        if op == "&":
+            return lhs & rhs
+        if op == "|":
+            return lhs | rhs
+        if op == "^":
+            return lhs ^ rhs
+        if op == ">=":
+            return 1 if lhs >= rhs else 0
+        if op == "<=":
+            return 1 if lhs <= rhs else 0
+        if op == ">":
+            return 1 if lhs > rhs else 0
+        if op == "<":
+            return 1 if lhs < rhs else 0
+        if op == "==":
+            return 1 if lhs == rhs else 0
+        if op == "!=":
+            return 1 if lhs != rhs else 0
+        if op in ["&&", "||"]:
+            return 1 if rhs != 0 else 0
+        if op in ["/", "%"]:
+            if rhs == 0:
+                raise DecompFailure(
+                    f"Division by zero when evaluating expression {to_c(expr)}"
+                )
+            return divmod_towards_zero(lhs, rhs, op)
+    if isinstance(expr, ca.TernaryOp):
+        cond = parse_constant_int(expr.cond, typemap) != 0
+        return parse_constant_int(expr.iftrue if cond else expr.iffalse, typemap)
+    if isinstance(expr, ca.ExprList) and not isinstance(expr.exprs[-1], ca.Typename):
+        return parse_constant_int(expr.exprs[-1], typemap)
+    if isinstance(expr, ca.UnaryOp) and not isinstance(expr.expr, ca.Typename):
+        sub = parse_constant_int(expr.expr, typemap)
+        if expr.op == "-":
+            return -sub
+        if expr.op == "~":
+            return ~sub
+        if expr.op == "!":
+            return 1 if sub == 0 else 1
     raise DecompFailure(
         f"Failed to evaluate expression {to_c(expr)} at compile time; only simple arithmetic is supported for now"
     )
@@ -297,7 +390,7 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
 
 def parse_struct_member(
     type: CType, field_name: str, typemap: TypeMap, *, allow_unsized: bool
-) -> Tuple[int, int, Optional[Struct]]:
+) -> Tuple[int, int, DetailedStructMember]:
     old_type = type
     type = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl):
@@ -306,10 +399,10 @@ def parse_struct_member(
         if type.dim is None:
             raise DecompFailure(f"Array field {field_name} must have a size")
         dim = parse_constant_int(type.dim, typemap)
-        size, align, _ = parse_struct_member(
+        size, align, substr = parse_struct_member(
             type.type, field_name, typemap, allow_unsized=False
         )
-        return size * dim, align, None
+        return size * dim, align, Array(substr, type.type, size, dim)
     if isinstance(type, FuncDecl):
         assert allow_unsized, "Struct can not contain a function"
         return 0, 0, None
@@ -324,6 +417,22 @@ def parse_struct_member(
     if size == 0 and not allow_unsized:
         raise DecompFailure(f"Field {field_name} cannot be void")
     return size, size, None
+
+
+def expand_detailed_struct_member(
+    substr: DetailedStructMember, type: CType, size: int
+) -> Iterator[Tuple[int, str, CType, int]]:
+    yield (0, "", type, size)
+    if isinstance(substr, Struct):
+        for off, sfields in substr.fields.items():
+            for field in sfields:
+                yield (off, "." + field.name, field.type, field.size)
+    elif isinstance(substr, Array) and substr.subsize != 1:
+        for i in range(substr.dim):
+            for (off, path, subtype, subsize) in expand_detailed_struct_member(
+                substr.subtype, substr.subctype, substr.subsize
+            ):
+                yield (substr.subsize * i + off, f"[{i}]" + path, subtype, subsize)
 
 
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
@@ -383,17 +492,12 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             )
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
-            fields[offset].append(StructField(type=type, size=ssize, name=decl.name))
-            if substr is not None:
-                for off, sfields in substr.fields.items():
-                    for field in sfields:
-                        fields[offset + off].append(
-                            StructField(
-                                type=field.type,
-                                size=field.size,
-                                name=decl.name + "." + field.name,
-                            )
-                        )
+            for off, path, ftype, fsize in expand_detailed_struct_member(
+                substr, type, ssize
+            ):
+                fields[offset + off].append(
+                    StructField(type=ftype, size=fsize, name=decl.name + path)
+                )
             if is_union:
                 union_size = max(union_size, ssize)
             else:
@@ -486,6 +590,7 @@ def parse_c(source: str) -> ca.FileAST:
         raise DecompFailure(f"Syntax error when parsing C context.\n{msg}{posstr}")
 
 
+@functools.lru_cache(maxsize=4)
 def build_typemap(source: str) -> TypeMap:
     source = add_builtin_typedefs(source)
     source = strip_comments(source)
@@ -497,11 +602,14 @@ def build_typemap(source: str) -> TypeMap:
             ret.typedefs[item.name] = item.type
         if isinstance(item, ca.FuncDef):
             assert item.decl.name is not None, "cannot define anonymous function"
-            assert isinstance(item.decl.type, FuncDecl)
-            ret.functions[item.decl.name] = parse_function(item.decl.type)
+            fn = parse_function(item.decl.type)
+            assert fn is not None
+            ret.functions[item.decl.name] = fn
         if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
             assert item.name is not None, "cannot define anonymous function"
-            ret.functions[item.name] = parse_function(item.type)
+            fn = parse_function(item.type)
+            assert fn is not None
+            ret.functions[item.name] = fn
 
     defined_function_decls: Set[ca.Decl] = set()
 
@@ -516,7 +624,7 @@ def build_typemap(source: str) -> TypeMap:
 
         def visit_Decl(self, decl: ca.Decl) -> None:
             if decl.name is not None:
-                ret.var_types[decl.name] = decl.type
+                ret.var_types[decl.name] = type_from_global_decl(decl)
             if not isinstance(decl.type, FuncDecl):
                 self.visit(decl.type)
 
@@ -525,7 +633,7 @@ def build_typemap(source: str) -> TypeMap:
 
         def visit_FuncDef(self, fn: ca.FuncDef) -> None:
             if fn.decl.name is not None:
-                ret.var_types[fn.decl.name] = fn.decl.type
+                ret.var_types[fn.decl.name] = type_from_global_decl(fn.decl)
 
     Visitor().visit(ast)
     return ret
@@ -539,7 +647,7 @@ def set_decl_name(decl: ca.Decl) -> None:
     type.declname = name
 
 
-def type_to_string(type: CType) -> str:
+def type_to_string(type: CType, name: str = "") -> str:
     if isinstance(type, TypeDecl) and isinstance(
         type.type, (ca.Struct, ca.Union, ca.Enum)
     ):
@@ -552,7 +660,7 @@ def type_to_string(type: CType) -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    decl = ca.Decl("", [], [], [], type, None, None)
+    decl = ca.Decl(name, [], [], [], copy.deepcopy(type), None, None)
     set_decl_name(decl)
     return to_c(decl)
 
@@ -560,19 +668,11 @@ def type_to_string(type: CType) -> str:
 def dump_typemap(typemap: TypeMap) -> None:
     print("Variables:")
     for var, type in typemap.var_types.items():
-        print(f"{var}:", type_to_string(type))
+        print(f"{type_to_string(type, var)};")
     print()
     print("Functions:")
     for name, fn in typemap.functions.items():
-        if fn.params is None:
-            params_str = ""
-        else:
-            params = [type_to_string(arg.type) for arg in fn.params]
-            if fn.is_variadic:
-                params.append("...")
-            params_str = ", ".join(params) or "void"
-        ret_str = "void" if fn.ret_type is None else type_to_string(fn.ret_type)
-        print(f"{name}: {ret_str}({params_str})")
+        print(f"{type_to_string(fn.type, name)};")
     print()
     print("Structs:")
     for name, struct in typemap.named_structs.items():

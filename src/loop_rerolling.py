@@ -5,7 +5,7 @@ from .flow_graph import (
     ConditionalNode,
     FlowGraph,
     Node,
-    compute_dominators_and_parents,
+    compute_relations,
 )
 from .parse_instruction import Instruction
 
@@ -43,7 +43,7 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
 
     if not (
         isinstance(node_3, ConditionalNode)
-        and node_3.is_loop()
+        and node_3.loop
         and node_3.conditional_edge is node_3
     ):
         return False
@@ -62,7 +62,7 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
 
     if not (
         isinstance(node_6, ConditionalNode)
-        and node_6.is_loop()
+        and node_6.loop
         and node_6.conditional_edge is node_6
         and node_6.fallthrough_edge is node_7
     ):
@@ -81,7 +81,7 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
         # that this node fits the criteria.
         instructions.remove(branches[0])
         andi = andi_instrs[0]
-        move = Instruction("move", [andi.args[0], andi.args[1]])
+        move = Instruction.derived("move", [andi.args[0], andi.args[1]], andi)
         instructions[instructions.index(andi)] = move
         return True
 
@@ -112,5 +112,5 @@ def reroll_loops(flow_graph: FlowGraph) -> FlowGraph:
             changed = reroll_loop(flow_graph, node)
             if changed:
                 break
-    compute_dominators_and_parents(flow_graph.nodes)
+    compute_relations(flow_graph.nodes)
     return flow_graph

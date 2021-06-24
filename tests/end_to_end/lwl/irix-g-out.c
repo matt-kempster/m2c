@@ -1,7 +1,7 @@
 void test(void) {
-    ? sp18;
+    ?32 sp18;
 
-    sp18.unk0 = (s32) D_400170.unk0;
+    sp18.unk0 = (?32) D_400170.unk0;
     sp18.unk4 = (first 3 bytes) D_400170.unk4;
     func_004000B0(&sp18);
     D_410181 = (unaligned s32) D_410189;

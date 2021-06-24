@@ -3,8 +3,8 @@ s16 test(struct SomeStruct *arg, u8 should, ? union_arg, ? union_arg_unk4, ...) 
 
     temp_t6 = should & 0xFF;
     if (temp_t6 != 0) {
-        globalf = (f32) arg->float_field;
-        globali = (s32) arg->int_field;
+        globalf = arg->float_field;
+        globali = arg->int_field;
         arg->data_field.char_innerfield = temp_t6;
     } else {
         arg->pointer_field = NULL;

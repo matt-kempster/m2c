@@ -1,17 +1,30 @@
 import abc
 import copy
 import typing
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Counter,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import attr
 
 from .error import DecompFailure
-from .parse_file import Function, Label, Rodata
+from .options import Formatter
+from .parse_file import Function, Label, AsmData
 from .parse_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
+    InstructionMeta,
     JumpTarget,
     Macro,
     Register,
@@ -93,6 +106,15 @@ class BlockBuilder:
         return self.blocks
 
 
+def verify_no_trailing_delay_slot(function: Function) -> None:
+    last_ins: Optional[Instruction] = None
+    for item in function.body:
+        if isinstance(item, Instruction):
+            last_ins = item
+    if last_ins and last_ins.is_delay_slot_instruction():
+        raise DecompFailure(f"Last instruction is missing a delay slot:\n{last_ins}")
+
+
 def invert_branch_mnemonic(mnemonic: str) -> str:
     inverses = {
         "beq": "bne",
@@ -109,32 +131,32 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-# Branch-likely instructions only evaluate their delay slots when they are
-# taken, making control flow more complex. However, on the IRIX compiler they
-# only occur in a very specific pattern:
-#
-# ...
-# <branch likely instr> .label
-#  X
-# ...
-# X
-# .label:
-# ...
-#
-# which this function transforms back into a regular branch pattern by moving
-# the label one step back and replacing the delay slot by a nop.
-#
-# Branch-likely instructions that do not appear in this pattern are kept.
-#
-# We also do this for b instructions, which sometimes occur in the same pattern,
-# and also fix up the pattern
-#
-# <branch likely instr> .label
-#  X
-# .label:
-#
-# which GCC emits.
 def normalize_likely_branches(function: Function) -> Function:
+    """Branch-likely instructions only evaluate their delay slots when they are
+    taken, making control flow more complex. However, on the IDO compiler they
+    only occur in a very specific pattern:
+
+    ...
+    <branch likely instr> .label
+     X
+    ...
+    X
+    .label:
+    ...
+
+    which this function transforms back into a regular branch pattern by moving
+    the label one step back and replacing the delay slot by a nop.
+
+    Branch-likely instructions that do not appear in this pattern are kept.
+
+    We also do this for b instructions, which sometimes occur in the same pattern,
+    and also fix up the pattern
+
+    <branch likely instr> .label
+     X
+    .label:
+
+    which GCC emits."""
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
     instr_before_instr: Dict[int, Instruction] = {}
@@ -165,6 +187,10 @@ def normalize_likely_branches(function: Function) -> Function:
             item.is_branch_likely_instruction() or item.mnemonic == "b"
         ):
             old_label = item.get_branch_target().target
+            if old_label not in label_prev_instr:
+                raise DecompFailure(
+                    f"Unable to parse branch: label {old_label} does not exist in function {function.name}"
+                )
             before_target = label_prev_instr[old_label]
             before_before_target = (
                 instr_before_instr.get(id(before_target))
@@ -176,7 +202,7 @@ def normalize_likely_branches(function: Function) -> Function:
             if (
                 item.mnemonic == "b"
                 and before_before_target is not None
-                and before_before_target.is_branch_instruction()
+                and before_before_target.is_delay_slot_instruction()
             ):
                 # Don't treat 'b' instructions as branch likelies if doing so would
                 # introduce a label in a delay slot.
@@ -188,9 +214,10 @@ def normalize_likely_branches(function: Function) -> Function:
                 and item.mnemonic != "b"
             ):
                 mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-                item = Instruction(mn_inverted, item.args, item.emit_goto)
+                item = Instruction.derived(mn_inverted, item.args, item)
+                new_nop = Instruction.derived("nop", [], item)
                 new_body.append((orig_item, item))
-                new_body.append((Instruction("dummy", []), Instruction("nop", [])))
+                new_body.append((new_nop, new_nop))
                 new_body.append((orig_next_item, next_item))
             elif (
                 isinstance(next_item, Instruction)
@@ -205,10 +232,10 @@ def normalize_likely_branches(function: Function) -> Function:
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
                 mn_unlikely = item.mnemonic[:-1] or "b"
-                item = Instruction(
-                    mn_unlikely, item.args[:-1] + [new_target], item.emit_goto
+                item = Instruction.derived(
+                    mn_unlikely, item.args[:-1] + [new_target], item
                 )
-                next_item = Instruction("nop", [])
+                next_item = Instruction.derived("nop", [], item)
                 new_body.append((orig_item, item))
                 new_body.append((orig_next_item, next_item))
             else:
@@ -226,11 +253,11 @@ def normalize_likely_branches(function: Function) -> Function:
     return new_function
 
 
-def prune_unreferenced_labels(function: Function, rodata: Rodata) -> Function:
+def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function:
     labels_used: Set[str] = {
         label.name
         for label in function.body
-        if isinstance(label, Label) and label.name in rodata.mentioned_labels
+        if isinstance(label, Label) and label.name in asm_data.mentioned_labels
     }
     for item in function.body:
         if isinstance(item, Instruction) and item.is_branch_instruction():
@@ -244,63 +271,104 @@ def prune_unreferenced_labels(function: Function, rodata: Rodata) -> Function:
     return new_function
 
 
-# Detect and simplify various standard patterns emitted by the IRIX compiler.
-# Currently handled:
-# - checks for x/0 and INT_MIN/-1 after division (removed)
-# - unsigned to float conversion (converted to a made-up instruction)
-# - float/double to unsigned conversion (converted to a made-up instruction)
 def simplify_standard_patterns(function: Function) -> Function:
+    """Detect and simplify various standard patterns emitted by IDO and GCC.
+    Currently handled:
+    - checks for x/0 and INT_MIN/-1 after division (removed)
+    - gcc sqrt nan check (removed)
+    - division or modulo by power of two (converted to made-up instructions)
+    - unsigned to float conversion (converted to a made-up instruction)
+    - float/double to unsigned conversion (converted to a made-up instruction)"""
     BodyPart = Union[Instruction, Label]
+    PatternPart = Union[Instruction, Label, None]
+    Pattern = List[Tuple[PatternPart, bool]]
 
-    div_pattern: List[str] = [
-        "bnez",
-        "nop",
+    def make_pattern(*parts: str) -> Pattern:
+        ret: Pattern = []
+        for part in parts:
+            optional = part.endswith("*")
+            part = part.rstrip("*")
+            if part == "?":
+                ret.append((None, optional))
+            elif part.endswith(":"):
+                ret.append((Label(""), optional))
+            else:
+                ins = parse_instruction(part, InstructionMeta.missing())
+                ret.append((ins, optional))
+        return ret
+
+    div_pattern = make_pattern(
+        "bnez $x, .A",
+        "?",  # nop or div
         "break",
-        "",
+        ".A:",
         "li $at, -1",
-        "bne",
+        "bne $x, $at, .B",
         "li $at, 0x80000000",
-        "bne",
+        "bne $y, $at, .B",
         "nop",
         "break",
-        "",
-    ]
+        ".B:",
+    )
 
-    divu_pattern: List[str] = [
-        "bnez",
+    divu_pattern = make_pattern(
+        "bnez $x, .A",
         "nop",
         "break",
-        "",
-    ]
+        ".A:",
+    )
 
-    div_p2_pattern_1: List[str] = [
-        "bgez",
-        "sra",
-        "addiu",
-        "sra",
-        "",
-    ]
+    mod_p2_pattern = make_pattern(
+        "bgez $x, .A",
+        "andi $y, $x, LIT",
+        "beqz $y, .A",
+        "nop",
+        "addiu $y, $y, LIT",
+        ".A:",
+    )
 
-    div_p2_pattern_2: List[str] = [
-        "bgez",
-        "move",
-        "addiu",
-        "",
-        "sra",
-    ]
+    div_p2_pattern_1 = make_pattern(
+        "bgez $x, .A",
+        "sra $y, $x, LIT",
+        "addiu $at, $x, LIT",
+        "sra $y, $at, LIT",
+        ".A:",
+    )
 
-    utf_pattern: List[str] = [
-        "bgez",
+    div_p2_pattern_2 = make_pattern(
+        "bgez $x, .A",
+        "move $at, $x",
+        "addiu $at, $x, LIT",
+        ".A:",
+        "sra $x, $at, LIT",
+    )
+
+    div_2_s16_pattern = make_pattern(
+        "sll $x, $x, LIT",
+        "sra $y, $x, LIT",
+        "srl $x, $x, 0x1f",
+        "addu $y, $y, $x",
+        "sra $y, $y, 1",
+    )
+
+    div_2_s32_pattern = make_pattern(
+        "srl $x, $y, 0x1f",
+        "addu $x, $y, $x",
+        "sra $x, $x, 1",
+    )
+
+    utf_pattern = make_pattern(
+        "bgez $x, .A",
         "cvt.s.w",
         "li $at, 0x4f800000",
         "mtc1",
         "nop",
         "add.s",
-        "",
-    ]
+        ".A:",
+    )
 
-    ftu_pattern: List[str] = [
-        "cfc1",  # cfc1 Y, $31
+    ftu_pattern = make_pattern(
+        "cfc1 $y, $31",
         "nop",
         "andi",
         "andi*",  # (skippable)
@@ -324,7 +392,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         "li",
         "b",
         "or",
-        "",
+        ".A:",
         "b",
         "li",
         "?",  # label: (moved one step down if bneql)
@@ -332,118 +400,156 @@ def simplify_standard_patterns(function: Function) -> Function:
         "nop",
         "bltz",
         "nop",
-    ]
+    )
 
-    def get_li_imm(ins: Instruction) -> Optional[int]:
-        if ins.mnemonic == "li" and isinstance(ins.args[1], AsmLiteral):
-            return ins.args[1].value & 0xFFFFFFFF
-        return None
+    lwc1_twice_pattern = make_pattern("lwc1", "lwc1")
+    swc1_twice_pattern = make_pattern("swc1", "swc1")
 
-    def matches_pattern(actual: List[BodyPart], pattern: List[str]) -> int:
-        def match_one(actual: BodyPart, expected: str) -> bool:
-            if expected == "?":
+    gcc_sqrt_pattern = make_pattern(
+        "sqrt.s",
+        "c.eq.s",
+        "nop",
+        "bc1t",
+        "?",
+        "jal sqrtf",
+        "nop",
+    )
+
+    def matches_pattern(actual: List[BodyPart], pattern: Pattern) -> int:
+        symbolic_registers: Dict[str, Register] = {}
+        symbolic_labels: Dict[str, str] = {}
+
+        def match_one(actual: BodyPart, exp: PatternPart) -> bool:
+            if exp is None:
                 return True
+            if isinstance(exp, Label):
+                name = symbolic_labels.get(exp.name)
+                return isinstance(actual, Label) and (
+                    name is None or actual.name == name
+                )
             if not isinstance(actual, Instruction):
-                return expected == ""
+                return False
             ins = actual
-            exp = parse_instruction(expected, emit_goto=False)
-            if not exp.args:
-                if exp.mnemonic == "li" and ins.mnemonic in ["lui", "addiu"]:
-                    return True
-                return ins.mnemonic == exp.mnemonic
-            if str(ins) == str(exp):
-                return True
-            # A bit of an ugly hack, but since 'li' can be spelled many ways...
-            return (
-                exp.mnemonic == "li"
-                and exp.args[0] == ins.args[0]
-                and isinstance(exp.args[1], AsmLiteral)
-                and (exp.args[1].value & 0xFFFFFFFF) == get_li_imm(ins)
-            )
+            if ins.mnemonic != exp.mnemonic:
+                return False
+            if exp.args:
+                if len(exp.args) != len(ins.args):
+                    return False
+                for (e, a) in zip(exp.args, ins.args):
+                    if isinstance(e, AsmLiteral):
+                        if not isinstance(a, AsmLiteral) or e.value != a.value:
+                            return False
+                    elif isinstance(e, Register):
+                        if not isinstance(a, Register):
+                            return False
+                        if len(e.register_name) <= 1:
+                            if e.register_name not in symbolic_registers:
+                                symbolic_registers[e.register_name] = a
+                            elif symbolic_registers[e.register_name] != a:
+                                return False
+                        elif e.register_name != a.register_name:
+                            return False
+                    elif isinstance(e, AsmGlobalSymbol):
+                        if e.symbol_name == "LIT" and not isinstance(a, AsmLiteral):
+                            return False
+                    elif isinstance(e, JumpTarget):
+                        if not isinstance(a, JumpTarget):
+                            return False
+                        if e.target not in symbolic_labels:
+                            symbolic_labels[e.target] = a.target
+                        elif symbolic_labels[e.target] != a.target:
+                            return False
+                    else:
+                        assert False, f"bad pattern part: {exp}"
+            return True
 
         actuali = 0
-        for pat in pattern:
-            matches = actuali < len(actual) and match_one(
-                actual[actuali], pat.rstrip("*")
-            )
-            if matches:
+        for (pat, optional) in pattern:
+            if actuali < len(actual) and match_one(actual[actuali], pat):
                 actuali += 1
-            elif not pat.endswith("*"):
+            elif not optional:
                 return 0
         return actuali
 
     def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
         assert isinstance(sra.args[2], AsmLiteral)
         shift = sra.args[2].value & 0x1F
-        return Instruction(
-            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)]
+        return Instruction.derived(
+            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)], sra
         )
 
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(div_pattern)]
         if not matches_pattern(actual, div_pattern):
             return None
-        label1 = typing.cast(Label, actual[3])
-        label2 = typing.cast(Label, actual[10])
-        bnez = typing.cast(Instruction, actual[0])
-        bne1 = typing.cast(Instruction, actual[5])
-        bne2 = typing.cast(Instruction, actual[7])
-        if (
-            bnez.get_branch_target().target != label1.name
-            or bne1.get_branch_target().target != label2.name
-            and bne2.get_branch_target().target != label2.name
-        ):
-            return None
-        return ([], i + len(div_pattern) - 1)
+        return ([actual[1]], i + len(div_pattern) - 1)
 
     def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(divu_pattern)]
         if not matches_pattern(actual, divu_pattern):
             return None
-        label = typing.cast(Label, actual[3])
-        bnez = typing.cast(Instruction, actual[0])
-        if bnez.get_branch_target().target != label.name:
-            return None
         return ([], i + len(divu_pattern) - 1)
 
     def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        # Division by power of two where input reg != output reg
         actual = function.body[i : i + len(div_p2_pattern_1)]
         if not matches_pattern(actual, div_p2_pattern_1):
             return None
-        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
-            return None
-        label = typing.cast(Label, actual[4])
         bnez = typing.cast(Instruction, actual[0])
-        if bnez.get_branch_target().target != label.name:
-            return None
         div = create_div_p2(bnez, typing.cast(Instruction, actual[3]))
         return ([div], i + len(div_p2_pattern_1) - 1)
 
     def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        # Division by power of two where input reg = output reg
         actual = function.body[i : i + len(div_p2_pattern_2)]
         if not matches_pattern(actual, div_p2_pattern_2):
             return None
-        if typing.cast(Instruction, actual[1]).args[0] != Register("at"):
-            return None
-        if typing.cast(Instruction, actual[2]).args[0] != Register("at"):
-            return None
-        label = typing.cast(Label, actual[3])
         bnez = typing.cast(Instruction, actual[0])
-        if bnez.get_branch_target().target != label.name:
-            return None
         div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
         return ([div], i + len(div_p2_pattern_2))
+
+    def try_replace_div_2_s16(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_2_s16_pattern)]
+        if not matches_pattern(actual, div_2_s16_pattern):
+            return None
+        sll1 = typing.cast(Instruction, actual[0])
+        sra1 = typing.cast(Instruction, actual[1])
+        sra = typing.cast(Instruction, actual[4])
+        if sll1.args[2] != sra1.args[2]:
+            return None
+        div = Instruction.derived(
+            "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
+        )
+        return ([sll1, sra1, div], i + len(div_2_s16_pattern))
+
+    def try_replace_div_2_s32(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(div_2_s32_pattern)]
+        if not matches_pattern(actual, div_2_s32_pattern):
+            return None
+        addu = typing.cast(Instruction, actual[1])
+        sra = typing.cast(Instruction, actual[2])
+        div = Instruction.derived(
+            "div.fictive", [sra.args[0], addu.args[1], AsmLiteral(2)], sra
+        )
+        return ([div], i + len(div_2_s32_pattern))
+
+    def try_replace_mod_p2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(mod_p2_pattern)]
+        if not matches_pattern(actual, mod_p2_pattern):
+            return None
+        andi = typing.cast(Instruction, actual[1])
+        val = (typing.cast(AsmLiteral, andi.args[2]).value & 0xFFFF) + 1
+        mod = Instruction.derived(
+            "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
+        )
+        return ([mod], i + len(mod_p2_pattern) - 1)
 
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         actual = function.body[i : i + len(utf_pattern)]
         if not matches_pattern(actual, utf_pattern):
             return None
-        label = typing.cast(Label, actual[6])
-        bgez = typing.cast(Instruction, actual[0])
-        if bgez.get_branch_target().target != label.name:
-            return None
         cvt_instr = typing.cast(Instruction, actual[1])
-        new_instr = Instruction(mnemonic="cvt.s.u.fictive", args=cvt_instr.args)
+        new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
         return ([new_instr], i + len(utf_pattern) - 1)
 
     def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
@@ -461,9 +567,9 @@ def simplify_standard_patterns(function: Function) -> Function:
         fmt = sub.mnemonic.split(".")[-1]
         args = [cfc.args[0], sub.args[1]]
         if fmt == "s":
-            new_instr = Instruction(mnemonic="cvt.u.s.fictive", args=args)
+            new_instr = Instruction.derived("cvt.u.s.fictive", args, cfc)
         else:
-            new_instr = Instruction(mnemonic="cvt.u.d.fictive", args=args)
+            new_instr = Instruction.derived("cvt.u.d.fictive", args, cfc)
         return ([new_instr], i + consumed)
 
     def try_replace_mips1_double_load_store(
@@ -471,8 +577,8 @@ def simplify_standard_patterns(function: Function) -> Function:
     ) -> Optional[Tuple[List[BodyPart], int]]:
         # TODO: sometimes the instructions aren't consecutive.
         actual = function.body[i : i + 2]
-        if not matches_pattern(actual, ["lwc1", "lwc1"]) and not matches_pattern(
-            actual, ["swc1", "swc1"]
+        if not matches_pattern(actual, lwc1_twice_pattern) and not matches_pattern(
+            actual, swc1_twice_pattern
         ):
             return None
         a, b = actual
@@ -498,8 +604,18 @@ def simplify_standard_patterns(function: Function) -> Function:
         # Store the even-numbered register (ra) into the low address (mb).
         new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
-        new_instr = Instruction(mnemonic=new_mn, args=new_args)
+        new_instr = Instruction.derived(new_mn, new_args, a)
         return ([new_instr], i + 2)
+
+    def try_replace_gcc_sqrt(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(gcc_sqrt_pattern)]
+        consumed = matches_pattern(actual, gcc_sqrt_pattern)
+        if not consumed:
+            return None
+        sqrt = actual[0]
+        assert isinstance(sqrt, Instruction)
+        new_instr = Instruction.derived("sqrt.s", sqrt.args, sqrt)
+        return ([new_instr], i + consumed)
 
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
@@ -512,24 +628,30 @@ def simplify_standard_patterns(function: Function) -> Function:
             or try_replace_divu(i)
             or try_replace_div_p2_1(i)
             or try_replace_div_p2_2(i)
+            or try_replace_div_2_s32(i)
+            or try_replace_div_2_s16(i)
+            or try_replace_mod_p2(i)
             or try_replace_utf_conv(i)
             or try_replace_ftu_conv(i)
             or try_replace_mips1_double_load_store(i)
+            or try_replace_gcc_sqrt(i)
             or no_replacement(i)
         )
         new_function.body.extend(repl)
     return new_function
 
 
-def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
+def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
+    verify_no_trailing_delay_slot(function)
     function = normalize_likely_branches(function)
-    function = prune_unreferenced_labels(function, rodata)
+    function = prune_unreferenced_labels(function, asm_data)
     function = simplify_standard_patterns(function)
-    function = prune_unreferenced_labels(function, rodata)
+    function = prune_unreferenced_labels(function, asm_data)
 
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
+    branch_likely_counts: Counter[str] = Counter()
 
     def process(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
@@ -582,19 +704,24 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
             )
 
         if item.is_branch_likely_instruction():
-            target = item.args[-1]
-            assert isinstance(target, JumpTarget)
+            target = item.get_branch_target()
+            branch_likely_counts[target.target] += 1
+            index = branch_likely_counts[target.target]
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-            temp_label = JumpTarget(target.target + "_branchlikelyskip")
-            branch_not = Instruction(mn_inverted, item.args[:-1] + [temp_label], False)
+            temp_label = JumpTarget(f"{target.target}_branchlikelyskip_{index}")
+            branch_not = Instruction.derived(
+                mn_inverted, item.args[:-1] + [temp_label], item
+            )
+            nop = Instruction.derived("nop", [], item)
             block_builder.add_instruction(branch_not)
-            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.add_instruction(nop)
             block_builder.new_block()
             block_builder.add_instruction(next_item)
-            block_builder.add_instruction(Instruction("b", [target], item.emit_goto))
-            block_builder.add_instruction(Instruction("nop", []))
+            block_builder.add_instruction(Instruction.derived("b", [target], item))
+            block_builder.add_instruction(nop)
             block_builder.new_block()
             block_builder.set_label(Label(temp_label.target))
+            block_builder.add_instruction(nop)
 
         elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
@@ -622,38 +749,34 @@ def build_blocks(function: Function, rodata: Rodata) -> List[Block]:
         process(item)
 
     if block_builder.curr_label:
+        # As an easy-to-implement safeguard, check that the current block is
+        # anonymous ("jr" instructions create new anonymous blocks, so if it's
+        # not we must be missing a "jr $ra").
         label = block_builder.curr_label.name
         print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
-        block_builder.add_instruction(Instruction("jr", [Register("ra")]))
-        block_builder.add_instruction(Instruction("nop", []))
+        meta = InstructionMeta.missing()
+        block_builder.add_instruction(Instruction("jr", [Register("ra")], meta))
+        block_builder.add_instruction(Instruction("nop", [], meta))
         block_builder.new_block()
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
     return block_builder.get_blocks()
 
 
-def is_self_loop_edge(node: "Node", edge: "Node") -> bool:
-    return node is edge
-
-
-def is_loop_edge(node: "Node", edge: "Node") -> bool:
-    # Loops are represented by backwards jumps.
-    return edge.block.index <= node.block.index
-
-
-# TODO: Nodes need to be frozen.
-# We use dictionaries and sets of nodes throughout the codebase,
-# and it would be helpful to define __eq__ using `self.block.index`.
-# This would also keep code from silently modifying Nodes.
-# It just makes more sense.
 @attr.s(eq=False)
 class BaseNode(abc.ABC):
     block: Block = attr.ib()
     emit_goto: bool = attr.ib()
-    parents: Set["Node"] = attr.ib(init=False, factory=set)
+    parents: List["Node"] = attr.ib(init=False, factory=list)
     dominators: Set["Node"] = attr.ib(init=False, factory=set)
     immediate_dominator: Optional["Node"] = attr.ib(init=False, default=None)
     immediately_dominates: List["Node"] = attr.ib(init=False, factory=list)
+    postdominators: Set["Node"] = attr.ib(init=False, factory=set)
+    immediate_postdominator: Optional["Node"] = attr.ib(init=False, default=None)
+    immediately_postdominates: List["Node"] = attr.ib(init=False, factory=list)
+    # This is only populated on the head node of the loop,
+    # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
+    loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
 
     def to_basic_node(self, successor: "Node") -> "BasicNode":
         new_node = BasicNode(self.block, self.emit_goto, successor)
@@ -663,13 +786,8 @@ class BaseNode(abc.ABC):
         new_node.immediately_dominates = self.immediately_dominates
         return new_node
 
-    def add_parent(self, parent: "Node") -> None:
-        self.parents.add(parent)
-
-    def replace_parent(self, replace_this: "Node", with_this: "Node") -> None:
-        if replace_this in self.parents:
-            self.parents.remove(replace_this)
-            self.parents.add(with_this)
+    def name(self) -> str:
+        return str(self.block.index)
 
     @abc.abstractmethod
     def children(self) -> List["Node"]:
@@ -691,10 +809,8 @@ class BasicNode(BaseNode):
         if self.successor is replace_this:
             self.successor = with_this
 
-    def is_loop(self) -> bool:
-        return is_loop_edge(self, self.successor)
-
     def children(self) -> List["Node"]:
+        # TODO: Should we also include the fallthrough node if `emit_goto` is True?
         return [self.successor]
 
     def __str__(self) -> str:
@@ -702,7 +818,7 @@ class BasicNode(BaseNode):
             [
                 f"{self.block}\n",
                 f"# {self.block.index} -> {self.successor.block.index}",
-                " (loop)" if self.is_loop() else "",
+                " (loop)" if self.loop else "",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -719,13 +835,9 @@ class ConditionalNode(BaseNode):
         if self.fallthrough_edge is replace_this:
             self.fallthrough_edge = with_this
 
-    def is_self_loop(self) -> bool:
-        return is_self_loop_edge(self, self.conditional_edge)
-
-    def is_loop(self) -> bool:
-        return is_loop_edge(self, self.conditional_edge)
-
     def children(self) -> List["Node"]:
+        if self.conditional_edge == self.fallthrough_edge:
+            return [self.conditional_edge]
         return [self.conditional_edge, self.fallthrough_edge]
 
     def __str__(self) -> str:
@@ -734,7 +846,7 @@ class ConditionalNode(BaseNode):
                 f"{self.block}\n",
                 f"# {self.block.index} -> ",
                 f"cond: {self.conditional_edge.block.index}",
-                " (loop)" if self.is_loop() else "",
+                " (loop)" if self.loop else "",
                 ", ",
                 f"def: {self.fallthrough_edge.block.index}",
                 " (goto)" if self.emit_goto else "",
@@ -745,6 +857,10 @@ class ConditionalNode(BaseNode):
 @attr.s(eq=False)
 class ReturnNode(BaseNode):
     index: int = attr.ib()
+    terminal: "TerminalNode" = attr.ib()
+
+    def children(self) -> List["Node"]:
+        return [self.terminal]
 
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
         pass
@@ -752,9 +868,6 @@ class ReturnNode(BaseNode):
     def name(self) -> str:
         name = super().name()
         return name if self.is_real() else f"{name}.{self.index}"
-
-    def children(self) -> List["Node"]:
-        return []
 
     def is_real(self) -> bool:
         return self.index == 0
@@ -784,18 +897,71 @@ class SwitchNode(BaseNode):
         self.cases = new_cases
 
     def children(self) -> List["Node"]:
-        return self.cases
+        # Deduplicate nodes in `self.cases`
+        seen = set()
+        children = []
+        for node in self.cases:
+            if node not in seen:
+                seen.add(node)
+                children.append(node)
+        return children
 
     def __str__(self) -> str:
         targets = ", ".join(str(c.block.index) for c in self.cases)
         return f"{self.block}\n# {self.block.index} -> {targets}"
 
 
-Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode]
+@attr.s(eq=False)
+class TerminalNode(BaseNode):
+    """
+    This is a fictive node that acts as a common postdominator for every node
+    in the flowgraph. There should be exactly one TerminalNode per flowgraph.
+    This is sometimes referred to as the "exit node", and having it makes it
+    easier to perform interval/structural analysis on the flowgraph.
+    This node has no `block_info` or contents: it has no corresponding assembly
+    and emits no C code.
+    """
+
+    @staticmethod
+    def terminal() -> "TerminalNode":
+        return TerminalNode(Block(-1, None, "", []), False)
+
+    def children(self) -> List["Node"]:
+        return []
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        return None
+
+    def __str__(self) -> str:
+        return "return"
+
+
+Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode, TerminalNode]
+
+
+@attr.s(eq=False)
+class NaturalLoop:
+    """
+    Loops are defined by "backedges" `tail->head` where `head`
+    dominates `tail` in the control flow graph.
+
+    The loop body is the set of nodes dominated by `head` where there
+    is a path from the node to `tail` that does not contain `head`.
+
+    A loop can contain multiple backedges that all point to `head`
+    Each backedge is represented by the source node.
+    """
+
+    head: Node = attr.ib()
+    nodes: Set[Node] = attr.ib(factory=set)
+    backedges: Set[Node] = attr.ib(factory=set)
+
+    def is_self_loop(self) -> bool:
+        return False  # TODO
 
 
 def build_graph_from_block(
-    block: Block, blocks: List[Block], nodes: List[Node], rodata: Rodata
+    block: Block, blocks: List[Block], nodes: List[Node], asm_data: AsmData
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -804,6 +970,10 @@ def build_graph_from_block(
 
     new_node: Node
     dummy_node: Any = None
+    terminal_node = nodes[0]
+    assert isinstance(
+        terminal_node, TerminalNode
+    ), "expected first node to be TerminalNode"
 
     def find_block_by_label(label: str) -> Optional[Block]:
         for block in blocks:
@@ -824,10 +994,7 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes, rodata)
-
-        # Keep track of parents.
-        new_node.successor.add_parent(new_node)
+        new_node.successor = build_graph_from_block(next_block, blocks, nodes, asm_data)
     elif len(jumps) == 1:
         # There is a jump. This is either:
         # - a ReturnNode, if it's "jr $ra",
@@ -837,12 +1004,12 @@ def build_graph_from_block(
         jump = jumps[0]
 
         if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
-            new_node = ReturnNode(block, False, index=0)
+            new_node = ReturnNode(block, False, index=0, terminal=terminal_node)
             nodes.append(new_node)
             return new_node
 
         if jump.mnemonic == "jr":
-            new_node = SwitchNode(block, True, [])
+            new_node = SwitchNode(block, False, [])
             nodes.append(new_node)
 
             jtbl_names = []
@@ -853,26 +1020,34 @@ def build_graph_from_block(
                         and isinstance(arg.lhs, Macro)
                         and arg.lhs.macro_name == "lo"
                         and isinstance(arg.lhs.argument, AsmGlobalSymbol)
-                        and arg.lhs.argument.symbol_name.startswith("jtbl")
+                        and any(
+                            arg.lhs.argument.symbol_name.startswith(prefix)
+                            for prefix in ("jtbl", "jpt_")
+                        )
                     ):
                         jtbl_names.append(arg.lhs.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
-                    "Unable to determine jump table for jr instruction.\n\n"
+                    f"Unable to determine jump table for jr instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable in the same block as\n"
-                    'the instruction, which has a name starting with "jtbl".'
+                    'the instruction, which has a name starting with "jtbl"/"jpt_".'
                 )
 
             jtbl_name = jtbl_names[0]
-            if jtbl_name not in rodata.values:
+            if jtbl_name not in asm_data.values:
                 raise DecompFailure(
-                    "Found jr instruction, but the corresponding jump table is not provided.\n\n"
-                    "Please pass a --rodata flag to mips_to_c, pointing to the right .s file.\n\n"
-                    "(You might need to pass --goto and --no-andor flags as well,\n"
+                    f"Found jr instruction {jump.meta.loc_str()}, but the "
+                    "corresponding jump table is not provided.\n"
+                    "\n"
+                    "Please include it in the input .s file, or in a separate .s "
+                    "file pointed to by --rodata.\n"
+                    'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
+                    "\n"
+                    "(You might need to pass --goto and --no-andor flags as well, "
                     "to get correct control flow for non-jtbl switch jumps.)"
                 )
 
-            jtbl_entries = rodata.values[jtbl_name].data
+            jtbl_entries = asm_data.values[jtbl_name].data
             for entry in jtbl_entries:
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
@@ -881,11 +1056,8 @@ def build_graph_from_block(
                 case_block = find_block_by_label(entry)
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
-                case_node = build_graph_from_block(case_block, blocks, nodes, rodata)
+                case_node = build_graph_from_block(case_block, blocks, nodes, asm_data)
                 new_node.cases.append(case_node)
-                if new_node not in case_node.parents:
-                    case_node.add_parent(new_node)
-
             return new_node
 
         assert jump.is_branch_instruction()
@@ -898,33 +1070,28 @@ def build_graph_from_block(
             raise DecompFailure(f"Cannot find branch target {target}")
 
         is_constant_branch = jump.mnemonic in ["b", "j"]
+        emit_goto = jump.meta.emit_goto
         if is_constant_branch:
             # A constant branch becomes a basic edge to our branch target.
-            new_node = BasicNode(block, jump.emit_goto, dummy_node)
+            new_node = BasicNode(block, emit_goto, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(
-                branch_block, blocks, nodes, rodata
+                branch_block, blocks, nodes, asm_data
             )
-            # Keep track of parents.
-            new_node.successor.add_parent(new_node)
         else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
-            new_node = ConditionalNode(block, jump.emit_goto, dummy_node, dummy_node)
+            new_node = ConditionalNode(block, emit_goto, dummy_node, dummy_node)
             nodes.append(new_node)
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(
-                branch_block, blocks, nodes, rodata
+                branch_block, blocks, nodes, asm_data
             )
             new_node.fallthrough_edge = build_graph_from_block(
-                next_block, blocks, nodes, rodata
+                next_block, blocks, nodes, asm_data
             )
-            # Keep track of parents.
-            new_node.conditional_edge.add_parent(new_node)
-            new_node.fallthrough_edge.add_parent(new_node)
-
     return new_node
 
 
@@ -941,12 +1108,39 @@ def is_trivial_return_block(block: Block) -> bool:
     return True
 
 
-def build_nodes(function: Function, blocks: List[Block], rodata: Rodata) -> List[Node]:
-    graph: List[Node] = []
+def reachable_without(start: Node, end: Node, without: Node) -> bool:
+    """Return whether `end` is reachable from `start` with `without` removed."""
+    reachable: Set[Node] = set()
+    stack: List[Node] = [start]
+
+    while stack:
+        node = stack.pop()
+        if node == without or node in reachable:
+            continue
+        reachable.add(node)
+        stack.extend(node.children())
+
+    return end in reachable
+
+
+def build_nodes(
+    function: Function, blocks: List[Block], asm_data: AsmData
+) -> List[Node]:
+    terminal_node = TerminalNode.terminal()
+    graph: List[Node] = [terminal_node]
+
+    if not blocks:
+        raise DecompFailure(
+            f"Function {function.name} contains no instructions. Maybe it is rodata?"
+        )
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph, rodata)
+    build_graph_from_block(entry_block, blocks, graph, asm_data)
+
+    # Give the TerminalNode a new index so that it sorts to the end of the list
+    assert [n for n in graph if isinstance(n, TerminalNode)] == [terminal_node]
+    terminal_node.block.index = max(n.block.index for n in graph) + 1
 
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
@@ -955,7 +1149,11 @@ def build_nodes(function: Function, blocks: List[Block], rodata: Rodata) -> List
 
 def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     """Check whether a given edge in the flow graph is an early return."""
-    if not isinstance(edge, ReturnNode) or edge != nodes[-1]:
+    if len(nodes) < 3:
+        return False
+    antepenultimate_node, final_return_node, terminal_node = nodes[-3:]
+    assert isinstance(terminal_node, TerminalNode)
+    if not isinstance(edge, ReturnNode) or edge != final_return_node:
         return False
     if not is_trivial_return_block(edge.block):
         # Only trivial return blocks can be used for premature returns,
@@ -969,9 +1167,9 @@ def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     # The only node that is allowed to point to the return node is the node
     # before it in the flow graph list. (You'd think it would be the node
     # with index = return_node.index - 1, but that's not necessarily the
-    # case -- some functions have a dead penultimate block with a
+    # case -- some functions have a dead antepenultimate block with a
     # superfluous unreachable return.)
-    return node != nodes[-2]
+    return node != antepenultimate_node
 
 
 def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
@@ -987,112 +1185,133 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
             and is_premature_return(node, node.successor, nodes)
         ):
             assert isinstance(node.successor, ReturnNode)
-            node.successor.parents.remove(node)
             index += 1
-            n = ReturnNode(node.successor.block.clone(), False, index=index)
+            n = ReturnNode(
+                node.successor.block.clone(),
+                False,
+                index=index,
+                terminal=node.successor.terminal,
+            )
             node.successor = n
-            n.add_parent(node)
             extra_nodes.append(n)
 
-    nodes += extra_nodes
-    nodes.sort(key=lambda node: node.block.index)
-    return [n for n in nodes if n.parents or n == nodes[0]]
+    # Filter nodes to only include ones reachable from the entry node
+    queue = {nodes[0]}
+    # Always include the TerminalNode (even if it isn't reachable right now)
+    reachable_nodes: Set[Node] = {n for n in nodes if isinstance(n, TerminalNode)}
+    while queue:
+        node = queue.pop()
+        reachable_nodes.add(node)
+        queue.update(set(node.children()) - reachable_nodes)
+    nodes = sorted(reachable_nodes, key=lambda node: node.block.index)
+    return nodes
 
 
-def ensure_fallthrough(nodes: List[Node]) -> None:
-    """For any node which is only reachable through indirect jumps (switch
-    labels, loop edges, emit_goto edges), mark its predecessor as emit_goto to
-    ensure we continue to generate code after it."""
-    last_reachable: Set[Node] = set()
-    while True:
-        # Traverse all edges other than indirect jumps, and collect the targets.
-        reachable: Set[Node] = {nodes[0]}
-        predecessors: Dict[Node, Node] = {}
-        for i, node in enumerate(nodes):
-            fallthrough: Optional[Node]
-            if i + 1 < len(nodes):
-                fallthrough = nodes[i + 1]
-                predecessors[fallthrough] = node
-            else:
-                fallthrough = None
-            if isinstance(node, BasicNode):
-                if node.emit_goto and fallthrough is not None:
-                    reachable.add(fallthrough)
-                if not node.emit_goto and not node.is_loop():
-                    reachable.add(node.successor)
-            elif isinstance(node, ConditionalNode):
-                assert fallthrough is not None
-                assert fallthrough == node.fallthrough_edge
-                reachable.add(fallthrough)
-                if not node.emit_goto and not node.is_loop():
-                    reachable.add(node.conditional_edge)
-            elif isinstance(node, SwitchNode):
-                assert fallthrough is not None
-                reachable.add(fallthrough)
-            else:  # ReturnNode
-                if node.emit_goto and fallthrough is not None:
-                    reachable.add(fallthrough)
-
-        # We can make the first node not in the set be included in the set by
-        # making its predecessor fall through, and then repeat. For efficiency
-        # we actually do this for all nodes not in the set, but note that we
-        # still need the repeat, since marking nodes fallthrough can cause
-        # edges to disappear.
-        #
-        # At each point we mark more and more nodes fallthrough, so eventually
-        # this process will terminate.
-        assert reachable != last_reachable, "Fallthrough process hit a cycle"
-        last_reachable = reachable
-        unreachable = set(nodes).difference(reachable)
-        if not unreachable:
-            break
-        for node in unreachable:
-            assert node in predecessors, "Start node is never unreachable"
-            pre = predecessors[node]
-            assert not isinstance(pre, ConditionalNode)
-            pre.emit_goto = True
-
-
-def compute_parents(nodes: List[Node]) -> None:
+def compute_relations(nodes: List[Node]) -> None:
+    """
+    Compute dominators, postdominators, and backedges for the set of nodes.
+    These are properties of control-flow graphs, for example see:
+    https://en.wikipedia.org/wiki/Control-flow_graph
+    https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
+    """
+    # Calculate parents
     for node in nodes:
-        node.parents = set()
+        node.parents = []
     for node in nodes:
         for child in node.children():
-            child.parents.add(node)
+            child.parents.append(node)
 
+    def compute_dominators(
+        entry: Node,
+        parents: Callable[[Node], List[Node]],
+        dominators: Callable[[Node], Set[Node]],
+        immediately_dominates: Callable[[Node], List[Node]],
+        set_immediate_dominator: Callable[[Node, Optional[Node]], None],
+    ) -> None:
+        # See https://en.wikipedia.org/wiki/Dominator_(graph_theory)#Algorithms
+        # Note: if `n` is unreachable from `entry`, then *every* node will
+        # vacuously belong to `n`'s dominator set.
+        for n in nodes:
+            dominators(n).clear()
+            if n == entry:
+                dominators(n).add(n)
+            else:
+                dominators(n).update(nodes)
 
-def compute_dominators_and_parents(nodes: List[Node]) -> None:
-    """Compute or recompute the dominators and parents of the given nodes."""
-    for node in nodes:
-        node.dominators = set()
-        node.immediate_dominator = None
-        node.immediately_dominates = []
-    compute_parents(nodes)
+        changes = True
+        while changes:
+            changes = False
+            for node in nodes:
+                if node == entry:
+                    continue
+                nset = dominators(node)
+                for parent in parents(node):
+                    nset = nset.intersection(dominators(parent))
+                nset.add(node)
+                if len(nset) < len(dominators(node)):
+                    assert nset.issubset(dominators(node))
+                    dominators(node).intersection_update(nset)
+                    changes = True
+
+        # Compute immediate dominator, and the inverse relation
+        for node in nodes:
+            immediately_dominates(node).clear()
+        for node in nodes:
+            doms = dominators(node).difference({node})
+            # If `node == entry` or the flow graph is not reducible, `doms` may be empty.
+            # TODO: Infinite loops could be made reducible by introducing
+            # branches like `if (false) { return; }` without breaking semantics
+            if doms:
+                imdom = max(doms, key=lambda d: len(dominators(d)))
+                immediately_dominates(imdom).append(node)
+                set_immediate_dominator(node, imdom)
+            else:
+                set_immediate_dominator(node, None)
+        for node in nodes:
+            immediately_dominates(node).sort(key=lambda x: x.block.index)
+
+    def _set_immediate_dominator(node: Node, imdom: Optional[Node]) -> None:
+        node.immediate_dominator = imdom
+
+    def _set_immediate_postdominator(node: Node, impdom: Optional[Node]) -> None:
+        node.immediate_postdominator = impdom
 
     entry = nodes[0]
-    entry.dominators = {entry}
-    for n in nodes[1:]:
-        n.dominators = set(nodes)
+    terminal = nodes[-1]
+    assert isinstance(terminal, TerminalNode)
 
-    changes = True
-    while changes:
-        changes = False
-        for n in nodes[1:]:
-            assert n.parents, f"no predecessors for node: {n}"
-            nset = n.dominators
-            for p in n.parents:
-                nset = nset.intersection(p.dominators)
-            nset = {n}.union(nset)
-            if len(nset) < len(n.dominators):
-                n.dominators = nset
-                changes = True
+    # Compute dominators & immediate dominators
+    compute_dominators(
+        entry=entry,
+        parents=lambda n: n.parents,
+        dominators=lambda n: n.dominators,
+        immediately_dominates=lambda n: n.immediately_dominates,
+        set_immediate_dominator=_set_immediate_dominator,
+    )
 
-    for n in nodes[1:]:
-        doms = n.dominators.difference({n})
-        n.immediate_dominator = max(doms, key=lambda d: len(d.dominators))
-        n.immediate_dominator.immediately_dominates.append(n)
-    for n in nodes:
-        n.immediately_dominates.sort(key=lambda x: x.block.index)
+    # Compute postdominators & immediate postdominators
+    # This uses the same algorithm as above, but with edges reversed
+    compute_dominators(
+        entry=terminal,
+        parents=lambda n: n.children(),
+        dominators=lambda n: n.postdominators,
+        immediately_dominates=lambda n: n.immediately_postdominates,
+        set_immediate_dominator=_set_immediate_postdominator,
+    )
+
+    # Iterate over all edges n -> c and check for backedges, which define natural loops
+    for node in nodes:
+        for child in node.children():
+            if child not in node.dominators:
+                continue
+            # Found a backedge node -> child where child dominates node; child is the "head" of the loop
+            if child.loop is None:
+                child.loop = NaturalLoop(child)
+            child.loop.nodes |= {child, node}
+            child.loop.backedges.add(node)
+            for parent in nodes:
+                if reachable_without(parent, node, child):
+                    child.loop.nodes.add(parent)
 
 
 @attr.s(frozen=True)
@@ -1102,37 +1321,135 @@ class FlowGraph:
     def entry_node(self) -> Node:
         return self.nodes[0]
 
-    def return_node(self) -> Optional[ReturnNode]:
-        candidates = [
-            n for n in self.nodes if isinstance(n, ReturnNode) and n.is_real()
-        ]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda n: n.block.index)
+    def terminal_node(self) -> TerminalNode:
+        node = self.nodes[-1]
+        assert isinstance(node, TerminalNode)
+        return node
+
+    def is_reducible(self) -> bool:
+        """
+        A control flow graph is considered reducible or "well-structured" if:
+        1. The edges can be partitioned into two disjoint sets: forward edges
+          and back edges
+        2. The forward edges form a DAG, with all nodes reachable from the entry
+        3. For all back edges A -> B, B dominates A
+
+        We already calculated back edges in `compute_relations`, so we need to
+        check that the non-back edges satisfy #2.
+
+        Most C code produces reducible graphs: to produce non-reducible graphs,
+        the code either needs a `goto` or an infinite loop, which is rare in
+        practice.
+
+        Having a reducible control flow graphs allows us to perform interval analysis:
+        we can examine a section of the graph bounded by entry & exit nodes, where
+        the exit node postdominates the entry node. In a reducible graph, the backedges
+        in loops are unambiguous.
+
+        https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility
+        https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
+        https://www.cs.columbia.edu/~suman/secure_sw_devel/Basic_Program_Analysis_CF.pdf
+        """
+
+        # Kahn's Algorithm, with backedges excluded
+        # https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm
+        seen = set()
+        queue = {self.entry_node()}
+        incoming_edges: Dict[Node, Set[Node]] = {
+            n: set(n.parents) - (n.loop.backedges if n.loop else set())
+            for n in self.nodes
+        }
+
+        while queue:
+            n = queue.pop()
+            seen.add(n)
+            for s in n.children():
+                if s.loop is not None and n in s.loop.backedges:
+                    continue
+                try:
+                    incoming_edges[s].remove(n)
+                except KeyError:
+                    break
+                if not incoming_edges[s]:
+                    queue.add(s)
+
+        if any(v for v in incoming_edges.values()):
+            # There are remaining edges: the graph has at least one cycle
+            return False
+        if len(seen) != len(self.nodes):
+            # Not all nodes are reachable from the entry node
+            return False
+
+        # Traverse the graph again, but starting at the terminal and following
+        # all edges backwards, to ensure that it is possible to reach the exit
+        # from every node. We don't need to look for loops this time.
+        seen = set()
+        queue = {self.terminal_node()}
+        while queue:
+            n = queue.pop()
+            seen.add(n)
+            queue.update(set(n.parents) - seen)
+
+        if len(seen) != len(self.nodes):
+            # Not all nodes can reach the terminal node
+            return False
+        return True
 
 
-def build_flowgraph(function: Function, rodata: Rodata) -> FlowGraph:
-    blocks = build_blocks(function, rodata)
-    nodes = build_nodes(function, blocks, rodata)
+def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
+    blocks = build_blocks(function, asm_data)
+    nodes = build_nodes(function, blocks, asm_data)
     nodes = duplicate_premature_returns(nodes)
-    ensure_fallthrough(nodes)
-    compute_dominators_and_parents(nodes)
+    compute_relations(nodes)
     return FlowGraph(nodes)
 
 
 def visualize_flowgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
 
-    dot = g.Digraph()
+    fmt = Formatter(debug=True)
+    dot = g.Digraph(
+        node_attr={
+            "shape": "rect",
+            "fontname": "Monospace",
+        },
+        edge_attr={
+            "fontname": "Monospace",
+        },
+    )
     for node in flow_graph.nodes:
+        block_info = node.block.block_info
+        # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
+        label = f"// Node {node.name()}\l"
+        if block_info:
+            label += "".join(
+                w.format(fmt) + "\l" for w in block_info.to_write if w.should_write()
+            )
         dot.node(node.name())
         if isinstance(node, BasicNode):
-            dot.edge(node.name(), node.successor.name(), color="green")
+            dot.edge(node.name(), node.successor.name(), color="black")
         elif isinstance(node, ConditionalNode):
-            dot.edge(node.name(), node.fallthrough_edge.name(), color="blue")
-            dot.edge(node.name(), node.conditional_edge.name(), color="red")
+            if block_info:
+                label += f"if ({block_info.branch_condition.format(fmt)})\l"
+            dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
+            dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
+        elif isinstance(node, ReturnNode):
+            if block_info and block_info.return_value:
+                label += f"return ({block_info.return_value.format(fmt)});\l"
+            else:
+                label += "return;\l"
+            dot.edge(node.name(), node.terminal.name())
+        elif isinstance(node, SwitchNode):
+            if block_info:
+                label += f"switch ({block_info.switch_value.format(fmt)})\l"
+            for i, case in enumerate(node.cases):
+                dot.edge(node.name(), case.name(), label=str(i), color="green")
         else:
-            pass
+            assert isinstance(node, TerminalNode)
+            label += "// exit\l"
+        dot.node(node.name(), label=label)
     dot.render("graphviz_render.gv")
     print("Rendered to graphviz_render.gv.pdf")
-    print("Key: green = successor, red = conditional edge, blue = fallthrough edge")
+    print(
+        "Key: black = successor, red = conditional edge, blue = fallthrough edge, green = switch case"
+    )

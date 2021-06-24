@@ -1,37 +1,42 @@
 import argparse
 import sys
 import traceback
-from typing import List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
-from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .loop_rerolling import reroll_loops
 from .if_statements import get_function_text
-from .options import CodingStyle, Options
-from .parse_file import Function, MIPSFile, Rodata, parse_file
-from .translate import translate_to_ast
+from .options import Options, CodingStyle
+from .parse_file import Function, MIPSFile, parse_file
+from .translate import (
+    FunctionInfo,
+    GlobalInfo,
+    InstrProcessingFailure,
+    translate_to_ast,
+)
+from .types import Type
+from .c_types import TypeMap, build_typemap, dump_typemap
 
 
-def decompile_function(
-    options: Options, function: Function, rodata: Rodata, typemap: Optional[TypeMap]
-) -> None:
-    if options.print_assembly:
-        print(function)
-        print()
+def print_exception(sanitize: bool) -> None:
+    """Print a traceback for the current exception to stdout.
 
-    flowgraph: FlowGraph = build_flowgraph(function, rodata)
-
-    if options.loop_rerolling:
-        flowgraph = reroll_loops(flowgraph)
-
-    if options.visualize_flowgraph:
-        visualize_flowgraph(flowgraph)
-        return
-
-    function_info = translate_to_ast(function, flowgraph, options, rodata, typemap)
-    function_text = get_function_text(function_info, options)
-    print(function_text)
+    If `sanitize` is true, the filename's full path is stripped,
+    and the line is set to 0. These changes make the test output
+    less brittle."""
+    if sanitize:
+        tb = traceback.TracebackException(*sys.exc_info())
+        if tb.exc_type == InstrProcessingFailure and tb.__cause__:
+            tb = tb.__cause__
+        for frame in tb.stack:
+            frame.lineno = 0
+            frame.filename = Path(frame.filename).name
+        for line in tb.format(chain=False):
+            print(line, end="")
+    else:
+        traceback.print_exc(file=sys.stdout)
 
 
 def run(options: Options) -> int:
@@ -45,16 +50,19 @@ def run(options: Options) -> int:
                 mips_file = parse_file(f, options)
 
         # Move over jtbl rodata from files given by --rodata
-        for rodata_file in options.rodata_files:
-            with open(rodata_file, "r", encoding="utf-8-sig") as f:
+        for asm_data_file in options.asm_data_files:
+            with open(asm_data_file, "r", encoding="utf-8-sig") as f:
                 sub_file = parse_file(f, options)
-                sub_file.rodata.merge_into(mips_file.rodata)
+                sub_file.asm_data.merge_into(mips_file.asm_data)
 
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
                 typemap = build_typemap(f.read())
     except (OSError, DecompFailure) as e:
         print(e)
+        return 1
+    except Exception as e:
+        print_exception(sanitize=options.sanitize_tracebacks)
         return 1
 
     if options.dump_typemap:
@@ -63,21 +71,7 @@ def run(options: Options) -> int:
         return 0
 
     if options.function_index_or_name is None:
-        has_error = False
-        for index, fn in enumerate(mips_file.functions):
-            if index != 0:
-                print()
-            try:
-                decompile_function(options, fn, mips_file.rodata, typemap)
-            except DecompFailure as e:
-                print(f"Failed to decompile function {fn.name}:\n\n{e}")
-                has_error = True
-            except Exception:
-                print(f"Internal error while decompiling function {fn.name}:\n")
-                traceback.print_exc()
-                has_error = True
-        if has_error:
-            return 1
+        functions = mips_file.functions
     else:
         try:
             index = int(options.function_index_or_name)
@@ -89,21 +83,71 @@ def run(options: Options) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            function = mips_file.functions[index]
+            functions = [mips_file.functions[index]]
         except ValueError:
             name = options.function_index_or_name
-            try:
-                function = next(fn for fn in mips_file.functions if fn.name == name)
-            except StopIteration:
+            functions = [fn for fn in mips_file.functions if fn.name == name]
+            if not functions:
                 print(f"Function {name} not found.", file=sys.stderr)
                 return 1
 
+    function_names = {fn.name for fn in mips_file.functions}
+    global_info = GlobalInfo(mips_file.asm_data, function_names, typemap)
+    function_infos: List[Union[FunctionInfo, Exception]] = []
+    for function in functions:
         try:
-            decompile_function(options, function, mips_file.rodata, typemap)
+            flowgraph: FlowGraph = build_flowgraph(function, mips_file.asm_data)
+
+            if options.loop_rerolling:
+                flowgraph = reroll_loops(flowgraph)
+
+            info = translate_to_ast(function, flowgraph, options, global_info)
+            function_infos.append(info)
+        except Exception as e:
+            # Store the exception for later, to preserve the order in the output
+            function_infos.append(e)
+
+    if options.visualize_flowgraph:
+        fn_info = function_infos[0]
+        if isinstance(fn_info, Exception):
+            raise fn_info
+        visualize_flowgraph(fn_info.flow_graph)
+        return 0
+
+    fmt = options.formatter()
+    if options.emit_globals:
+        global_decls = global_info.global_decls(fmt)
+        if global_decls:
+            print(global_decls)
+
+    return_code = 0
+    for index, (function, function_info) in enumerate(zip(functions, function_infos)):
+        if index != 0:
+            print()
+        try:
+            if options.print_assembly:
+                print(function)
+                print()
+
+            if isinstance(function_info, Exception):
+                raise function_info
+
+            function_text = get_function_text(function_info, options)
+            print(function_text)
         except DecompFailure as e:
-            print(f"Failed to decompile function {function.name}:\n\n{e}")
-            return 1
-    return 0
+            print("/*")
+            print(f"Failed to decompile function {function.name}:\n")
+            print(e)
+            print("*/")
+            return_code = 1
+        except Exception:
+            print("/*")
+            print(f"Internal error while decompiling function {function.name}:\n")
+            print_exception(sanitize=options.sanitize_tracebacks)
+            print("*/")
+            return_code = 1
+
+    return return_code
 
 
 def parse_flags(flags: List[str]) -> Options:
@@ -120,10 +164,16 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
     )
     parser.add_argument(
-        "--no-ifs",
+        "--gotos-only",
         dest="ifs",
         help="disable control flow generation; emit gotos for everything",
         action="store_false",
+    )
+    parser.add_argument(
+        "--no-ifs",
+        dest="ifs",
+        action="store_false",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--no-andor",
@@ -144,6 +194,13 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
     )
     parser.add_argument(
+        "--reg-vars",
+        metavar="REGISTERS",
+        dest="reg_vars",
+        help="use single variables instead of temps/phis for the given "
+        "registers (comma separated)",
+    )
+    parser.add_argument(
         "--goto",
         metavar="PATTERN",
         dest="goto_patterns",
@@ -156,10 +213,10 @@ def parse_flags(flags: List[str]) -> Options:
     parser.add_argument(
         "--rodata",
         metavar="ASM_FILE",
-        dest="rodata_files",
+        dest="asm_data_files",
         action="append",
         default=[],
-        help="read jump table data from this file",
+        help="read jump table, constant, and global variable information from this file",
     )
     parser.add_argument(
         "--stop-on-error",
@@ -214,12 +271,32 @@ def parse_flags(flags: List[str]) -> Options:
         "context. Mainly useful for debugging.",
     )
     parser.add_argument(
+        "--valid-syntax",
+        dest="valid_syntax",
+        action="store_true",
+        help="emit valid C syntax, using macros to indicate unknown types or other "
+        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
+    )
+    parser.add_argument(
+        "--emit-globals",
+        dest="emit_globals",
+        action="store_true",
+        help="emit global declarations with inferred types.",
+    )
+    parser.add_argument(
         "--pdb-translate",
         dest="pdb_translate",
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--sanitize-tracebacks",
+        dest="sanitize_tracebacks",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(flags)
+    reg_vars = args.reg_vars.split(",") if args.reg_vars else []
     preproc_defines = {
         **{d: 0 for d in args.undefined},
         **{d.split("=")[0]: 1 for d in args.defined},
@@ -242,8 +319,9 @@ def parse_flags(flags: List[str]) -> Options:
         andor_detection=args.andor_detection,
         loop_rerolling=args.loop_rerolling,
         skip_casts=args.skip_casts,
+        reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
-        rodata_files=args.rodata_files,
+        asm_data_files=args.asm_data_files,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
@@ -252,6 +330,9 @@ def parse_flags(flags: List[str]) -> Options:
         pdb_translate=args.pdb_translate,
         preproc_defines=preproc_defines,
         coding_style=coding_style,
+        sanitize_tracebacks=args.sanitize_tracebacks,
+        valid_syntax=args.valid_syntax,
+        emit_globals=args.emit_globals,
     )
 
 

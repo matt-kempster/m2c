@@ -81,11 +81,9 @@ DIV_MULT_INSTRUCTIONS: Set[str] = {
 class Register:
     register_name: str = attr.ib()
 
-    def is_callee_save(self) -> bool:
-        return bool(re.match("s[0-7]|f2[0-9]|f3[01]|gp", self.register_name))
-
     def is_float(self) -> bool:
-        return self.register_name[0] == "f" and self.register_name != "fp"
+        name = self.register_name
+        return bool(name) and name[0] == "f" and name != "fp"
 
     def other_f64_reg(self) -> "Register":
         assert (
@@ -330,10 +328,34 @@ def parse_arg(arg: str) -> Optional[Argument]:
 
 
 @attr.s(frozen=True)
+class InstructionMeta:
+    emit_goto: bool = attr.ib()
+    filename: str = attr.ib()
+    lineno: int = attr.ib()
+    synthetic: bool = attr.ib()
+
+    @staticmethod
+    def missing() -> "InstructionMeta":
+        return InstructionMeta(
+            emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
+        )
+
+    def loc_str(self) -> str:
+        adj = "near" if self.synthetic else "at"
+        return f"{adj} {self.filename} line {self.lineno}"
+
+
+@attr.s(frozen=True)
 class Instruction:
     mnemonic: str = attr.ib()
     args: List[Argument] = attr.ib()
-    emit_goto: bool = attr.ib(default=False)
+    meta: InstructionMeta = attr.ib()
+
+    @staticmethod
+    def derived(
+        mnemonic: str, args: List[Argument], old: "Instruction"
+    ) -> "Instruction":
+        return Instruction(mnemonic, args, attr.evolve(old.meta, synthetic=True))
 
     def is_branch_instruction(self) -> bool:
         return (
@@ -371,15 +393,9 @@ class Instruction:
 
     def get_branch_target(self) -> JumpTarget:
         label = self.args[-1]
+        if isinstance(label, AsmGlobalSymbol):
+            return JumpTarget(label.symbol_name)
         if not isinstance(label, JumpTarget):
-            if isinstance(label, AsmGlobalSymbol):
-                raise DecompFailure(
-                    f'Couldn\'t parse instruction "{self}": mips_to_c currently '
-                    'only supports jumps to labels prefixed with ".".\nNon '
-                    "dot-prefixed labels act as function separators, except for "
-                    '"glabel L[0-9A-F]{8}" which is used for jump table targets.\n'
-                    "Try adding a dot in front of the label name."
-                )
             raise DecompFailure(
                 f'Couldn\'t parse instruction "{self}": invalid branch target'
             )
@@ -398,70 +414,71 @@ class Instruction:
         ]
 
     def __str__(self) -> str:
-        return f'{self.mnemonic} {", ".join(str(arg) for arg in self.args)}'
+        args = ", ".join(str(arg) for arg in self.args)
+        return f"{self.mnemonic} {args}"
 
 
 def normalize_instruction(instr: Instruction) -> Instruction:
     args = instr.args
     if len(args) == 3:
         if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
-            return Instruction("nop", [])
+            return Instruction("nop", [], instr.meta)
         if instr.mnemonic == "or" and args[2] == Register("zero"):
-            return Instruction("move", args[:2], instr.emit_goto)
+            return Instruction("move", args[:2], instr.meta)
         if instr.mnemonic == "addu" and args[2] == Register("zero"):
-            return Instruction("move", args[:2], instr.emit_goto)
+            return Instruction("move", args[:2], instr.meta)
         if instr.mnemonic == "daddu" and args[2] == Register("zero"):
-            return Instruction("move", args[:2], instr.emit_goto)
+            return Instruction("move", args[:2], instr.meta)
         if instr.mnemonic == "nor" and args[1] == Register("zero"):
-            return Instruction("not", [args[0], args[2]])
+            return Instruction("not", [args[0], args[2]], instr.meta)
         if instr.mnemonic == "nor" and args[2] == Register("zero"):
-            return Instruction("not", [args[0], args[1]])
+            return Instruction("not", [args[0], args[1]], instr.meta)
         if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
-            return Instruction("move", args[:2], instr.emit_goto)
+            return Instruction("move", args[:2], instr.meta)
         if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
             if args[0] != Register("zero"):
                 raise DecompFailure("first argument to div/mult must be $zero")
-            return Instruction(instr.mnemonic, args[1:], instr.emit_goto)
+            return Instruction(instr.mnemonic, args[1:], instr.meta)
         if (
             instr.mnemonic == "ori"
             and args[1] == Register("zero")
             and isinstance(args[2], AsmLiteral)
         ):
             lit = AsmLiteral(args[2].value & 0xFFFF)
-            return Instruction("li", [args[0], lit], instr.emit_goto)
+            return Instruction("li", [args[0], lit], instr.meta)
         if (
             instr.mnemonic == "addiu"
             and args[1] == Register("zero")
             and isinstance(args[2], AsmLiteral)
         ):
             lit = AsmLiteral(((args[2].value + 0x8000) & 0xFFFF) - 0x8000)
-            return Instruction("li", [args[0], lit], instr.emit_goto)
+            return Instruction("li", [args[0], lit], instr.meta)
         if instr.mnemonic == "beq" and args[0] == args[1] == Register("zero"):
-            return Instruction("b", [args[2]], instr.emit_goto)
+            return Instruction("b", [args[2]], instr.meta)
         if instr.mnemonic in ["bne", "beq", "beql", "bnel"] and args[1] == Register(
             "zero"
         ):
             mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
-            return Instruction(mn, [args[0], args[2]], instr.emit_goto)
+            return Instruction(mn, [args[0], args[2]], instr.meta)
     if len(args) == 2:
         if instr.mnemonic == "beqz" and args[0] == Register("zero"):
-            return Instruction("b", [args[1]], instr.emit_goto)
+            return Instruction("b", [args[1]], instr.meta)
         if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
             lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
-            return Instruction("li", [args[0], lit], instr.emit_goto)
+            return Instruction("li", [args[0], lit], instr.meta)
         if instr.mnemonic in LENGTH_THREE:
             return normalize_instruction(
-                Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+                Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
             )
     if len(args) == 1:
         if instr.mnemonic in LENGTH_TWO:
             return normalize_instruction(
-                Instruction(instr.mnemonic, [args[0]] + args, instr.emit_goto)
+                Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
             )
     return instr
 
 
-def parse_instruction(line: str, emit_goto: bool) -> Instruction:
+def parse_instruction(line: str, meta: InstructionMeta) -> Instruction:
     try:
         # First token is instruction name, rest is args.
         line = line.strip()
@@ -472,8 +489,7 @@ def parse_instruction(line: str, emit_goto: bool) -> Instruction:
                 None, [parse_arg(arg_str.strip()) for arg_str in args_str.split(",")]
             )
         )
-        instr = Instruction(mnemonic, args, emit_goto)
+        instr = Instruction(mnemonic, args, meta)
         return normalize_instruction(instr)
     except Exception as e:
-        print(f"Failed to parse instruction: {line}\n", file=sys.stderr)
-        raise e
+        raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")

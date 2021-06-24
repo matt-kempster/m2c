@@ -31,8 +31,7 @@ def set_up_logging(debug: bool) -> None:
 
 
 class PathsToBinaries(NamedTuple):
-    QEMU_IRIX: str
-    IRIX_ROOT: str
+    MIPS_CC: str
     SM64_TOOLS: str
 
 
@@ -43,14 +42,9 @@ def get_environment_variables() -> Optional[PathsToBinaries]:
             logging.error(error_message)
         return env_var
 
-    QEMU_IRIX = distutils.spawn.find_executable("qemu-irix")
-    if not QEMU_IRIX:
-        QEMU_IRIX = load(
-            "QEMU_IRIX", "env variable QEMU_IRIX should point to the qemu-mips binary"
-        )
-    IRIX_ROOT = load(
-        "IRIX_ROOT",
-        "env variable IRIX_ROOT should point to the IRIX compiler directory",
+    MIPS_CC = load(
+        "MIPS_CC",
+        "env variable MIPS_CC should point to recompiled IDO cc binary",
     )
     SM64_TOOLS = load(
         "SM64_TOOLS",
@@ -59,13 +53,13 @@ def get_environment_variables() -> Optional[PathsToBinaries]:
             "https://github.com/queueRAM/sm64tools/, with mipsdisasm built"
         ),
     )
-    if not QEMU_IRIX or not IRIX_ROOT or not SM64_TOOLS:
+    if not SM64_TOOLS or not MIPS_CC:
         logging.error(
             "One or more required environment variables are not set. Bailing."
         )
         return None
     else:
-        return PathsToBinaries(QEMU_IRIX, IRIX_ROOT, SM64_TOOLS)
+        return PathsToBinaries(MIPS_CC, SM64_TOOLS)
 
 
 class DisassemblyInfo(NamedTuple):
@@ -103,7 +97,10 @@ def do_disassembly_step(
         break
 
     arg = f"{addr}:{index}+{size}"
-    logging.debug(f"Calling mipsdisasm with arg {arg} and entry point {entry_point}...")
+    entry_point_str = entry_point.decode("utf-8", "replace")
+    logging.debug(
+        f"Calling mipsdisasm with arg {arg} and entry point {entry_point_str}..."
+    )
     final_asm = subprocess.run(
         [env_vars.SM64_TOOLS + "/mipsdisasm", temp_out_file, arg],
         stdout=subprocess.PIPE,
@@ -126,11 +123,7 @@ def do_compilation_step(
 ) -> None:
     subprocess.run(
         [
-            env_vars.QEMU_IRIX,
-            "-silent",
-            "-L",
-            env_vars.IRIX_ROOT,
-            env_vars.IRIX_ROOT + "/usr/bin/cc",
+            env_vars.MIPS_CC,
             "-c",
             "-Wab,-r4300_mul",
             "-non_shared",
@@ -245,12 +238,12 @@ def main() -> int:
         if not orig_file.is_file():
             logging.error(f"{orig_file} does not exist. Skipping.")
             continue
-        if orig_file != (
+        expected_file = (
             Path(__file__).parent / "end_to_end" / orig_file.parent.name / "orig.c"
-        ):
+        )
+        if orig_file != expected_file:
             logging.error(
-                f"{orig_file} does not have a path of the form "
-                "`tests/end_to_end/TEST_NAME/orig.c`! Skipping."
+                f"`{orig_file}` does not have a path of the form `{expected_file}`! Skipping."
             )
             continue
         add_test_from_file(orig_file, env_vars)
