@@ -166,13 +166,14 @@ class DoWhileLoop:
         space = fmt.indent("")
         after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
         cond = format_expr(self.condition, fmt) if self.condition else ""
-        return "\n".join(
-            [
-                f"{space}do{after_do}{{",
-                self.body.format(fmt),
-                f"{space}}} while ({cond});",
-            ]
-        )
+        with fmt.indented():
+            return "\n".join(
+                [
+                    f"{space}do{after_do}{{",
+                    self.body.format(fmt),
+                    f"{space}}} while ({cond});",
+                ]
+            )
 
 
 Statement = Union[

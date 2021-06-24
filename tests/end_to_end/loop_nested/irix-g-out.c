@@ -7,8 +7,8 @@ s32 test(s32 arg0) {
     sp8 = 0;
     if (spC < arg0) {
         do {
-        goto loop_1;
-        spC += 1;
+            goto loop_1;
+            spC += 1;
         } while ((spC < arg0) != 0);
     }
     return sp8;
