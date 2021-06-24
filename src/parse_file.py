@@ -328,17 +328,21 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         for w in line[5:].split(","):
                             w = w.strip()
                             if not w or w[0].isdigit():
-                                ival = try_parse(lambda: int(w, 0), ".word")
+                                ival = (
+                                    try_parse(lambda: int(w, 0), ".word") & 0xFFFFFFFF
+                                )
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
                             else:
                                 mips_file.new_data_sym(w)
                     elif line.startswith(".short"):
                         for w in line[6:].split(","):
-                            ival = try_parse(lambda: int(w.strip(), 0), ".short")
+                            ival = (
+                                try_parse(lambda: int(w.strip(), 0), ".short") & 0xFFFF
+                            )
                             mips_file.new_data_bytes(struct.pack(">H", ival))
                     elif line.startswith(".byte"):
                         for w in line[5:].split(","):
-                            ival = try_parse(lambda: int(w.strip(), 0), ".byte")
+                            ival = try_parse(lambda: int(w.strip(), 0), ".byte") & 0xFF
                             mips_file.new_data_bytes(bytes([ival]))
                     elif line.startswith(".float"):
                         for w in line[6:].split(","):
@@ -353,6 +357,21 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         mips_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
+                    elif line.startswith(".space"):
+                        args = line[6:].split(",")
+                        if len(args) == 2:
+                            fill = (
+                                try_parse(lambda: int(args[1].strip(), 0), ".space")
+                                & 0xFF
+                            )
+                        elif len(args) == 1:
+                            fill = 0
+                        else:
+                            raise DecompFailure(
+                                f"Could not parse asm_data .space in {curr_section}: {line}"
+                            )
+                        size = try_parse(lambda: int(args[0].strip(), 0), ".space")
+                        mips_file.new_data_bytes(bytes([fill] * size))
         elif ifdef_level == 0:
             if line.startswith("glabel"):
                 process_label(line.split()[1], glabel=True)

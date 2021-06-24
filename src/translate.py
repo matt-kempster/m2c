@@ -1089,7 +1089,7 @@ class ArrayAccess(Expression):
         return f"{base}[{index}]"
 
 
-@attr.s(eq=True, hash=True)
+@attr.s(eq=False)
 class GlobalSymbol(Expression):
     symbol_name: str = attr.ib()
     type: Type = attr.ib(eq=False)
@@ -1106,15 +1106,10 @@ class GlobalSymbol(Expression):
         ent = self.asm_data_entry
         if not ent or not ent.is_string:
             return False
-        if len(ent.data) != 1 or not isinstance(ent.data[0], bytes):
-            return False
-        return True
+        return len(ent.data) == 1 and isinstance(ent.data[0], bytes)
 
     def format_string_constant(self, fmt: Formatter) -> str:
-        if not self.is_string_constant():
-            raise DecompFailure(
-                "GlobalSymbol.is_string_constant() should be checked by caller"
-            )
+        assert self.is_string_constant(), "checked by caller"
         assert self.asm_data_entry and isinstance(self.asm_data_entry.data[0], bytes)
 
         has_trailing_null = False
@@ -3843,6 +3838,7 @@ class GlobalInfo:
                     sym.asm_data_entry is not None
                 ) and sym.asm_data_entry.is_readonly
 
+                # TODO: Use original MIPSFile ordering for variables
                 sort_order = (
                     not sym.type.is_function(),
                     is_global,
