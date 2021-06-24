@@ -797,9 +797,6 @@ class BaseNode(abc.ABC):
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
         ...
 
-    def name(self) -> str:
-        return str(self.block.index)
-
 
 @attr.s(eq=False)
 class BasicNode(BaseNode):
@@ -863,7 +860,7 @@ class ReturnNode(BaseNode):
         return [self.terminal]
 
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
-        pass
+        return None
 
     def name(self) -> str:
         name = super().name()
