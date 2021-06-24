@@ -688,8 +688,10 @@ def build_flowgraph_between(
         assert not isinstance(curr_start, TerminalNode)
 
         if not skip_loop_detection and isinstance(curr_start, ConditionalNode):
+            # breakpoint()
             do_while_loop = detect_loop(context, curr_start, end)
             if do_while_loop:
+                # breakpoint()
                 body.add_do_while_loop(do_while_loop)
                 # Move past the loop:
                 if curr_start.loop and curr_start.loop.is_self_loop():

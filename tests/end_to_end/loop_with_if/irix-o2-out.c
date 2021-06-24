@@ -13,8 +13,8 @@ s32 test(s32 arg0) {
         } while ((phi_v1_2 < arg0) != 0);
     }
     return phi_v1_3;
-    // bug: did not emit code for node #3; contents below:
-    phi_v1_2 = phi_v1 * 2;
     // bug: did not emit code for node #4; contents below:
     phi_v1_2 = phi_v1 + 4;
+    // bug: did not emit code for node #3; contents below:
+    phi_v1_2 = phi_v1 * 2;
 }

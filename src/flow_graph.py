@@ -957,7 +957,7 @@ class NaturalLoop:
     backedges: Set[Node] = attr.ib(factory=set)
 
     def is_self_loop(self) -> bool:
-        return False  # TODO
+        return len(self.nodes) == 1
 
 
 def build_graph_from_block(
