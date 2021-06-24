@@ -1,7 +1,7 @@
+import copy
 from typing import List, Optional, Set, Tuple, Union
 
 import attr
-import copy
 import pycparser.c_ast as ca
 
 from .c_types import (
@@ -9,17 +9,15 @@ from .c_types import (
     TypeMap,
     equal_types,
     get_struct,
-    parse_function,
-    primitive_size,
-    parse_struct,
     parse_constant_int,
+    parse_function,
+    parse_struct,
+    primitive_size,
     resolve_typedefs,
     set_decl_name,
     to_c,
-    type_to_string,
     var_size_align,
 )
-from .error import DecompFailure
 from .options import Formatter
 
 
@@ -70,16 +68,29 @@ class Type:
 
     _data: TypeData = attr.ib()
 
-    def unify(self, other: "Type") -> bool:
+    def unify(self, other: "Type", *, seen: Optional[Set["TypeData"]] = None) -> bool:
         """
         Try to set this type equal to another. Returns true on success.
         Once set equal, the types will always be equal (we use a union-find
         structure to ensure this).
+        The seen argument is used during recursion, to track which TypeData
+        objects have been encountered so far.
         """
+
         x = self.data()
         y = other.data()
         if x is y:
             return True
+
+        # If we hit a type that we have already seen, fail.
+        # TODO: Is there a looser check that would allow more types to unify?
+        if seen is None:
+            seen = {x, y}
+        elif x in seen or y in seen:
+            return False
+        else:
+            seen = seen | {x, y}
+
         if x.size is not None and y.size is not None and x.size != y.size:
             return False
 
@@ -111,10 +122,10 @@ class Type:
             if not equal_types(x_ctype, y_ctype):
                 return False
         if x.ptr_to is not None and y.ptr_to is not None:
-            if not x.ptr_to.unify(y.ptr_to):
+            if not x.ptr_to.unify(y.ptr_to, seen=seen):
                 return False
         if x.fn_sig is not None and y.fn_sig is not None:
-            if not x.fn_sig.unify(y.fn_sig):
+            if not x.fn_sig.unify(y.fn_sig, seen=seen):
                 return False
         x.kind = kind
         x.size = size
@@ -406,7 +417,7 @@ class FunctionSignature:
     params_known: bool = attr.ib(default=False)
     is_variadic: bool = attr.ib(default=False)
 
-    def unify(self, other: "FunctionSignature") -> bool:
+    def unify(self, other: "FunctionSignature", *, seen: Set[TypeData]) -> bool:
         if self.params_known and other.params_known:
             if self.is_variadic != other.is_variadic:
                 return False
@@ -415,9 +426,9 @@ class FunctionSignature:
 
         # Try to unify *all* ret/param types, without returning early
         # TODO: If not all the types unify, roll back any changes made
-        can_unify = self.return_type.unify(other.return_type)
+        can_unify = self.return_type.unify(other.return_type, seen=seen)
         for x, y in zip(self.params, other.params):
-            can_unify &= x.type.unify(y.type)
+            can_unify &= x.type.unify(y.type, seen=seen)
         if not can_unify:
             return False
 

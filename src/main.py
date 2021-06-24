@@ -2,22 +2,21 @@ import argparse
 import sys
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
+from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
-from .flow_graph import build_flowgraph, visualize_flowgraph
+from .flow_graph import visualize_flowgraph
 from .if_statements import get_function_text
 from .initializers import GenericInitializer
-from .options import Options, CodingStyle
-from .parse_file import Function, MIPSFile, parse_file
+from .options import CodingStyle, Options
+from .parse_file import MIPSFile, parse_file
 from .translate import (
     FunctionInfo,
     GlobalInfo,
     InstrProcessingFailure,
     translate_to_ast,
 )
-from .types import Type
-from .c_types import TypeMap, build_typemap, dump_typemap
 
 
 def print_exception(sanitize: bool) -> None:
@@ -96,10 +95,6 @@ def run(options: Options) -> int:
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
-            if options.visualize_flowgraph:
-                visualize_flowgraph(build_flowgraph(function, mips_file.asm_data))
-                continue
-
             info = translate_to_ast(function, options, global_info)
             function_infos.append(info)
         except Exception as e:
@@ -107,6 +102,10 @@ def run(options: Options) -> int:
             function_infos.append(e)
 
     if options.visualize_flowgraph:
+        fn_info = function_infos[0]
+        if isinstance(fn_info, Exception):
+            raise fn_info
+        visualize_flowgraph(fn_info.flow_graph)
         return 0
 
     fmt = options.formatter()

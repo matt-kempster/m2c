@@ -1,11 +1,24 @@
+import abc
 import copy
 import typing
-from typing import Any, Counter, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Counter,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import attr
 
 from .error import DecompFailure
-from .parse_file import Function, Label, AsmData
+from .options import Formatter
+from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -750,40 +763,43 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
     return block_builder.get_blocks()
 
 
-def is_loop_edge(node: "Node", edge: "Node") -> bool:
-    # Loops are represented by backwards jumps.
-    return edge.block.index <= node.block.index
-
-
 @attr.s(eq=False)
-class BaseNode:
+class BaseNode(abc.ABC):
     block: Block = attr.ib()
     emit_goto: bool = attr.ib()
     parents: List["Node"] = attr.ib(init=False, factory=list)
     dominators: Set["Node"] = attr.ib(init=False, factory=set)
     immediate_dominator: Optional["Node"] = attr.ib(init=False, default=None)
     immediately_dominates: List["Node"] = attr.ib(init=False, factory=list)
-
-    def add_parent(self, parent: "Node") -> None:
-        self.parents.append(parent)
+    postdominators: Set["Node"] = attr.ib(init=False, factory=set)
+    immediate_postdominator: Optional["Node"] = attr.ib(init=False, default=None)
+    immediately_postdominates: List["Node"] = attr.ib(init=False, factory=list)
+    # This is only populated on the head node of the loop,
+    # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
+    loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
 
     def name(self) -> str:
         return str(self.block.index)
+
+    @abc.abstractmethod
+    def children(self) -> List["Node"]:
+        ...
 
 
 @attr.s(eq=False)
 class BasicNode(BaseNode):
     successor: "Node" = attr.ib()
 
-    def is_loop(self) -> bool:
-        return is_loop_edge(self, self.successor)
+    def children(self) -> List["Node"]:
+        # TODO: Should we also include the fallthrough node if `emit_goto` is True?
+        return [self.successor]
 
     def __str__(self) -> str:
         return "".join(
             [
                 f"{self.block}\n",
                 f"# {self.block.index} -> {self.successor.block.index}",
-                " (loop)" if self.is_loop() else "",
+                " (loop)" if self.loop else "",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -794,8 +810,10 @@ class ConditionalNode(BaseNode):
     conditional_edge: "Node" = attr.ib()
     fallthrough_edge: "Node" = attr.ib()
 
-    def is_loop(self) -> bool:
-        return is_loop_edge(self, self.conditional_edge)
+    def children(self) -> List["Node"]:
+        if self.conditional_edge == self.fallthrough_edge:
+            return [self.conditional_edge]
+        return [self.conditional_edge, self.fallthrough_edge]
 
     def __str__(self) -> str:
         return "".join(
@@ -803,7 +821,7 @@ class ConditionalNode(BaseNode):
                 f"{self.block}\n",
                 f"# {self.block.index} -> ",
                 f"cond: {self.conditional_edge.block.index}",
-                " (loop)" if self.is_loop() else "",
+                " (loop)" if self.loop else "",
                 ", ",
                 f"def: {self.fallthrough_edge.block.index}",
                 " (goto)" if self.emit_goto else "",
@@ -814,6 +832,10 @@ class ConditionalNode(BaseNode):
 @attr.s(eq=False)
 class ReturnNode(BaseNode):
     index: int = attr.ib()
+    terminal: "TerminalNode" = attr.ib()
+
+    def children(self) -> List["Node"]:
+        return [self.terminal]
 
     def name(self) -> str:
         name = super().name()
@@ -836,12 +858,62 @@ class ReturnNode(BaseNode):
 class SwitchNode(BaseNode):
     cases: List["Node"] = attr.ib()
 
+    def children(self) -> List["Node"]:
+        # Deduplicate nodes in `self.cases`
+        seen = set()
+        children = []
+        for node in self.cases:
+            if node not in seen:
+                seen.add(node)
+                children.append(node)
+        return children
+
     def __str__(self) -> str:
         targets = ", ".join(str(c.block.index) for c in self.cases)
         return f"{self.block}\n# {self.block.index} -> {targets}"
 
 
-Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode]
+@attr.s(eq=False)
+class TerminalNode(BaseNode):
+    """
+    This is a fictive node that acts as a common postdominator for every node
+    in the flowgraph. There should be exactly one TerminalNode per flowgraph.
+    This is sometimes referred to as the "exit node", and having it makes it
+    easier to perform interval/structural analysis on the flowgraph.
+    This node has no `block_info` or contents: it has no corresponding assembly
+    and emits no C code.
+    """
+
+    @staticmethod
+    def terminal() -> "TerminalNode":
+        return TerminalNode(Block(-1, None, "", []), False)
+
+    def children(self) -> List["Node"]:
+        return []
+
+    def __str__(self) -> str:
+        return "return"
+
+
+Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode, TerminalNode]
+
+
+@attr.s(eq=False)
+class NaturalLoop:
+    """
+    Loops are defined by "backedges" `tail->head` where `head`
+    dominates `tail` in the control flow graph.
+
+    The loop body is the set of nodes dominated by `head` where there
+    is a path from the node to `tail` that does not contain `head`.
+
+    A loop can contain multiple backedges that all point to `head`
+    Each backedge is represented by the source node.
+    """
+
+    head: Node = attr.ib()
+    nodes: Set[Node] = attr.ib(factory=set)
+    backedges: Set[Node] = attr.ib(factory=set)
 
 
 def build_graph_from_block(
@@ -854,6 +926,10 @@ def build_graph_from_block(
 
     new_node: Node
     dummy_node: Any = None
+    terminal_node = nodes[0]
+    assert isinstance(
+        terminal_node, TerminalNode
+    ), "expected first node to be TerminalNode"
 
     def find_block_by_label(label: str) -> Optional[Block]:
         for block in blocks:
@@ -875,9 +951,6 @@ def build_graph_from_block(
         # Recursively analyze.
         next_block = blocks[block.index + 1]
         new_node.successor = build_graph_from_block(next_block, blocks, nodes, asm_data)
-
-        # Keep track of parents.
-        new_node.successor.add_parent(new_node)
     elif len(jumps) == 1:
         # There is a jump. This is either:
         # - a ReturnNode, if it's "jr $ra",
@@ -887,12 +960,12 @@ def build_graph_from_block(
         jump = jumps[0]
 
         if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
-            new_node = ReturnNode(block, False, index=0)
+            new_node = ReturnNode(block, False, index=0, terminal=terminal_node)
             nodes.append(new_node)
             return new_node
 
         if jump.mnemonic == "jr":
-            new_node = SwitchNode(block, True, [])
+            new_node = SwitchNode(block, False, [])
             nodes.append(new_node)
 
             jtbl_names = []
@@ -941,9 +1014,6 @@ def build_graph_from_block(
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
                 case_node = build_graph_from_block(case_block, blocks, nodes, asm_data)
                 new_node.cases.append(case_node)
-                if new_node not in case_node.parents:
-                    case_node.add_parent(new_node)
-
             return new_node
 
         assert jump.is_branch_instruction()
@@ -965,8 +1035,6 @@ def build_graph_from_block(
             new_node.successor = build_graph_from_block(
                 branch_block, blocks, nodes, asm_data
             )
-            # Keep track of parents.
-            new_node.successor.add_parent(new_node)
         else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
@@ -980,10 +1048,6 @@ def build_graph_from_block(
             new_node.fallthrough_edge = build_graph_from_block(
                 next_block, blocks, nodes, asm_data
             )
-            # Keep track of parents.
-            new_node.conditional_edge.add_parent(new_node)
-            new_node.fallthrough_edge.add_parent(new_node)
-
     return new_node
 
 
@@ -1000,10 +1064,26 @@ def is_trivial_return_block(block: Block) -> bool:
     return True
 
 
+def reachable_without(start: Node, end: Node, without: Node) -> bool:
+    """Return whether `end` is reachable from `start` with `without` removed."""
+    reachable: Set[Node] = set()
+    stack: List[Node] = [start]
+
+    while stack:
+        node = stack.pop()
+        if node == without or node in reachable:
+            continue
+        reachable.add(node)
+        stack.extend(node.children())
+
+    return end in reachable
+
+
 def build_nodes(
     function: Function, blocks: List[Block], asm_data: AsmData
 ) -> List[Node]:
-    graph: List[Node] = []
+    terminal_node = TerminalNode.terminal()
+    graph: List[Node] = [terminal_node]
 
     if not blocks:
         raise DecompFailure(
@@ -1014,6 +1094,10 @@ def build_nodes(
     entry_block = blocks[0]
     build_graph_from_block(entry_block, blocks, graph, asm_data)
 
+    # Give the TerminalNode a new index so that it sorts to the end of the list
+    assert [n for n in graph if isinstance(n, TerminalNode)] == [terminal_node]
+    terminal_node.block.index = max(n.block.index for n in graph) + 1
+
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
     return graph
@@ -1021,7 +1105,11 @@ def build_nodes(
 
 def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     """Check whether a given edge in the flow graph is an early return."""
-    if not isinstance(edge, ReturnNode) or edge != nodes[-1]:
+    if len(nodes) < 3:
+        return False
+    antepenultimate_node, final_return_node, terminal_node = nodes[-3:]
+    assert isinstance(terminal_node, TerminalNode)
+    if not isinstance(edge, ReturnNode) or edge != final_return_node:
         return False
     if not is_trivial_return_block(edge.block):
         # Only trivial return blocks can be used for premature returns,
@@ -1035,9 +1123,9 @@ def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     # The only node that is allowed to point to the return node is the node
     # before it in the flow graph list. (You'd think it would be the node
     # with index = return_node.index - 1, but that's not necessarily the
-    # case -- some functions have a dead penultimate block with a
+    # case -- some functions have a dead antepenultimate block with a
     # superfluous unreachable return.)
-    return node != nodes[-2]
+    return node != antepenultimate_node
 
 
 def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
@@ -1053,97 +1141,133 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
             and is_premature_return(node, node.successor, nodes)
         ):
             assert isinstance(node.successor, ReturnNode)
-            node.successor.parents.remove(node)
             index += 1
-            n = ReturnNode(node.successor.block.clone(), False, index=index)
+            n = ReturnNode(
+                node.successor.block.clone(),
+                False,
+                index=index,
+                terminal=node.successor.terminal,
+            )
             node.successor = n
-            n.add_parent(node)
             extra_nodes.append(n)
 
-    nodes += extra_nodes
-    nodes.sort(key=lambda node: node.block.index)
-    return [n for n in nodes if n.parents or n == nodes[0]]
+    # Filter nodes to only include ones reachable from the entry node
+    queue = {nodes[0]}
+    # Always include the TerminalNode (even if it isn't reachable right now)
+    reachable_nodes: Set[Node] = {n for n in nodes if isinstance(n, TerminalNode)}
+    while queue:
+        node = queue.pop()
+        reachable_nodes.add(node)
+        queue.update(set(node.children()) - reachable_nodes)
+    nodes = sorted(reachable_nodes, key=lambda node: node.block.index)
+    return nodes
 
 
-def ensure_fallthrough(nodes: List[Node]) -> None:
-    """For any node which is only reachable through indirect jumps (switch
-    labels, loop edges, emit_goto edges), mark its predecessor as emit_goto to
-    ensure we continue to generate code after it."""
-    last_reachable: Set[Node] = set()
-    while True:
-        # Traverse all edges other than indirect jumps, and collect the targets.
-        reachable: Set[Node] = {nodes[0]}
-        predecessors: Dict[Node, Node] = {}
-        for i, node in enumerate(nodes):
-            fallthrough: Optional[Node]
-            if i + 1 < len(nodes):
-                fallthrough = nodes[i + 1]
-                predecessors[fallthrough] = node
+def compute_relations(nodes: List[Node]) -> None:
+    """
+    Compute dominators, postdominators, and backedges for the set of nodes.
+    These are properties of control-flow graphs, for example see:
+    https://en.wikipedia.org/wiki/Control-flow_graph
+    https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
+    """
+    # Calculate parents
+    for node in nodes:
+        node.parents = []
+    for node in nodes:
+        for child in node.children():
+            child.parents.append(node)
+
+    def compute_dominators(
+        entry: Node,
+        parents: Callable[[Node], List[Node]],
+        dominators: Callable[[Node], Set[Node]],
+        immediately_dominates: Callable[[Node], List[Node]],
+        set_immediate_dominator: Callable[[Node, Optional[Node]], None],
+    ) -> None:
+        # See https://en.wikipedia.org/wiki/Dominator_(graph_theory)#Algorithms
+        # Note: if `n` is unreachable from `entry`, then *every* node will
+        # vacuously belong to `n`'s dominator set.
+        for n in nodes:
+            dominators(n).clear()
+            if n == entry:
+                dominators(n).add(n)
             else:
-                fallthrough = None
-            if isinstance(node, BasicNode):
-                if node.emit_goto and fallthrough is not None:
-                    reachable.add(fallthrough)
-                if not node.emit_goto and not node.is_loop():
-                    reachable.add(node.successor)
-            elif isinstance(node, ConditionalNode):
-                assert fallthrough is not None
-                assert fallthrough == node.fallthrough_edge
-                reachable.add(fallthrough)
-                if not node.emit_goto and not node.is_loop():
-                    reachable.add(node.conditional_edge)
-            elif isinstance(node, SwitchNode):
-                assert fallthrough is not None
-                reachable.add(fallthrough)
-            else:  # ReturnNode
-                if node.emit_goto and fallthrough is not None:
-                    reachable.add(fallthrough)
+                dominators(n).update(nodes)
 
-        # We can make the first node not in the set be included in the set by
-        # making its predecessor fall through, and then repeat. For efficiency
-        # we actually do this for all nodes not in the set, but note that we
-        # still need the repeat, since marking nodes fallthrough can cause
-        # edges to disappear.
-        #
-        # At each point we mark more and more nodes fallthrough, so eventually
-        # this process will terminate.
-        assert reachable != last_reachable, "Fallthrough process hit a cycle"
-        last_reachable = reachable
-        unreachable = set(nodes).difference(reachable)
-        if not unreachable:
-            break
-        for node in unreachable:
-            assert node in predecessors, "Start node is never unreachable"
-            pre = predecessors[node]
-            assert not isinstance(pre, ConditionalNode)
-            pre.emit_goto = True
+        changes = True
+        while changes:
+            changes = False
+            for node in nodes:
+                if node == entry:
+                    continue
+                nset = dominators(node)
+                for parent in parents(node):
+                    nset = nset.intersection(dominators(parent))
+                nset.add(node)
+                if len(nset) < len(dominators(node)):
+                    assert nset.issubset(dominators(node))
+                    dominators(node).intersection_update(nset)
+                    changes = True
 
+        # Compute immediate dominator, and the inverse relation
+        for node in nodes:
+            immediately_dominates(node).clear()
+        for node in nodes:
+            doms = dominators(node).difference({node})
+            # If `node == entry` or the flow graph is not reducible, `doms` may be empty.
+            # TODO: Infinite loops could be made reducible by introducing
+            # branches like `if (false) { return; }` without breaking semantics
+            if doms:
+                imdom = max(doms, key=lambda d: len(dominators(d)))
+                immediately_dominates(imdom).append(node)
+                set_immediate_dominator(node, imdom)
+            else:
+                set_immediate_dominator(node, None)
+        for node in nodes:
+            immediately_dominates(node).sort(key=lambda x: x.block.index)
 
-def compute_dominators(nodes: List[Node]) -> None:
+    def _set_immediate_dominator(node: Node, imdom: Optional[Node]) -> None:
+        node.immediate_dominator = imdom
+
+    def _set_immediate_postdominator(node: Node, impdom: Optional[Node]) -> None:
+        node.immediate_postdominator = impdom
+
     entry = nodes[0]
-    entry.dominators = {entry}
-    for n in nodes[1:]:
-        n.dominators = set(nodes)
+    terminal = nodes[-1]
+    assert isinstance(terminal, TerminalNode)
 
-    changes = True
-    while changes:
-        changes = False
-        for n in nodes[1:]:
-            assert n.parents, f"no predecessors for node: {n}"
-            nset = n.dominators
-            for p in n.parents:
-                nset = nset.intersection(p.dominators)
-            nset = {n}.union(nset)
-            if len(nset) < len(n.dominators):
-                n.dominators = nset
-                changes = True
+    # Compute dominators & immediate dominators
+    compute_dominators(
+        entry=entry,
+        parents=lambda n: n.parents,
+        dominators=lambda n: n.dominators,
+        immediately_dominates=lambda n: n.immediately_dominates,
+        set_immediate_dominator=_set_immediate_dominator,
+    )
 
-    for n in nodes[1:]:
-        doms = n.dominators.difference({n})
-        n.immediate_dominator = max(doms, key=lambda d: len(d.dominators))
-        n.immediate_dominator.immediately_dominates.append(n)
-    for n in nodes:
-        n.immediately_dominates.sort(key=lambda x: x.block.index)
+    # Compute postdominators & immediate postdominators
+    # This uses the same algorithm as above, but with edges reversed
+    compute_dominators(
+        entry=terminal,
+        parents=lambda n: n.children(),
+        dominators=lambda n: n.postdominators,
+        immediately_dominates=lambda n: n.immediately_postdominates,
+        set_immediate_dominator=_set_immediate_postdominator,
+    )
+
+    # Iterate over all edges n -> c and check for backedges, which define natural loops
+    for node in nodes:
+        for child in node.children():
+            if child not in node.dominators:
+                continue
+            # Found a backedge node -> child where child dominates node; child is the "head" of the loop
+            if child.loop is None:
+                child.loop = NaturalLoop(child)
+            child.loop.nodes |= {child, node}
+            child.loop.backedges.add(node)
+            for parent in nodes:
+                if reachable_without(parent, node, child):
+                    child.loop.nodes.add(parent)
 
 
 @attr.s(frozen=True)
@@ -1153,37 +1277,132 @@ class FlowGraph:
     def entry_node(self) -> Node:
         return self.nodes[0]
 
-    def return_node(self) -> Optional[ReturnNode]:
-        candidates = [
-            n for n in self.nodes if isinstance(n, ReturnNode) and n.is_real()
-        ]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda n: n.block.index)
+    def terminal_node(self) -> TerminalNode:
+        node = self.nodes[-1]
+        assert isinstance(node, TerminalNode)
+        return node
+
+    def is_reducible(self) -> bool:
+        """
+        A control flow graph is considered reducible or "well-structured" if:
+        1. The edges can be partitioned into two disjoint sets: forward edges
+          and back edges
+        2. The forward edges form a DAG, with all nodes reachable from the entry
+        3. For all back edges A -> B, B dominates A
+
+        We already calculated back edges in `compute_relations`, so we need to
+        check that the non-back edges satisfy #2.
+
+        Most C code produces reducible graphs: to produce non-reducible graphs,
+        the code either needs a `goto` or an infinite loop, which is rare in
+        practice.
+
+        Having a reducible control flow graphs allows us to perform interval analysis:
+        we can examine a section of the graph bounded by entry & exit nodes, where
+        the exit node postdominates the entry node. In a reducible graph, the backedges
+        in loops are unambiguous.
+
+        https://en.wikipedia.org/wiki/Control-flow_graph#Reducibility
+        https://www.cs.princeton.edu/courses/archive/spr04/cos598C/lectures/02-ControlFlow.pdf
+        https://www.cs.columbia.edu/~suman/secure_sw_devel/Basic_Program_Analysis_CF.pdf
+        """
+
+        # Kahn's Algorithm, with backedges excluded
+        # https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm
+        seen = set()
+        queue = {self.entry_node()}
+        incoming_edges: Dict[Node, Set[Node]] = {
+            n: set(n.parents) - (n.loop.backedges if n.loop else set())
+            for n in self.nodes
+        }
+
+        while queue:
+            n = queue.pop()
+            seen.add(n)
+            for s in n.children():
+                if s.loop is not None and n in s.loop.backedges:
+                    continue
+                incoming_edges[s].remove(n)
+                if not incoming_edges[s]:
+                    queue.add(s)
+
+        if any(v for v in incoming_edges.values()):
+            # There are remaining edges: the graph has at least one cycle
+            return False
+        if len(seen) != len(self.nodes):
+            # Not all nodes are reachable from the entry node
+            return False
+
+        # Traverse the graph again, but starting at the terminal and following
+        # all edges backwards, to ensure that it is possible to reach the exit
+        # from every node. We don't need to look for loops this time.
+        seen = set()
+        queue = {self.terminal_node()}
+        while queue:
+            n = queue.pop()
+            seen.add(n)
+            queue.update(set(n.parents) - seen)
+
+        if len(seen) != len(self.nodes):
+            # Not all nodes can reach the terminal node
+            return False
+        return True
 
 
 def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
     blocks = build_blocks(function, asm_data)
     nodes = build_nodes(function, blocks, asm_data)
     nodes = duplicate_premature_returns(nodes)
-    ensure_fallthrough(nodes)
-    compute_dominators(nodes)
+    compute_relations(nodes)
     return FlowGraph(nodes)
 
 
 def visualize_flowgraph(flow_graph: FlowGraph) -> None:
     import graphviz as g
 
-    dot = g.Digraph()
+    fmt = Formatter(debug=True)
+    dot = g.Digraph(
+        node_attr={
+            "shape": "rect",
+            "fontname": "Monospace",
+        },
+        edge_attr={
+            "fontname": "Monospace",
+        },
+    )
     for node in flow_graph.nodes:
+        block_info = node.block.block_info
+        # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
+        label = f"// Node {node.name()}\l"
+        if block_info:
+            label += "".join(
+                w.format(fmt) + "\l" for w in block_info.to_write if w.should_write()
+            )
         dot.node(node.name())
         if isinstance(node, BasicNode):
-            dot.edge(node.name(), node.successor.name(), color="green")
+            dot.edge(node.name(), node.successor.name(), color="black")
         elif isinstance(node, ConditionalNode):
-            dot.edge(node.name(), node.fallthrough_edge.name(), color="blue")
-            dot.edge(node.name(), node.conditional_edge.name(), color="red")
+            if block_info:
+                label += f"if ({block_info.branch_condition.format(fmt)})\l"
+            dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
+            dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
+        elif isinstance(node, ReturnNode):
+            if block_info and block_info.return_value:
+                label += f"return ({block_info.return_value.format(fmt)});\l"
+            else:
+                label += "return;\l"
+            dot.edge(node.name(), node.terminal.name())
+        elif isinstance(node, SwitchNode):
+            if block_info:
+                label += f"switch ({block_info.switch_value.format(fmt)})\l"
+            for i, case in enumerate(node.cases):
+                dot.edge(node.name(), case.name(), label=str(i), color="green")
         else:
-            pass
+            assert isinstance(node, TerminalNode)
+            label += "// exit\l"
+        dot.node(node.name(), label=label)
     dot.render("graphviz_render.gv")
     print("Rendered to graphviz_render.gv.pdf")
-    print("Key: green = successor, red = conditional edge, blue = fallthrough edge")
+    print(
+        "Key: black = successor, red = conditional edge, blue = fallthrough edge, green = switch case"
+    )

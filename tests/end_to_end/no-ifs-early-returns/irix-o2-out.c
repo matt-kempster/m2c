@@ -14,4 +14,5 @@ block_3:
     return;
 block_4:
     *arg1 = (s32) (*arg1 - temp_v1);
+    return;
 }

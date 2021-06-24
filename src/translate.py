@@ -3,7 +3,6 @@ import math
 import struct
 import sys
 import traceback
-import typing
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
@@ -17,9 +16,10 @@ from .flow_graph import (
     Node,
     ReturnNode,
     SwitchNode,
+    TerminalNode,
     build_flowgraph,
 )
-from .options import CodingStyle, Options, Formatter, DEFAULT_CODING_STYLE
+from .options import Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
@@ -32,8 +32,8 @@ from .parse_instruction import (
     Register,
 )
 from .types import (
-    FunctionSignature,
     FunctionParam,
+    FunctionSignature,
     Type,
     find_substruct_array,
     get_field,
@@ -2359,10 +2359,11 @@ def fold_mul_chains(expr: Expression) -> Expression:
                 and (allow_sll or expr.right.value % 2 != 0)
             ):
                 return (lbase, lnum * expr.right.value)
-            if expr.op == "+" and lbase == rbase:
-                return (lbase, lnum + rnum)
-            if expr.op == "-" and lbase == rbase:
-                return (lbase, lnum - rnum)
+            if early_unwrap(lbase) == early_unwrap(rbase):
+                if expr.op == "+":
+                    return (lbase, lnum + rnum)
+                if expr.op == "-":
+                    return (lbase, lnum - rnum)
         if isinstance(expr, UnaryOp) and not toplevel:
             base, num = fold(expr.expr, False, True)
             return (base, -num)
@@ -2371,7 +2372,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             and not expr.emit_exactly_once
             and not expr.forced_emit
         ):
-            base, num = fold(expr.wrapped_expr, False, allow_sll)
+            base, num = fold(early_unwrap(expr), False, allow_sll)
             if num != 1 and is_trivial_expression(base):
                 return (base, num)
         return (expr, 1)
@@ -3107,6 +3108,8 @@ def compute_has_custom_return(nodes: List[Node]) -> None:
     while changed:
         changed = False
         for n in nodes:
+            if isinstance(n, TerminalNode):
+                continue
             block_info = n.block.block_info
             assert isinstance(block_info, BlockInfo)
             if block_info.has_custom_return or block_info.has_function_call:
@@ -3673,6 +3676,8 @@ def translate_graph_from_block(
     # final register state. This will eventually reach every node.
     typemap = stack_info.global_info.typemap
     for child in node.immediately_dominates:
+        if isinstance(child, TerminalNode):
+            continue
         new_contents = regs.contents.copy()
         phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:

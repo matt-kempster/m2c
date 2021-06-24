@@ -4,5 +4,4 @@ loop_0:
         D_4100F0 = 1;
         goto loop_0;
     }
-    return;
 }
