@@ -154,7 +154,7 @@ class LabelStatement:
 @attr.s
 class DoWhileLoop:
     body: "Body" = attr.ib()
-    condition: Optional[Condition] = attr.ib(default=None)
+    condition: Condition = attr.ib()
 
     def should_write(self) -> bool:
         return True
@@ -162,25 +162,15 @@ class DoWhileLoop:
     def format(self, fmt: Formatter) -> str:
         space = fmt.indent("")
         after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
-        cond = format_expr(self.condition, fmt) if self.condition else ""
+        cond = format_expr(self.condition, fmt)
         with fmt.indented():
-            if cond:
-                return "\n".join(
-                    [
-                        f"{space}do{after_do}{{",
-                        self.body.format(fmt),
-                        f"{space}}} while ({cond});",
-                    ]
-                )
-            else:
-                return "\n".join(
-                    [
-                        f"{space}while (true) {{",
-                        self.body.format(fmt),
-                        fmt.indent("break;"),
-                        f"{space}}}",
-                    ]
-                )
+            return "\n".join(
+                [
+                    f"{space}do{after_do}{{",
+                    self.body.format(fmt),
+                    f"{space}}} while ({cond});",
+                ]
+            )
 
 
 Statement = Union[
@@ -301,7 +291,7 @@ def label_for_node(context: Context, node: Node) -> str:
         return f"block_{node.block.index}"
 
 
-def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) -> bool:
+def emit_node(context: Context, node: Node, body: Body) -> bool:
     """
     Try to emit a node for the first time, together with a label for it.
     The label is only printed if something jumps to it, e.g. a loop.
@@ -327,8 +317,7 @@ def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) 
             )
     else:
         body.add_statement(LabelStatement(context, node))
-        if not secretly:
-            context.emitted_nodes.add(node)
+        context.emitted_nodes.add(node)
 
     body.add_node(node, comment_empty=True)
     if isinstance(node, ReturnNode):
@@ -638,7 +627,7 @@ def build_switch_between(
     return SwitchStatement(jump, body)
 
 
-def detect_loop(context: Context, start: Node, end: Node) -> DoWhileLoop:
+def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoop]:
     assert start.loop
 
     # Find the the condition for the do-while, if it exists
@@ -654,6 +643,8 @@ def detect_loop(context: Context, start: Node, end: Node) -> DoWhileLoop:
             condition = node.block.block_info.branch_condition
             end = node
             break
+    if not condition:
+        return None
 
     loop_body = build_flowgraph_between(
         context,
@@ -661,10 +652,7 @@ def detect_loop(context: Context, start: Node, end: Node) -> DoWhileLoop:
         end,
         skip_loop_detection=True,
     )
-    if condition:
-        # If we are using a loop node as the condition, we need to include the node's
-        # body inside the loop
-        emit_node(context, end, loop_body)
+    emit_node(context, end, loop_body)
 
     return DoWhileLoop(
         loop_body,
@@ -704,11 +692,12 @@ def build_flowgraph_between(
 
             # Construct the while(true) or do-while loop
             do_while_loop = detect_loop(context, curr_start, imm_pdom)
-            body.add_do_while_loop(do_while_loop)
+            if do_while_loop:
+                body.add_do_while_loop(do_while_loop)
 
-            # Move on.
-            curr_start = imm_pdom
-            continue
+                # Move on.
+                curr_start = imm_pdom
+                continue
 
         # Write the current node, or a goto, to the body
         if not emit_node(context, curr_start, body):
