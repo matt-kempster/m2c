@@ -24,12 +24,4 @@ s32 test(u32 arg0, s32 arg1, s32 arg2) {
         } while (arg1 != temp_v1);
     }
     return phi_return;
-    // bug: did not emit code for node #3; contents below:
-    *phi_a0 = phi_v0;
-    temp_v1 = phi_v1 + 1;
-    temp_v0_2 = phi_v0 + 0x10;
-    phi_v0 = temp_v0_2;
-    phi_a0 += 4;
-    phi_v1 = temp_v1;
-    phi_return = temp_v0_2;
 }

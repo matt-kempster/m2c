@@ -18,7 +18,4 @@ s32 test(s32 arg0) {
         } while ((spC < arg0) != 0);
     }
     return sp8;
-    // bug: did not emit code for node #2; contents below:
-    sp8 += spC * sp4;
-    sp4 += 1;
 }

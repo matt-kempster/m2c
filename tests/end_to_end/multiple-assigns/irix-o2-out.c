@@ -30,20 +30,4 @@ s32 test(s32 arg0) {
         sp4 = temp_a0_3;
     }
     return sp4;
-    // bug: did not emit code for node #2; contents below:
-    D_410120 = phi_a0;
-    temp_a0 = phi_a0 + 1;
-    D_410120 = temp_a0;
-    temp_a0_2 = temp_a0 + 1;
-    D_410120 = temp_a0_2;
-    temp_a0_3 = temp_a0_2 + 1;
-    D_410120 = temp_a0_3;
-    temp_a0_4 = temp_a0_3 + 1;
-    D_410120 = temp_a0_4;
-    D_410120 = temp_a0_4;
-    temp_a0_5 = temp_a0_4 + 1;
-    D_410120 = temp_a0_5;
-    temp_a0_6 = temp_a0_5 + 1;
-    D_410120 = temp_a0_3;
-    phi_a0 = temp_a0_6;
 }

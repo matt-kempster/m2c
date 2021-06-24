@@ -42,10 +42,4 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
         sp1C += 6;
     }
     return sp1C;
-    // bug: did not emit code for node #13; contents below:
-    sp1C += 1;
-    sp1C *= 2;
-    // bug: did not emit code for node #20; contents below:
-    sp1C += 1;
-    sp1C *= 2;
 }

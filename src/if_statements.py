@@ -650,7 +650,12 @@ def detect_loop(
         return None
 
     loop_body = Body(False, [])
-    emit_node(context, start, loop_body, secretly=True)
+    emit_node(
+        context,
+        start,
+        loop_body,
+        secretly=(bool(start.loop and not start.loop.is_self_loop())),
+    )
 
     if not start.loop or not start.loop.is_self_loop():
         # There are more nodes to emit, "between" the start node

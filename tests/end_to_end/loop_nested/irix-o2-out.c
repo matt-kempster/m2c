@@ -34,10 +34,4 @@ s32 test(s32 arg0) {
         } while (temp_v0 != arg0);
     }
     return phi_v1;
-    // bug: did not emit code for node #4; contents below:
-    temp_v1 = phi_v1_4 + phi_a2;
-    phi_a3 += 1;
-    phi_v1_2 = temp_v1;
-    phi_v1_4 = temp_v1;
-    phi_a2 += phi_v0;
 }
