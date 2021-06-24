@@ -888,7 +888,6 @@ class SwitchNode(BaseNode):
         for case in self.cases:
             if case is replace_this:
                 new_cases.append(with_this)
-                with_this.add_parent(self)
             else:
                 new_cases.append(case)
         self.cases = new_cases
