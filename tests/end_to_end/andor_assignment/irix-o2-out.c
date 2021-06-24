@@ -92,4 +92,12 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
         phi_v1_5 = phi_v1_3 + 6;
     }
     return phi_v1_5;
+    // bug: did not emit code for node #19; contents below:
+    temp_t5 = (phi_v1_4 + 1) * 2;
+    phi_v1_4 = temp_t5;
+    phi_v1_7 = temp_t5;
+    // bug: did not emit code for node #12; contents below:
+    temp_t3 = (phi_v1_2 + 1) * 2;
+    phi_v1_2 = temp_t3;
+    phi_v1_6 = temp_t3;
 }

@@ -294,7 +294,7 @@ def label_for_node(context: Context, node: Node) -> str:
         return f"block_{node.block.index}"
 
 
-def emit_node(context: Context, node: Node, body: Body) -> bool:
+def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) -> bool:
     """
     Try to emit a node for the first time, together with a label for it.
     The label is only printed if something jumps to it, e.g. a loop.
@@ -320,7 +320,8 @@ def emit_node(context: Context, node: Node, body: Body) -> bool:
             )
     else:
         body.add_statement(LabelStatement(context, node))
-        context.emitted_nodes.add(node)
+        if not secretly:
+            context.emitted_nodes.add(node)
 
     body.add_node(node, comment_empty=True)
     if isinstance(node, ReturnNode):
@@ -634,6 +635,7 @@ def detect_loop(
     context: Context, start: ConditionalNode, end: Node
 ) -> Optional[DoWhileLoop]:
     # We detect edges that are accompanied by their reverse as loops.
+    # breakpoint()
     imm_pdom: Node
     if start.loop and start.loop.is_self_loop():
         imm_pdom = start
@@ -648,7 +650,7 @@ def detect_loop(
         return None
 
     loop_body = Body(False, [])
-    emit_node(context, start, loop_body)
+    emit_node(context, start, loop_body, secretly=True)
 
     if not start.loop or not start.loop.is_self_loop():
         # There are more nodes to emit, "between" the start node
