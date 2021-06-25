@@ -1,5 +1,4 @@
 import argparse
-import collections
 import re
 import sys
 import traceback
@@ -40,7 +39,7 @@ def print_exception(sanitize: bool) -> None:
 
 
 def run(options: Options) -> int:
-    all_functions: collections.OrderedDict[str, Function] = collections.OrderedDict()
+    all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
     typemap: Optional[TypeMap] = None
     try:
@@ -145,7 +144,7 @@ def run(options: Options) -> int:
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(
         description="Decompile MIPS assembly to C.",
-        usage="%(prog)s [--context C_FILE] [--emit-globals] [--valid-syntax] [-f FN ...] filename [filename ...]",
+        usage="%(prog)s [--context C_FILE] [--emit-globals] [-f FN ...] filename [filename ...]",
     )
 
     group = parser.add_argument_group("Input Options")
@@ -158,7 +157,7 @@ def parse_flags(flags: List[str]) -> Options:
         "--rodata",
         dest="filename",
         action="append",
-        help=argparse.SUPPRESS,  # For backwards compatability
+        help=argparse.SUPPRESS,  # For backwards compatibility
     )
     group.add_argument(
         "--context",
@@ -317,7 +316,7 @@ def parse_flags(flags: List[str]) -> Options:
     )
     filenames = args.filename
 
-    # Backwards compatability: giving a function index/name as a final argument, or "all"
+    # Backwards compatibility: giving a function index/name as a final argument, or "all"
     assert filenames, "checked by argparse, nargs='+'"
     if filenames[-1] == "all":
         filenames.pop()
