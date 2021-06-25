@@ -291,7 +291,7 @@ def label_for_node(context: Context, node: Node) -> str:
         return f"block_{node.block.index}"
 
 
-def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) -> bool:
+def emit_node(context: Context, node: Node, body: Body) -> bool:
     """
     Try to emit a node for the first time, together with a label for it.
     The label is only printed if something jumps to it, e.g. a loop.
