@@ -1092,12 +1092,17 @@ class ArrayAccess(Expression):
 @attr.s(eq=False)
 class GlobalSymbol(Expression):
     symbol_name: str = attr.ib()
-    type: Type = attr.ib(eq=False)
-    asm_data_entry: Optional[AsmDataEntry] = attr.ib(default=None, eq=False)
+    type: Type = attr.ib()
+    asm_data_entry: Optional[AsmDataEntry] = attr.ib(default=None)
     # `array_dim=None` indicates that the symbol is not an array
     # `array_dim=0` indicates that it *is* an array, but the dimension is unknown
     # Otherwise, it is the dimension of the array.
-    array_dim: Optional[int] = attr.ib(default=None, eq=False)
+    #
+    # If the symbol is in the typemap, this value is populated from there.
+    # Otherwise, this defaults to `None` and is set using heuristics in
+    # `GlobalInfo.global_decls()` after the AST has been built.
+    # So, this value should not be relied on during translate.
+    array_dim: Optional[int] = attr.ib(default=None)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -3779,7 +3784,8 @@ class GlobalInfo:
             assert isinstance(label, str)
             return self.address_of_gsym(label)
 
-        def for_type(type: Type) -> Optional[str]:
+        def for_element_type(type: Type) -> Optional[str]:
+            """Return the intiializer for a single element of type `type`"""
             if type.is_int() or type.is_float():
                 size_bits = type.get_size_bits()
                 if size_bits == 0:
@@ -3803,16 +3809,22 @@ class GlobalInfo:
             # Type kinds K_FN and K_VOID do not have initializers
             return None
 
-        if sym.array_dim is None:
-            return for_type(sym.type)
-        else:
-            elements: List[str] = []
-            for _ in range(sym.array_dim):
-                el = for_type(sym.type)
-                if el is None:
-                    return None
-                elements.append(el)
-            return f"{{{', '.join(elements)}}}"
+        def for_type(type: Type, array_dim: Optional[int]) -> Optional[str]:
+            """Return the intiializer for an array/variable of type `type`.
+            `array_dim` has the same meaning as `GlobalSymbol.array_dim`."""
+            if array_dim is None:
+                # Not an array
+                return for_element_type(type)
+            else:
+                elements: List[str] = []
+                for _ in range(array_dim):
+                    el = for_element_type(type)
+                    if el is None:
+                        return None
+                    elements.append(el)
+                return f"{{{', '.join(elements)}}}"
+
+        return for_type(sym.type, sym.array_dim)
 
     def global_decls(self, fmt: Formatter) -> str:
         # Format labels from symbol_type_map into global declarations.
@@ -3863,33 +3875,52 @@ class GlobalInfo:
                     comments.append(qualifier)
                     qualifier = ""
 
+                # Try to guess the symbol's `array_dim` if we have a data entry for it,
+                # and it does not exist in the typemap (`not is_global`) or dim is unknown
+                # (Otherwise, if the dim is provided by the typemap, we trust it.)
+                if sym.asm_data_entry and (not is_global or sym.array_dim == 0):
+                    assert sym.array_dim is None or sym.array_dim == 0
+                    # The size of the data entry is uncertain, because of padding
+                    # between sections. Generally `(max_data_size - data_size) < 16`.
+                    data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
+                    # The size of the element type (not the size of the array type)
+                    type_size_bits = sym.type.get_size_bits()
+                    type_size = (type_size_bits or 0) // 8
+                    if not type_size_bits:
+                        # If we don't know the type, we can't guess the array_dim
+                        pass
+                    elif type_size > max_data_size:
+                        # Uh-oh! The type is too big for our data. (not an array)
+                        comments.append(
+                            f"type too large by {type_size - max_data_size}"
+                        )
+                    elif type_size == max_data_size:
+                        # The type perfectly fits our data: 1 element, or not an array
+                        if sym.array_dim == 0:
+                            sym.array_dim = 1
+                        else:
+                            sym.array_dim = None
+                    else:
+                        assert type_size < max_data_size
+                        # We might have an array here. Now look at the lower bound,
+                        # which we know must be included in the initializer.
+                        if data_size % type_size != 0:
+                            # How many extra bytes do we need to add to `data_size`
+                            # to make it an exact multiple of `type_size`?
+                            extra_bytes = type_size - (data_size % type_size)
+                            if data_size + extra_bytes <= max_data_size:
+                                # We can make an exact multiple by taking some of the bytes
+                                # we thought were padding
+                                data_size += extra_bytes
+                            else:
+                                comments.append(f"extra bytes: {data_size % type_size}")
+                        if data_size // type_size > 1:
+                            # We know it's an array (of at least 2 elements)
+                            sym.array_dim = max_data_size // type_size
+                            print(f"> array: {data_size} {type_size} {name}")
+
                 # Try to convert the data from .data/.rodata into an initializer
                 if sym.asm_data_entry is not None:
-                    min_data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
-                    type_size_bits = sym.type.get_size_bits()
-                    if type_size_bits and max_data_size != type_size_bits // 8:
-                        type_size = type_size_bits // 8
-                        if max_data_size < type_size:
-                            comments.append(
-                                f"type too large by {type_size - max_data_size}"
-                            )
-                        else:
-                            if min_data_size % type_size != 0:
-                                added_size = type_size - (min_data_size % type_size)
-                                if min_data_size + added_size <= max_data_size:
-                                    min_data_size += added_size
-                                else:
-                                    comments.append(
-                                        f"extra bytes: {min_data_size % type_size}"
-                                    )
-                            if min_data_size // type_size > 1:
-                                if sym.array_dim is None:
-                                    sym.array_dim = max_data_size // type_size
-                                elif sym.array_dim != max_data_size // type_size:
-                                    comments.append(
-                                        f"array [{max_data_size // type_size}]"
-                                    )
-
                     value = self.initializer_for_symbol(sym, fmt) or ""
 
                 if not is_in_file and is_global:
