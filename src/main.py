@@ -315,7 +315,6 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
     )
-    functions: List[Union[int, str]] = args.functions
     filenames = args.filename
 
     # Backwards compatability: giving a function index/name as a final argument, or "all"
@@ -328,7 +327,7 @@ def parse_flags(flags: List[str]) -> Options:
     if not filenames:
         parser.error("the following arguments are required: filename")
 
-    functions = []
+    functions: List[Union[int, str]] = []
     for fn in args.functions:
         try:
             functions.append(int(fn))
