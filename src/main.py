@@ -6,7 +6,8 @@ from typing import List, Optional, Union
 
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
-from .flow_graph import visualize_flowgraph
+from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
+from .loop_rerolling import reroll_loops
 from .if_statements import get_function_text
 from .options import CodingStyle, Options
 from .parse_file import MIPSFile, parse_file
@@ -94,7 +95,12 @@ def run(options: Options) -> int:
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
-            info = translate_to_ast(function, options, global_info)
+            flowgraph: FlowGraph = build_flowgraph(function, mips_file.asm_data)
+
+            if options.loop_rerolling:
+                flowgraph = reroll_loops(flowgraph)
+
+            info = translate_to_ast(function, flowgraph, options, global_info)
             function_infos.append(info)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
@@ -172,6 +178,12 @@ def parse_flags(flags: List[str]) -> Options:
         "--no-andor",
         dest="andor_detection",
         help="disable detection of &&/||",
+        action="store_false",
+    )
+    parser.add_argument(
+        "--no-reroll",
+        dest="loop_rerolling",
+        help="disable detection and fixing of unrolled loops",
         action="store_false",
     )
     parser.add_argument(
@@ -304,6 +316,7 @@ def parse_flags(flags: List[str]) -> Options:
         void=args.void,
         ifs=args.ifs,
         andor_detection=args.andor_detection,
+        loop_rerolling=args.loop_rerolling,
         skip_casts=args.skip_casts,
         reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,

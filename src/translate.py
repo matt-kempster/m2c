@@ -4,6 +4,7 @@ import struct
 import sys
 import traceback
 from contextlib import contextmanager
+from copy import copy
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
@@ -2981,7 +2982,7 @@ def regs_clobbered_until_dominator(
     if node.immediate_dominator is None:
         return set()
     seen = {node.immediate_dominator}
-    stack = node.parents[:]
+    stack = copy(node.parents)
     clobbered = set()
     while stack:
         n = stack.pop()
@@ -3003,7 +3004,7 @@ def reg_always_set(
     if node.immediate_dominator is None:
         return False
     seen = {node.immediate_dominator}
-    stack = node.parents[:]
+    stack = copy(node.parents)
     while stack:
         n = stack.pop()
         if n == node.immediate_dominator and not dom_set:
@@ -3032,11 +3033,17 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
     while i < len(used_phis):
         phi = used_phis[i]
         assert phi.num_usages > 0
-        assert len(phi.node.parents) >= 2
+        # assert len(phi.node.parents) >= 2
+        if len(phi.node.parents) < 2:
+            i += 1
+            continue
         exprs = []
         for node in phi.node.parents:
             block_info = node.block.block_info
-            assert isinstance(block_info, BlockInfo)
+            # assert isinstance(block_info, BlockInfo)
+            if not block_info:
+                i += 1
+                continue
             exprs.append(block_info.final_register_states[phi.reg])
 
         first_uw = early_unwrap(exprs[0])
@@ -3094,7 +3101,9 @@ def compute_has_custom_return(nodes: List[Node]) -> None:
                 continue
             for p in n.parents:
                 block_info2 = p.block.block_info
-                assert isinstance(block_info2, BlockInfo)
+                # assert isinstance(block_info2, BlockInfo)
+                if not block_info2:
+                    continue
                 if block_info2.has_custom_return:
                     block_info.has_custom_return = True
                     changed = True
@@ -3877,6 +3886,7 @@ class FunctionInfo:
 
 def translate_to_ast(
     function: Function,
+    flow_graph: FlowGraph,
     options: Options,
     global_info: GlobalInfo,
 ) -> FunctionInfo:
@@ -3886,7 +3896,6 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
     typemap = global_info.typemap
 

@@ -778,6 +778,14 @@ class BaseNode(abc.ABC):
     # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
     loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
 
+    def to_basic_node(self, successor: "Node") -> "BasicNode":
+        new_node = BasicNode(self.block, self.emit_goto, successor)
+        new_node.parents = self.parents
+        new_node.dominators = self.dominators
+        new_node.immediate_dominator = self.immediate_dominator
+        new_node.immediately_dominates = self.immediately_dominates
+        return new_node
+
     def name(self) -> str:
         return str(self.block.index)
 
@@ -785,10 +793,18 @@ class BaseNode(abc.ABC):
     def children(self) -> List["Node"]:
         ...
 
+    @abc.abstractmethod
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        ...
+
 
 @attr.s(eq=False)
 class BasicNode(BaseNode):
     successor: "Node" = attr.ib()
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        if self.successor is replace_this:
+            self.successor = with_this
 
     def children(self) -> List["Node"]:
         # TODO: Should we also include the fallthrough node if `emit_goto` is True?
@@ -809,6 +825,12 @@ class BasicNode(BaseNode):
 class ConditionalNode(BaseNode):
     conditional_edge: "Node" = attr.ib()
     fallthrough_edge: "Node" = attr.ib()
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        if self.conditional_edge is replace_this:
+            self.conditional_edge = with_this
+        if self.fallthrough_edge is replace_this:
+            self.fallthrough_edge = with_this
 
     def children(self) -> List["Node"]:
         if self.conditional_edge == self.fallthrough_edge:
@@ -837,6 +859,9 @@ class ReturnNode(BaseNode):
     def children(self) -> List["Node"]:
         return [self.terminal]
 
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        return None
+
     def name(self) -> str:
         name = super().name()
         return name if self.is_real() else f"{name}.{self.index}"
@@ -857,6 +882,15 @@ class ReturnNode(BaseNode):
 @attr.s(eq=False)
 class SwitchNode(BaseNode):
     cases: List["Node"] = attr.ib()
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        new_cases: List["Node"] = []
+        for case in self.cases:
+            if case is replace_this:
+                new_cases.append(with_this)
+            else:
+                new_cases.append(case)
+        self.cases = new_cases
 
     def children(self) -> List["Node"]:
         # Deduplicate nodes in `self.cases`
@@ -890,6 +924,9 @@ class TerminalNode(BaseNode):
 
     def children(self) -> List["Node"]:
         return []
+
+    def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
+        return None
 
     def __str__(self) -> str:
         return "return"
@@ -1322,7 +1359,10 @@ class FlowGraph:
             for s in n.children():
                 if s.loop is not None and n in s.loop.backedges:
                     continue
-                incoming_edges[s].remove(n)
+                try:
+                    incoming_edges[s].remove(n)
+                except KeyError:
+                    break
                 if not incoming_edges[s]:
                     queue.add(s)
 
