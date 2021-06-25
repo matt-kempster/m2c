@@ -641,7 +641,7 @@ def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoo
             assert node.block.block_info
             assert node.block.block_info.branch_condition
             condition = node.block.block_info.branch_condition
-            end = node
+            new_end = node
             break
     if not condition:
         return None
@@ -649,15 +649,12 @@ def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoo
     loop_body = build_flowgraph_between(
         context,
         start,
-        end,
+        new_end,
         skip_loop_detection=True,
     )
-    emit_node(context, end, loop_body)
+    emit_node(context, new_end, loop_body)
 
-    return DoWhileLoop(
-        loop_body,
-        condition,
-    )
+    return DoWhileLoop(loop_body, condition)
 
 
 def build_flowgraph_between(
@@ -666,7 +663,11 @@ def build_flowgraph_between(
     """
     Output a section of a flow graph that has already been translated to our
     symbolic AST. All nodes between start and end, including start but NOT end,
-    will be printed out using if-else statements and block info
+    will be printed out using if-else statements and block info.
+
+    `skip_loop_detection` is used to prevent infinite recursion, since (in the
+    case of loops) this function can be recursively called by itself (via
+    `detect_loop`) with the same `start` argument.
     """
     curr_start: Node = start
     body = Body(print_node_comment=context.options.debug)
@@ -690,7 +691,7 @@ def build_flowgraph_between(
                 assert imm_pdom.immediate_postdominator is not None
                 imm_pdom = imm_pdom.immediate_postdominator
 
-            # Construct the while(true) or do-while loop
+            # Construct the do-while loop
             do_while_loop = detect_loop(context, curr_start, imm_pdom)
             if do_while_loop:
                 body.add_do_while_loop(do_while_loop)
