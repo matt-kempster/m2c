@@ -1,4 +1,5 @@
 import argparse
+import collections
 import re
 import sys
 import traceback
@@ -39,8 +40,7 @@ def print_exception(sanitize: bool) -> None:
 
 
 def run(options: Options) -> int:
-    # We are relying on Python 3.7 dicts preserving insertion order
-    all_functions: Dict[str, Function] = {}
+    all_functions: collections.OrderedDict[str, Function] = collections.OrderedDict()
     asm_data = AsmData()
     typemap: Optional[TypeMap] = None
     try:
@@ -322,7 +322,8 @@ def parse_flags(flags: List[str]) -> Options:
     assert filenames, "checked by argparse, nargs='+'"
     if filenames[-1] == "all":
         filenames.pop()
-    elif re.match(r"[0-9a-zA-Z_]+", filenames[-1]):
+    elif re.match(r"^[0-9a-zA-Z_]+$", filenames[-1]):
+        # The filename is a valid C identifier or a number
         args.functions.append(filenames.pop())
     if not filenames:
         parser.error("the following arguments are required: filename")
