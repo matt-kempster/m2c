@@ -291,7 +291,7 @@ def label_for_node(context: Context, node: Node) -> str:
         return f"block_{node.block.index}"
 
 
-def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) -> bool:
+def emit_node(context: Context, node: Node, body: Body) -> bool:
     """
     Try to emit a node for the first time, together with a label for it.
     The label is only printed if something jumps to it, e.g. a loop.
@@ -317,8 +317,6 @@ def emit_node(context: Context, node: Node, body: Body, secretly: bool = False) 
             )
     else:
         body.add_statement(LabelStatement(context, node))
-        if not secretly:
-            context.emitted_nodes.add(node)
 
     body.add_node(node, comment_empty=True)
     if isinstance(node, ReturnNode):
@@ -695,7 +693,6 @@ def build_flowgraph_between(
             # Construct the do-while loop
             do_while_loop = detect_loop(context, curr_start, imm_pdom)
             if do_while_loop:
-                # breakpoint()
                 body.add_do_while_loop(do_while_loop)
 
                 # Move on.
