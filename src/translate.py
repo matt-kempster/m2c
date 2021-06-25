@@ -3741,7 +3741,8 @@ class GlobalInfo:
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
     ) -> Optional[str]:
-        if not sym.asm_data_entry:
+        if not sym.asm_data_entry or sym.asm_data_entry.is_bss:
+            # IDO only puts symbols in the BSS if they don't have any initializer
             return None
         data = sym.asm_data_entry.data[:]
 

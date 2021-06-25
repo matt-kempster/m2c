@@ -47,6 +47,7 @@ class AsmDataEntry:
     data: List[Union[str, bytes]] = attr.ib(factory=list)
     is_string: bool = attr.ib(default=False)
     is_readonly: bool = attr.ib(default=False)
+    is_bss: bool = attr.ib(default=False)
 
     def size_range_bytes(self) -> Tuple[int, int]:
         """Return the range of possible sizes, if padding were stripped."""
@@ -112,8 +113,8 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_data_label(self, symbol_name: str, is_readonly: bool) -> None:
-        self.current_data = AsmDataEntry(is_readonly=is_readonly)
+    def new_data_label(self, symbol_name: str, is_readonly: bool, is_bss: bool) -> None:
+        self.current_data = AsmDataEntry(is_readonly=is_readonly, is_bss=is_bss)
         self.asm_data.values[symbol_name] = self.current_data
 
     def new_data_sym(self, sym: str) -> None:
@@ -243,9 +244,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
 
         def process_label(label: str, *, glabel: bool) -> None:
             if curr_section == ".rodata":
-                mips_file.new_data_label(label, is_readonly=True)
-            elif curr_section in (".data", ".bss"):
-                mips_file.new_data_label(label, is_readonly=False)
+                mips_file.new_data_label(label, is_readonly=True, is_bss=False)
+            elif curr_section == ".data":
+                mips_file.new_data_label(label, is_readonly=False, is_bss=False)
+            elif curr_section == ".bss":
+                mips_file.new_data_label(label, is_readonly=False, is_bss=True)
             elif curr_section == ".text":
                 re_local = re_local_glabel if glabel else re_local_label
                 if label.startswith("."):
