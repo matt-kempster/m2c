@@ -1,15 +1,16 @@
 import argparse
+import re
 import sys
 import traceback
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import visualize_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options
-from .parse_file import MIPSFile, parse_file
+from .parse_file import AsmData, Function, parse_file
 from .translate import (
     FunctionInfo,
     GlobalInfo,
@@ -38,20 +39,18 @@ def print_exception(sanitize: bool) -> None:
 
 
 def run(options: Options) -> int:
-    mips_file: MIPSFile
+    all_functions: Dict[str, Function] = {}
+    asm_data = AsmData()
     typemap: Optional[TypeMap] = None
     try:
-        if options.filename == "-":
-            mips_file = parse_file(sys.stdin, options)
-        else:
-            with open(options.filename, "r", encoding="utf-8-sig") as f:
-                mips_file = parse_file(f, options)
-
-        # Move over jtbl rodata from files given by --rodata
-        for asm_data_file in options.asm_data_files:
-            with open(asm_data_file, "r", encoding="utf-8-sig") as f:
-                sub_file = parse_file(f, options)
-                sub_file.asm_data.merge_into(mips_file.asm_data)
+        for filename in options.filenames:
+            if filename == "-":
+                mips_file = parse_file(sys.stdin, options)
+            else:
+                with open(filename, "r", encoding="utf-8-sig") as f:
+                    mips_file = parse_file(f, options)
+            all_functions.update((fn.name, fn) for fn in mips_file.functions)
+            mips_file.asm_data.merge_into(asm_data)
 
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
@@ -68,29 +67,28 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
-    if options.function_index_or_name is None:
-        functions = mips_file.functions
+    if not options.function_indexes_or_names:
+        functions = list(all_functions.values())
     else:
-        try:
-            index = int(options.function_index_or_name)
-            count = len(mips_file.functions)
-            if not (0 <= index < count):
-                print(
-                    f"Function index {index} is out of bounds (must be between "
-                    f"0 and {count - 1}).",
-                    file=sys.stderr,
-                )
-                return 1
-            functions = [mips_file.functions[index]]
-        except ValueError:
-            name = options.function_index_or_name
-            functions = [fn for fn in mips_file.functions if fn.name == name]
-            if not functions:
-                print(f"Function {name} not found.", file=sys.stderr)
-                return 1
+        functions = []
+        for index_or_name in options.function_indexes_or_names:
+            if isinstance(index_or_name, int):
+                if not (0 <= index_or_name < len(all_functions)):
+                    print(
+                        f"Function index {index_or_name} is out of bounds (must be between "
+                        f"0 and {len(all_functions) - 1}).",
+                        file=sys.stderr,
+                    )
+                    return 1
+                functions.append(list(all_functions.values())[index_or_name])
+            else:
+                if index_or_name not in all_functions:
+                    print(f"Function {index_or_name} not found.", file=sys.stderr)
+                    return 1
+                functions.append(all_functions[index_or_name])
 
-    function_names = {fn.name for fn in mips_file.functions}
-    global_info = GlobalInfo(mips_file.asm_data, function_names, typemap)
+    function_names = set(all_functions.keys())
+    global_info = GlobalInfo(asm_data, function_names, typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
@@ -144,50 +142,151 @@ def run(options: Options) -> int:
 
 
 def parse_flags(flags: List[str]) -> Options:
-    parser = argparse.ArgumentParser(description="Decompile MIPS assembly to C.")
-    parser.add_argument("filename", help="input filename")
-    parser.add_argument("function", help="function index or name", nargs="?")
-    parser.add_argument(
-        "--debug", dest="debug", help="print debug info", action="store_true"
+    parser = argparse.ArgumentParser(
+        description="Decompile MIPS assembly to C.",
+        usage="%(prog)s [--context C_FILE] [--emit-globals] [-f FN ...] filename [filename ...]",
     )
-    parser.add_argument(
+
+    group = parser.add_argument_group("Input Options")
+    group.add_argument(
+        "filename",
+        nargs="+",
+        help="input asm filename(s)",
+    )
+    group.add_argument(
+        "--rodata",
+        dest="filename",
+        action="append",
+        help=argparse.SUPPRESS,  # For backwards compatibility
+    )
+    group.add_argument(
+        "--context",
+        metavar="C_FILE",
+        dest="c_context",
+        help="read variable types/function signatures/structs from an existing C file. "
+        "The file must already have been processed by the C preprocessor.",
+    )
+    group.add_argument(
+        "-D",
+        dest="defined",
+        action="append",
+        default=[],
+        help="mark preprocessor constant as defined",
+    )
+    group.add_argument(
+        "-U",
+        dest="undefined",
+        action="append",
+        default=[],
+        help="mark preprocessor constant as undefined",
+    )
+
+    group = parser.add_argument_group("Output & Formatting Options")
+    group.add_argument(
+        "-f",
+        "--function",
+        metavar="FN",
+        dest="functions",
+        action="append",
+        default=[],
+        help="function index or name to decompile",
+    )
+    group.add_argument(
+        "--valid-syntax",
+        dest="valid_syntax",
+        action="store_true",
+        help="emit valid C syntax, using macros to indicate unknown types or other "
+        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
+    )
+    group.add_argument(
+        "--emit-globals",
+        dest="emit_globals",
+        action="store_true",
+        help="emit global declarations with inferred types.",
+    )
+    group.add_argument(
+        "--debug",
+        dest="debug",
+        action="store_true",
+        help="print debug info inline",
+    )
+    group.add_argument(
+        "--print-assembly",
+        dest="print_assembly",
+        action="store_true",
+        help="print assembly of function to decompile",
+    )
+    group.add_argument(
+        "--allman",
+        dest="allman",
+        action="store_true",
+        help="put braces on separate lines",
+    )
+    group.add_argument(
+        "--dump-typemap",
+        dest="dump_typemap",
+        action="store_true",
+        help="dump information about all functions and structs from the provided C "
+        "context. Mainly useful for debugging.",
+    )
+    group.add_argument(
+        "--visualize",
+        dest="visualize",
+        action="store_true",
+        help="display a visualization of the control flow graph using graphviz",
+    )
+    group.add_argument(
+        "--sanitize-tracebacks",
+        dest="sanitize_tracebacks",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+
+    group = parser.add_argument_group("Analysis Options")
+    group.add_argument(
+        "--stop-on-error",
+        dest="stop_on_error",
+        action="store_true",
+        help="stop when encountering any error",
+    )
+    group.add_argument(
         "--void",
         dest="void",
-        help="assume the decompiled function returns void",
         action="store_true",
+        help="assume the decompiled function returns void",
     )
-    parser.add_argument(
+    group.add_argument(
         "--gotos-only",
         dest="ifs",
-        help="disable control flow generation; emit gotos for everything",
         action="store_false",
+        help="disable control flow generation; emit gotos for everything",
     )
-    parser.add_argument(
+    group.add_argument(
         "--no-ifs",
         dest="ifs",
         action="store_false",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
+    group.add_argument(
         "--no-andor",
         dest="andor_detection",
-        help="disable detection of &&/||",
         action="store_false",
+        help="disable detection of &&/||",
     )
-    parser.add_argument(
+    group.add_argument(
         "--no-casts",
         dest="skip_casts",
-        help="don't emit any type casts",
         action="store_true",
+        help="don't emit any type casts",
     )
-    parser.add_argument(
+    group.add_argument(
         "--reg-vars",
         metavar="REGISTERS",
         dest="reg_vars",
         help="use single variables instead of temps/phis for the given "
         "registers (comma separated)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--goto",
         metavar="PATTERN",
         dest="goto_patterns",
@@ -197,91 +296,13 @@ def parse_flags(flags: List[str]) -> Options:
         '(possibly within a comment). Default: "GOTO". Multiple '
         "patterns are allowed.",
     )
-    parser.add_argument(
-        "--rodata",
-        metavar="ASM_FILE",
-        dest="asm_data_files",
-        action="append",
-        default=[],
-        help="read jump table, constant, and global variable information from this file",
-    )
-    parser.add_argument(
-        "--stop-on-error",
-        dest="stop_on_error",
-        help="stop when encountering any error",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--print-assembly",
-        dest="print_assembly",
-        help="print assembly of function to decompile",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--visualize",
-        dest="visualize",
-        action="store_true",
-        help="display a visualization of the control flow graph using graphviz",
-    )
-    parser.add_argument(
-        "--allman",
-        dest="allman",
-        action="store_true",
-        help="put braces on separate lines",
-    )
-    parser.add_argument(
-        "-D",
-        dest="defined",
-        action="append",
-        default=[],
-        help="mark preprocessor constant as defined",
-    )
-    parser.add_argument(
-        "-U",
-        dest="undefined",
-        action="append",
-        default=[],
-        help="mark preprocessor constant as undefined",
-    )
-    parser.add_argument(
-        "--context",
-        metavar="C_FILE",
-        dest="c_context",
-        help="read variable types/function signatures/structs from an existing C file. "
-        "The file must already have been processed by the C preprocessor.",
-    )
-    parser.add_argument(
-        "--dump-typemap",
-        dest="dump_typemap",
-        action="store_true",
-        help="dump information about all functions and structs from the provided C "
-        "context. Mainly useful for debugging.",
-    )
-    parser.add_argument(
-        "--valid-syntax",
-        dest="valid_syntax",
-        action="store_true",
-        help="emit valid C syntax, using macros to indicate unknown types or other "
-        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
-    )
-    parser.add_argument(
-        "--emit-globals",
-        dest="emit_globals",
-        action="store_true",
-        help="emit global declarations with inferred types.",
-    )
-    parser.add_argument(
+    group.add_argument(
         "--pdb-translate",
         dest="pdb_translate",
         action="store_true",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--sanitize-tracebacks",
-        dest="sanitize_tracebacks",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
+
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
     preproc_defines = {
@@ -293,13 +314,28 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
     )
-    function = args.function
-    if function == "all":
-        # accept "all" as "all functions in file", for compat reasons.
-        function = None
+    filenames = args.filename
+
+    # Backwards compatibility: giving a function index/name as a final argument, or "all"
+    assert filenames, "checked by argparse, nargs='+'"
+    if filenames[-1] == "all":
+        filenames.pop()
+    elif re.match(r"^[0-9a-zA-Z_]+$", filenames[-1]):
+        # The filename is a valid C identifier or a number
+        args.functions.append(filenames.pop())
+    if not filenames:
+        parser.error("the following arguments are required: filename")
+
+    functions: List[Union[int, str]] = []
+    for fn in args.functions:
+        try:
+            functions.append(int(fn))
+        except ValueError:
+            functions.append(fn)
+
     return Options(
-        filename=args.filename,
-        function_index_or_name=function,
+        filenames=filenames,
+        function_indexes_or_names=functions,
         debug=args.debug,
         void=args.void,
         ifs=args.ifs,
@@ -307,7 +343,6 @@ def parse_flags(flags: List[str]) -> Options:
         skip_casts=args.skip_casts,
         reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
-        asm_data_files=args.asm_data_files,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
