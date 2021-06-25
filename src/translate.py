@@ -3917,7 +3917,6 @@ class GlobalInfo:
                         if data_size // type_size > 1:
                             # We know it's an array (of at least 2 elements)
                             sym.array_dim = max_data_size // type_size
-                            print(f"> array: {data_size} {type_size} {name}")
 
                 # Try to convert the data from .data/.rodata into an initializer
                 if sym.asm_data_entry is not None:
