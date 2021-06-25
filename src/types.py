@@ -1,7 +1,7 @@
+import copy
 from typing import List, Optional, Set, Tuple, Union
 
 import attr
-import copy
 import pycparser.c_ast as ca
 
 from .c_types import (
@@ -10,15 +10,13 @@ from .c_types import (
     equal_types,
     get_struct,
     parse_function,
-    primitive_size,
     parse_struct,
+    primitive_size,
     resolve_typedefs,
     set_decl_name,
     to_c,
-    type_to_string,
     var_size_align,
 )
-from .error import DecompFailure
 from .options import Formatter
 
 

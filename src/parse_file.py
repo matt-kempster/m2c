@@ -2,7 +2,7 @@ import re
 import struct
 import typing
 from pathlib import Path
-from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
+from typing import Callable, Dict, List, Match, Optional, Set, TypeVar, Union
 
 import attr
 

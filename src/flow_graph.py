@@ -18,7 +18,7 @@ import attr
 
 from .error import DecompFailure
 from .options import Formatter
-from .parse_file import Function, Label, AsmData
+from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -951,9 +951,6 @@ class NaturalLoop:
     head: Node = attr.ib()
     nodes: Set[Node] = attr.ib(factory=set)
     backedges: Set[Node] = attr.ib(factory=set)
-
-    def is_self_loop(self) -> bool:
-        return len(self.nodes) == 1
 
 
 def build_graph_from_block(

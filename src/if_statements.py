@@ -3,7 +3,6 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 import attr
 
-from .error import DecompFailure
 from .flow_graph import (
     BasicNode,
     ConditionalNode,
@@ -21,11 +20,9 @@ from .translate import (
     Condition,
     Formatter,
     FunctionInfo,
-    Statement as TrStatement,
-    Type,
-    simplify_condition,
-    format_expr,
 )
+from .translate import Statement as TrStatement
+from .translate import Type, format_expr, simplify_condition
 
 
 @attr.s
@@ -157,7 +154,7 @@ class LabelStatement:
 @attr.s
 class DoWhileLoop:
     body: "Body" = attr.ib()
-    condition: Optional[Condition] = attr.ib(default=None)
+    condition: Condition = attr.ib()
 
     def should_write(self) -> bool:
         return True
@@ -165,7 +162,7 @@ class DoWhileLoop:
     def format(self, fmt: Formatter) -> str:
         space = fmt.indent("")
         after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
-        cond = format_expr(self.condition, fmt) if self.condition else ""
+        cond = format_expr(self.condition, fmt)
         with fmt.indented():
             return "\n".join(
                 [
@@ -631,49 +628,34 @@ def build_switch_between(
     return SwitchStatement(jump, body)
 
 
-def detect_loop(
-    context: Context, start: ConditionalNode, end: Node
-) -> Optional[DoWhileLoop]:
-    # We detect edges that are accompanied by their reverse as loops.
-    # breakpoint()
-    imm_pdom: Node
-    if start.loop and start.loop.is_self_loop():
-        imm_pdom = start
-    else:
-        # imm_pdom = immediate_postdominator(context, start, end)
-        assert start.immediate_postdominator
-        imm_pdom = start.immediate_postdominator
+def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoop]:
+    assert start.loop
 
-    if not (
-        isinstance(imm_pdom, ConditionalNode) and imm_pdom.conditional_edge is start
-    ):
+    # Find the the condition for the do-while, if it exists
+    condition: Optional[Condition] = None
+    for node in start.loop.backedges:
+        if (
+            node in start.postdominators
+            and isinstance(node, ConditionalNode)
+            and node.fallthrough_edge == end
+        ):
+            assert node.block.block_info
+            assert node.block.block_info.branch_condition
+            condition = node.block.block_info.branch_condition
+            new_end = node
+            break
+    if not condition:
         return None
 
-    loop_body = Body(False, [])
-    emit_node(
+    loop_body = build_flowgraph_between(
         context,
         start,
-        loop_body,
-        secretly=(bool(start.loop and not start.loop.is_self_loop())),
+        new_end,
+        skip_loop_detection=True,
     )
+    emit_node(context, new_end, loop_body)
 
-    if not start.loop or not start.loop.is_self_loop():
-        # There are more nodes to emit, "between" the start node
-        # and the loop edge that it connects to:
-        loop_body = build_flowgraph_between(
-            context,
-            start,
-            imm_pdom,
-            skip_loop_detection=True,
-        )
-        emit_node(context, imm_pdom, loop_body)
-
-    assert imm_pdom.block.block_info
-    assert imm_pdom.block.block_info.branch_condition
-    return DoWhileLoop(
-        loop_body,
-        imm_pdom.block.block_info.branch_condition,
-    )
+    return DoWhileLoop(loop_body, condition)
 
 
 def build_flowgraph_between(
@@ -682,7 +664,11 @@ def build_flowgraph_between(
     """
     Output a section of a flow graph that has already been translated to our
     symbolic AST. All nodes between start and end, including start but NOT end,
-    will be printed out using if-else statements and block info
+    will be printed out using if-else statements and block info.
+
+    `skip_loop_detection` is used to prevent infinite recursion, since (in the
+    case of loops) this function can be recursively called by itself (via
+    `detect_loop`) with the same `start` argument.
     """
     curr_start: Node = start
     body = Body(print_node_comment=context.options.debug)
@@ -694,20 +680,26 @@ def build_flowgraph_between(
     while curr_start != end:
         assert not isinstance(curr_start, TerminalNode)
 
-        if not skip_loop_detection and isinstance(curr_start, ConditionalNode):
-            # breakpoint()
-            do_while_loop = detect_loop(context, curr_start, end)
+        if (
+            not skip_loop_detection
+            and curr_start.loop
+            and not curr_start in context.emitted_nodes
+        ):
+            # Find the immediate postdominator to the whole loop,
+            # i.e. the first node outside the loop body
+            imm_pdom: Node = curr_start
+            while imm_pdom in curr_start.loop.nodes:
+                assert imm_pdom.immediate_postdominator is not None
+                imm_pdom = imm_pdom.immediate_postdominator
+
+            # Construct the do-while loop
+            do_while_loop = detect_loop(context, curr_start, imm_pdom)
             if do_while_loop:
                 # breakpoint()
                 body.add_do_while_loop(do_while_loop)
-                # Move past the loop:
-                if curr_start.loop and curr_start.loop.is_self_loop():
-                    curr_start = curr_start.fallthrough_edge
-                else:
-                    # imm_pdom = immediate_postdominator(context, curr_start, end)
-                    imm_pdom = curr_start.immediate_postdominator
-                    assert isinstance(imm_pdom, ConditionalNode)
-                    curr_start = imm_pdom.fallthrough_edge
+
+                # Move on.
+                curr_start = imm_pdom
                 continue
 
         # Write the current node, or a goto, to the body
