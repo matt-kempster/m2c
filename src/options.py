@@ -1,5 +1,5 @@
 import contextlib
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator, List, Optional, Union
 
 import attr
 
@@ -13,8 +13,8 @@ class CodingStyle:
 
 @attr.s
 class Options:
-    filename: str = attr.ib()
-    function_index_or_name: Optional[str] = attr.ib()
+    filenames: List[str] = attr.ib()
+    function_indexes_or_names: List[Union[int, str]] = attr.ib()
     debug: bool = attr.ib()
     void: bool = attr.ib()
     ifs: bool = attr.ib()
@@ -22,7 +22,6 @@ class Options:
     skip_casts: bool = attr.ib()
     reg_vars: List[str] = attr.ib()
     goto_patterns: List[str] = attr.ib()
-    asm_data_files: List[str] = attr.ib()
     stop_on_error: bool = attr.ib()
     print_assembly: bool = attr.ib()
     visualize_flowgraph: bool = attr.ib()

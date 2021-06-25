@@ -995,8 +995,7 @@ def build_graph_from_block(
                     f"Found jr instruction {jump.meta.loc_str()}, but the "
                     "corresponding jump table is not provided.\n"
                     "\n"
-                    "Please include it in the input .s file, or in a separate .s "
-                    "file pointed to by --rodata.\n"
+                    "Please include it in the input .s file(s), or in an additional file.\n"
                     'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
                     "\n"
                     "(You might need to pass --goto and --no-andor flags as well, "

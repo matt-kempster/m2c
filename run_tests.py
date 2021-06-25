@@ -145,7 +145,7 @@ def create_e2e_tests(
                 output_file=output_file,
                 brief_crashes=True,
                 flags_path=flags_path,
-                flags=["test"],  # Decompile the function 'test'
+                flags=["--function", "test"],
             )
         )
     cases.sort()
@@ -206,15 +206,15 @@ def create_project_tests(
                 continue
             f = asm_file.parent / candidate
             if f.exists():
-                flags.extend(["--rodata", str(f)])
+                flags.append(str(f))
         # papermario
         papermario_data_path = Path(
             str(asm_file).replace("/nonmatchings/", "/data/")
         ).parent.parent
         for f in papermario_data_path.glob("*.data.s"):
-            flags.extend(["--rodata", str(f)])
+            flags.append(str(f))
         for f in papermario_data_path.glob("*.rodata.s"):
-            flags.extend(["--rodata", str(f)])
+            flags.append(str(f))
 
         test_path = asm_file.relative_to(asm_dir)
         name = f"{name_prefix}:{test_path}"
