@@ -81,10 +81,11 @@ def decompile_and_compare(
             return None, f"{test_case.output_file} does not exist. Skippping."
         original_contents = "(file did not exist)"
 
-    test_flags = ["--sanitize-tracebacks", "--stop-on-error", str(test_case.asm_file)]
+    test_flags = ["--sanitize-tracebacks", "--stop-on-error"]
     test_flags.extend(test_case.flags)
     if test_case.flags_path is not None:
         test_flags.extend(get_test_flags(test_case.flags_path))
+    test_flags.append(str(test_case.asm_file))
     options = parse_flags(test_flags)
 
     final_contents = decompile_and_capture_output(options, test_case.brief_crashes)

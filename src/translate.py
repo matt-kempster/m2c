@@ -733,11 +733,23 @@ class BinaryOp(Condition):
             floating=True,
         )
 
-    def is_boolean(self) -> bool:
+    def is_comparison(self) -> bool:
         return self.op in ["==", "!=", ">", "<", ">=", "<="]
 
     def negated(self) -> "Condition":
-        if not self.is_boolean() or (
+        if (
+            self.op in ["&&", "||"]
+            and isinstance(self.left, Condition)
+            and isinstance(self.right, Condition)
+        ):
+            # DeMorgan's Laws
+            return BinaryOp(
+                left=self.left.negated(),
+                op={"&&": "||", "||": "&&"}[self.op],
+                right=self.right.negated(),
+                type=Type.bool(),
+            )
+        if not self.is_comparison() or (
             self.floating and self.op in ["<", ">", "<=", ">="]
         ):
             # Floating-point comparisons cannot be negated in any nice way,
@@ -757,7 +769,7 @@ class BinaryOp(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if (
-            self.is_boolean()
+            self.is_comparison()
             and isinstance(self.left, Literal)
             and not isinstance(self.right, Literal)
         ):
@@ -1786,10 +1798,15 @@ def simplify_condition(expr: Expression) -> Expression:
     """
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return simplify_condition(expr.wrapped_expr)
+    if isinstance(expr, UnaryOp):
+        inner = simplify_condition(expr.expr)
+        if expr.op == "!" and isinstance(inner, Condition):
+            return inner.negated()
+        return attr.evolve(expr, expr=inner)
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
         right = simplify_condition(expr.right)
-        if isinstance(left, BinaryOp) and left.is_boolean() and right == Literal(0):
+        if isinstance(left, BinaryOp) and left.is_comparison() and right == Literal(0):
             if expr.op == "==":
                 return simplify_condition(left.negated())
             if expr.op == "!=":

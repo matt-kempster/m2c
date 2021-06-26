@@ -225,7 +225,7 @@ def parse_flags(flags: List[str]) -> Options:
         "--pointer-style",
         dest="pointer_style",
         help="control whether to output pointer asterisks next to the type name (left) "
-             "or next to the variable name (right)",
+        "or next to the variable name (right)",
         choices=["left", "right"],
         default="right",
     )

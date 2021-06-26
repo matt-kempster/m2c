@@ -225,10 +225,9 @@ class Type:
         if fmt.coding_style.pointer_style_left:
             # Keep going until the result is unmodified
             while True:
-                replaced = ret\
-                    .replace(" *", "* ")\
-                    .replace("* )", "*)")\
-                    .replace("* ,", "*,")
+                replaced = (
+                    ret.replace(" *", "* ").replace("* )", "*)").replace("* ,", "*,")
+                )
                 if replaced == ret:
                     break
                 ret = replaced
