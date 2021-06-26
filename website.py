@@ -35,6 +35,8 @@ if "source" in form:
         cmd.append("--no-casts")
     if "allman" in form:
         cmd.append("--allman")
+    if "leftptr" in form:
+        cmd.extend(["--pointer-style", "left"])
     regvars = ""
     if "regvarsselect" in form:
         sel = form["regvarsselect"].value
@@ -172,6 +174,7 @@ textarea, .sidebar iframe {
     <label><input type="checkbox" name="noandor">Disable &amp;&amp;/||</label>
     <label><input type="checkbox" name="nocasts">Hide type casts</label>
     <label><input type="checkbox" name="allman">Allman braces</label>
+    <label><input type="checkbox" name="leftptr">* to the left</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
@@ -236,7 +239,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];
