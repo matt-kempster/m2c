@@ -9,6 +9,7 @@ class CodingStyle:
     newline_after_function: bool = attr.ib()
     newline_after_if: bool = attr.ib()
     newline_before_else: bool = attr.ib()
+    pointer_style_left: bool = attr.ib()
 
 
 @attr.s
@@ -46,6 +47,7 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     newline_after_function=False,
     newline_after_if=False,
     newline_before_else=False,
+    pointer_style_left=False,
 )
 
 
