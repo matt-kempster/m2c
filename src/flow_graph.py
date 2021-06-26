@@ -785,6 +785,10 @@ class BaseNode(abc.ABC):
     def children(self) -> List["Node"]:
         ...
 
+    @abc.abstractmethod
+    def __repr__(self) -> str:
+        ...
+
 
 @attr.s(eq=False)
 class BasicNode(BaseNode):
@@ -794,7 +798,7 @@ class BasicNode(BaseNode):
         # TODO: Should we also include the fallthrough node if `emit_goto` is True?
         return [self.successor]
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return "".join(
             [
                 f"{self.block}\n",
@@ -815,7 +819,7 @@ class ConditionalNode(BaseNode):
             return [self.conditional_edge]
         return [self.conditional_edge, self.fallthrough_edge]
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return "".join(
             [
                 f"{self.block}\n",
@@ -844,7 +848,7 @@ class ReturnNode(BaseNode):
     def is_real(self) -> bool:
         return self.index == 0
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return "".join(
             [
                 f"{self.block}\n",
@@ -868,7 +872,7 @@ class SwitchNode(BaseNode):
                 children.append(node)
         return children
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         targets = ", ".join(str(c.block.index) for c in self.cases)
         return f"{self.block}\n# {self.block.index} -> {targets}"
 
@@ -891,7 +895,7 @@ class TerminalNode(BaseNode):
     def children(self) -> List["Node"]:
         return []
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return "return"
 
 

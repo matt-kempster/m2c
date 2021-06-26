@@ -218,7 +218,20 @@ class Type:
             bitsize=None,
         )
         set_decl_name(decl)
-        return to_c(decl)
+        ret = to_c(decl)
+
+        if fmt.coding_style.pointer_style_left:
+            # Keep going until the result is unmodified
+            while True:
+                replaced = ret\
+                    .replace(" *", "* ")\
+                    .replace("* )", "*)")\
+                    .replace("* ,", "*,")
+                if replaced == ret:
+                    break
+                ret = replaced
+
+        return ret
 
     def _to_ctype(self, seen: Set["TypeData"], fmt: Formatter) -> CType:
         def simple_ctype(typename: str) -> ca.TypeDecl:

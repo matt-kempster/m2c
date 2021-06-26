@@ -223,6 +223,14 @@ def parse_flags(flags: List[str]) -> Options:
         help="put braces on separate lines",
     )
     group.add_argument(
+        "--pointer-style",
+        dest="pointer_style",
+        help="control whether to output pointer asterisks next to the type name (left) "
+             "or next to the variable name (right)",
+        choices=["left", "right"],
+        default="right"
+    )
+    group.add_argument(
         "--dump-typemap",
         dest="dump_typemap",
         action="store_true",
@@ -313,6 +321,7 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_function=args.allman,
         newline_after_if=args.allman,
         newline_before_else=args.allman,
+        pointer_style_left=args.pointer_style.lower() == "left",
     )
     filenames = args.filename
 
