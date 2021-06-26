@@ -3,7 +3,9 @@ Given some MIPS assembly, this program will attempt to convert it to C.
 The goal is that eventually the output will be well-formed C, and eventually after that, byte-equivalent C.
 
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code
-(especially for loops), and sometimes crashes. See the `tests/` directory for some example output.
+(especially for loops). See the `tests/` directory for some example input and output.
+
+An online version is available at https://simonsoftware.se/other/mips_to_c.py.
 
 ## Install
 
@@ -18,7 +20,7 @@ sudo apt install python3-pip
 ## Usage
 
 ```bash
-python3 mips_to_c.py [options] <asmfile> <functionname | index | all>
+python3 mips_to_c.py [options] [--context <context file>] [-f <function name>] <asmfile>...
 ```
 
 Run with `--help` to see which options are available.
