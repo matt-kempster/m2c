@@ -2,7 +2,7 @@ import re
 import struct
 import typing
 from pathlib import Path
-from typing import Callable, Dict, List, Match, Optional, Set, TypeVar, Union
+from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
 
 import attr
 
@@ -47,15 +47,33 @@ class AsmDataEntry:
     data: List[Union[str, bytes]] = attr.ib(factory=list)
     is_string: bool = attr.ib(default=False)
     is_readonly: bool = attr.ib(default=False)
+    is_bss: bool = attr.ib(default=False)
 
-    def size_bytes(self) -> int:
-        size = 0
+    def size_range_bytes(self) -> Tuple[int, int]:
+        """Return the range of possible sizes, if padding were stripped."""
+        # TODO: The data address could be used to only strip padding
+        # that ends on 16-byte boundaries and is at the end of a section
+        max_size = 0
         for x in self.data:
             if isinstance(x, str):
-                size += 4
+                max_size += 4
             else:
-                size += len(x)
-        return size
+                max_size += len(x)
+
+        padding_size = 0
+        if self.data and isinstance(self.data[-1], bytes):
+            assert len(self.data) == 1 or isinstance(self.data[-2], str)
+            for b in self.data[-1][::-1]:
+                if b != 0:
+                    break
+                padding_size += 1
+        padding_size = min(padding_size, 15)
+        assert padding_size <= max_size
+
+        # Assume the size is at least 1 byte, unless `max_size == 0`
+        if max_size == padding_size and max_size != 0:
+            return 1, max_size
+        return max_size - padding_size, max_size
 
 
 @attr.s
@@ -98,8 +116,8 @@ class MIPSFile:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_data_label(self, symbol_name: str, is_readonly: bool) -> None:
-        self.current_data = AsmDataEntry(is_readonly=is_readonly)
+    def new_data_label(self, symbol_name: str, is_readonly: bool, is_bss: bool) -> None:
+        self.current_data = AsmDataEntry(is_readonly=is_readonly, is_bss=is_bss)
         self.asm_data.values[symbol_name] = self.current_data
 
     def new_data_sym(self, sym: str) -> None:
@@ -229,9 +247,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
 
         def process_label(label: str, *, glabel: bool) -> None:
             if curr_section == ".rodata":
-                mips_file.new_data_label(label, is_readonly=True)
-            elif curr_section in (".data", ".bss"):
-                mips_file.new_data_label(label, is_readonly=False)
+                mips_file.new_data_label(label, is_readonly=True, is_bss=False)
+            elif curr_section == ".data":
+                mips_file.new_data_label(label, is_readonly=False, is_bss=False)
+            elif curr_section == ".bss":
+                mips_file.new_data_label(label, is_readonly=False, is_bss=True)
             elif curr_section == ".text":
                 re_local = re_local_glabel if glabel else re_local_label
                 if label.startswith("."):
@@ -314,13 +334,21 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         for w in line[5:].split(","):
                             w = w.strip()
                             if not w or w[0].isdigit():
-                                ival = try_parse(lambda: int(w, 0), ".word")
+                                ival = (
+                                    try_parse(lambda: int(w, 0), ".word") & 0xFFFFFFFF
+                                )
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
                             else:
                                 mips_file.new_data_sym(w)
+                    elif line.startswith(".short"):
+                        for w in line[6:].split(","):
+                            ival = (
+                                try_parse(lambda: int(w.strip(), 0), ".short") & 0xFFFF
+                            )
+                            mips_file.new_data_bytes(struct.pack(">H", ival))
                     elif line.startswith(".byte"):
                         for w in line[5:].split(","):
-                            ival = try_parse(lambda: int(w.strip(), 0), ".byte")
+                            ival = try_parse(lambda: int(w.strip(), 0), ".byte") & 0xFF
                             mips_file.new_data_bytes(bytes([ival]))
                     elif line.startswith(".float"):
                         for w in line[6:].split(","):
@@ -335,6 +363,21 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         mips_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
+                    elif line.startswith(".space"):
+                        args = line[6:].split(",")
+                        if len(args) == 2:
+                            fill = (
+                                try_parse(lambda: int(args[1].strip(), 0), ".space")
+                                & 0xFF
+                            )
+                        elif len(args) == 1:
+                            fill = 0
+                        else:
+                            raise DecompFailure(
+                                f"Could not parse asm_data .space in {curr_section}: {line}"
+                            )
+                        size = try_parse(lambda: int(args[0].strip(), 0), ".space")
+                        mips_file.new_data_bytes(bytes([fill] * size))
         elif ifdef_level == 0:
             if line.startswith("glabel"):
                 process_label(line.split()[1], glabel=True)

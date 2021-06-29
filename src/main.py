@@ -106,10 +106,9 @@ def run(options: Options) -> int:
         return 0
 
     fmt = options.formatter()
-    if options.emit_globals:
-        global_decls = global_info.global_decls(fmt)
-        if global_decls:
-            print(global_decls)
+    global_decls = global_info.global_decls(fmt)
+    if options.emit_globals and global_decls:
+        print(global_decls)
 
     return_code = 0
     for index, (function, function_info) in enumerate(zip(functions, function_infos)):

@@ -9,6 +9,7 @@ from .c_types import (
     TypeMap,
     equal_types,
     get_struct,
+    parse_constant_int,
     parse_function,
     parse_struct,
     primitive_size,
@@ -17,6 +18,7 @@ from .c_types import (
     to_c,
     var_size_align,
 )
+from .error import DecompFailure
 from .options import Formatter
 
 
@@ -529,18 +531,25 @@ def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
         )
 
 
-def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, bool]:
+def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[int]]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
         # Array to pointer decay
-        return Type.ptr(type_from_ctype(real_ctype.type, typemap)), True
-    return Type.ptr(type_from_ctype(ctype, typemap)), False
+        dim = 0
+        try:
+            if real_ctype.dim is not None:
+                dim = parse_constant_int(real_ctype.dim, typemap)
+        except DecompFailure:
+            pass
+        return Type.ptr(type_from_ctype(real_ctype.type, typemap)), dim
+    return Type.ptr(type_from_ctype(ctype, typemap)), None
 
 
 def get_field(
     type: Type, offset: int, typemap: TypeMap, *, target_size: Optional[int]
-) -> Tuple[Optional[str], Type, Type, bool]:
-    """Returns field name, target type, target pointer type, and whether the field is an array."""
+) -> Tuple[Optional[str], Type, Type, Optional[int]]:
+    """Returns field name, target type, target pointer type, and
+    the field's array size (or None if the field is not an array)."""
     if target_size is None and offset == 0:
         # We might as well take a pointer to the whole struct
         target = type.get_pointer_target() or Type.any()
