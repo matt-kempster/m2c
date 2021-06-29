@@ -1094,6 +1094,7 @@ class GlobalSymbol(Expression):
     symbol_name: str = attr.ib()
     type: Type = attr.ib()
     asm_data_entry: Optional[AsmDataEntry] = attr.ib(default=None)
+    type_in_typemap: bool = attr.ib(default=False)
     # `array_dim=None` indicates that the symbol is not an array
     # `array_dim=0` indicates that it *is* an array, but the dimension is unknown
     # Otherwise, it is the dimension of the array.
@@ -3722,23 +3723,23 @@ class GlobalInfo:
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
 
-    def global_symbol(self, sym_name: str) -> GlobalSymbol:
-        if sym_name not in self.global_symbol_map:
-            self.global_symbol_map[sym_name] = GlobalSymbol(
+    def address_of_gsym(self, sym_name: str) -> AddressOf:
+        if sym_name in self.global_symbol_map:
+            sym = self.global_symbol_map[sym_name]
+        else:
+            sym = self.global_symbol_map[sym_name] = GlobalSymbol(
                 symbol_name=sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
             )
-        return self.global_symbol_map[sym_name]
 
-    def address_of_gsym(self, sym_name: str) -> Expression:
-        sym = self.global_symbol(sym_name)
         type = Type.ptr(sym.type)
         if self.typemap:
             ctype = self.typemap.var_types.get(sym_name)
             if ctype:
                 ctype_type, dim = ptr_type_from_ctype(ctype, self.typemap)
                 sym.array_dim = dim
+                sym.type_in_typemap = True
                 type.unify(ctype_type)
                 type = ctype_type
         return AddressOf(sym, type=type)
@@ -3785,7 +3786,7 @@ class GlobalInfo:
             return self.address_of_gsym(label)
 
         def for_element_type(type: Type) -> Optional[str]:
-            """Return the intiializer for a single element of type `type`"""
+            """Return the initializer for a single element of type `type`"""
             if type.is_int() or type.is_float():
                 size_bits = type.get_size_bits()
                 if size_bits == 0:
@@ -3810,7 +3811,7 @@ class GlobalInfo:
             return None
 
         def for_type(type: Type, array_dim: Optional[int]) -> Optional[str]:
-            """Return the intiializer for an array/variable of type `type`.
+            """Return the initializer for an array/variable of type `type`.
             `array_dim` has the same meaning as `GlobalSymbol.array_dim`."""
             if array_dim is None:
                 # Not an array
@@ -3845,7 +3846,7 @@ class GlobalInfo:
                     name in self.local_functions
                 )
                 # Is the label externally visible (mentioned in the context file)
-                is_global = self.typemap and (name in self.typemap.var_types)
+                is_global = sym.type_in_typemap
                 # Is the label a symbol in .rodata?
                 is_const = (
                     sym.asm_data_entry is not None
@@ -3876,13 +3877,15 @@ class GlobalInfo:
                     qualifier = ""
 
                 # Try to guess the symbol's `array_dim` if we have a data entry for it,
-                # and it does not exist in the typemap (`not is_global`) or dim is unknown
+                # and it does not exist in the typemap or dim is unknown.
                 # (Otherwise, if the dim is provided by the typemap, we trust it.)
-                if sym.asm_data_entry and (not is_global or sym.array_dim == 0):
+                if sym.asm_data_entry and (
+                    not sym.type_in_typemap or sym.array_dim == 0
+                ):
                     assert sym.array_dim is None or sym.array_dim == 0
                     # The size of the data entry is uncertain, because of padding
                     # between sections. Generally `(max_data_size - data_size) < 16`.
-                    data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
+                    min_data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
                     # The size of the element type (not the size of the array type)
                     type_size_bits = sym.type.get_size_bits()
                     type_size = (type_size_bits or 0) // 8
@@ -3894,16 +3897,11 @@ class GlobalInfo:
                         comments.append(
                             f"type too large by {type_size - max_data_size}"
                         )
-                    elif type_size == max_data_size:
-                        # The type perfectly fits our data: 1 element, or not an array
-                        if sym.array_dim == 0:
-                            sym.array_dim = 1
-                        else:
-                            sym.array_dim = None
                     else:
-                        assert type_size < max_data_size
+                        assert type_size <= max_data_size
                         # We might have an array here. Now look at the lower bound,
                         # which we know must be included in the initializer.
+                        data_size = min_data_size
                         if data_size % type_size != 0:
                             # How many extra bytes do we need to add to `data_size`
                             # to make it an exact multiple of `type_size`?
@@ -3914,8 +3912,8 @@ class GlobalInfo:
                                 data_size += extra_bytes
                             else:
                                 comments.append(f"extra bytes: {data_size % type_size}")
-                        if data_size // type_size > 1:
-                            # We know it's an array (of at least 2 elements)
+                        if data_size // type_size > 1 or sym.array_dim == 0:
+                            # We know it's an array
                             sym.array_dim = max_data_size // type_size
 
                 # Try to convert the data from .data/.rodata into an initializer
@@ -3988,7 +3986,7 @@ def translate_to_ast(
     else:
         fn_type = Type.function()
         fn_decl_provided = False
-    fn_type.unify(global_info.global_symbol(function.name).type)
+    fn_type.unify(global_info.address_of_gsym(function.name).expr.type)
 
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"

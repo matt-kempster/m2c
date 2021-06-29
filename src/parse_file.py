@@ -70,6 +70,9 @@ class AsmDataEntry:
         padding_size = min(padding_size, 15)
         assert padding_size <= max_size
 
+        # Assume the size is at least 1 byte, unless `max_size == 0`
+        if max_size == padding_size and max_size != 0:
+            return 1, max_size
         return max_size - padding_size, max_size
 
 
