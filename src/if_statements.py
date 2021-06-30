@@ -900,7 +900,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
             any_decl = True
 
         for reg_var in function_info.stack_info.reg_vars.values():
-            if reg_var.register not in function_info.stack_info.used_reg_vars:
+            if reg_var.reg not in function_info.stack_info.used_reg_vars:
                 continue
             type_decl = reg_var.type.to_decl(reg_var.format(fmt), fmt)
             function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))

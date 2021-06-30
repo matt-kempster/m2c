@@ -335,10 +335,10 @@ class StackInfo:
 
     def add_register_var(self, reg: Register) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        self.reg_vars[reg] = RegisterVar(register=reg, type=type)
+        self.reg_vars[reg] = RegisterVar(reg=reg, type=type)
 
     def use_register_var(self, var: "RegisterVar") -> None:
-        self.used_reg_vars.add(var.register)
+        self.used_reg_vars.add(var.reg)
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg.register_name == "sp":
@@ -946,14 +946,14 @@ class LocalVar(Expression):
 
 @dataclass(frozen=True, eq=False)
 class RegisterVar(Expression):
+    reg: Register
     type: Type
-    register: Register
 
     def dependencies(self) -> List[Expression]:
         return []
 
     def format(self, fmt: Formatter) -> str:
-        return self.register.register_name
+        return self.reg.register_name
 
 
 @dataclass(frozen=True, eq=True)
@@ -3257,7 +3257,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if dest is not None:
                 stack_info.use_register_var(dest)
                 # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
-                if not (isinstance(uw_expr, RegisterVar) and uw_expr.register == reg):
+                if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
                     source = as_type(expr, dest.type, True)
                     source.use()
                     to_write.append(StoreStmt(source=source, dest=dest))
