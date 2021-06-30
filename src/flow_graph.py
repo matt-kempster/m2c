@@ -876,13 +876,9 @@ class SwitchNode(BaseNode):
     cases: List["Node"] = attr.ib()
 
     def replace_any_children(self, replace_this: "Node", with_this: "Node") -> None:
-        new_cases: List["Node"] = []
-        for case in self.cases:
+        for i, case in enumerate(self.cases):
             if case is replace_this:
-                new_cases.append(with_this)
-            else:
-                new_cases.append(case)
-        self.cases = new_cases
+                self.cases[i] = with_this
 
     def children(self) -> List["Node"]:
         # Deduplicate nodes in `self.cases`
