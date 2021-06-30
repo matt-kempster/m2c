@@ -44,9 +44,6 @@ IDO_O2_SIMPLE_LOOP: PatternGraph = {
 def detect_pattern(
     pattern: PatternGraph, flow_graph: FlowGraph, start: Node
 ) -> Optional[Tuple[Node, ...]]:
-    def idx_eq(node1: Node, node2: Node) -> bool:
-        return node1.block.index == node2.block.index
-
     indices = [node.block.index for node in flow_graph.nodes]
     assert sorted(indices) == indices, "FlowGraphs should be sorted"
 
@@ -56,22 +53,19 @@ def detect_pattern(
             node = flow_graph.nodes[label + offset]
             target = pattern[label]
             if isinstance(target, int):
-                if not isinstance(node, BasicNode) or not idx_eq(
-                    node.successor, flow_graph.nodes[offset + target]
+                if (
+                    not isinstance(node, BasicNode)
+                    or node.successor is not flow_graph.nodes[offset + target]
                 ):
                     return None
             else:
                 (fallthrough, conditional) = target
                 if (
                     not isinstance(node, ConditionalNode)
-                    or not idx_eq(
-                        node.conditional_edge,
-                        flow_graph.nodes[offset + conditional],
-                    )
-                    or not idx_eq(
-                        node.fallthrough_edge,
-                        flow_graph.nodes[offset + fallthrough],
-                    )
+                    or node.conditional_edge
+                    is not flow_graph.nodes[offset + conditional]
+                    or node.fallthrough_edge
+                    is not flow_graph.nodes[offset + fallthrough]
                 ):
                     return None
         except IndexError:
