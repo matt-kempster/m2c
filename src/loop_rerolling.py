@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional, Tuple
 
 from .flow_graph import (
     BasicNode,
@@ -28,17 +28,17 @@ def replace_node(flow_graph: FlowGraph, replace_this: Node, with_this: Node) -> 
     replace_node_references(flow_graph, replace_this, with_this)
 
 
-def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
+def match_nodes(start: ConditionalNode) -> Optional[Tuple[Node, ...]]:
     node_1 = start.fallthrough_edge
     node_7 = start.conditional_edge
 
     if not isinstance(node_1, ConditionalNode):
-        return False
+        return None
     node_2 = node_1.fallthrough_edge
     node_5 = node_1.conditional_edge
 
     if not isinstance(node_2, BasicNode):
-        return False
+        return None
     node_3 = node_2.successor
 
     if not (
@@ -46,7 +46,7 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
         and node_3.loop
         and node_3.conditional_edge is node_3
     ):
-        return False
+        return None
     node_4 = node_3.fallthrough_edge
 
     if not (
@@ -54,10 +54,10 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
         and node_4.fallthrough_edge is node_5
         and node_4.conditional_edge is node_7
     ):
-        return False
+        return None
 
     if not isinstance(node_5, BasicNode):
-        return False
+        return None
     node_6 = node_5.successor
 
     if not (
@@ -66,7 +66,15 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
         and node_6.conditional_edge is node_6
         and node_6.fallthrough_edge is node_7
     ):
+        return None
+    return (node_1, node_2, node_3, node_4, node_5, node_6, node_7)
+
+
+def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
+    nodes = match_nodes(start)
+    if nodes is None:
         return False
+    (node_1, node_2, node_3, node_4, node_5, node_6, node_7) = nodes
 
     def modify_node_1_instructions(instructions: List[Instruction]) -> bool:
         # First, we check that the node has the instructions we
