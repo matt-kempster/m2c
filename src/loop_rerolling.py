@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from .flow_graph import (
     BasicNode,
@@ -70,8 +70,70 @@ def match_nodes(start: ConditionalNode) -> Optional[Tuple[Node, ...]]:
     return (node_1, node_2, node_3, node_4, node_5, node_6, node_7)
 
 
+PatternGraph = Dict[int, Union[int, Tuple[int, int]]]
+
+IDO_O2_SIMPLE_LOOP: PatternGraph = {
+    0: (1, 7),
+    1: (2, 5),
+    2: 3,
+    3: (4, 3),
+    4: (5, 7),
+    5: 6,
+    6: (7, 6),
+}
+
+
+def detect_pattern(
+    pattern: PatternGraph, flow_graph: FlowGraph, start: Node
+) -> Optional[Tuple[Node, ...]]:
+    def idx_eq(node1: Node, node2: Node) -> bool:
+        return node1.block.index == node2.block.index
+
+    indices = [node.block.index for node in flow_graph.nodes]
+    assert sorted(indices) == indices, "FlowGraphs should be sorted"
+
+    offset = start.block.index
+    for label in pattern.keys():
+        try:
+            node = flow_graph.nodes[label + offset]
+            target = pattern[label]
+            if isinstance(target, int):
+                if not isinstance(node, BasicNode) or not idx_eq(
+                    node.successor, flow_graph.nodes[offset + target]
+                ):
+                    return None
+            else:
+                (fallthrough, conditional) = target
+                if (
+                    not isinstance(node, ConditionalNode)
+                    or not idx_eq(
+                        node.conditional_edge,
+                        flow_graph.nodes[offset + conditional],
+                    )
+                    or not idx_eq(
+                        node.fallthrough_edge,
+                        flow_graph.nodes[offset + fallthrough],
+                    )
+                ):
+                    return None
+        except IndexError:
+            return None
+
+    all_nodes_in_pattern = (
+        {offset + label for label in pattern.keys()}
+        | {offset + label[0] for label in pattern.values() if isinstance(label, tuple)}
+        | {offset + label[1] for label in pattern.values() if isinstance(label, tuple)}
+    )
+    return tuple(
+        node
+        for i, node in enumerate(flow_graph.nodes)
+        if node is not start and i in all_nodes_in_pattern
+    )
+
+
 def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
-    nodes = match_nodes(start)
+    # nodes = match_nodes(start)
+    nodes = detect_pattern(IDO_O2_SIMPLE_LOOP, flow_graph, start)
     if nodes is None:
         return False
     (node_1, node_2, node_3, node_4, node_5, node_6, node_7) = nodes
