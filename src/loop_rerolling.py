@@ -28,48 +28,6 @@ def replace_node(flow_graph: FlowGraph, replace_this: Node, with_this: Node) -> 
     replace_node_references(flow_graph, replace_this, with_this)
 
 
-def match_nodes(start: ConditionalNode) -> Optional[Tuple[Node, ...]]:
-    node_1 = start.fallthrough_edge
-    node_7 = start.conditional_edge
-
-    if not isinstance(node_1, ConditionalNode):
-        return None
-    node_2 = node_1.fallthrough_edge
-    node_5 = node_1.conditional_edge
-
-    if not isinstance(node_2, BasicNode):
-        return None
-    node_3 = node_2.successor
-
-    if not (
-        isinstance(node_3, ConditionalNode)
-        and node_3.loop
-        and node_3.conditional_edge is node_3
-    ):
-        return None
-    node_4 = node_3.fallthrough_edge
-
-    if not (
-        isinstance(node_4, ConditionalNode)
-        and node_4.fallthrough_edge is node_5
-        and node_4.conditional_edge is node_7
-    ):
-        return None
-
-    if not isinstance(node_5, BasicNode):
-        return None
-    node_6 = node_5.successor
-
-    if not (
-        isinstance(node_6, ConditionalNode)
-        and node_6.loop
-        and node_6.conditional_edge is node_6
-        and node_6.fallthrough_edge is node_7
-    ):
-        return None
-    return (node_1, node_2, node_3, node_4, node_5, node_6, node_7)
-
-
 PatternGraph = Dict[int, Union[int, Tuple[int, int]]]
 
 IDO_O2_SIMPLE_LOOP: PatternGraph = {
@@ -132,7 +90,6 @@ def detect_pattern(
 
 
 def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
-    # nodes = match_nodes(start)
     nodes = detect_pattern(IDO_O2_SIMPLE_LOOP, flow_graph, start)
     if nodes is None:
         return False
