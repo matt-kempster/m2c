@@ -1,19 +1,25 @@
-s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
+?32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 spC;
     s32 sp8;
-    s32 sp4;
+    ?32 sp4;
 
     spC = arg0 + arg1;
     sp8 = arg1 + arg2;
     sp4 = 0;
     if ((spC != 0) || ((sp8 != 0) && ((arg0 * arg1) != 0)) || ((arg3 != 0) && (arg0 != 0))) {
-        sp4 = arg0 + arg3;
+        sp4 = 1;
     }
     if ((arg0 != 0) && ((arg1 != 0) || (arg2 != 0)) && ((arg3 != 0) || ((arg0 + 1) != 0))) {
-        sp4 = arg1 + arg3;
+        sp4 = 2;
     }
     if (((arg0 != 0) && (arg3 != 0)) || (((arg1 != 0) || (arg2 != 0)) && ((arg3 + arg2) != 0))) {
-        sp4 = arg2 + arg3;
+        sp4 = 3;
+    }
+    if ((arg0 != 0) && (arg1 != 0) && ((arg2 != 0) || (arg3 != 0)) && (((arg0 + arg3) != 0) || ((arg1 + arg2) != 0))) {
+        sp4 = 4;
+    }
+    if ((((arg0 != 0) || (arg1 != 0)) && (arg2 != 0)) || ((arg3 != 0) && ((arg0 + 1) != 0)) || ((arg0 + 2) != 0) || ((arg0 + 3) != 0)) {
+        sp4 = 5;
     }
     return sp4;
 }

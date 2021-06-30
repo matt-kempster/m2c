@@ -637,7 +637,6 @@ class BinaryOp(Condition):
     op: str
     right: Expression
     type: Type
-    floating: bool = False
 
     @staticmethod
     def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -683,7 +682,6 @@ class BinaryOp(Condition):
             op=op,
             right=as_f32(right),
             type=Type.bool(),
-            floating=True,
         )
 
     @staticmethod
@@ -693,7 +691,6 @@ class BinaryOp(Condition):
             op=op,
             right=as_f64(right),
             type=Type.bool(),
-            floating=True,
         )
 
     @staticmethod
@@ -719,7 +716,6 @@ class BinaryOp(Condition):
             op=op,
             right=as_f32(right),
             type=Type.f32(),
-            floating=True,
         )
 
     @staticmethod
@@ -729,11 +725,13 @@ class BinaryOp(Condition):
             op=op,
             right=as_f64(right),
             type=Type.f64(),
-            floating=True,
         )
 
     def is_comparison(self) -> bool:
         return self.op in ["==", "!=", ">", "<", ">=", "<="]
+
+    def is_floating(self) -> bool:
+        return self.left.type.is_float() and self.right.type.is_float()
 
     def negated(self) -> "Condition":
         if (
@@ -749,7 +747,7 @@ class BinaryOp(Condition):
                 type=Type.bool(),
             )
         if not self.is_comparison() or (
-            self.floating and self.op in ["<", ">", "<=", ">="]
+            self.is_floating() and self.op in ["<", ">", "<=", ">="]
         ):
             # Floating-point comparisons cannot be negated in any nice way,
             # due to nans.
@@ -780,7 +778,7 @@ class BinaryOp(Condition):
             ).format(fmt)
 
         if (
-            not self.floating
+            not self.is_floating()
             and isinstance(self.right, Literal)
             and self.right.value < 0
         ):
@@ -1801,7 +1799,7 @@ def simplify_condition(expr: Expression) -> Expression:
         inner = simplify_condition(expr.expr)
         if expr.op == "!" and isinstance(inner, Condition):
             return inner.negated()
-        return replace(expr, expr=inner)
+        return UnaryOp(expr=inner, op=expr.op, type=expr.type)
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
         right = simplify_condition(expr.right)
@@ -1810,7 +1808,7 @@ def simplify_condition(expr: Expression) -> Expression:
                 return simplify_condition(left.negated())
             if expr.op == "!=":
                 return left
-        return replace(expr, left=left, right=right)
+        return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
     return expr
 
 

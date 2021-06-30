@@ -80,17 +80,6 @@ class IfElseStatement:
             if_str = if_str + else_str
         return if_str
 
-    def negated(self) -> "IfElseStatement":
-        """Return an IfElseStatement with the condition negated and the if/else
-        bodies swapped. The caller must check that `else_body` is present."""
-        assert self.else_body is not None, "checked by caller"
-        return replace(
-            self,
-            condition=self.condition.negated(),
-            if_body=self.else_body,
-            else_body=self.if_body,
-        )
-
 
 @dataclass
 class SwitchStatement:
@@ -441,6 +430,7 @@ def build_conditional_subgraph(
                 else:
                     # `node && node.conditional_edge`
                     node = node.conditional_edge
+            # If the top-level chain does not end in `if_node`, then it's not an &&
             if node is not if_node:
                 potential_partition_nodes = set()
 
@@ -506,7 +496,7 @@ def build_conditional_subgraph(
                     # ```
                     #   if (or_terms) {
                     #       if (tail_cond) {            // tail_cond starts with the `if_node` condition
-                    #           else_node;
+                    #           next_node;
                     #       } else {
                     #           node.conditional_edge
                     #       }
@@ -520,21 +510,16 @@ def build_conditional_subgraph(
                     #   if (!or_terms || !tail_cond) {
                     #       node.conditional_edge;
                     #   } else {
-                    #       else_node;                  // this is the returned `node` from traverse(...)
+                    #       next_node;                  // this is the returned `node` from traverse(...)
                     #   }
                     # ```
                     assert if_node in chained_cond_nodes
-                    next_node, tail_cond = traverse(
+                    node, tail_cond = traverse(
                         if_node, else_node, node.conditional_edge
                     )
-                    if next_node is else_node:
-                        tail_cond = tail_cond.negated()
-                        node = next_node
-                    else:
-                        assert next_node is node.conditional_edge
                     or_terms = [
                         join_conditions(or_terms, "||").negated(),
-                        tail_cond,
+                        tail_cond.negated(),
                     ]
                 break
             else:
