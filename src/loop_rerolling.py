@@ -98,9 +98,6 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
 
 
 def reroll_loops(flow_graph: FlowGraph) -> FlowGraph:
-    # TODO: What if knocking out nodes reveals another set of nodes
-    # that look identical? We will incorrectly be merging two
-    # adjacent for-loops.
     changed: bool = True
     while changed:
         changed = False
@@ -109,6 +106,6 @@ def reroll_loops(flow_graph: FlowGraph) -> FlowGraph:
                 continue
             changed = reroll_loop(flow_graph, node)
             if changed:
+                compute_relations(flow_graph.nodes)
                 break
-    compute_relations(flow_graph.nodes)
     return flow_graph
