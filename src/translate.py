@@ -1801,7 +1801,7 @@ def simplify_condition(expr: Expression) -> Expression:
         inner = simplify_condition(expr.expr)
         if expr.op == "!" and isinstance(inner, Condition):
             return inner.negated()
-        return attr.evolve(expr, expr=inner)
+        return replace(expr, expr=inner)
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
         right = simplify_condition(expr.right)
@@ -1810,7 +1810,7 @@ def simplify_condition(expr: Expression) -> Expression:
                 return simplify_condition(left.negated())
             if expr.op == "!=":
                 return left
-        return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
+        return replace(expr, left=left, right=right)
     return expr
 
 

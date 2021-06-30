@@ -424,10 +424,37 @@ def build_conditional_subgraph(
         assert chained_cond_nodes
         if_node = chained_cond_nodes[-1].fallthrough_edge
         else_node = chained_cond_nodes[-1].conditional_edge
+
+        # If the else body would be empty (`else_node is end`), then compute which
+        # nodes are part of a top-level && expression (if it exists).
+        # If any of these nodes would add comma expressions, we'll split them into
+        # separate if statements instead of bundling them into this condition.
+        potential_partition_nodes = set()
+        if else_node is end:
+            node: Node = chained_cond_nodes[0]
+            while node in chained_cond_nodes:
+                assert isinstance(node, ConditionalNode)
+                potential_partition_nodes.add(node)
+                if node.conditional_edge == end:
+                    # `!node && node.conditional_edge`
+                    node = node.fallthrough_edge
+                else:
+                    # `node && node.conditional_edge`
+                    node = node.conditional_edge
+            if node is not if_node:
+                potential_partition_nodes = set()
+
         # Set of nodes that are permitted to be the target of conditional_edge
         allowed_nodes = set(chained_cond_nodes) | {if_node, else_node}
         for node in chained_cond_nodes:
-            if node.conditional_edge not in allowed_nodes:
+            block_info = node.block.block_info
+            assert block_info
+            if node.conditional_edge not in allowed_nodes or (
+                node is not start
+                and node.conditional_edge is end
+                and node in potential_partition_nodes
+                and next((True for b in block_info.to_write if b.should_write()), False)
+            ):
                 # Shorten the chain by removing the last node, then try again
                 chained_cond_nodes.pop()
                 break
@@ -444,7 +471,9 @@ def build_conditional_subgraph(
         # although there aren't any loops *inside* the chain, `start` is allowed to
         # be a loop, and it may point to itself.
         while node not in (if_node, else_node) or node is start:
-            assert isinstance(node, ConditionalNode) and node in chained_cond_nodes
+            assert (
+                isinstance(node, ConditionalNode) and node in chained_cond_nodes
+            ), f"{(node, if_node, else_node)}"
 
             block_info = node.block.block_info
             assert block_info
@@ -456,16 +485,15 @@ def build_conditional_subgraph(
             else:
                 # Otherwise, these statements will be added to the condition
                 cond = gather_any_comma_conditions(block_info)
+                context.emitted_nodes.add(node)
 
             if node.conditional_edge is if_node:
                 # The node means: "If `cond`, goto `if_node`", so append `cond` to `or_terms` as-is
                 or_terms.append(cond)
-                context.emitted_nodes.add(node)
                 node = node.fallthrough_edge
             elif node.fallthrough_edge is if_node:
                 # The node means: "If `!cond`, goto `if_node`": so append `!cond` to `or_terms`...
                 or_terms.append(cond.negated())
-                context.emitted_nodes.add(node)
                 if node.conditional_edge is else_node:
                     # We're done, we hit the bottom!
                     # (In this case, the recursion would fail because `node == else_node`)
@@ -496,14 +524,19 @@ def build_conditional_subgraph(
                     #   }
                     # ```
                     assert if_node in chained_cond_nodes
-                    node, tail_cond = traverse(
+                    next_node, tail_cond = traverse(
                         if_node, else_node, node.conditional_edge
                     )
-                    assert node is else_node
+                    if next_node is else_node:
+                        tail_cond = tail_cond.negated()
+                        node = next_node
+                    else:
+                        assert next_node is node.conditional_edge
                     or_terms = [
                         join_conditions(or_terms, "||").negated(),
-                        tail_cond.negated(),
+                        tail_cond,
                     ]
+                break
             else:
                 # Both branches from the node point to other nodes, so we need to create
                 # a parenthetical expression, similar to above.
@@ -530,6 +563,7 @@ def build_conditional_subgraph(
                 # ```
                 node, tail_cond = traverse(node, node.conditional_edge, if_node)
                 or_terms.append(tail_cond.negated())
+        assert node in (if_node, else_node), f"{(node, if_node, else_node)}"
         return node, join_conditions(or_terms, "||")
 
     final_node, cond = traverse(start, if_node, else_node)

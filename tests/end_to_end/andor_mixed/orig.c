@@ -11,5 +11,13 @@ int test(int a, int b, int c, int d) {
         ret = a + d;
     }
 
+    if (a && (b || c) && (d || (a + 1))) {
+        ret = b + d;
+    }
+
+    if ((a && d) || ((b || c) && (d + c))) {
+        ret = c + d;
+    }
+
     return ret;
 }
