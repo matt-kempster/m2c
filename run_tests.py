@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
-import attr
 import contextlib
+from dataclasses import dataclass, field
 import difflib
 import io
 import logging
@@ -18,23 +18,23 @@ from src.options import Options
 CRASH_STRING = "CRASHED\n"
 
 
-@attr.s(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TestOptions:
-    should_overwrite: bool = attr.ib()
-    diff_context: int = attr.ib()
-    filter_re: Pattern[str] = attr.ib()
-    parallel: Optional[int] = attr.ib(default=None)
-    coverage: Any = attr.ib(default=None)
+    should_overwrite: bool
+    diff_context: int
+    filter_re: Pattern[str]
+    parallel: Optional[int] = None
+    coverage: Any = None
 
 
-@attr.s(frozen=True, slots=True)
+@dataclass(frozen=True, order=True)
 class TestCase:
-    name: str = attr.ib()
-    asm_file: Path = attr.ib()
-    output_file: Path = attr.ib()
-    brief_crashes: bool = attr.ib(default=True)
-    flags_path: Optional[Path] = attr.ib(default=None)
-    flags: List[str] = attr.ib(factory=list)
+    name: str
+    asm_file: Path
+    output_file: Path
+    brief_crashes: bool = True
+    flags_path: Optional[Path] = None
+    flags: List[str] = field(default_factory=list)
 
 
 def set_up_logging(debug: bool) -> None:

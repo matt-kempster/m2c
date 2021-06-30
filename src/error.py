@@ -1,9 +1,9 @@
-import attr
+from dataclasses import dataclass
 
 
-@attr.s
+@dataclass
 class DecompFailure(Exception):
-    message: str = attr.ib()
+    message: str
 
     def __str__(self) -> str:
         return self.message

@@ -1,7 +1,6 @@
 from collections import defaultdict
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Set, Tuple, Union
-
-import attr
 
 from .flow_graph import (
     BasicNode,
@@ -25,27 +24,27 @@ from .translate import Statement as TrStatement
 from .translate import Type, format_expr, simplify_condition
 
 
-@attr.s
+@dataclass
 class Context:
-    flow_graph: FlowGraph = attr.ib()
-    fmt: Formatter = attr.ib()
-    options: Options = attr.ib()
-    is_void: bool = attr.ib(default=True)
-    switch_nodes: Dict[SwitchNode, int] = attr.ib(factory=dict)
-    case_nodes: Dict[Node, List[Tuple[int, int]]] = attr.ib(
-        factory=lambda: defaultdict(list)
+    flow_graph: FlowGraph
+    fmt: Formatter
+    options: Options
+    is_void: bool = True
+    switch_nodes: Dict[SwitchNode, int] = field(default_factory=dict)
+    case_nodes: Dict[Node, List[Tuple[int, int]]] = field(
+        default_factory=lambda: defaultdict(list)
     )
-    goto_nodes: Set[Node] = attr.ib(factory=set)
-    loop_nodes: Set[Node] = attr.ib(factory=set)
-    emitted_nodes: Set[Node] = attr.ib(factory=set)
-    has_warned: bool = attr.ib(default=False)
+    goto_nodes: Set[Node] = field(default_factory=set)
+    loop_nodes: Set[Node] = field(default_factory=set)
+    emitted_nodes: Set[Node] = field(default_factory=set)
+    has_warned: bool = False
 
 
-@attr.s
+@dataclass
 class IfElseStatement:
-    condition: Condition = attr.ib()
-    if_body: "Body" = attr.ib()
-    else_body: Optional["Body"] = attr.ib(default=None)
+    condition: Condition
+    if_body: "Body"
+    else_body: Optional["Body"] = None
 
     def should_write(self) -> bool:
         return True
@@ -85,7 +84,7 @@ class IfElseStatement:
         """Return an IfElseStatement with the condition negated and the if/else
         bodies swapped. The caller must check that `else_body` is present."""
         assert self.else_body is not None, "checked by caller"
-        return attr.evolve(
+        return replace(
             self,
             condition=self.condition.negated(),
             if_body=self.else_body,
@@ -93,10 +92,10 @@ class IfElseStatement:
         )
 
 
-@attr.s
+@dataclass
 class SwitchStatement:
-    jump: "SimpleStatement" = attr.ib()
-    body: "Body" = attr.ib()
+    jump: "SimpleStatement"
+    body: "Body"
 
     def should_write(self) -> bool:
         return True
@@ -109,10 +108,10 @@ class SwitchStatement:
         return "\n".join(lines)
 
 
-@attr.s
+@dataclass
 class SimpleStatement:
-    contents: Optional[Union[str, TrStatement]] = attr.ib()
-    is_jump: bool = attr.ib(default=False)
+    contents: Optional[Union[str, TrStatement]]
+    is_jump: bool = False
 
     def should_write(self) -> bool:
         return self.contents is not None
@@ -129,10 +128,10 @@ class SimpleStatement:
         self.contents = None
 
 
-@attr.s
+@dataclass
 class LabelStatement:
-    context: Context = attr.ib()
-    node: Node = attr.ib()
+    context: Context
+    node: Node
 
     def should_write(self) -> bool:
         return (
@@ -151,10 +150,10 @@ class LabelStatement:
         return "\n".join(lines)
 
 
-@attr.s
+@dataclass
 class DoWhileLoop:
-    body: "Body" = attr.ib()
-    condition: Condition = attr.ib()
+    body: "Body"
+    condition: Condition
 
     def should_write(self) -> bool:
         return True
@@ -182,10 +181,10 @@ Statement = Union[
 ]
 
 
-@attr.s
+@dataclass
 class Body:
-    print_node_comment: bool = attr.ib()
-    statements: List[Statement] = attr.ib(factory=list)
+    print_node_comment: bool
+    statements: List[Statement] = field(default_factory=list)
 
     def extend(self, other: "Body") -> None:
         """Add the contents of `other` into ourselves"""
@@ -216,7 +215,7 @@ class Body:
             # Transform `if (A) { B; return C; } else { D; }`
             # into `if (A) { B; return C; } D;`,
             # which reduces indentation to make the output more readable
-            self.statements.append(attr.evolve(if_else, else_body=None))
+            self.statements.append(replace(if_else, else_body=None))
             if if_else.else_body is not None:
                 self.extend(if_else.else_body)
             return
@@ -901,7 +900,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
             any_decl = True
 
         for reg_var in function_info.stack_info.reg_vars.values():
-            if reg_var.register not in function_info.stack_info.used_reg_vars:
+            if reg_var.reg not in function_info.stack_info.used_reg_vars:
                 continue
             type_decl = reg_var.type.to_decl(reg_var.format(fmt), fmt)
             function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))

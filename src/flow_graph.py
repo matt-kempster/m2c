@@ -1,5 +1,6 @@
 import abc
 import copy
+from dataclasses import dataclass, field
 import typing
 from typing import (
     Any,
@@ -13,8 +14,6 @@ from typing import (
     Tuple,
     Union,
 )
-
-import attr
 
 from .error import DecompFailure
 from .options import Formatter
@@ -32,12 +31,12 @@ from .parse_instruction import (
 )
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class Block:
-    index: int = attr.ib()
-    label: Optional[Label] = attr.ib()
-    approx_label_name: str = attr.ib()
-    instructions: List[Instruction] = attr.ib()
+    index: int
+    label: Optional[Label]
+    approx_label_name: str
+    instructions: List[Instruction]
 
     # TODO: fix "Any" to be "BlockInfo" (currently annoying due to circular imports)
     block_info: Optional[Any] = None
@@ -55,14 +54,14 @@ class Block:
         return f"# {name}\n{inst_str}\n"
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class BlockBuilder:
-    curr_index: int = attr.ib(default=0)
-    curr_label: Optional[Label] = attr.ib(default=None)
-    last_label_name: str = attr.ib(default="initial")
-    label_counter: int = attr.ib(default=0)
-    curr_instructions: List[Instruction] = attr.ib(factory=list)
-    blocks: List[Block] = attr.ib(factory=list)
+    curr_index: int = 0
+    curr_label: Optional[Label] = None
+    last_label_name: str = "initial"
+    label_counter: int = 0
+    curr_instructions: List[Instruction] = field(default_factory=list)
+    blocks: List[Block] = field(default_factory=list)
 
     def new_block(self) -> Optional[Block]:
         if len(self.curr_instructions) == 0:
@@ -763,21 +762,25 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
     return block_builder.get_blocks()
 
 
-@attr.s(eq=False)
-class BaseNode(abc.ABC):
-    block: Block = attr.ib()
-    emit_goto: bool = attr.ib()
-    parents: List["Node"] = attr.ib(init=False, factory=list)
-    dominators: Set["Node"] = attr.ib(init=False, factory=set)
-    immediate_dominator: Optional["Node"] = attr.ib(init=False, default=None)
-    immediately_dominates: List["Node"] = attr.ib(init=False, factory=list)
-    postdominators: Set["Node"] = attr.ib(init=False, factory=set)
-    immediate_postdominator: Optional["Node"] = attr.ib(init=False, default=None)
-    immediately_postdominates: List["Node"] = attr.ib(init=False, factory=list)
+# Split out dataclass from abc due to a mypy limitation:
+# https://github.com/python/mypy/issues/5374
+@dataclass(eq=False)
+class _BaseNode:
+    block: Block
+    emit_goto: bool
+    parents: List["Node"] = field(init=False, default_factory=list)
+    dominators: Set["Node"] = field(init=False, default_factory=set)
+    immediate_dominator: Optional["Node"] = field(init=False, default=None)
+    immediately_dominates: List["Node"] = field(init=False, default_factory=list)
+    postdominators: Set["Node"] = field(init=False, default_factory=set)
+    immediate_postdominator: Optional["Node"] = field(init=False, default=None)
+    immediately_postdominates: List["Node"] = field(init=False, default_factory=list)
     # This is only populated on the head node of the loop,
     # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
-    loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
+    loop: Optional["NaturalLoop"] = field(init=False, default=None)
 
+
+class BaseNode(_BaseNode, abc.ABC):
     def name(self) -> str:
         return str(self.block.index)
 
@@ -790,9 +793,9 @@ class BaseNode(abc.ABC):
         ...
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class BasicNode(BaseNode):
-    successor: "Node" = attr.ib()
+    successor: "Node"
 
     def children(self) -> List["Node"]:
         # TODO: Should we also include the fallthrough node if `emit_goto` is True?
@@ -809,10 +812,10 @@ class BasicNode(BaseNode):
         )
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class ConditionalNode(BaseNode):
-    conditional_edge: "Node" = attr.ib()
-    fallthrough_edge: "Node" = attr.ib()
+    conditional_edge: "Node"
+    fallthrough_edge: "Node"
 
     def children(self) -> List["Node"]:
         if self.conditional_edge == self.fallthrough_edge:
@@ -833,10 +836,10 @@ class ConditionalNode(BaseNode):
         )
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class ReturnNode(BaseNode):
-    index: int = attr.ib()
-    terminal: "TerminalNode" = attr.ib()
+    index: int
+    terminal: "TerminalNode"
 
     def children(self) -> List["Node"]:
         return [self.terminal]
@@ -858,9 +861,9 @@ class ReturnNode(BaseNode):
         )
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class SwitchNode(BaseNode):
-    cases: List["Node"] = attr.ib()
+    cases: List["Node"]
 
     def children(self) -> List["Node"]:
         # Deduplicate nodes in `self.cases`
@@ -877,7 +880,7 @@ class SwitchNode(BaseNode):
         return f"{self.block}\n# {self.block.index} -> {targets}"
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class TerminalNode(BaseNode):
     """
     This is a fictive node that acts as a common postdominator for every node
@@ -902,7 +905,7 @@ class TerminalNode(BaseNode):
 Node = Union[BasicNode, ConditionalNode, ReturnNode, SwitchNode, TerminalNode]
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class NaturalLoop:
     """
     Loops are defined by "backedges" `tail->head` where `head`
@@ -915,9 +918,9 @@ class NaturalLoop:
     Each backedge is represented by the source node.
     """
 
-    head: Node = attr.ib()
-    nodes: Set[Node] = attr.ib(factory=set)
-    backedges: Set[Node] = attr.ib(factory=set)
+    head: Node
+    nodes: Set[Node] = field(default_factory=set)
+    backedges: Set[Node] = field(default_factory=set)
 
 
 def build_graph_from_block(
@@ -1273,9 +1276,9 @@ def compute_relations(nodes: List[Node]) -> None:
                     child.loop.nodes.add(parent)
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class FlowGraph:
-    nodes: List[Node] = attr.ib()
+    nodes: List[Node]
 
     def entry_node(self) -> Node:
         return self.nodes[0]

@@ -9,7 +9,7 @@ An online version is available at https://simonsoftware.se/other/mips_to_c.py.
 
 ## Install
 
-Make sure you have Python 3.6 or later installed, then do `python3 -m pip install --upgrade attrs pycparser`.
+Make sure you have Python 3.6 or later installed, then do `python3 -m pip install --upgrade pycparser` (also `dataclasses` if not on 3.7+).
 
 You might need to install `pip` first; on Ubuntu this can be done with:
 ```bash
