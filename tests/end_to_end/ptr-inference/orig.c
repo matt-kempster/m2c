@@ -11,4 +11,5 @@ void test(void) {
     struct A* var2;
 
     foo(&var1, &var2);
+    foo((signed **) (((int) &var1) & ~0x3), &var2);
 }

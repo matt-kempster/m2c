@@ -912,7 +912,14 @@ class Cast(Expression):
             # No cast needed
             return self.expr.format(fmt)
 
-        return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
+        type_name = self.type.format(fmt)
+        if self.expr.type.is_pointer():
+            if type_name == "s32":
+                type_name = "intptr_t"
+            elif type_name == "u32":
+                type_name = "uintptr_t"
+
+        return f"({type_name}) {self.expr.format(fmt)}"
 
 
 @dataclass(frozen=True, eq=False)
