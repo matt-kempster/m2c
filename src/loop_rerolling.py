@@ -53,19 +53,17 @@ def detect_pattern(
             node = flow_graph.nodes[label + offset]
             target = pattern[label]
             if isinstance(target, int):
-                if (
-                    not isinstance(node, BasicNode)
-                    or node.successor is not flow_graph.nodes[offset + target]
+                if not (
+                    isinstance(node, BasicNode)
+                    and node.successor is flow_graph.nodes[offset + target]
                 ):
                     return None
             else:
                 (fallthrough, conditional) = target
-                if (
-                    not isinstance(node, ConditionalNode)
-                    or node.conditional_edge
-                    is not flow_graph.nodes[offset + conditional]
-                    or node.fallthrough_edge
-                    is not flow_graph.nodes[offset + fallthrough]
+                if not (
+                    isinstance(node, ConditionalNode)
+                    and node.conditional_edge is flow_graph.nodes[offset + conditional]
+                    and node.fallthrough_edge is flow_graph.nodes[offset + fallthrough]
                 ):
                     return None
         except IndexError:
