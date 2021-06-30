@@ -1501,7 +1501,7 @@ class RegInfo:
     def __str__(self) -> str:
         return ", ".join(
             f"{k}: {v}"
-            for k, v in sorted(self.contents.items())
+            for k, v in sorted(self.contents.items(), key=lambda x: x[0].register_name)
             if not self.stack_info.should_save(v, None)
         )
 

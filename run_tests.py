@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import attr
 import contextlib
-from dataclasses import dataclass, field
 import difflib
 import io
 import logging
@@ -18,23 +18,23 @@ from src.options import Options
 CRASH_STRING = "CRASHED\n"
 
 
-@dataclass(frozen=True)
+@attr.s(frozen=True, slots=True)
 class TestOptions:
-    should_overwrite: bool
-    diff_context: int
-    filter_re: Pattern[str]
-    parallel: Optional[int] = None
-    coverage: Any = None
+    should_overwrite: bool = attr.ib()
+    diff_context: int = attr.ib()
+    filter_re: Pattern[str] = attr.ib()
+    parallel: Optional[int] = attr.ib(default=None)
+    coverage: Any = attr.ib(default=None)
 
 
-@dataclass(frozen=True, order=True)
+@attr.s(frozen=True, slots=True)
 class TestCase:
-    name: str
-    asm_file: Path
-    output_file: Path
-    brief_crashes: bool = True
-    flags_path: Optional[Path] = None
-    flags: List[str] = field(default_factory=list)
+    name: str = attr.ib()
+    asm_file: Path = attr.ib()
+    output_file: Path = attr.ib()
+    brief_crashes: bool = attr.ib(default=True)
+    flags_path: Optional[Path] = attr.ib(default=None)
+    flags: List[str] = attr.ib(factory=list)
 
 
 def set_up_logging(debug: bool) -> None:
@@ -81,10 +81,11 @@ def decompile_and_compare(
             return None, f"{test_case.output_file} does not exist. Skippping."
         original_contents = "(file did not exist)"
 
-    test_flags = ["--sanitize-tracebacks", "--stop-on-error", str(test_case.asm_file)]
+    test_flags = ["--sanitize-tracebacks", "--stop-on-error"]
     test_flags.extend(test_case.flags)
     if test_case.flags_path is not None:
         test_flags.extend(get_test_flags(test_case.flags_path))
+    test_flags.append(str(test_case.asm_file))
     options = parse_flags(test_flags)
 
     final_contents = decompile_and_capture_output(options, test_case.brief_crashes)
