@@ -4,7 +4,6 @@ import struct
 import sys
 import traceback
 from contextlib import contextmanager
-from copy import copy
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import attr
@@ -2982,7 +2981,7 @@ def regs_clobbered_until_dominator(
     if node.immediate_dominator is None:
         return set()
     seen = {node.immediate_dominator}
-    stack = copy(node.parents)
+    stack = node.parents[:]
     clobbered = set()
     while stack:
         n = stack.pop()
@@ -3004,7 +3003,7 @@ def reg_always_set(
     if node.immediate_dominator is None:
         return False
     seen = {node.immediate_dominator}
-    stack = copy(node.parents)
+    stack = node.parents[:]
     while stack:
         n = stack.pop()
         if n == node.immediate_dominator and not dom_set:
