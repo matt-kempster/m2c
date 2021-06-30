@@ -778,14 +778,6 @@ class BaseNode(abc.ABC):
     # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
     loop: Optional["NaturalLoop"] = attr.ib(init=False, default=None)
 
-    def to_basic_node(self, successor: "Node") -> "BasicNode":
-        new_node = BasicNode(self.block, self.emit_goto, successor)
-        new_node.parents = self.parents
-        new_node.dominators = self.dominators
-        new_node.immediate_dominator = self.immediate_dominator
-        new_node.immediately_dominates = self.immediately_dominates
-        return new_node
-
     def name(self) -> str:
         return str(self.block.index)
 

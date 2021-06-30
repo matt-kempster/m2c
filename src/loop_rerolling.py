@@ -88,7 +88,7 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
     if not modify_node_1_instructions(node_1.block.instructions):
         return False
 
-    new_node_1 = node_1.to_basic_node(successor=node_2)
+    new_node_1 = BasicNode(node_1.block, node_1.emit_goto, node_2)
     replace_node(flow_graph, node_1, new_node_1)
     remove_node(flow_graph, node_4, node_7)
     remove_node(flow_graph, node_5, node_7)
