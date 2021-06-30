@@ -2,12 +2,12 @@
 based on a C AST. Based on the pycparser library."""
 
 import copy
+from dataclasses import dataclass, field
 import functools
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterator, List, Match, Optional, Set, Tuple, Union
 
-import attr
 from pycparser import c_ast as ca
 from pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
 from pycparser.c_generator import CGenerator
@@ -21,54 +21,54 @@ StructUnion = Union[ca.Struct, ca.Union]
 SimpleType = Union[PtrDecl, TypeDecl]
 
 
-@attr.s
+@dataclass
 class StructField:
-    type: CType = attr.ib()
-    size: int = attr.ib()
-    name: str = attr.ib()
+    type: CType
+    size: int
+    name: str
 
 
-@attr.s
+@dataclass
 class Struct:
-    fields: Dict[int, List[StructField]] = attr.ib()
+    fields: Dict[int, List[StructField]]
     # TODO: bitfields
-    size: int = attr.ib()
-    align: int = attr.ib()
+    size: int
+    align: int
 
 
-@attr.s
+@dataclass
 class Array:
-    subtype: "DetailedStructMember" = attr.ib()
-    subctype: CType = attr.ib()
-    subsize: int = attr.ib()
-    dim: int = attr.ib()
+    subtype: "DetailedStructMember"
+    subctype: CType
+    subsize: int
+    dim: int
 
 
 DetailedStructMember = Union[Array, Struct, None]
 
 
-@attr.s
+@dataclass
 class Param:
-    type: CType = attr.ib()
-    name: Optional[str] = attr.ib()
+    type: CType
+    name: Optional[str]
 
 
-@attr.s
+@dataclass
 class Function:
-    type: CType = attr.ib()
-    ret_type: Optional[CType] = attr.ib()
-    params: Optional[List[Param]] = attr.ib()
-    is_variadic: bool = attr.ib()
+    type: CType
+    ret_type: Optional[CType]
+    params: Optional[List[Param]]
+    is_variadic: bool
 
 
-@attr.s
+@dataclass
 class TypeMap:
-    typedefs: Dict[str, CType] = attr.ib(factory=dict)
-    var_types: Dict[str, CType] = attr.ib(factory=dict)
-    functions: Dict[str, Function] = attr.ib(factory=dict)
-    named_structs: Dict[str, Struct] = attr.ib(factory=dict)
-    anon_structs: Dict[int, Struct] = attr.ib(factory=dict)
-    enum_values: Dict[str, int] = attr.ib(factory=dict)
+    typedefs: Dict[str, CType] = field(default_factory=dict)
+    var_types: Dict[str, CType] = field(default_factory=dict)
+    functions: Dict[str, Function] = field(default_factory=dict)
+    named_structs: Dict[str, Struct] = field(default_factory=dict)
+    anon_structs: Dict[int, Struct] = field(default_factory=dict)
+    enum_values: Dict[str, int] = field(default_factory=dict)
 
 
 def to_c(node: ca.Node) -> str:

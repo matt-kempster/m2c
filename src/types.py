@@ -1,7 +1,7 @@
 import copy
+from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple, Union
 
-import attr
 import pycparser.c_ast as ca
 
 from .c_types import (
@@ -22,7 +22,7 @@ from .error import DecompFailure
 from .options import Formatter
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class TypeData:
     K_INT = 1
     K_PTR = 2
@@ -38,15 +38,15 @@ class TypeData:
     UNSIGNED = 2
     ANY_SIGN = 3
 
-    kind: int = attr.ib(default=K_ANY)
-    size: Optional[int] = attr.ib(default=None)
-    uf_parent: Optional["TypeData"] = attr.ib(default=None)
+    kind: int = K_ANY
+    size: Optional[int] = None
+    uf_parent: Optional["TypeData"] = None
 
-    sign: int = attr.ib(default=ANY_SIGN)  # K_INT
-    ptr_to: Optional["Type"] = attr.ib(default=None)  # K_PTR
-    typemap: Optional[TypeMap] = attr.ib(default=None)  # K_CTYPE
-    ctype_ref: Optional[CType] = attr.ib(default=None)  # K_CTYPE
-    fn_sig: Optional["FunctionSignature"] = attr.ib(default=None)  # K_FN
+    sign: int = ANY_SIGN  # K_INT
+    ptr_to: Optional["Type"] = None  # K_PTR
+    typemap: Optional[TypeMap] = None  # K_CTYPE
+    ctype_ref: Optional[CType] = None  # K_CTYPE
+    fn_sig: Optional["FunctionSignature"] = None  # K_FN
 
     def get_representative(self) -> "TypeData":
         if self.uf_parent is None:
@@ -55,7 +55,7 @@ class TypeData:
         return self.uf_parent
 
 
-@attr.s(eq=False, repr=False)
+@dataclass(eq=False, repr=False)
 class Type:
     """
     Type information for an expression, which may improve over time. The least
@@ -67,7 +67,7 @@ class Type:
     become floats.
     """
 
-    _data: TypeData = attr.ib()
+    _data: TypeData
 
     def unify(self, other: "Type", *, seen: Optional[Set["TypeData"]] = None) -> bool:
         """
@@ -417,18 +417,18 @@ class Type:
         return Type(TypeData(kind=TypeData.K_VOID, size=0))
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class FunctionParam:
-    type: Type = attr.ib(factory=Type.any)
-    name: str = attr.ib(default="")
+    type: Type = field(default_factory=Type.any)
+    name: str = ""
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class FunctionSignature:
-    return_type: Type = attr.ib(factory=Type.any)
-    params: List[FunctionParam] = attr.ib(factory=list)
-    params_known: bool = attr.ib(default=False)
-    is_variadic: bool = attr.ib(default=False)
+    return_type: Type = field(default_factory=Type.any)
+    params: List[FunctionParam] = field(default_factory=list)
+    params_known: bool = False
+    is_variadic: bool = False
 
     def unify(self, other: "FunctionSignature", *, seen: Set[TypeData]) -> bool:
         if self.params_known and other.params_known:

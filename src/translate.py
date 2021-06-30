@@ -1,12 +1,11 @@
 import abc
+from dataclasses import dataclass, field, replace
 import math
 import struct
 import sys
 import traceback
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
-
-import attr
 
 from .c_types import TypeMap
 from .error import DecompFailure
@@ -136,9 +135,9 @@ SAVED_REGS: List[Register] = list(
 )
 
 
-@attr.s
+@dataclass
 class InstrProcessingFailure(Exception):
-    instr: Instruction = attr.ib()
+    instr: Instruction
 
     def __str__(self) -> str:
         return f"Error while processing instruction:\n{self.instr}"
@@ -205,28 +204,28 @@ def as_function_ptr(expr: "Expression") -> "Expression":
     return as_type(expr, Type.ptr(Type.function()), True)
 
 
-@attr.s
+@dataclass
 class StackInfo:
-    function: Function = attr.ib()
-    global_info: "GlobalInfo" = attr.ib()
-    allocated_stack_size: int = attr.ib(default=0)
-    is_leaf: bool = attr.ib(default=True)
-    is_variadic: bool = attr.ib(default=False)
-    uses_framepointer: bool = attr.ib(default=False)
-    subroutine_arg_top: int = attr.ib(default=0)
-    return_addr_location: int = attr.ib(default=0)
-    callee_save_reg_locations: Dict[Register, int] = attr.ib(factory=dict)
-    callee_save_reg_region: Tuple[int, int] = attr.ib(default=(0, 0))
-    unique_type_map: Dict[Any, "Type"] = attr.ib(factory=dict)
-    local_vars: List["LocalVar"] = attr.ib(factory=list)
-    temp_vars: List["EvalOnceStmt"] = attr.ib(factory=list)
-    phi_vars: List["PhiExpr"] = attr.ib(factory=list)
-    reg_vars: Dict[Register, "RegisterVar"] = attr.ib(factory=dict)
-    used_reg_vars: Set[Register] = attr.ib(factory=set)
-    arguments: List["PassedInArg"] = attr.ib(factory=list)
-    temp_name_counter: Dict[str, int] = attr.ib(factory=dict)
-    nonzero_accesses: Set["Expression"] = attr.ib(factory=set)
-    param_names: Dict[int, str] = attr.ib(factory=dict)
+    function: Function
+    global_info: "GlobalInfo"
+    allocated_stack_size: int = 0
+    is_leaf: bool = True
+    is_variadic: bool = False
+    uses_framepointer: bool = False
+    subroutine_arg_top: int = 0
+    return_addr_location: int = 0
+    callee_save_reg_locations: Dict[Register, int] = field(default_factory=dict)
+    callee_save_reg_region: Tuple[int, int] = (0, 0)
+    unique_type_map: Dict[Any, "Type"] = field(default_factory=dict)
+    local_vars: List["LocalVar"] = field(default_factory=list)
+    temp_vars: List["EvalOnceStmt"] = field(default_factory=list)
+    phi_vars: List["PhiExpr"] = field(default_factory=list)
+    reg_vars: Dict[Register, "RegisterVar"] = field(default_factory=dict)
+    used_reg_vars: Set[Register] = field(default_factory=set)
+    arguments: List["PassedInArg"] = field(default_factory=list)
+    temp_name_counter: Dict[str, int] = field(default_factory=dict)
+    nonzero_accesses: Set["Expression"] = field(default_factory=set)
+    param_names: Dict[int, str] = field(default_factory=dict)
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -336,10 +335,10 @@ class StackInfo:
 
     def add_register_var(self, reg: Register) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        self.reg_vars[reg] = RegisterVar(reg, type)
+        self.reg_vars[reg] = RegisterVar(reg=reg, type=type)
 
     def use_register_var(self, var: "RegisterVar") -> None:
-        self.used_reg_vars.add(var.register)
+        self.used_reg_vars.add(var.reg)
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg.register_name == "sp":
@@ -531,12 +530,12 @@ def escape_byte(b: int) -> bytes:
     return bs
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class Var:
-    stack_info: StackInfo = attr.ib(repr=False)
-    prefix: str = attr.ib()
-    num_usages: int = attr.ib(default=0)
-    name: Optional[str] = attr.ib(default=None)
+    stack_info: StackInfo = field(repr=False)
+    prefix: str
+    num_usages: int = 0
+    name: Optional[str] = None
 
     def format(self, fmt: Formatter) -> str:
         if self.name is None:
@@ -604,10 +603,10 @@ class Statement(abc.ABC):
         return '"' + self.format(fmt) + '"'
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class ErrorExpr(Condition):
-    desc: Optional[str] = attr.ib(default=None)
-    type: Type = attr.ib(factory=Type.any_reg)
+    desc: Optional[str] = None
+    type: Type = field(default_factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -621,9 +620,9 @@ class ErrorExpr(Condition):
         return "MIPS2C_ERROR()"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class SecondF64Half(Expression):
-    type: Type = attr.ib(factory=Type.any_reg)
+    type: Type = field(default_factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -632,13 +631,13 @@ class SecondF64Half(Expression):
         return "(second half of f64)"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class BinaryOp(Condition):
-    left: Expression = attr.ib()
-    op: str = attr.ib()
-    right: Expression = attr.ib()
-    type: Type = attr.ib()
-    floating: bool = attr.ib(default=False)
+    left: Expression
+    op: str
+    right: Expression
+    type: Type
+    floating: bool = False
 
     @staticmethod
     def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -808,11 +807,11 @@ class BinaryOp(Condition):
         return f"({lhs} {self.op} {self.right.format(fmt)})"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class UnaryOp(Condition):
-    op: str = attr.ib()
-    expr: Expression = attr.ib()
-    type: Type = attr.ib()
+    op: str
+    expr: Expression
+    type: Type
 
     def dependencies(self) -> List[Expression]:
         return [self.expr]
@@ -826,11 +825,11 @@ class UnaryOp(Condition):
         return f"{self.op}{self.expr.format(fmt)}"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class ExprCondition(Condition):
-    expr: Expression = attr.ib()
-    type: Type = attr.ib()
-    is_negated: bool = attr.ib(default=False)
+    expr: Expression
+    type: Type
+    is_negated: bool = False
 
     def dependencies(self) -> List[Expression]:
         return [self.expr]
@@ -843,10 +842,10 @@ class ExprCondition(Condition):
         return f"{neg}{self.expr.format(fmt)}"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class CommaConditionExpr(Condition):
-    statements: List["Statement"] = attr.ib()
-    condition: "Condition" = attr.ib()
+    statements: List["Statement"]
+    condition: "Condition"
     type: Type = Type.bool()
 
     def dependencies(self) -> List[Expression]:
@@ -863,12 +862,12 @@ class CommaConditionExpr(Condition):
         return f"({comma_joined}, {self.condition.format(fmt)})"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class Cast(Expression):
-    expr: Expression = attr.ib()
-    type: Type = attr.ib()
-    reinterpret: bool = attr.ib(default=False)
-    silent: bool = attr.ib(default=True)
+    expr: Expression
+    type: Type
+    reinterpret: bool = False
+    silent: bool = True
 
     def dependencies(self) -> List[Expression]:
         return [self.expr]
@@ -928,11 +927,11 @@ class Cast(Expression):
         return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class FuncCall(Expression):
-    function: Expression = attr.ib()
-    args: List[Expression] = attr.ib()
-    type: Type = attr.ib()
+    function: Expression
+    args: List[Expression]
+    type: Type
 
     def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
@@ -945,10 +944,10 @@ class FuncCall(Expression):
         return f"{self.function.format(fmt)}({args})"
 
 
-@attr.s(frozen=True, eq=True)
+@dataclass(frozen=True, eq=True)
 class LocalVar(Expression):
-    value: int = attr.ib()
-    type: Type = attr.ib(eq=False)
+    value: int
+    type: Type = field(compare=False)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -957,24 +956,24 @@ class LocalVar(Expression):
         return f"sp{format_hex(self.value)}"
 
 
-@attr.s(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False)
 class RegisterVar(Expression):
-    register: Register = attr.ib()
-    type: Type = attr.ib()
+    reg: Register
+    type: Type
 
     def dependencies(self) -> List[Expression]:
         return []
 
     def format(self, fmt: Formatter) -> str:
-        return self.register.register_name
+        return self.reg.register_name
 
 
-@attr.s(frozen=True, eq=True)
+@dataclass(frozen=True, eq=True)
 class PassedInArg(Expression):
-    value: int = attr.ib()
-    copied: bool = attr.ib(eq=False)
-    stack_info: StackInfo = attr.ib(eq=False, repr=False)
-    type: Type = attr.ib(eq=False)
+    value: int
+    copied: bool = field(compare=False)
+    stack_info: StackInfo = field(compare=False, repr=False)
+    type: Type = field(compare=False)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -985,10 +984,10 @@ class PassedInArg(Expression):
         return name or f"arg{format_hex(self.value // 4)}"
 
 
-@attr.s(frozen=True, eq=True)
+@dataclass(frozen=True, eq=True)
 class SubroutineArg(Expression):
-    value: int = attr.ib()
-    type: Type = attr.ib(eq=False)
+    value: int
+    type: Type = field(compare=False)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -997,20 +996,20 @@ class SubroutineArg(Expression):
         return f"subroutine_arg{format_hex(self.value // 4)}"
 
 
-@attr.s(eq=True, hash=True)
+@dataclass(eq=True, unsafe_hash=True)
 class StructAccess(Expression):
     # Represents struct_var->offset.
     # This has eq=True since it represents a live expression and not an access
     # at a certain point in time -- this sometimes helps get rid of phi nodes.
     # prevent_later_uses makes sure it's not used after writes/function calls
     # that may invalidate it.
-    struct_var: Expression = attr.ib()
-    offset: int = attr.ib()
-    target_size: Optional[int] = attr.ib()
-    field_name: Optional[str] = attr.ib(eq=False)
-    stack_info: StackInfo = attr.ib(eq=False, repr=False)
-    type: Type = attr.ib(eq=False)
-    has_late_field_name: bool = attr.ib(default=False, eq=False)
+    struct_var: Expression
+    offset: int
+    target_size: Optional[int]
+    field_name: Optional[str] = field(compare=False)
+    stack_info: StackInfo = field(compare=False, repr=False)
+    type: Type = field(compare=False)
+    has_late_field_name: bool = field(default=False, compare=False)
 
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
@@ -1085,12 +1084,12 @@ class StructAccess(Expression):
                 return f"{parenthesize_for_struct_access(var, fmt)}.{field_name}"
 
 
-@attr.s(frozen=True, eq=True)
+@dataclass(frozen=True, eq=True)
 class ArrayAccess(Expression):
     # Represents ptr[index]. eq=True for symmetry with StructAccess.
-    ptr: Expression = attr.ib()
-    index: Expression = attr.ib()
-    type: Type = attr.ib(eq=False)
+    ptr: Expression
+    index: Expression
+    type: Type = field(compare=False)
 
     def dependencies(self) -> List[Expression]:
         return [self.ptr, self.index]
@@ -1101,12 +1100,12 @@ class ArrayAccess(Expression):
         return f"{base}[{index}]"
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class GlobalSymbol(Expression):
-    symbol_name: str = attr.ib()
-    type: Type = attr.ib()
-    asm_data_entry: Optional[AsmDataEntry] = attr.ib(default=None)
-    type_in_typemap: bool = attr.ib(default=False)
+    symbol_name: str
+    type: Type
+    asm_data_entry: Optional[AsmDataEntry] = None
+    type_in_typemap: bool = False
     # `array_dim=None` indicates that the symbol is not an array
     # `array_dim=0` indicates that it *is* an array, but the dimension is unknown
     # Otherwise, it is the dimension of the array.
@@ -1115,7 +1114,7 @@ class GlobalSymbol(Expression):
     # Otherwise, this defaults to `None` and is set using heuristics in
     # `GlobalInfo.global_decls()` after the AST has been built.
     # So, this value should not be relied on during translate.
-    array_dim: Optional[int] = attr.ib(default=None)
+    array_dim: Optional[int] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1147,10 +1146,10 @@ class GlobalSymbol(Expression):
         return self.symbol_name
 
 
-@attr.s(frozen=True, eq=True)
+@dataclass(frozen=True, eq=True)
 class Literal(Expression):
-    value: int = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any)
+    value: int
+    type: Type = field(compare=False, default_factory=Type.any)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1183,10 +1182,10 @@ class Literal(Expression):
         return prefix + mid + suffix
 
 
-@attr.s(frozen=True, eq=True)
+@dataclass(frozen=True, eq=True)
 class AddressOf(Expression):
-    expr: Expression = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.ptr)
+    expr: Expression
+    type: Type = field(compare=False, default_factory=Type.ptr)
 
     def dependencies(self) -> List[Expression]:
         return [self.expr]
@@ -1205,11 +1204,11 @@ class AddressOf(Expression):
         return f"&{self.expr.format(fmt)}"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Lwl(Expression):
-    load_expr: Expression = attr.ib()
-    key: Tuple[int, object] = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any_reg)
+    load_expr: Expression
+    key: Tuple[int, object]
+    type: Type = field(compare=False, default_factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
@@ -1218,10 +1217,10 @@ class Lwl(Expression):
         return f"MIPS2C_LWL({self.load_expr.format(fmt)})"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Load3Bytes(Expression):
-    load_expr: Expression = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any_reg)
+    load_expr: Expression
+    type: Type = field(compare=False, default_factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
@@ -1232,10 +1231,10 @@ class Load3Bytes(Expression):
         return f"(first 3 bytes) {self.load_expr.format(fmt)}"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class UnalignedLoad(Expression):
-    load_expr: Expression = attr.ib()
-    type: Type = attr.ib(eq=False, factory=Type.any_reg)
+    load_expr: Expression
+    type: Type = field(compare=False, default_factory=Type.any_reg)
 
     def dependencies(self) -> List[Expression]:
         return [self.load_expr]
@@ -1246,30 +1245,30 @@ class UnalignedLoad(Expression):
         return f"(unaligned s32) {self.load_expr.format(fmt)}"
 
 
-@attr.s(frozen=False, eq=False)
+@dataclass(frozen=False, eq=False)
 class EvalOnceExpr(Expression):
-    wrapped_expr: Expression = attr.ib()
-    var: Var = attr.ib()
-    type: Type = attr.ib()
+    wrapped_expr: Expression
+    var: Var
+    type: Type
 
     # True for function calls/errors
-    emit_exactly_once: bool = attr.ib()
+    emit_exactly_once: bool
 
     # Mutable state:
 
     # True if this EvalOnceExpr should be totally transparent and not emit a variable,
     # It may dynamically change from true to false due to forced emissions.
     # Initially, it is based on is_trivial_expression.
-    trivial: bool = attr.ib()
+    trivial: bool
 
     # True if this EvalOnceExpr is wrapped by a ForceVarExpr which has been triggered.
     # This state really live in ForceVarExpr, but there's a hack in RegInfo.__getitem__
     # where we strip off ForceVarExpr's... This is a mess, sorry. :(
-    forced_emit: bool = attr.ib(default=False)
+    forced_emit: bool = False
 
     # The number of expressions that depend on this EvalOnceExpr; we emit a variable
     # if this is > 1.
-    num_usages: int = attr.ib(default=0)
+    num_usages: int = 0
 
     def dependencies(self) -> List[Expression]:
         # (this is a bit iffy since state can change over time, but improves uses_expr)
@@ -1292,10 +1291,10 @@ class EvalOnceExpr(Expression):
             return self.var.format(fmt)
 
 
-@attr.s(eq=False)
+@dataclass(eq=False)
 class ForceVarExpr(Expression):
-    wrapped_expr: EvalOnceExpr = attr.ib()
-    type: Type = attr.ib()
+    wrapped_expr: EvalOnceExpr
+    type: Type
 
     def dependencies(self) -> List[Expression]:
         return [self.wrapped_expr]
@@ -1318,16 +1317,16 @@ class ForceVarExpr(Expression):
         return self.wrapped_expr.format(fmt)
 
 
-@attr.s(frozen=False, eq=False)
+@dataclass(frozen=False, eq=False)
 class PhiExpr(Expression):
-    reg: Register = attr.ib()
-    node: Node = attr.ib()
-    type: Type = attr.ib()
-    used_phis: List["PhiExpr"] = attr.ib()
-    name: Optional[str] = attr.ib(default=None)
-    num_usages: int = attr.ib(default=0)
-    replacement_expr: Optional[Expression] = attr.ib(default=None)
-    used_by: Optional["PhiExpr"] = attr.ib(default=None)
+    reg: Register
+    node: Node
+    type: Type
+    used_phis: List["PhiExpr"]
+    name: Optional[str] = None
+    num_usages: int = 0
+    replacement_expr: Optional[Expression] = None
+    used_by: Optional["PhiExpr"] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1362,9 +1361,9 @@ class PhiExpr(Expression):
         return self.get_var_name()
 
 
-@attr.s
+@dataclass
 class EvalOnceStmt(Statement):
-    expr: EvalOnceExpr = attr.ib()
+    expr: EvalOnceExpr
 
     def need_decl(self) -> bool:
         return self.expr.need_decl()
@@ -1382,10 +1381,10 @@ class EvalOnceStmt(Statement):
         return f"{self.expr.var.format(fmt)} = {val_str};"
 
 
-@attr.s
+@dataclass
 class SetPhiStmt(Statement):
-    phi: PhiExpr = attr.ib()
-    expr: Expression = attr.ib()
+    phi: PhiExpr
+    expr: Expression
 
     def should_write(self) -> bool:
         expr = self.expr
@@ -1404,9 +1403,9 @@ class SetPhiStmt(Statement):
         return format_assignment(self.phi.propagates_to(), self.expr, fmt)
 
 
-@attr.s
+@dataclass
 class ExprStmt(Statement):
-    expr: Expression = attr.ib()
+    expr: Expression
 
     def should_write(self) -> bool:
         return True
@@ -1415,10 +1414,10 @@ class ExprStmt(Statement):
         return f"{format_expr(self.expr, fmt)};"
 
 
-@attr.s
+@dataclass
 class StoreStmt(Statement):
-    source: Expression = attr.ib()
-    dest: Expression = attr.ib()
+    source: Expression
+    dest: Expression
 
     def should_write(self) -> bool:
         return True
@@ -1434,9 +1433,9 @@ class StoreStmt(Statement):
         return format_assignment(dest, source, fmt)
 
 
-@attr.s
+@dataclass
 class CommentStmt(Statement):
-    contents: str = attr.ib()
+    contents: str
 
     def should_write(self) -> bool:
         return True
@@ -1445,10 +1444,10 @@ class CommentStmt(Statement):
         return f"// {self.contents}"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class AddressMode:
-    offset: int = attr.ib()
-    rhs: Register = attr.ib()
+    offset: int
+    rhs: Register
 
     def __str__(self) -> str:
         if self.offset:
@@ -1457,10 +1456,10 @@ class AddressMode:
             return f"({self.rhs})"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class RawSymbolRef:
-    offset: int = attr.ib()
-    sym: AsmGlobalSymbol = attr.ib()
+    offset: int
+    sym: AsmGlobalSymbol
 
     def __str__(self) -> str:
         if self.offset:
@@ -1469,10 +1468,10 @@ class RawSymbolRef:
             return self.sym.symbol_name
 
 
-@attr.s
+@dataclass
 class RegInfo:
-    contents: Dict[Register, Expression] = attr.ib()
-    stack_info: StackInfo = attr.ib(repr=False)
+    contents: Dict[Register, Expression]
+    stack_info: StackInfo = field(repr=False)
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register("zero"):
@@ -1514,25 +1513,25 @@ class RegInfo:
     def __str__(self) -> str:
         return ", ".join(
             f"{k}: {v}"
-            for k, v in sorted(self.contents.items())
+            for k, v in sorted(self.contents.items(), key=lambda x: x[0].register_name)
             if not self.stack_info.should_save(v, None)
         )
 
 
-@attr.s
+@dataclass
 class BlockInfo:
     """
     Contains translated assembly code (to_write), the block's branch condition,
     and block's final register states.
     """
 
-    to_write: List[Statement] = attr.ib()
-    return_value: Optional[Expression] = attr.ib()
-    switch_value: Optional[Expression] = attr.ib()
-    branch_condition: Optional[Condition] = attr.ib()
-    final_register_states: RegInfo = attr.ib()
-    has_custom_return: bool = attr.ib()
-    has_function_call: bool = attr.ib()
+    to_write: List[Statement]
+    return_value: Optional[Expression]
+    switch_value: Optional[Expression]
+    branch_condition: Optional[Condition]
+    final_register_states: RegInfo
+    has_custom_return: bool
+    has_function_call: bool
 
     def __str__(self) -> str:
         newline = "\n\t"
@@ -1545,11 +1544,11 @@ class BlockInfo:
         )
 
 
-@attr.s
+@dataclass
 class InstrArgs:
-    raw_args: List[Argument] = attr.ib()
-    regs: RegInfo = attr.ib(repr=False)
-    stack_info: StackInfo = attr.ib(repr=False)
+    raw_args: List[Argument]
+    regs: RegInfo = field(repr=False)
+    stack_info: StackInfo = field(repr=False)
 
     def raw_arg(self, index: int) -> Argument:
         assert index >= 0
@@ -2223,7 +2222,7 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
     if isinstance(uw_old_value, Lwl) and uw_old_value.key[0] == lwl_key[0]:
         return UnalignedLoad(uw_old_value.load_expr)
     if ref.offset % 4 == 2:
-        left_mem_ref = attr.evolve(ref, offset=ref.offset - 2)
+        left_mem_ref = replace(ref, offset=ref.offset - 2)
         load_expr = deref_unaligned(left_mem_ref, args.regs, args.stack_info)
         return Load3Bytes(load_expr)
     return ErrorExpr("Unable to handle lwr; missing a corresponding lwl")
@@ -2271,7 +2270,7 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
         # Elide swr's that don't come from 3-byte-loading lwr's; they probably
         # come with a corresponding swl which has already been emitted.
         return None
-    real_target = attr.evolve(target, offset=target.offset - 2)
+    real_target = replace(target, offset=target.offset - 2)
     dest = deref_unaligned(real_target, args.regs, args.stack_info, store=True)
     return StoreStmt(source=expr, dest=dest)
 
@@ -2563,12 +2562,12 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
-@attr.s
+@dataclass
 class AbiStackSlot:
-    offset: int = attr.ib()
-    reg: Optional[Register] = attr.ib()
-    name: Optional[str] = attr.ib()
-    type: Type = attr.ib()
+    offset: int
+    reg: Optional[Register]
+    name: Optional[str]
+    type: Type
 
 
 def function_abi(
@@ -3275,7 +3274,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if dest is not None:
                 stack_info.use_register_var(dest)
                 # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
-                if not (isinstance(uw_expr, RegisterVar) and uw_expr.register == reg):
+                if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
                     source = as_type(expr, dest.type, True)
                     source.use()
                     to_write.append(StoreStmt(source=source, dest=dest))
@@ -3730,12 +3729,12 @@ def resolve_types_late(stack_info: StackInfo) -> None:
             var.type.unify(Type.ptr(type))
 
 
-@attr.s
+@dataclass
 class GlobalInfo:
-    asm_data: AsmData = attr.ib()
-    local_functions: Set[str] = attr.ib()
-    typemap: Optional[TypeMap] = attr.ib()
-    global_symbol_map: Dict[str, GlobalSymbol] = attr.ib(factory=dict)
+    asm_data: AsmData
+    local_functions: Set[str]
+    typemap: Optional[TypeMap]
+    global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -3966,11 +3965,11 @@ class GlobalInfo:
         return "".join(line for _, line in lines)
 
 
-@attr.s
+@dataclass
 class FunctionInfo:
-    stack_info: StackInfo = attr.ib()
-    flow_graph: FlowGraph = attr.ib()
-    return_type: Type = attr.ib()
+    stack_info: StackInfo
+    flow_graph: FlowGraph
+    return_type: Type
 
 
 def translate_to_ast(
