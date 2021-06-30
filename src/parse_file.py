@@ -1,28 +1,27 @@
+from dataclasses import dataclass, field
 import re
 import struct
 import typing
 from pathlib import Path
 from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
 
-import attr
-
 from .error import DecompFailure
 from .options import Options
 from .parse_instruction import Instruction, InstructionMeta, parse_instruction
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Label:
-    name: str = attr.ib()
+    name: str
 
     def __str__(self) -> str:
         return f"  .{self.name}:"
 
 
-@attr.s
+@dataclass
 class Function:
-    name: str = attr.ib()
-    body: List[Union[Instruction, Label]] = attr.ib(factory=list)
+    name: str
+    body: List[Union[Instruction, Label]] = field(default_factory=list)
 
     def new_label(self, name: str) -> None:
         label = Label(name)
@@ -42,12 +41,12 @@ class Function:
         return f"glabel {self.name}\n{body}"
 
 
-@attr.s
+@dataclass
 class AsmDataEntry:
-    data: List[Union[str, bytes]] = attr.ib(factory=list)
-    is_string: bool = attr.ib(default=False)
-    is_readonly: bool = attr.ib(default=False)
-    is_bss: bool = attr.ib(default=False)
+    data: List[Union[str, bytes]] = field(default_factory=list)
+    is_string: bool = False
+    is_readonly: bool = False
+    is_bss: bool = False
 
     def size_range_bytes(self) -> Tuple[int, int]:
         """Return the range of possible sizes, if padding were stripped."""
@@ -76,10 +75,10 @@ class AsmDataEntry:
         return max_size - padding_size, max_size
 
 
-@attr.s
+@dataclass
 class AsmData:
-    values: Dict[str, AsmDataEntry] = attr.ib(factory=dict)
-    mentioned_labels: Set[str] = attr.ib(factory=set)
+    values: Dict[str, AsmDataEntry] = field(default_factory=dict)
+    mentioned_labels: Set[str] = field(default_factory=set)
 
     def merge_into(self, other: "AsmData") -> None:
         for (sym, value) in self.values.items():
@@ -88,13 +87,13 @@ class AsmData:
             other.mentioned_labels.add(label)
 
 
-@attr.s
+@dataclass
 class MIPSFile:
-    filename: str = attr.ib()
-    functions: List[Function] = attr.ib(factory=list)
-    asm_data: AsmData = attr.ib(factory=AsmData)
-    current_function: Optional[Function] = attr.ib(default=None, repr=False)
-    current_data: AsmDataEntry = attr.ib(factory=AsmDataEntry)
+    filename: str
+    functions: List[Function] = field(default_factory=list)
+    asm_data: AsmData = field(default_factory=AsmData)
+    current_function: Optional[Function] = field(default=None, repr=False)
+    current_data: AsmDataEntry = field(default_factory=AsmDataEntry)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)

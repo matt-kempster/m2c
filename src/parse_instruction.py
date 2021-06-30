@@ -1,9 +1,8 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
+from dataclasses import dataclass, replace
 import string
 from typing import List, Optional, Set, Union
-
-import attr
 
 from .error import DecompFailure
 
@@ -75,9 +74,9 @@ DIV_MULT_INSTRUCTIONS: Set[str] = {
 }
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Register:
-    register_name: str = attr.ib()
+    register_name: str
 
     def is_float(self) -> bool:
         name = self.register_name
@@ -94,18 +93,18 @@ class Register:
         return f"${self.register_name}"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class AsmGlobalSymbol:
-    symbol_name: str = attr.ib()
+    symbol_name: str
 
     def __str__(self) -> str:
         return self.symbol_name
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class AsmSectionGlobalSymbol(AsmGlobalSymbol):
-    section_name: str = attr.ib()
-    addend: int = attr.ib()
+    section_name: str
+    addend: int
 
 
 def asm_section_global_symbol(section_name: str, addend: int) -> AsmSectionGlobalSymbol:
@@ -116,18 +115,18 @@ def asm_section_global_symbol(section_name: str, addend: int) -> AsmSectionGloba
     )
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Macro:
-    macro_name: str = attr.ib()
-    argument: "Argument" = attr.ib()  # forward-declare
+    macro_name: str
+    argument: "Argument"  # forward-declare
 
     def __str__(self) -> str:
         return f"%{self.macro_name}({self.argument})"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class AsmLiteral:
-    value: int = attr.ib()
+    value: int
 
     def signed_value(self) -> int:
         return ((self.value + 0x8000) & 0xFFFF) - 0x8000
@@ -136,10 +135,10 @@ class AsmLiteral:
         return hex(self.value)
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class AsmAddressMode:
-    lhs: Union[AsmLiteral, Macro, None] = attr.ib()
-    rhs: Register = attr.ib()
+    lhs: Union[AsmLiteral, Macro, None]
+    rhs: Register
 
     def lhs_as_literal(self) -> int:
         if not self.lhs:
@@ -154,19 +153,19 @@ class AsmAddressMode:
             return f"({self.rhs})"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class BinOp:
-    op: str = attr.ib()
-    lhs: "Argument" = attr.ib()
-    rhs: "Argument" = attr.ib()
+    op: str
+    lhs: "Argument"
+    rhs: "Argument"
 
     def __str__(self) -> str:
         return f"{self.lhs} {self.op} {self.rhs}"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class JumpTarget:
-    target: str = attr.ib()
+    target: str
 
     def __str__(self) -> str:
         return f".{self.target}"
@@ -325,12 +324,12 @@ def parse_arg(arg: str) -> Optional[Argument]:
     return parse_arg_elems(arg_elems)
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class InstructionMeta:
-    emit_goto: bool = attr.ib()
-    filename: str = attr.ib()
-    lineno: int = attr.ib()
-    synthetic: bool = attr.ib()
+    emit_goto: bool
+    filename: str
+    lineno: int
+    synthetic: bool
 
     @staticmethod
     def missing() -> "InstructionMeta":
@@ -343,17 +342,17 @@ class InstructionMeta:
         return f"{adj} {self.filename} line {self.lineno}"
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Instruction:
-    mnemonic: str = attr.ib()
-    args: List[Argument] = attr.ib()
-    meta: InstructionMeta = attr.ib()
+    mnemonic: str
+    args: List[Argument]
+    meta: InstructionMeta
 
     @staticmethod
     def derived(
         mnemonic: str, args: List[Argument], old: "Instruction"
     ) -> "Instruction":
-        return Instruction(mnemonic, args, attr.evolve(old.meta, synthetic=True))
+        return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
 
     def is_branch_instruction(self) -> bool:
         return (
