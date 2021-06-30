@@ -563,7 +563,6 @@ def build_conditional_subgraph(
                 # ```
                 node, tail_cond = traverse(node, node.conditional_edge, if_node)
                 or_terms.append(tail_cond.negated())
-        assert node in (if_node, else_node), f"{(node, if_node, else_node)}"
         return node, join_conditions(or_terms, "||")
 
     final_node, cond = traverse(start, if_node, else_node)
