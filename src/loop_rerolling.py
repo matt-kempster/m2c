@@ -69,6 +69,9 @@ def detect_pattern(
         except IndexError:
             return None
 
+    # TODO: Check that the subgraph is self-contained except for the entry
+    # and exit nodes, which themselves should be somehow "designated" using an enum.
+
     all_nodes_in_pattern = (
         {offset + label for label in pattern.keys()}
         | {offset + label[0] for label in pattern.values() if isinstance(label, tuple)}
