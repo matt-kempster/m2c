@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import functools
 import re
 from collections import defaultdict
-from typing import Any, Dict, Iterator, List, Match, Optional, Set, Tuple, Union
+from typing import Dict, Iterator, List, Match, Optional, Set, Tuple, Union
 
 from pycparser import c_ast as ca
 from pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
@@ -144,7 +144,7 @@ def is_void(type: CType) -> bool:
 
 
 def equal_types(a: CType, b: CType) -> bool:
-    def equal(a: Any, b: Any) -> bool:
+    def equal(a: object, b: object) -> bool:
         if a is b:
             return True
         if type(a) != type(b):

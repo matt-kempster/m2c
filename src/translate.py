@@ -5,7 +5,8 @@ import struct
 import sys
 import traceback
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
+import typing
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from .c_types import TypeMap
 from .error import DecompFailure
@@ -216,7 +217,7 @@ class StackInfo:
     return_addr_location: int = 0
     callee_save_reg_locations: Dict[Register, int] = field(default_factory=dict)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
-    unique_type_map: Dict[Any, "Type"] = field(default_factory=dict)
+    unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
     local_vars: List["LocalVar"] = field(default_factory=list)
     temp_vars: List["EvalOnceStmt"] = field(default_factory=list)
     phi_vars: List["PhiExpr"] = field(default_factory=list)
@@ -289,7 +290,7 @@ class StackInfo:
     def has_nonzero_access(self, ptr: "Expression") -> bool:
         return unwrap_deep(ptr) in self.nonzero_accesses
 
-    def unique_type_for(self, category: str, key: Any, default: Type) -> "Type":
+    def unique_type_for(self, category: str, key: object, default: Type) -> "Type":
         key = (category, key)
         if key not in self.unique_type_map:
             self.unique_type_map[key] = default
@@ -353,7 +354,7 @@ class StackInfo:
         for (category, key), type in self.unique_type_map.items():
             if category != "struct":
                 continue
-            var, offset = key
+            var, offset = typing.cast(Tuple[Expression, int], key)
             if var not in struct_type_map:
                 struct_type_map[var] = {}
             struct_type_map[var][offset] = type
