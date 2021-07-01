@@ -15,15 +15,15 @@ int test(int a, int b, int c, int d) {
         ret = 2;
     }
 
-    if ((a && d) || ((b || c) && (d + c))) {
+    if ((a && d) || ((b || c) && (a + 1))) {
         ret = 3;
     }
 
-    if (a && (b && (c || d)) && (a + d || b + c)) {
+    if (a && b && (c || d) && (a + 1 || b + 1)) {
         ret = 4;
     }
 
-    if (((a || b) && c) || (d && (a + 1)) || (a + 2) || (a + 3)) {
+    if (((a || b) && c) || (d && (a + 1)) || (b + 1) || (c + 1)) {
         ret = 5;
     }
 
