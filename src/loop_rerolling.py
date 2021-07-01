@@ -81,6 +81,15 @@ def detect_pattern(
     )
 
 
+def remove_and_replace_nodes(flow_graph: FlowGraph, nodes: Tuple[Node, ...]) -> None:
+    (node_1, node_2, node_3, node_4, node_5, node_6, node_7) = nodes
+    new_node_1 = BasicNode(node_1.block, node_1.emit_goto, node_2)
+    replace_node(flow_graph, node_1, new_node_1)
+    remove_node(flow_graph, node_4, node_7)
+    remove_node(flow_graph, node_5, node_7)
+    remove_node(flow_graph, node_6, node_7)  # TODO: assert didn't execute anything?.
+
+
 def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
     nodes = detect_pattern(IDO_O2_SIMPLE_LOOP, flow_graph, start)
     if nodes is None:
@@ -107,11 +116,7 @@ def reroll_loop(flow_graph: FlowGraph, start: ConditionalNode) -> bool:
     if not modify_node_1_instructions(node_1.block.instructions):
         return False
 
-    new_node_1 = BasicNode(node_1.block, node_1.emit_goto, node_2)
-    replace_node(flow_graph, node_1, new_node_1)
-    remove_node(flow_graph, node_4, node_7)
-    remove_node(flow_graph, node_5, node_7)
-    remove_node(flow_graph, node_6, node_7)  # TODO: assert didn't execute anything?.
+    remove_and_replace_nodes(flow_graph, nodes)
 
     return True
 
