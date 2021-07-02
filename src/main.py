@@ -198,11 +198,6 @@ def parse_flags(flags: List[str]) -> Options:
         "unusual statements. Macro definitions are in `mips2c_macros.h`.",
     )
     group.add_argument(
-        "--emit-globals",
-        dest="",
-        help=argparse.SUPPRESS,  # Now the default; see `--no-emit-globals`
-    )
-    group.add_argument(
         "--no-emit-globals",
         dest="emit_globals",
         action="store_false",
