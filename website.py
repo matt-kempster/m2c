@@ -9,15 +9,14 @@ import sys
 # cgi tracebacks
 cgitb.enable()
 
-form = cgi.FieldStorage()
-do_visualize = "visualize" in form
-if do_visualize:
-    print(f"Content-Type: image/svg+xml; charset=utf-8")
-else:
-    print(f"Content-Type: text/html; charset=utf-8")
-print()
-sys.stdout.flush()
 
+def print_headers(content_type: str) -> None:
+    print(f"Content-Type: {content_type}; charset=utf-8")
+    print()
+    sys.stdout.flush()
+
+
+form = cgi.FieldStorage()
 if "source" in form:
     source = form["source"].value if "source" in form else ""
     context = form["context"].value if "context" in form else None
@@ -42,7 +41,7 @@ if "source" in form:
         cmd.extend(["--pointer-style", "left"])
     if "globals" in form:
         cmd.append("--emit-globals")
-    if do_visualize:
+    if "visualize" in form:
         cmd.append("--visualize")
     function = form["functionselect"].value if "functionselect" in form else "all"
     if function != "all":
@@ -80,9 +79,11 @@ if "source" in form:
             input=source,
             timeout=15,
         )
-    if do_visualize and res.returncode == 0:
+    if "visualize" in form and res.returncode == 0:
+        print_headers(content_type="image/svg+xml")
         print(res.stdout.decode("utf-8", "replace"))
     else:
+        print_headers(content_type="text/html")
         print("<!DOCTYPE html><html>")
         if "dark" in form:
             print(
@@ -102,6 +103,7 @@ body {
 elif "?go" in os.environ.get("REQUEST_URI", ""):
     pass
 else:
+    print_headers(content_type="text/html")
     print(
         """
 <!DOCTYPE html><html>
