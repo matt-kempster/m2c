@@ -107,209 +107,209 @@ try:
         print_headers(content_type="text/html")
         print(
             """
-    <!DOCTYPE html><html>
-    <head>
-    <style>
-    * {
-        box-sizing: border-box;
-    }
-    html, body, form, .main, .sidebar {
-        margin: 0;
-        height: 100%;
-    }
-    textarea, .sidebar iframe {
-        width: 100%;
-        height: 100%;
-        border: 1px solid #bbb;
-        margin: 1px 0;
-    }
-    label {
-        white-space: nowrap;
-    }
-    [data-regvars]:not([data-regvars=custom]) [name=regvars] {
-        display: none;
-    }
-    [name=regvars] {
-        width: 150px;
-    }
-    .main, .sidebar {
-        display: flex;
-        flex-direction: column;
-        padding: 10px;
-    }
-    .sidebar {
-        display: none;
-    }
-    .has-sidebar form {
-        display: flex;
-        flex-direction: row;
-    }
-    .has-sidebar .main, .has-sidebar .sidebar {
-        flex: 1;
-    }
-    .has-sidebar .sidebar {
-        display: flex;
-    }
-    .dark-theme {
-        background-color: #2d2d2d;
-        color: #c0c0c0;
-    }
-    .dark-theme div,
-    .dark-theme body,
-    .dark-theme form,
-    .dark-theme textarea {
-        background-color: rgba(255, 255, 255, 0.0225);
-        color: #c0c0c0;
-        box-shadow: 1px 1px 10px 0px black;
-    }
-    </style>
-    </head>
-    <body>
-    <form action="?go" method="post">
-    <div class="main">
-    <div>
-        MIPS assembly:
-    </div>
-    <div style="flex: 20;">
-        <textarea name="source"></textarea>
-    </div>
-    <div style="margin-top: 10px;">
-        Existing C source, preprocessed (optional):
-    </div>
-    <div style="flex: 11;">
-        <textarea name="context"></textarea>
-    </div>
-    <div style="margin-top: 10px;" id="options">
-        <input type="submit" value="Decompile">
-        <input type="submit" name="visualize" value="Visualize">
-        <label>Function: <select name="functionselect"></select></label>
-        <label>Use single var for:
-        <select name="regvarsselect">
-        <option value="none">none</option>
-        <option value="saved">saved regs</option>
-        <option value="all">all regs</option>
-        <option value="custom">custom</option>
-        </select>
-        </label>
-        <input name="regvars" value="">
-        <label><input type="checkbox" name="void">Force void return type</label>
-        <label><input type="checkbox" name="debug">Debug info</label>
-        <label><input type="checkbox" name="noandor">Disable &amp;&amp;/||</label>
-        <label><input type="checkbox" name="nocasts">Hide type casts</label>
-        <label><input type="checkbox" name="allman">Allman braces</label>
-        <label><input type="checkbox" name="leftptr">* to the left</label>
-        <label><input type="checkbox" name="globals" checked>Global declarations</label>
-        <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
-        <label><input type="checkbox" name="usesidebar">Output sidebar</label>
-        <label><input type="checkbox" name="dark">Dark mode</label>
-    </div>
-    </div>
-    <div class="sidebar">
-    <div>
-        Output:
-    </div>
-    <div style="flex: 1;">
-        <iframe src="about:blank" name="outputframe"></iframe>
-    </div>
-    </div>
-    <script>
-    var formEl = document.getElementsByTagName("form")[0]
-    var sourceEl = document.getElementsByName("source")[0];
-    var contextEl = document.getElementsByName("context")[0];
-    var sidebarCheckboxEl = document.getElementsByName("usesidebar")[0];
-    var savedSource = localStorage.mips_to_c_saved_source;
-    var savedContext = localStorage.mips_to_c_saved_context;
-    var savedOptions = localStorage.mips_to_c_saved_options;
-    if (savedSource) sourceEl.value = savedSource;
-    if (savedContext) contextEl.value = savedContext;
-    if (savedOptions) {
-        savedOptions = JSON.parse(savedOptions);
-        for (var key in savedOptions) {
-            var el = document.getElementsByName(key)[0], val = savedOptions[key];
-            if (el) {
-                if (el.type === "checkbox")
-                    el.checked = val === "yes";
-                else
-                    el.value = val;
-            }
+<!DOCTYPE html><html>
+<head>
+<style>
+* {
+    box-sizing: border-box;
+}
+html, body, form, .main, .sidebar {
+    margin: 0;
+    height: 100%;
+}
+textarea, .sidebar iframe {
+    width: 100%;
+    height: 100%;
+    border: 1px solid #bbb;
+    margin: 1px 0;
+}
+label {
+    white-space: nowrap;
+}
+[data-regvars]:not([data-regvars=custom]) [name=regvars] {
+    display: none;
+}
+[name=regvars] {
+    width: 150px;
+}
+.main, .sidebar {
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+}
+.sidebar {
+    display: none;
+}
+.has-sidebar form {
+    display: flex;
+    flex-direction: row;
+}
+.has-sidebar .main, .has-sidebar .sidebar {
+    flex: 1;
+}
+.has-sidebar .sidebar {
+    display: flex;
+}
+.dark-theme {
+    background-color: #2d2d2d;
+    color: #c0c0c0;
+}
+.dark-theme div,
+.dark-theme body,
+.dark-theme form,
+.dark-theme textarea {
+    background-color: rgba(255, 255, 255, 0.0225);
+    color: #c0c0c0;
+    box-shadow: 1px 1px 10px 0px black;
+}
+</style>
+</head>
+<body>
+<form action="?go" method="post">
+<div class="main">
+<div>
+    MIPS assembly:
+</div>
+<div style="flex: 20;">
+    <textarea name="source"></textarea>
+</div>
+<div style="margin-top: 10px;">
+    Existing C source, preprocessed (optional):
+</div>
+<div style="flex: 11;">
+    <textarea name="context"></textarea>
+</div>
+<div style="margin-top: 10px;" id="options">
+    <input type="submit" value="Decompile">
+    <input type="submit" name="visualize" value="Visualize">
+    <label>Function: <select name="functionselect"></select></label>
+    <label>Use single var for:
+    <select name="regvarsselect">
+    <option value="none">none</option>
+    <option value="saved">saved regs</option>
+    <option value="all">all regs</option>
+    <option value="custom">custom</option>
+    </select>
+    </label>
+    <input name="regvars" value="">
+    <label><input type="checkbox" name="void">Force void return type</label>
+    <label><input type="checkbox" name="debug">Debug info</label>
+    <label><input type="checkbox" name="noandor">Disable &amp;&amp;/||</label>
+    <label><input type="checkbox" name="nocasts">Hide type casts</label>
+    <label><input type="checkbox" name="allman">Allman braces</label>
+    <label><input type="checkbox" name="leftptr">* to the left</label>
+    <label><input type="checkbox" name="globals" checked>Global declarations</label>
+    <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
+    <label><input type="checkbox" name="usesidebar">Output sidebar</label>
+    <label><input type="checkbox" name="dark">Dark mode</label>
+</div>
+</div>
+<div class="sidebar">
+<div>
+    Output:
+</div>
+<div style="flex: 1;">
+    <iframe src="about:blank" name="outputframe"></iframe>
+</div>
+</div>
+<script>
+var formEl = document.getElementsByTagName("form")[0]
+var sourceEl = document.getElementsByName("source")[0];
+var contextEl = document.getElementsByName("context")[0];
+var sidebarCheckboxEl = document.getElementsByName("usesidebar")[0];
+var savedSource = localStorage.mips_to_c_saved_source;
+var savedContext = localStorage.mips_to_c_saved_context;
+var savedOptions = localStorage.mips_to_c_saved_options;
+if (savedSource) sourceEl.value = savedSource;
+if (savedContext) contextEl.value = savedContext;
+if (savedOptions) {
+    savedOptions = JSON.parse(savedOptions);
+    for (var key in savedOptions) {
+        var el = document.getElementsByName(key)[0], val = savedOptions[key];
+        if (el) {
+            if (el.type === "checkbox")
+                el.checked = val === "yes";
+            else
+                el.value = val;
         }
     }
+}
 
-    var darkModeCheckbox = document.getElementsByName("dark")[0];
-    if (!savedOptions || !("dark" in savedOptions)) {
-        darkModeCheckbox.checked = window.matchMedia("prefers-color-scheme: dark").matches;
+var darkModeCheckbox = document.getElementsByName("dark")[0];
+if (!savedOptions || !("dark" in savedOptions)) {
+    darkModeCheckbox.checked = window.matchMedia("prefers-color-scheme: dark").matches;
+}
+
+function updateDarkMode() {
+    document.documentElement.className = darkModeCheckbox.checked ? "dark-theme" : "";
+}
+updateDarkMode();
+darkModeCheckbox.addEventListener("change", updateDarkMode);
+
+function updateFunctions() {
+    var functionSelect = document.getElementsByName("functionselect")[0];
+    var prevValue = functionSelect.value;
+    functionSelect.innerHTML = "<option value='all'>all functions</option>";
+    for (let match of sourceEl.value.matchAll(/^\\s*glabel\\s+([A-Za-z0-9_]+)/mg)) {
+        var name = match[1];
+
+        var option = document.createElement("option");
+        option.value = name;
+        option.innerText = name;
+        option.selected = (name == prevValue);
+        functionSelect.appendChild(option);
     }
+}
+updateFunctions();
+sourceEl.addEventListener("blur", updateFunctions);
 
-    function updateDarkMode() {
-        document.documentElement.className = darkModeCheckbox.checked ? "dark-theme" : "";
+var regVarsSelect = document.getElementsByName("regvarsselect")[0];
+function updateRegVars(e) {
+    document.body.setAttribute("data-regvars", regVarsSelect.value);
+    if (regVarsSelect.value === "custom" && e) {
+        document.getElementsByName("regvars")[0].value = "s0,s1,s2";
     }
-    updateDarkMode();
-    darkModeCheckbox.addEventListener("change", updateDarkMode);
+}
+updateRegVars();
+regVarsSelect.addEventListener("change", updateRegVars);
 
-    function updateFunctions() {
-        var functionSelect = document.getElementsByName("functionselect")[0];
-        var prevValue = functionSelect.value;
-        functionSelect.innerHTML = "<option value='all'>all functions</option>";
-        for (let match of sourceEl.value.matchAll(/^\\s*glabel\\s+([A-Za-z0-9_]+)/mg)) {
-            var name = match[1];
-
-            var option = document.createElement("option");
-            option.value = name;
-            option.innerText = name;
-            option.selected = (name == prevValue);
-            functionSelect.appendChild(option);
-        }
+sourceEl.addEventListener("change", function() {
+    localStorage.mips_to_c_saved_source = sourceEl.value;
+});
+contextEl.addEventListener("change", function() {
+    localStorage.mips_to_c_saved_context = contextEl.value;
+});
+document.getElementById("options").addEventListener("change", function(event) {
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
+    var options = {};
+    for (var key of shouldSave) {
+        var el = document.getElementsByName(key)[0];
+        options[key] = (el.type === "checkbox" ?
+            (el.checked ? "yes" : "no") :
+            el.value);
     }
-    updateFunctions();
-    sourceEl.addEventListener("blur", updateFunctions);
+    localStorage.mips_to_c_saved_options = JSON.stringify(options);
+});
 
-    var regVarsSelect = document.getElementsByName("regvarsselect")[0];
-    function updateRegVars(e) {
-        document.body.setAttribute("data-regvars", regVarsSelect.value);
-        if (regVarsSelect.value === "custom" && e) {
-            document.getElementsByName("regvars")[0].value = "s0,s1,s2";
-        }
-    }
-    updateRegVars();
-    regVarsSelect.addEventListener("change", updateRegVars);
-
-    sourceEl.addEventListener("change", function() {
-        localStorage.mips_to_c_saved_source = sourceEl.value;
-    });
-    contextEl.addEventListener("change", function() {
-        localStorage.mips_to_c_saved_context = contextEl.value;
-    });
-    document.getElementById("options").addEventListener("change", function(event) {
-        var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
-        var options = {};
-        for (var key of shouldSave) {
-            var el = document.getElementsByName(key)[0];
-            options[key] = (el.type === "checkbox" ?
-                (el.checked ? "yes" : "no") :
-                el.value);
-        }
-        localStorage.mips_to_c_saved_options = JSON.stringify(options);
-    });
-
-    function updateSidebar() {
-        document.body.classList.toggle("has-sidebar", sidebarCheckboxEl.checked);
-        formEl.setAttribute("target", sidebarCheckboxEl.checked ? "outputframe" : "");
-        try {
-            document.getElementsByName("outputframe")[0].contentDocument.body.innerHTML = "";
-        } catch (e) {}
-    }
-    updateSidebar();
-    sidebarCheckboxEl.addEventListener("change", updateSidebar);
-    formEl.addEventListener("submit", function() {
-        if (!sidebarCheckboxEl.checked) return;
-        try {
-            document.getElementsByName("outputframe")[0].contentDocument.body.innerHTML = "Decompiling...";
-        } catch (e) {}
-    });
-    </script>
-    </form>
-    </body>
-    </html>
+function updateSidebar() {
+    document.body.classList.toggle("has-sidebar", sidebarCheckboxEl.checked);
+    formEl.setAttribute("target", sidebarCheckboxEl.checked ? "outputframe" : "");
+    try {
+        document.getElementsByName("outputframe")[0].contentDocument.body.innerHTML = "";
+    } catch (e) {}
+}
+updateSidebar();
+sidebarCheckboxEl.addEventListener("change", updateSidebar);
+formEl.addEventListener("submit", function() {
+    if (!sidebarCheckboxEl.checked) return;
+    try {
+        document.getElementsByName("outputframe")[0].contentDocument.body.innerHTML = "Decompiling...";
+    } catch (e) {}
+});
+</script>
+</form>
+</body>
+</html>
     """
         )
 except:
