@@ -3,16 +3,19 @@ import tempfile
 import cgi
 import cgitb
 import os
+import string
 import subprocess
 import sys
 
 # cgi tracebacks
 cgitb.enable()
 
-print("Content-Type: text/html; charset=utf-8")
-print()
-print("<!DOCTYPE html><html>")
-sys.stdout.flush()
+
+def print_headers(content_type: str) -> None:
+    print(f"Content-Type: {content_type}; charset=utf-8")
+    print()
+    sys.stdout.flush()
+
 
 form = cgi.FieldStorage()
 if "source" in form:
@@ -22,7 +25,7 @@ if "source" in form:
         source = "glabel foo\n" + source
     source = bytes(source, "utf-8")
     script_path = os.path.join(os.path.dirname(__file__), "mips_to_c.py")
-    cmd = ["python3", script_path, "/dev/stdin", "0"]
+    cmd = ["python3", script_path, "/dev/stdin"]
     if "debug" in form:
         cmd.append("--debug")
     if "void" in form:
@@ -37,6 +40,17 @@ if "source" in form:
         cmd.append("--allman")
     if "leftptr" in form:
         cmd.extend(["--pointer-style", "left"])
+    if "globals" in form:
+        cmd.append("--emit-globals")
+    if "visualize" in form:
+        cmd.append("--visualize")
+
+    function = form["functionselect"].value if "functionselect" in form else "all"
+    FUNCTION_ALPHABET = string.ascii_letters + string.digits + "_"
+    function = "".join(c for c in function if c in FUNCTION_ALPHABET)
+    if function and function != "all":
+        cmd.extend(["--function", function])
+
     regvars = ""
     if "regvarsselect" in form:
         sel = form["regvarsselect"].value
@@ -44,35 +58,46 @@ if "source" in form:
             regvars = sel
         elif sel == "custom":
             regvars = form.getvalue("regvars", "")
-            REG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789,"
+            REG_ALPHABET = string.ascii_lowercase + string.digits + ","
             regvars = "".join(c for c in regvars if c in REG_ALPHABET)
 
     if regvars:
         cmd.append("--reg-vars")
         cmd.append(regvars)
-    if context:
-        with tempfile.NamedTemporaryFile() as f:
-            f.write(bytes(context, "utf-8"))
-            f.file.close()
-            cmd.extend(["--context", f.name])
+    try:
+        if context:
+            with tempfile.NamedTemporaryFile() as f:
+                f.write(bytes(context, "utf-8"))
+                f.file.close()
+                cmd.extend(["--context", f.name])
+                res = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    input=source,
+                    timeout=15,
+                )
+        else:
             res = subprocess.run(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 input=source,
                 timeout=15,
-            ).stdout
+            )
+    except:
+        # Set the headers for the cgitb traceback
+        print_headers(content_type="text/html")
+        raise
+    if "visualize" in form and res.returncode == 0:
+        print_headers(content_type="image/svg+xml")
+        print(res.stdout.decode("utf-8", "replace"))
     else:
-        res = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            input=source,
-            timeout=15,
-        ).stdout
-    if "dark" in form:
-        print(
-            """
+        print_headers(content_type="text/html")
+        print("<!DOCTYPE html><html>")
+        if "dark" in form:
+            print(
+                """
 <head>
 <style>
 body {
@@ -82,14 +107,16 @@ body {
 </style>
 </head>
 """
-        )
-    print("<body><pre><plaintext>", end="")
-    print(res.decode("utf-8", "replace"))
+            )
+        print("<body><pre><plaintext>", end="")
+        print(res.stdout.decode("utf-8", "replace"))
 elif "?go" in os.environ.get("REQUEST_URI", ""):
     pass
 else:
+    print_headers(content_type="text/html")
     print(
         """
+<!DOCTYPE html><html>
 <head>
 <style>
 * {
@@ -104,6 +131,9 @@ textarea, .sidebar iframe {
     height: 100%;
     border: 1px solid #bbb;
     margin: 1px 0;
+}
+label {
+    white-space: nowrap;
 }
 [data-regvars]:not([data-regvars=custom]) [name=regvars] {
     display: none;
@@ -160,6 +190,8 @@ textarea, .sidebar iframe {
   </div>
   <div style="margin-top: 10px;" id="options">
     <input type="submit" value="Decompile">
+    <input type="submit" name="visualize" value="Visualize">
+    <label>Function: <select name="functionselect"></select></label>
     <label>Use single var for:
     <select name="regvarsselect">
     <option value="none">none</option>
@@ -175,6 +207,7 @@ textarea, .sidebar iframe {
     <label><input type="checkbox" name="nocasts">Hide type casts</label>
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
+    <label><input type="checkbox" name="globals" checked>Global declarations</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
@@ -222,6 +255,23 @@ function updateDarkMode() {
 updateDarkMode();
 darkModeCheckbox.addEventListener("change", updateDarkMode);
 
+function updateFunctions() {
+    var functionSelect = document.getElementsByName("functionselect")[0];
+    var prevValue = functionSelect.value;
+    functionSelect.innerHTML = "<option value='all'>all functions</option>";
+    for (let match of sourceEl.value.matchAll(/^\\s*glabel\\s+([A-Za-z0-9_]+)/mg)) {
+        var name = match[1];
+
+        var option = document.createElement("option");
+        option.value = name;
+        option.innerText = name;
+        option.selected = (name == prevValue);
+        functionSelect.appendChild(option);
+    }
+}
+updateFunctions();
+sourceEl.addEventListener("blur", updateFunctions);
+
 var regVarsSelect = document.getElementsByName("regvarsselect")[0];
 function updateRegVars(e) {
     document.body.setAttribute("data-regvars", regVarsSelect.value);
@@ -239,7 +289,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];

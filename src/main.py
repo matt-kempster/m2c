@@ -102,7 +102,7 @@ def run(options: Options) -> int:
         fn_info = function_infos[0]
         if isinstance(fn_info, Exception):
             raise fn_info
-        visualize_flowgraph(fn_info.flow_graph)
+        print(visualize_flowgraph(fn_info.flow_graph))
         return 0
 
     fmt = options.formatter()
@@ -240,7 +240,7 @@ def parse_flags(flags: List[str]) -> Options:
         "--visualize",
         dest="visualize",
         action="store_true",
-        help="display a visualization of the control flow graph using graphviz",
+        help="print an SVG visualization of the control flow graph using graphviz",
     )
     group.add_argument(
         "--sanitize-tracebacks",
@@ -340,6 +340,10 @@ def parse_flags(flags: List[str]) -> Options:
             functions.append(int(fn))
         except ValueError:
             functions.append(fn)
+
+    # The debug output interferes with the visualize output
+    if args.visualize:
+        args.debug = False
 
     return Options(
         filenames=filenames,
