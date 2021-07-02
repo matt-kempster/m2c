@@ -111,7 +111,7 @@ body {
         print("<body><pre><plaintext>", end="")
         print(res.stdout.decode("utf-8", "replace"))
 elif "?go" in os.environ.get("REQUEST_URI", ""):
-    pass
+    print_headers(content_type="text/html")
 else:
     print_headers(content_type="text/html")
     print(
@@ -180,13 +180,13 @@ label {
     MIPS assembly:
   </div>
   <div style="flex: 20;">
-    <textarea name="source"></textarea>
+    <textarea name="source" spellcheck="false"></textarea>
   </div>
   <div style="margin-top: 10px;">
     Existing C source, preprocessed (optional):
   </div>
   <div style="flex: 11;">
-    <textarea name="context"></textarea>
+    <textarea name="context" spellcheck="false"></textarea>
   </div>
   <div style="margin-top: 10px;" id="options">
     <input type="submit" value="Decompile">
@@ -255,8 +255,8 @@ function updateDarkMode() {
 updateDarkMode();
 darkModeCheckbox.addEventListener("change", updateDarkMode);
 
+var functionSelect = document.getElementsByName("functionselect")[0];
 function updateFunctions() {
-    var functionSelect = document.getElementsByName("functionselect")[0];
     var prevValue = functionSelect.value;
     functionSelect.innerHTML = "<option value='all'>all functions</option>";
     for (let match of sourceEl.value.matchAll(/^\\s*glabel\\s+([A-Za-z0-9_]+)/mg)) {
@@ -270,6 +270,7 @@ function updateFunctions() {
     }
 }
 updateFunctions();
+functionSelect.style.width = getComputedStyle(functionSelect).width;
 sourceEl.addEventListener("blur", updateFunctions);
 
 var regVarsSelect = document.getElementsByName("regvarsselect")[0];
