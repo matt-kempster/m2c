@@ -494,9 +494,17 @@ class FunctionSignature:
         return can_unify
 
 
-def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
+def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) -> Type:
     real_ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(real_ctype, (ca.PtrDecl, ca.ArrayDecl)):
+    if isinstance(real_ctype, ca.ArrayDecl):
+        inner_type, dim = ptr_type_from_ctype(real_ctype, typemap)
+        if array_decay:
+            return inner_type
+        size = inner_type.get_size_bits()
+        if size is not None and dim is not None:
+            size *= dim
+        return Type._ctype(real_ctype, typemap, size=size)
+    if isinstance(real_ctype, ca.PtrDecl):
         return ptr_type_from_ctype(real_ctype.type, typemap)[0]
     if isinstance(real_ctype, ca.FuncDecl):
         fn = parse_function(real_ctype)
@@ -547,7 +555,10 @@ def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[
                 dim = parse_constant_int(real_ctype.dim, typemap)
         except DecompFailure:
             pass
-        return Type.ptr(type_from_ctype(real_ctype.type, typemap)), dim
+        return (
+            Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False)),
+            dim,
+        )
     return Type.ptr(type_from_ctype(ctype, typemap)), None
 
 
