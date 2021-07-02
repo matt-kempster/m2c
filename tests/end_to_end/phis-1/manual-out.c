@@ -9,6 +9,6 @@ void test(void) {
     if (*NULL == 0) {
         sp10C = temp_ret;
     }
-    temp_ret->unk3 = (u8)0;
-    temp_ret->unk4 = (u8)0;
+    temp_ret->unk3 = 0;
+    temp_ret->unk4 = 0;
 }

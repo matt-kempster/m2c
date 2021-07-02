@@ -2,7 +2,7 @@ MIPS2C_UNK extern_fn(struct A *); // extern
 MIPS2C_UNK static_fn(struct A *); // static
 extern f32 extern_float;
 struct A static_A = {
-    (u8)1,
+    1,
     {1, 2, 3, 4, 5},
     {
         {{1.0f, 2.0f, 3.0f, 4.0f}, {5.0f, 6.0f, 7.0f, 8.0f}, {9.0f, 0.0f, 1.0f, 2.0f}},

@@ -16,6 +16,6 @@ s32 test(s32 arg0, ?32 arg1) {
         return 0;
     }
     func_0040019C(sp24, sp28, sp2C);
-    *(&D_4101C8 + arg0) = (u8)5;
+    *(&D_4101C8 + arg0) = 5;
     return sp28;
 }
