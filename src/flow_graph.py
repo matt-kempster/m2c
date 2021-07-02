@@ -1406,4 +1406,5 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> str:
             assert isinstance(node, TerminalNode)
             label += "// exit\l"
         dot.node(node.name(), label=label)
-    return dot.pipe("svg").decode("utf-8", "replace")
+    svg_bytes: bytes = dot.pipe("svg")
+    return svg_bytes.decode("utf-8", "replace")
