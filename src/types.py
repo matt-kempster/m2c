@@ -212,13 +212,13 @@ class Type:
 
     def get_ctype_fields(
         self,
-    ) -> Optional[List[Union[int, Tuple["Type", Optional[int]]]]]:
+    ) -> Optional[List[Union[int, "Type"]]]:
         """
         If self is a CType, get a list of fields, suitable for creating an initializer,
         or return None if an initializer cannot be made (e.g. a struct with bitfields)
 
         Struct padding is represented by an int in the list, otherwise the list members
-        denote the field's Type & array dimension.
+        denote the field's Type.
         """
         data = self.data()
         if data.kind != TypeData.K_CTYPE or data.ctype_ref is None:
@@ -232,8 +232,10 @@ class Type:
         if isinstance(ctype, ca.ArrayDecl):
             inner_type, dim = ptr_type_from_ctype(ctype, data.typemap)
             field_type = inner_type.get_pointer_target()
-            assert dim is not None and field_type is not None
-            return [(field_type, None)] * dim
+            if not dim or field_type is None:
+                # Do not support zero-sized arrays
+                return None
+            return [field_type] * dim
 
         # Lookup the c_types.Struct representation
         if not isinstance(ctype, ca.TypeDecl):
@@ -245,7 +247,7 @@ class Type:
             # Bitfields aren't supported; they aren't represented in `struct.fields`
             return None
 
-        output: List[Union[int, Tuple[Type, Optional[int]]]] = []
+        output: List[Union[int, Type]] = []
         position = 0
         for offset, fields in sorted(struct.fields.items()):
             if offset < position:
@@ -257,14 +259,11 @@ class Type:
 
             # Choose the first field in a union, or the unexpanded name in a struct
             field = fields[0]
-            field_ptr, dim = ptr_type_from_ctype(field.type, data.typemap)
-            field_type = field_ptr.get_pointer_target()
+            field_type = type_from_ctype(field.type, data.typemap, array_decay=False)
             assert field_type is not None
             size, align = field_type.get_size_align_bytes()
-            full_size = size * (1 if dim is None else dim)
-            assert full_size == field.size
-            output.append((field_type, dim))
-            position = offset + full_size
+            output.append(field_type)
+            position = offset + size
 
         assert position <= struct.size
         if position < struct.size:
@@ -569,7 +568,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) ->
             size *= dim
         return Type._ctype(real_ctype, typemap, size=size)
     if isinstance(real_ctype, ca.PtrDecl):
-        return ptr_type_from_ctype(real_ctype.type, typemap)[0]
+        return Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False))
     if isinstance(real_ctype, ca.FuncDecl):
         fn = parse_function(real_ctype)
         assert fn is not None
@@ -691,7 +690,7 @@ def find_substruct_array(
     struct = get_struct(ctype.type, typemap)
     if not struct:
         return None
-    for off, fields in struct.fields.items():
+    for off, fields in sorted(struct.fields.items()):
         if offset < off:
             continue
         for field in fields:

@@ -3808,10 +3808,12 @@ class GlobalInfo:
                 members = []
                 for field in ctype_fields:
                     if isinstance(field, int):
-                        # Padding; read the bytes but throw them away
-                        read_uint(field)
+                        # Check that all padding bytes are 0
+                        padding = read_uint(field)
+                        if padding != 0:
+                            return None
                     else:
-                        m = for_type(*field)
+                        m = for_type(field, None)
                         if m is None:
                             return None
                         members.append(m)
