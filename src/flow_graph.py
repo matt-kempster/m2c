@@ -1362,7 +1362,7 @@ def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
     return FlowGraph(nodes)
 
 
-def visualize_flowgraph(flow_graph: FlowGraph) -> None:
+def visualize_flowgraph(flow_graph: FlowGraph) -> str:
     import graphviz as g
 
     fmt = Formatter(debug=True)
@@ -1406,8 +1406,4 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> None:
             assert isinstance(node, TerminalNode)
             label += "// exit\l"
         dot.node(node.name(), label=label)
-    dot.render("graphviz_render.gv")
-    print("Rendered to graphviz_render.gv.pdf")
-    print(
-        "Key: black = successor, red = conditional edge, blue = fallthrough edge, green = switch case"
-    )
+    return dot.pipe("svg").decode("utf-8", "replace")

@@ -9,12 +9,15 @@ import sys
 # cgi tracebacks
 cgitb.enable()
 
-print("Content-Type: text/html; charset=utf-8")
+form = cgi.FieldStorage()
+do_visualize = "visualize" in form
+if do_visualize:
+    print(f"Content-Type: image/svg+xml; charset=utf-8")
+else:
+    print(f"Content-Type: text/html; charset=utf-8")
 print()
-print("<!DOCTYPE html><html>")
 sys.stdout.flush()
 
-form = cgi.FieldStorage()
 if "source" in form:
     source = form["source"].value if "source" in form else ""
     context = form["context"].value if "context" in form else None
@@ -22,7 +25,7 @@ if "source" in form:
         source = "glabel foo\n" + source
     source = bytes(source, "utf-8")
     script_path = os.path.join(os.path.dirname(__file__), "mips_to_c.py")
-    cmd = ["python3", script_path, "/dev/stdin", "0"]
+    cmd = ["python3", script_path, "/dev/stdin"]
     if "debug" in form:
         cmd.append("--debug")
     if "void" in form:
@@ -37,6 +40,13 @@ if "source" in form:
         cmd.append("--allman")
     if "leftptr" in form:
         cmd.extend(["--pointer-style", "left"])
+    if "globals" in form:
+        cmd.append("--emit-globals")
+    if do_visualize:
+        cmd.append("--visualize")
+    function = form["functionselect"].value if "functionselect" in form else "all"
+    if function != "all":
+        cmd.extend(["--function", function])
     regvars = ""
     if "regvarsselect" in form:
         sel = form["regvarsselect"].value
@@ -61,7 +71,7 @@ if "source" in form:
                 stderr=subprocess.STDOUT,
                 input=source,
                 timeout=15,
-            ).stdout
+            )
     else:
         res = subprocess.run(
             cmd,
@@ -69,10 +79,14 @@ if "source" in form:
             stderr=subprocess.STDOUT,
             input=source,
             timeout=15,
-        ).stdout
-    if "dark" in form:
-        print(
-            """
+        )
+    if do_visualize and res.returncode == 0:
+        print(res.stdout.decode("utf-8", "replace"))
+    else:
+        print("<!DOCTYPE html><html>")
+        if "dark" in form:
+            print(
+                """
 <head>
 <style>
 body {
@@ -82,14 +96,15 @@ body {
 </style>
 </head>
 """
-        )
-    print("<body><pre><plaintext>", end="")
-    print(res.decode("utf-8", "replace"))
+            )
+        print("<body><pre><plaintext>", end="")
+        print(res.stdout.decode("utf-8", "replace"))
 elif "?go" in os.environ.get("REQUEST_URI", ""):
     pass
 else:
     print(
         """
+<!DOCTYPE html><html>
 <head>
 <style>
 * {
@@ -104,6 +119,9 @@ textarea, .sidebar iframe {
     height: 100%;
     border: 1px solid #bbb;
     margin: 1px 0;
+}
+label {
+    white-space: nowrap;
 }
 [data-regvars]:not([data-regvars=custom]) [name=regvars] {
     display: none;
@@ -160,6 +178,8 @@ textarea, .sidebar iframe {
   </div>
   <div style="margin-top: 10px;" id="options">
     <input type="submit" value="Decompile">
+    <input type="submit" name="visualize" value="Visualize">
+    <label>Function: <select name="functionselect"></select></label>
     <label>Use single var for:
     <select name="regvarsselect">
     <option value="none">none</option>
@@ -175,6 +195,7 @@ textarea, .sidebar iframe {
     <label><input type="checkbox" name="nocasts">Hide type casts</label>
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
+    <label><input type="checkbox" name="globals" checked>Global declarations</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
@@ -222,6 +243,24 @@ function updateDarkMode() {
 updateDarkMode();
 darkModeCheckbox.addEventListener("change", updateDarkMode);
 
+function updateFunctions() {
+    var functionSelect = document.getElementsByName("functionselect")[0];
+    var prevValue = functionSelect.value;
+    var options = "<option value='all'>all functions</option>";
+    for (var line of sourceEl.value.split("\\n")) {
+        //var match = line.match(/^\\w*glabel\\w*([A-Za-z0-9_]+)/)
+        var match = line.match(/^\\s*glabel\\s+([A-Za-z0-9_]+)/)
+        if (match) {
+            var name = match[1];
+            options += "<option value='" + name + "' " + (name == prevValue ? "selected" : "") + ">" + name + "</option>";
+        }
+    }
+
+    functionSelect.innerHTML = options;
+}
+updateFunctions();
+sourceEl.addEventListener("blur", updateFunctions);
+
 var regVarsSelect = document.getElementsByName("regvarsselect")[0];
 function updateRegVars(e) {
     document.body.setAttribute("data-regvars", regVarsSelect.value);
@@ -239,7 +278,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];
