@@ -16,50 +16,50 @@ def print_headers(content_type: str) -> None:
     sys.stdout.flush()
 
 
-try:
-    form = cgi.FieldStorage()
-    if "source" in form:
-        source = form["source"].value if "source" in form else ""
-        context = form["context"].value if "context" in form else None
-        if "glabel" not in source:
-            source = "glabel foo\n" + source
-        source = bytes(source, "utf-8")
-        script_path = os.path.join(os.path.dirname(__file__), "mips_to_c.py")
-        cmd = ["python3", script_path, "/dev/stdin"]
-        if "debug" in form:
-            cmd.append("--debug")
-        if "void" in form:
-            cmd.append("--void")
-        if "noifs" in form:
-            cmd.append("--no-ifs")
-        if "noandor" in form:
-            cmd.append("--no-andor")
-        if "nocasts" in form:
-            cmd.append("--no-casts")
-        if "allman" in form:
-            cmd.append("--allman")
-        if "leftptr" in form:
-            cmd.extend(["--pointer-style", "left"])
-        if "globals" in form:
-            cmd.append("--emit-globals")
-        if "visualize" in form:
-            cmd.append("--visualize")
-        function = form["functionselect"].value if "functionselect" in form else "all"
-        if function != "all":
-            cmd.extend(["--function", function])
-        regvars = ""
-        if "regvarsselect" in form:
-            sel = form["regvarsselect"].value
-            if sel in ("saved", "most", "all"):
-                regvars = sel
-            elif sel == "custom":
-                regvars = form.getvalue("regvars", "")
-                REG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789,"
-                regvars = "".join(c for c in regvars if c in REG_ALPHABET)
+form = cgi.FieldStorage()
+if "source" in form:
+    source = form["source"].value if "source" in form else ""
+    context = form["context"].value if "context" in form else None
+    if "glabel" not in source:
+        source = "glabel foo\n" + source
+    source = bytes(source, "utf-8")
+    script_path = os.path.join(os.path.dirname(__file__), "mips_to_c.py")
+    cmd = ["python3", script_path, "/dev/stdin"]
+    if "debug" in form:
+        cmd.append("--debug")
+    if "void" in form:
+        cmd.append("--void")
+    if "noifs" in form:
+        cmd.append("--no-ifs")
+    if "noandor" in form:
+        cmd.append("--no-andor")
+    if "nocasts" in form:
+        cmd.append("--no-casts")
+    if "allman" in form:
+        cmd.append("--allman")
+    if "leftptr" in form:
+        cmd.extend(["--pointer-style", "left"])
+    if "globals" in form:
+        cmd.append("--emit-globals")
+    if "visualize" in form:
+        cmd.append("--visualize")
+    function = form["functionselect"].value if "functionselect" in form else "all"
+    if function != "all":
+        cmd.extend(["--function", function])
+    regvars = ""
+    if "regvarsselect" in form:
+        sel = form["regvarsselect"].value
+        if sel in ("saved", "most", "all"):
+            regvars = sel
+        elif sel == "custom":
+            regvars = form.getvalue("regvars", "")
+            REG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789,"
+            regvars = "".join(c for c in regvars if c in REG_ALPHABET)
 
-        if regvars:
-            cmd.append("--reg-vars")
-            cmd.append(regvars)
+    if regvars:
+        cmd.append("--reg-vars")
+        cmd.append(regvars)
+    try:
         if context:
             with tempfile.NamedTemporaryFile() as f:
                 f.write(bytes(context, "utf-8"))
@@ -80,15 +80,19 @@ try:
                 input=source,
                 timeout=15,
             )
-        if "visualize" in form and res.returncode == 0:
-            print_headers(content_type="image/svg+xml")
-            print(res.stdout.decode("utf-8", "replace"))
-        else:
-            print_headers(content_type="text/html")
-            print("<!DOCTYPE html><html>")
-            if "dark" in form:
-                print(
-                    """
+    except:
+        # Set the headers for the cgitb traceback
+        print_headers(content_type="text/html")
+        raise
+    if "visualize" in form and res.returncode == 0:
+        print_headers(content_type="image/svg+xml")
+        print(res.stdout.decode("utf-8", "replace"))
+    else:
+        print_headers(content_type="text/html")
+        print("<!DOCTYPE html><html>")
+        if "dark" in form:
+            print(
+                """
 <head>
 <style>
 body {
@@ -98,15 +102,15 @@ body {
 </style>
 </head>
 """
-                )
-            print("<body><pre><plaintext>", end="")
-            print(res.stdout.decode("utf-8", "replace"))
-    elif "?go" in os.environ.get("REQUEST_URI", ""):
-        pass
-    else:
-        print_headers(content_type="text/html")
-        print(
-            """
+            )
+        print("<body><pre><plaintext>", end="")
+        print(res.stdout.decode("utf-8", "replace"))
+elif "?go" in os.environ.get("REQUEST_URI", ""):
+    pass
+else:
+    print_headers(content_type="text/html")
+    print(
+        """
 <!DOCTYPE html><html>
 <head>
 <style>
@@ -310,9 +314,5 @@ formEl.addEventListener("submit", function() {
 </form>
 </body>
 </html>
-    """
-        )
-except:
-    # Set the headers for the cgitb traceback
-    print_headers(content_type="text/html")
-    raise
+"""
+    )
