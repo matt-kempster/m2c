@@ -1156,11 +1156,7 @@ class Literal(Expression):
         suffix = ""
         if not fmt.skip_casts:
             if self.type.is_pointer():
-                prefix = "(void *)"
-            elif self.type.get_size_bits() == 8:
-                prefix = "(u8)"
-            elif self.type.get_size_bits() == 16:
-                prefix = "(u16)"
+                prefix = f"({self.type.format(fmt)})"
             if self.type.is_unsigned():
                 suffix = "U"
         mid = (

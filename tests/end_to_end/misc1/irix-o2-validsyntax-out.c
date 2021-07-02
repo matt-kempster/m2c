@@ -22,6 +22,6 @@ s32 test(s32 arg0, MIPS2C_UNK arg1) {
     }
     sp28 = temp_v0_2;
     func_00400158(sp24, temp_v0_2, temp_a2);
-    *(&D_410178 + arg0) = (u8)5;
+    *(&D_410178 + arg0) = 5;
     return sp28;
 }
