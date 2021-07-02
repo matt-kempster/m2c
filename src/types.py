@@ -6,6 +6,7 @@ import pycparser.c_ast as ca
 
 from .c_types import (
     CType,
+    Struct,
     TypeMap,
     equal_types,
     get_struct,
@@ -208,6 +209,69 @@ class Type:
             if ptr_to.kind == TypeData.K_FN:
                 return ptr_to.fn_sig
         return None
+
+    def get_ctype_fields(
+        self,
+    ) -> Optional[List[Union[int, Tuple["Type", Optional[int]]]]]:
+        """
+        If self is a CType, get a list of fields, suitable for creating an initializer,
+        or return None if an initializer cannot be made (e.g. a struct with bitfields)
+
+        Struct padding is represented by an int in the list, otherwise the list members
+        denote the field's Type & array dimension.
+        """
+        data = self.data()
+        if data.kind != TypeData.K_CTYPE or data.ctype_ref is None:
+            return None
+        assert data.typemap is not None
+        ctype = resolve_typedefs(data.ctype_ref, data.typemap)
+
+        # ArrayDecls are still used to when representing pointers-to-arrays, or
+        # multidimensional arrays.
+        # Treat an array of length N as a struct with N (identical) members
+        if isinstance(ctype, ca.ArrayDecl):
+            inner_type, dim = ptr_type_from_ctype(ctype, data.typemap)
+            field_type = inner_type.get_pointer_target()
+            assert dim is not None and field_type is not None
+            return [(field_type, None)] * dim
+
+        # Lookup the c_types.Struct representation
+        if not isinstance(ctype, ca.TypeDecl):
+            return None
+        if not isinstance(ctype.type, (ca.Struct, ca.Union)):
+            return None
+        struct = get_struct(ctype.type, data.typemap)
+        if not struct or struct.has_bitfields:
+            # Bitfields aren't supported; they aren't represented in `struct.fields`
+            return None
+
+        output: List[Union[int, Tuple[Type, Optional[int]]]] = []
+        position = 0
+        for offset, fields in sorted(struct.fields.items()):
+            if offset < position:
+                # Overlapping fields, e.g. from expanded struct paths
+                continue
+            elif offset > position:
+                # Padding bytes
+                output.append(offset - position)
+
+            # Choose the first field in a union, or the unexpanded name in a struct
+            field = fields[0]
+            field_ptr, dim = ptr_type_from_ctype(field.type, data.typemap)
+            field_type = field_ptr.get_pointer_target()
+            assert field_type is not None
+            size, align = field_type.get_size_align_bytes()
+            full_size = size * (1 if dim is None else dim)
+            assert full_size == field.size
+            output.append((field_type, dim))
+            position = offset + full_size
+
+        assert position <= struct.size
+        if position < struct.size:
+            # Insert padding bytes
+            output.append(struct.size - position)
+
+        return output
 
     def to_decl(self, name: str, fmt: Formatter) -> str:
         decl = ca.Decl(

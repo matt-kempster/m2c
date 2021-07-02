@@ -45,13 +45,23 @@ glabel test
 /* 00014C 0040014C 27BD0018 */   addiu $sp, $sp, 0x18
 
 .rodata
-glabel static_A
-.word 0x01, 0x02, 0x03, 0x04, 0x05
-
 glabel static_ro_array
 .word 0x07, 0x08, 0x09
 
 .data
+glabel static_A
+.byte 1
+.space 3
+.word 0x01, 0x02, 0x03, 0x04, 0x05
+.float 1.0, 2.0, 3.0, 4.0
+.float 5.0, 6.0, 7.0, 8.0
+.float 9.0, 0.0, 1.0, 2.0
+.float 1.5, 2.5, 3.5, 4.5
+.float 5.5, 6.5, 7.5, 8.5
+.float 9.5, 0.5, 1.5, 2.5
+.word 0, static_int
+.word static_bss_A
+
 glabel static_A_ptr
 .word static_A
 
@@ -64,3 +74,6 @@ glabel static_int
 
 glabel static_bss_array
 .space 12
+
+glabel static_bss_A
+.space 42

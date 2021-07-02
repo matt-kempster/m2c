@@ -58,6 +58,7 @@ class Formatter:
     extra_indent: int = 0
     debug: bool = False
     valid_syntax: bool = False
+    line_length: int = 80
 
     def indent(self, line: str, indent: int = 0) -> str:
         return self.indent_step * max(indent + self.extra_indent, 0) + line
@@ -69,3 +70,22 @@ class Formatter:
             yield
         finally:
             self.extra_indent -= 1
+
+    def format_array(self, elements: List[str]) -> str:
+        # If there are no newlines & the output would be short, put it all on one line.
+        # Here, "line length" is just used as a rough guideline: we aren't accounting
+        # for the LHS of the assignment or any indentation.
+        if not any("\n" in el or len(el) > self.line_length for el in elements):
+            output = f"{{{', '.join(elements)}}}"
+            if len(output) < self.line_length:
+                return output
+
+        # Otherwise, put each element on its own line (and include a trailing comma)
+        output = "{\n"
+        for el in elements:
+            # Add 1 indentation level to the string
+            el = el.replace("\n", "\n" + self.indent_step)
+            output += self.indent(f"{el},\n", 1)
+        output += "}"
+
+        return output

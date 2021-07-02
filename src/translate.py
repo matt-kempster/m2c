@@ -3747,9 +3747,7 @@ class GlobalInfo:
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
     ) -> Optional[str]:
-        if not sym.asm_data_entry or sym.asm_data_entry.is_bss:
-            # IDO only puts symbols in the BSS if they don't have any initializer
-            return None
+        assert sym.asm_data_entry is not None
         data = sym.asm_data_entry.data[:]
 
         def read_uint(n: int) -> Optional[int]:
@@ -3798,14 +3796,26 @@ class GlobalInfo:
                 if value is not None:
                     return Literal(value, type).format(fmt)
 
-            if type.is_pointer():
+            elif type.is_pointer():
                 ptr = read_pointer()
                 if ptr is not None:
                     return as_type(ptr, type, True).format(fmt)
 
-            if type.is_ctype():
-                # TODO: Generate initializers for structs/arrays/etc.
-                return None
+            elif type.is_ctype():
+                ctype_fields = type.get_ctype_fields()
+                if not ctype_fields:
+                    return None
+                members = []
+                for field in ctype_fields:
+                    if isinstance(field, int):
+                        # Padding; read the bytes but throw them away
+                        read_uint(field)
+                    else:
+                        m = for_type(*field)
+                        if m is None:
+                            return None
+                        members.append(m)
+                return fmt.format_array(members)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None
@@ -3823,7 +3833,7 @@ class GlobalInfo:
                     if el is None:
                         return None
                     elements.append(el)
-                return f"{{{', '.join(elements)}}}"
+                return fmt.format_array(elements)
 
         return for_type(sym.type, sym.array_dim)
 
@@ -3861,7 +3871,7 @@ class GlobalInfo:
                     name,
                 )
                 qualifier = ""
-                value = ""
+                value: Optional[str] = None
                 comments = []
 
                 # Determine type qualifier: static, extern, or neither
@@ -3917,8 +3927,12 @@ class GlobalInfo:
                             sym.array_dim = max_data_size // type_size
 
                 # Try to convert the data from .data/.rodata into an initializer
-                if sym.asm_data_entry is not None:
-                    value = self.initializer_for_symbol(sym, fmt) or ""
+                if sym.asm_data_entry is not None and not sym.asm_data_entry.is_bss:
+                    value = self.initializer_for_symbol(sym, fmt)
+                    if value is None:
+                        # This warning helps distinguish .bss symbols from .data/.rodata,
+                        # IDO only puts symbols in .bss if they don't have any initializer
+                        comments.append("unable to generate initializer")
 
                 if not is_in_file and is_global:
                     # Skip externally-declared symbols that are defined in other files
