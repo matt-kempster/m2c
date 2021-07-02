@@ -3813,7 +3813,7 @@ class GlobalInfo:
                         if padding != 0:
                             return None
                     else:
-                        m = for_type(field, None)
+                        m = for_element_type(field)
                         if m is None:
                             return None
                         members.append(m)
