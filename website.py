@@ -89,15 +89,15 @@ try:
             if "dark" in form:
                 print(
                     """
-    <head>
-    <style>
-    body {
-        background-color: #454545;
-        color: #c0c0c0;
-    }
-    </style>
-    </head>
-    """
+<head>
+<style>
+body {
+    background-color: #454545;
+    color: #c0c0c0;
+}
+</style>
+</head>
+"""
                 )
             print("<body><pre><plaintext>", end="")
             print(res.stdout.decode("utf-8", "replace"))
@@ -167,19 +167,19 @@ label {
 <body>
 <form action="?go" method="post">
 <div class="main">
-<div>
+  <div>
     MIPS assembly:
-</div>
-<div style="flex: 20;">
+  </div>
+  <div style="flex: 20;">
     <textarea name="source"></textarea>
-</div>
-<div style="margin-top: 10px;">
+  </div>
+  <div style="margin-top: 10px;">
     Existing C source, preprocessed (optional):
-</div>
-<div style="flex: 11;">
+  </div>
+  <div style="flex: 11;">
     <textarea name="context"></textarea>
-</div>
-<div style="margin-top: 10px;" id="options">
+  </div>
+  <div style="margin-top: 10px;" id="options">
     <input type="submit" value="Decompile">
     <input type="submit" name="visualize" value="Visualize">
     <label>Function: <select name="functionselect"></select></label>
@@ -202,15 +202,15 @@ label {
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
-</div>
+  </div>
 </div>
 <div class="sidebar">
-<div>
+  <div>
     Output:
-</div>
-<div style="flex: 1;">
+  </div>
+  <div style="flex: 1;">
     <iframe src="about:blank" name="outputframe"></iframe>
-</div>
+  </div>
 </div>
 <script>
 var formEl = document.getElementsByTagName("form")[0]
