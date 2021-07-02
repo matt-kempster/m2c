@@ -143,7 +143,7 @@ def run(options: Options) -> int:
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(
         description="Decompile MIPS assembly to C.",
-        usage="%(prog)s [--context C_FILE] [--emit-globals] [-f FN ...] filename [filename ...]",
+        usage="%(prog)s [--context C_FILE] [-f FN ...] filename [filename ...]",
     )
 
     group = parser.add_argument_group("Input Options")
@@ -199,9 +199,14 @@ def parse_flags(flags: List[str]) -> Options:
     )
     group.add_argument(
         "--emit-globals",
+        dest="",
+        help=argparse.SUPPRESS,  # Now the default; see `--no-emit-globals`
+    )
+    group.add_argument(
+        "--no-emit-globals",
         dest="emit_globals",
-        action="store_true",
-        help="emit global declarations with inferred types.",
+        action="store_false",
+        help="do not emit global declarations with inferred types.",
     )
     group.add_argument(
         "--debug",

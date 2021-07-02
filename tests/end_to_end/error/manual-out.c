@@ -1,3 +1,5 @@
+? test(s32 arg0); // static
+
 ? test(s32 arg0) {
     s32 temp_t1;
 

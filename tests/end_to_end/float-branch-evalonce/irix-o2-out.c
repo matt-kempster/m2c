@@ -1,3 +1,6 @@
+f32 test(); // static
+extern f32 D_410120;
+
 f32 test(void) {
     f32 temp_f0;
     s32 temp_cond;

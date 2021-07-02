@@ -1,3 +1,8 @@
+u32 *test(); // static
+extern f32 D_410230;
+extern f64 D_410238;
+extern u32 D_410240;
+
 u32 *test(void) {
     f32 temp_f8;
     f64 temp_f18;

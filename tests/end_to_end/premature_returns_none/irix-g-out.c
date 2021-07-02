@@ -1,3 +1,5 @@
+?32 test(s32 arg0); // static
+
 ?32 test(s32 arg0) {
     ?32 sp4;
 

@@ -1,3 +1,6 @@
+void *foo(); // extern
+void test(); // static
+
 void test(void) {
     void *sp10C;
     void *temp_ret;

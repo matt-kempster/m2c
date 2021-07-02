@@ -1,1 +1,1 @@
---valid-syntax --emit-globals
+--valid-syntax

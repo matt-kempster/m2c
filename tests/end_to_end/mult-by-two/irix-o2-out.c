@@ -1,3 +1,7 @@
+f32 test(); // static
+extern f32 D_4100E0;
+extern f64 D_4100E8;
+
 f32 test(void) {
     f32 temp_f0;
 

@@ -1,3 +1,7 @@
+s32 test(s32 arg0, s32 arg1, s32 arg2); // static
+extern ?32 D_400130;
+extern ? D_410140;
+
 s32 test(s32 arg0, s32 arg1, s32 arg2) {
     sp->unk0 = (?32) D_400130.unk0;
     sp->unk4 = (u16) D_400130.unk4;
