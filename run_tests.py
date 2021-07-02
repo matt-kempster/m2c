@@ -179,7 +179,7 @@ def create_project_tests(
         ):
             continue
 
-        flags = ["--emit-globals"]
+        flags = []
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 

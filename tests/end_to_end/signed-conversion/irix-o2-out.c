@@ -1,3 +1,6 @@
+s8 test(s8 arg0); // static
+extern ?32 D_410110;
+
 s8 test(s8 arg0) {
     s8 temp_v0;
 

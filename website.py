@@ -40,8 +40,8 @@ if "source" in form:
         cmd.append("--allman")
     if "leftptr" in form:
         cmd.extend(["--pointer-style", "left"])
-    if "globals" in form:
-        cmd.append("--emit-globals")
+    if "globals" not in form:
+        cmd.append("--no-emit-globals")
     if "visualize" in form:
         cmd.append("--visualize")
 

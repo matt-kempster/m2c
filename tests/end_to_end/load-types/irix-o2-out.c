@@ -1,3 +1,12 @@
+?32 *test(); // static
+extern s8 D_410110;
+extern u8 D_410111;
+extern s16 D_410112;
+extern u16 D_410114;
+extern ?32 D_410118;
+extern ?32 D_41011C;
+extern ?32 D_410120;
+
 ?32 *test(void) {
     D_410120.unk0 = (?32) D_410110;
     D_410120.unk4 = (?32) D_410111;

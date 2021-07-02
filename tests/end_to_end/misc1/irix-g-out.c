@@ -1,3 +1,9 @@
+s32 func_00400174(?, ?, s32, ?32, s32); // static
+? func_0040019C(?32, s32, s32); // static
+s32 test(s32 arg0, ?32 arg1); // static
+extern s32 D_4101C0;
+extern ? D_4101C8;
+
 s32 test(s32 arg0, ?32 arg1) {
     s32 sp2C;
     s32 sp28;

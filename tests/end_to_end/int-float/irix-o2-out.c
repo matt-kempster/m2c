@@ -1,3 +1,7 @@
+f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3); // static
+extern s32 D_410110;
+extern f32 D_410114;
+
 f32 test(f32 arg0, s32 arg1, f32 arg2, s32 arg3) {
     f32 temp_f18;
     s32 temp_a3;

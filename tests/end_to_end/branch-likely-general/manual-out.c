@@ -1,3 +1,5 @@
+void test(s32 arg0); // static
+
 void test(s32 arg0) {
     if (arg0 == 0) {
         *NULL = 0;

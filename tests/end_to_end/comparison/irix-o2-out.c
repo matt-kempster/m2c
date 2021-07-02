@@ -1,3 +1,6 @@
+s32 *test(s32 arg0, s32 arg1, s32 arg2); // static
+extern s32 D_410100;
+
 s32 *test(s32 arg0, s32 arg1, s32 arg2) {
     D_410100 = (s32) (arg0 == arg1);
     D_410100 = (s32) (arg0 != arg2);

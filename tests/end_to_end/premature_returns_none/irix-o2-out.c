@@ -1,3 +1,5 @@
+? test(s32 arg0); // static
+
 ? test(s32 arg0) {
     ? phi_v1;
 

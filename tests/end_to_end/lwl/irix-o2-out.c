@@ -1,3 +1,13 @@
+? func_004000B0(?32 *); // static
+void test(); // static
+extern ?32 D_400150;
+extern ? D_400158;
+extern ?32 D_410160;
+extern ? D_410161;
+extern ? D_410169;
+extern ? D_410170;
+extern ?32 D_410178;
+
 void test(void) {
     ?32 sp18;
 
