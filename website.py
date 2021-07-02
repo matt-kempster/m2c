@@ -3,6 +3,7 @@ import tempfile
 import cgi
 import cgitb
 import os
+import string
 import subprocess
 import sys
 
@@ -43,9 +44,13 @@ if "source" in form:
         cmd.append("--emit-globals")
     if "visualize" in form:
         cmd.append("--visualize")
+
     function = form["functionselect"].value if "functionselect" in form else "all"
-    if function != "all":
+    FUNCTION_ALPHABET = string.ascii_letters + string.digits + "_"
+    function = "".join(c for c in function if c in FUNCTION_ALPHABET)
+    if function and function != "all":
         cmd.extend(["--function", function])
+
     regvars = ""
     if "regvarsselect" in form:
         sel = form["regvarsselect"].value
@@ -53,7 +58,7 @@ if "source" in form:
             regvars = sel
         elif sel == "custom":
             regvars = form.getvalue("regvars", "")
-            REG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789,"
+            REG_ALPHABET = string.ascii_lowercase + string.digits + ","
             regvars = "".join(c for c in regvars if c in REG_ALPHABET)
 
     if regvars:
