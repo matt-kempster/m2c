@@ -6,6 +6,7 @@ import pycparser.c_ast as ca
 
 from .c_types import (
     CType,
+    Struct,
     TypeMap,
     equal_types,
     get_struct,
@@ -208,6 +209,67 @@ class Type:
             if ptr_to.kind == TypeData.K_FN:
                 return ptr_to.fn_sig
         return None
+
+    def get_ctype_fields(
+        self,
+    ) -> Optional[List[Union[int, "Type"]]]:
+        """
+        If self is a CType, get a list of fields, suitable for creating an initializer,
+        or return None if an initializer cannot be made (e.g. a struct with bitfields)
+
+        Struct padding is represented by an int in the list, otherwise the list members
+        denote the field's Type.
+        """
+        data = self.data()
+        if data.kind != TypeData.K_CTYPE or data.ctype_ref is None:
+            return None
+        assert data.typemap is not None
+        ctype = resolve_typedefs(data.ctype_ref, data.typemap)
+
+        # ArrayDecls are still used to when representing pointers-to-arrays, or
+        # multidimensional arrays.
+        # Treat an array of length N as a struct with N (identical) members
+        if isinstance(ctype, ca.ArrayDecl):
+            inner_type, dim = ptr_type_from_ctype(ctype, data.typemap)
+            field_type = inner_type.get_pointer_target()
+            if not dim or field_type is None:
+                # Do not support zero-sized arrays
+                return None
+            return [field_type] * dim
+
+        # Lookup the c_types.Struct representation
+        if not isinstance(ctype, ca.TypeDecl):
+            return None
+        if not isinstance(ctype.type, (ca.Struct, ca.Union)):
+            return None
+        struct = get_struct(ctype.type, data.typemap)
+        if not struct or struct.has_bitfields:
+            # Bitfields aren't supported; they aren't represented in `struct.fields`
+            return None
+
+        output: List[Union[int, Type]] = []
+        position = 0
+        for offset, fields in sorted(struct.fields.items()):
+            if offset < position:
+                # Overlapping fields, e.g. from expanded struct paths
+                continue
+            elif offset > position:
+                # Padding bytes
+                output.append(offset - position)
+
+            # Choose the first field in a union, or the unexpanded name in a struct
+            field = fields[0]
+            field_type = type_from_ctype(field.type, data.typemap, array_decay=False)
+            size, align = field_type.get_size_align_bytes()
+            output.append(field_type)
+            position = offset + size
+
+        assert position <= struct.size
+        if position < struct.size:
+            # Insert padding bytes
+            output.append(struct.size - position)
+
+        return output
 
     def to_decl(self, name: str, fmt: Formatter) -> str:
         decl = ca.Decl(
@@ -494,10 +556,18 @@ class FunctionSignature:
         return can_unify
 
 
-def type_from_ctype(ctype: CType, typemap: TypeMap) -> Type:
+def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) -> Type:
     real_ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(real_ctype, (ca.PtrDecl, ca.ArrayDecl)):
-        return ptr_type_from_ctype(real_ctype.type, typemap)[0]
+    if isinstance(real_ctype, ca.ArrayDecl):
+        inner_type, dim = ptr_type_from_ctype(real_ctype, typemap)
+        if array_decay:
+            return inner_type
+        size = inner_type.get_size_bits()
+        if size is not None and dim is not None:
+            size *= dim
+        return Type._ctype(real_ctype, typemap, size=size)
+    if isinstance(real_ctype, ca.PtrDecl):
+        return Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False))
     if isinstance(real_ctype, ca.FuncDecl):
         fn = parse_function(real_ctype)
         assert fn is not None
@@ -547,7 +617,10 @@ def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[
                 dim = parse_constant_int(real_ctype.dim, typemap)
         except DecompFailure:
             pass
-        return Type.ptr(type_from_ctype(real_ctype.type, typemap)), dim
+        return (
+            Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False)),
+            dim,
+        )
     return Type.ptr(type_from_ctype(ctype, typemap)), None
 
 
@@ -616,7 +689,7 @@ def find_substruct_array(
     struct = get_struct(ctype.type, typemap)
     if not struct:
         return None
-    for off, fields in struct.fields.items():
+    for off, fields in sorted(struct.fields.items()):
         if offset < off:
             continue
         for field in fields:

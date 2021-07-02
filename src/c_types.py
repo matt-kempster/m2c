@@ -33,6 +33,7 @@ class Struct:
     type: CType
     fields: Dict[int, List[StructField]]
     # TODO: bitfields
+    has_bitfields: bool
     size: int
     align: int
 
@@ -445,6 +446,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     align = 1
     offset = 0
     bit_offset = 0
+    has_bitfields = False
     for decl in struct.decls:
         if not isinstance(decl, ca.Decl):
             continue
@@ -460,6 +462,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             #   'type' (lw/lh/lb, unsigned counterparts). If it straddles a 'type'
             #   alignment boundary, skip all bits up to that boundary and then use the
             #   next 'b' bits from there instead.
+            has_bitfields = True
             width = parse_constant_int(decl.bitsize, typemap)
             ssize, salign, substr = parse_struct_member(
                 type, field_name, typemap, allow_unsized=False
@@ -537,7 +540,9 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
 
     size = union_size if is_union else offset
     size = (size + align - 1) & -align
-    return Struct(type=ctype, fields=fields, size=size, align=align)
+    return Struct(
+        type=ctype, fields=fields, has_bitfields=has_bitfields, size=size, align=align
+    )
 
 
 def add_builtin_typedefs(source: str) -> str:

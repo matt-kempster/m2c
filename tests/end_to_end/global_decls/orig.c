@@ -1,5 +1,10 @@
+struct A;
 struct A {
-    int x[5];
+    char value;
+    int array[5];
+    float array_3d[2][3][4];
+    int *pointer_array[2];
+    struct A *self_pointer;
 };
 
 //void extern_fn(struct A *a);
@@ -7,8 +12,20 @@ struct A {
 //void static_fn(struct A *a) { }
 
 static int static_int;
-static struct A static_A = {{1,2,3,4,5}};
-static struct A *static_A_ptr = &static_A;
+static struct A static_bss_A;
+static struct A *static_A_ptr = &static_bss_A;
+static struct A static_A = {
+    1,
+    {1, 2, 3, 4, 5},
+    { { {1.0f, 2.0f, 3.0f, 4.0f},
+        {5.0f, 6.0f, 7.0f, 8.0f},
+        {9.0f, 0.0f, 1.0f, 2.0f} },
+      { {1.5f, 2.5f, 3.5f, 4.5f},
+        {5.5f, 6.5f, 7.5f, 8.5f},
+        {9.5f, 0.5f, 1.5f, 2.5f} } },
+    { (void *) 0, &static_int },
+    &static_bss_A,
+};
 
 static int static_array[3] = {2, 4, 6};
 static const int static_ro_array[3] = {7, 8, 9};
@@ -22,26 +39,3 @@ int test(void) {
     static_bss_array[0] = static_array[0] + static_ro_array[0];
     return static_int;
 }
-
-/*
-.rodata
-glabel static_A
-.word 0x01, 0x02, 0x03, 0x04, 0x05
-
-glabel static_ro_array
-.word 0x07, 0x08, 0x09
-
-.data
-glabel static_A_ptr
-.word static_A
-
-glabel static_array
-.word 2, 4, 6
-
-.bss
-glabel static_int
-.space 4
-
-glabel static_bss_array
-.space 12
-*/
