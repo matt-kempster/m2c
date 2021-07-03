@@ -1,5 +1,5 @@
 void test(s32 arg0); // static
-extern ?32 D_4101D0;
+extern s32 D_4101D0;
 static ? jtbl_4001A0; // unable to generate initializer; const
 static ? jtbl_4001B8; // unable to generate initializer; const
 
