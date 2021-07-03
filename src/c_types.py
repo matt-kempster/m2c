@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import functools
 import re
 from collections import defaultdict
-from typing import Any, Dict, Iterator, List, Match, Optional, Set, Tuple, Union
+from typing import Dict, Iterator, List, Match, Optional, Set, Tuple, Union
 
 from pycparser import c_ast as ca
 from pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
@@ -30,8 +30,10 @@ class StructField:
 
 @dataclass
 class Struct:
+    type: CType
     fields: Dict[int, List[StructField]]
     # TODO: bitfields
+    has_bitfields: bool
     size: int
     align: int
 
@@ -66,8 +68,8 @@ class TypeMap:
     typedefs: Dict[str, CType] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
     functions: Dict[str, Function] = field(default_factory=dict)
-    named_structs: Dict[str, Struct] = field(default_factory=dict)
-    anon_structs: Dict[int, Struct] = field(default_factory=dict)
+    structs: Dict[Union[str, int], Struct] = field(default_factory=dict)
+    struct_typedefs: Dict[Union[str, int], CType] = field(default_factory=dict)
     enum_values: Dict[str, int] = field(default_factory=dict)
 
 
@@ -143,7 +145,7 @@ def is_void(type: CType) -> bool:
 
 
 def equal_types(a: CType, b: CType) -> bool:
-    def equal(a: Any, b: Any) -> bool:
+    def equal(a: object, b: object) -> bool:
         if a is b:
             return True
         if type(a) != type(b):
@@ -369,9 +371,9 @@ def get_struct(
     struct: Union[ca.Struct, ca.Union], typemap: TypeMap
 ) -> Optional[Struct]:
     if struct.name:
-        return typemap.named_structs.get(struct.name)
+        return typemap.structs.get(struct.name)
     else:
-        return typemap.anon_structs.get(id(struct))
+        return typemap.structs.get(id(struct))
 
 
 def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
@@ -382,9 +384,8 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
         raise DecompFailure(f"Tried to use struct {struct.name} before it is defined.")
     ret = do_parse_struct(struct, typemap)
     if struct.name:
-        typemap.named_structs[struct.name] = ret
-    else:
-        typemap.anon_structs[id(struct)] = ret
+        typemap.structs[struct.name] = ret
+    typemap.structs[id(struct)] = ret
     return ret
 
 
@@ -445,6 +446,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     align = 1
     offset = 0
     bit_offset = 0
+    has_bitfields = False
     for decl in struct.decls:
         if not isinstance(decl, ca.Decl):
             continue
@@ -460,6 +462,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             #   'type' (lw/lh/lb, unsigned counterparts). If it straddles a 'type'
             #   alignment boundary, skip all bits up to that boundary and then use the
             #   next 'b' bits from there instead.
+            has_bitfields = True
             width = parse_constant_int(decl.bitsize, typemap)
             ssize, salign, substr = parse_struct_member(
                 type, field_name, typemap, allow_unsized=False
@@ -527,9 +530,19 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
         bit_offset = 0
         offset += 1
 
+    # If there is a typedef for this struct, prefer using that name
+    if id(struct) in typemap.struct_typedefs:
+        ctype = typemap.struct_typedefs[id(struct)]
+    elif struct.name and struct.name in typemap.struct_typedefs:
+        ctype = typemap.struct_typedefs[struct.name]
+    else:
+        ctype = TypeDecl(declname=None, quals=[], type=struct)
+
     size = union_size if is_union else offset
     size = (size + align - 1) & -align
-    return Struct(fields=fields, size=size, align=align)
+    return Struct(
+        type=ctype, fields=fields, has_bitfields=has_bitfields, size=size, align=align
+    )
 
 
 def add_builtin_typedefs(source: str) -> str:
@@ -600,6 +613,13 @@ def build_typemap(source: str) -> TypeMap:
     for item in ast.ext:
         if isinstance(item, ca.Typedef):
             ret.typedefs[item.name] = item.type
+            if isinstance(item.type, TypeDecl) and isinstance(
+                item.type.type, (ca.Struct, ca.Union)
+            ):
+                typedef = basic_type([item.name])
+                if item.type.type.name:
+                    ret.struct_typedefs[item.type.type.name] = typedef
+                ret.struct_typedefs[id(item.type.type)] = typedef
         if isinstance(item, ca.FuncDef):
             assert item.decl.name is not None, "cannot define anonymous function"
             fn = parse_function(item.decl.type)
@@ -675,8 +695,10 @@ def dump_typemap(typemap: TypeMap) -> None:
         print(f"{type_to_string(fn.type, name)};")
     print()
     print("Structs:")
-    for name, struct in typemap.named_structs.items():
-        print(f"{name}: size {struct.size}, align {struct.align}")
+    for name_or_id, struct in typemap.structs.items():
+        if not isinstance(name_or_id, str):
+            continue
+        print(f"{name_or_id}: size {struct.size}, align {struct.align}")
         for offset, fields in struct.fields.items():
             print(f"  {hex(offset)}:", end="")
             for field in fields:

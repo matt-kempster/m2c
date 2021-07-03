@@ -1,3 +1,6 @@
+void test(s32 arg0); // static
+extern s32 D_4101D0;
+
 void test(s32 arg0) {
     s32 sp4;
     s32 temp_t7;

@@ -1,3 +1,5 @@
+s32 test(s32 arg0); // static
+
 s32 test(s32 arg0) {
     s32 phi_v1;
     s32 phi_v1_2;

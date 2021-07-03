@@ -1,3 +1,7 @@
+s32 test(s32 arg0); // static
+extern s32 D_410150;
+static ? jpt_400130; // unable to generate initializer; const
+
 s32 test(s32 arg0) {
     u32 temp_t6;
     s32 phi_a0;

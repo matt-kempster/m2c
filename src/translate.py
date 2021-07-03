@@ -5,7 +5,8 @@ import struct
 import sys
 import traceback
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
+import typing
+from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from .c_types import TypeMap
 from .error import DecompFailure
@@ -216,7 +217,7 @@ class StackInfo:
     return_addr_location: int = 0
     callee_save_reg_locations: Dict[Register, int] = field(default_factory=dict)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
-    unique_type_map: Dict[Any, "Type"] = field(default_factory=dict)
+    unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
     local_vars: List["LocalVar"] = field(default_factory=list)
     temp_vars: List["EvalOnceStmt"] = field(default_factory=list)
     phi_vars: List["PhiExpr"] = field(default_factory=list)
@@ -289,7 +290,7 @@ class StackInfo:
     def has_nonzero_access(self, ptr: "Expression") -> bool:
         return unwrap_deep(ptr) in self.nonzero_accesses
 
-    def unique_type_for(self, category: str, key: Any, default: Type) -> "Type":
+    def unique_type_for(self, category: str, key: object, default: Type) -> "Type":
         key = (category, key)
         if key not in self.unique_type_map:
             self.unique_type_map[key] = default
@@ -353,7 +354,7 @@ class StackInfo:
         for (category, key), type in self.unique_type_map.items():
             if category != "struct":
                 continue
-            var, offset = key
+            var, offset = typing.cast(Tuple[Expression, int], key)
             if var not in struct_type_map:
                 struct_type_map[var] = {}
             struct_type_map[var][offset] = type
@@ -1165,11 +1166,7 @@ class Literal(Expression):
         suffix = ""
         if not fmt.skip_casts:
             if self.type.is_pointer():
-                prefix = "(void *)"
-            elif self.type.get_size_bits() == 8:
-                prefix = "(u8)"
-            elif self.type.get_size_bits() == 16:
-                prefix = "(u16)"
+                prefix = f"({self.type.format(fmt)})"
             if self.type.is_unsigned():
                 suffix = "U"
         mid = (
@@ -2655,8 +2652,8 @@ CASES_STORE: StoreInstrMap = {
     # Storage instructions
     "sb": lambda a: make_store(a, type=Type.of_size(8)),
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
-    "sw": lambda a: make_store(a, type=Type.of_size(32)),
-    "sd": lambda a: make_store(a, type=Type.of_size(64)),
+    "sw": lambda a: make_store(a, type=Type.likely_intptr_of_size(32)),
+    "sd": lambda a: make_store(a, type=Type.likely_intptr_of_size(64)),
     # Unaligned stores
     "swl": lambda a: handle_swl(a),
     "swr": lambda a: handle_swr(a),
@@ -2950,7 +2947,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lbu": lambda a: handle_load(a, type=Type.u8()),
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
-    "lw": lambda a: handle_load(a, type=Type.of_size(32)),
+    "lw": lambda a: handle_load(a, type=Type.likely_intptr_of_size(32)),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.f32()),
     "ldc1": lambda a: handle_load(a, type=Type.f64()),
@@ -3761,9 +3758,7 @@ class GlobalInfo:
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
     ) -> Optional[str]:
-        if not sym.asm_data_entry or sym.asm_data_entry.is_bss:
-            # IDO only puts symbols in the BSS if they don't have any initializer
-            return None
+        assert sym.asm_data_entry is not None
         data = sym.asm_data_entry.data[:]
 
         def read_uint(n: int) -> Optional[int]:
@@ -3812,14 +3807,28 @@ class GlobalInfo:
                 if value is not None:
                     return Literal(value, type).format(fmt)
 
-            if type.is_pointer():
+            elif type.is_pointer():
                 ptr = read_pointer()
                 if ptr is not None:
                     return as_type(ptr, type, True).format(fmt)
 
-            if type.is_ctype():
-                # TODO: Generate initializers for structs/arrays/etc.
-                return None
+            elif type.is_ctype():
+                ctype_fields = type.get_ctype_fields()
+                if not ctype_fields:
+                    return None
+                members = []
+                for field in ctype_fields:
+                    if isinstance(field, int):
+                        # Check that all padding bytes are 0
+                        padding = read_uint(field)
+                        if padding != 0:
+                            return None
+                    else:
+                        m = for_element_type(field)
+                        if m is None:
+                            return None
+                        members.append(m)
+                return fmt.format_array(members)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None
@@ -3837,7 +3846,7 @@ class GlobalInfo:
                     if el is None:
                         return None
                     elements.append(el)
-                return f"{{{', '.join(elements)}}}"
+                return fmt.format_array(elements)
 
         return for_type(sym.type, sym.array_dim)
 
@@ -3875,7 +3884,7 @@ class GlobalInfo:
                     name,
                 )
                 qualifier = ""
-                value = ""
+                value: Optional[str] = None
                 comments = []
 
                 # Determine type qualifier: static, extern, or neither
@@ -3931,8 +3940,12 @@ class GlobalInfo:
                             sym.array_dim = max_data_size // type_size
 
                 # Try to convert the data from .data/.rodata into an initializer
-                if sym.asm_data_entry is not None:
-                    value = self.initializer_for_symbol(sym, fmt) or ""
+                if sym.asm_data_entry is not None and not sym.asm_data_entry.is_bss:
+                    value = self.initializer_for_symbol(sym, fmt)
+                    if value is None:
+                        # This warning helps distinguish .bss symbols from .data/.rodata,
+                        # IDO only puts symbols in .bss if they don't have any initializer
+                        comments.append("unable to generate initializer")
 
                 if not is_in_file and is_global:
                     # Skip externally-declared symbols that are defined in other files

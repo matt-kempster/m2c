@@ -1,3 +1,8 @@
+void test(s32 arg0); // static
+extern s32 D_4101D0;
+static ? jtbl_4001A0; // unable to generate initializer; const
+static ? jtbl_4001B8; // unable to generate initializer; const
+
 void test(s32 arg0) {
     u32 temp_t1;
     u32 temp_t6;

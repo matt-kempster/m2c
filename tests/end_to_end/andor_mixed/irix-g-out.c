@@ -1,7 +1,9 @@
-?32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
+s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3); // static
+
+s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 spC;
     s32 sp8;
-    ?32 sp4;
+    s32 sp4;
 
     spC = arg0 + arg1;
     sp8 = arg1 + arg2;

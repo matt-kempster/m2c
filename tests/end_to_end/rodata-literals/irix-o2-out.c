@@ -1,3 +1,9 @@
+void test(); // static
+extern f32 D_410120;
+extern f64 D_410128;
+extern f64 D_410130;
+extern ? *D_410138;
+
 void test(void) {
     D_410120 = 1.2f;
     D_410128 = 13.0;

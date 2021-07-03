@@ -1,3 +1,5 @@
+f32 test(f32 arg0); // static
+
 f32 test(f32 arg0) {
     f32 spC;
     f32 sp8;

@@ -102,7 +102,7 @@ def run(options: Options) -> int:
         fn_info = function_infos[0]
         if isinstance(fn_info, Exception):
             raise fn_info
-        visualize_flowgraph(fn_info.flow_graph)
+        print(visualize_flowgraph(fn_info.flow_graph))
         return 0
 
     fmt = options.formatter()
@@ -143,7 +143,7 @@ def run(options: Options) -> int:
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(
         description="Decompile MIPS assembly to C.",
-        usage="%(prog)s [--context C_FILE] [--emit-globals] [-f FN ...] filename [filename ...]",
+        usage="%(prog)s [--context C_FILE] [-f FN ...] filename [filename ...]",
     )
 
     group = parser.add_argument_group("Input Options")
@@ -198,10 +198,10 @@ def parse_flags(flags: List[str]) -> Options:
         "unusual statements. Macro definitions are in `mips2c_macros.h`.",
     )
     group.add_argument(
-        "--emit-globals",
+        "--no-emit-globals",
         dest="emit_globals",
-        action="store_true",
-        help="emit global declarations with inferred types.",
+        action="store_false",
+        help="do not emit global declarations with inferred types.",
     )
     group.add_argument(
         "--debug",
@@ -240,7 +240,7 @@ def parse_flags(flags: List[str]) -> Options:
         "--visualize",
         dest="visualize",
         action="store_true",
-        help="display a visualization of the control flow graph using graphviz",
+        help="print an SVG visualization of the control flow graph using graphviz",
     )
     group.add_argument(
         "--sanitize-tracebacks",
@@ -340,6 +340,10 @@ def parse_flags(flags: List[str]) -> Options:
             functions.append(int(fn))
         except ValueError:
             functions.append(fn)
+
+    # The debug output interferes with the visualize output
+    if args.visualize:
+        args.debug = False
 
     return Options(
         filenames=filenames,

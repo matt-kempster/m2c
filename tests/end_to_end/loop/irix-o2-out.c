@@ -1,3 +1,5 @@
+s32 test(s8 *arg0, s32 arg1); // static
+
 s32 test(s8 *arg0, s32 arg1) {
     s32 temp_a3;
     s32 temp_v0;
@@ -19,7 +21,7 @@ s32 test(s8 *arg0, s32 arg1) {
             phi_v0 = 0;
             do {
                 temp_v0 = phi_v0 + 1;
-                *phi_v1 = (u8)0;
+                *phi_v1 = 0;
                 phi_v1 += 1;
                 phi_v0 = temp_v0;
             } while (temp_a3 != temp_v0);
@@ -31,11 +33,11 @@ block_5:
                 phi_v0_2 = phi_v0_3;
                 do {
                     temp_v0_2 = phi_v0_2 + 4;
-                    phi_v1_2->unk1 = (u8)0;
-                    phi_v1_2->unk2 = (u8)0;
-                    phi_v1_2->unk3 = (u8)0;
+                    phi_v1_2->unk1 = 0;
+                    phi_v1_2->unk2 = 0;
+                    phi_v1_2->unk3 = 0;
                     temp_v1 = phi_v1_2 + 4;
-                    temp_v1->unk-4 = (u8)0;
+                    temp_v1->unk-4 = 0;
                     phi_v1_2 = temp_v1;
                     phi_v0_2 = temp_v0_2;
                     phi_return = temp_v0_2;

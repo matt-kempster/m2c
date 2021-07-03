@@ -1,3 +1,7 @@
+u16 func_0040012C(?); // static
+u16 test(); // static
+extern s32 D_410150;
+
 u16 test(void) {
     u16 sp1E;
 

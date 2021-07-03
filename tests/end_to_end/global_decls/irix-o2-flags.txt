@@ -1,1 +1,1 @@
---context orig.c --valid-syntax --emit-globals
+--context orig.c --valid-syntax
