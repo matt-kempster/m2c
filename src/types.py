@@ -50,6 +50,10 @@ class TypeData:
     ctype_ref: Optional[CType] = None  # K_CTYPE
     fn_sig: Optional["FunctionSignature"] = None  # K_FN
 
+    def __post_init__(self) -> None:
+        assert self.kind
+        self.likely_kind &= self.kind
+
     def get_representative(self) -> "TypeData":
         if self.uf_parent is None:
             return self
@@ -151,6 +155,10 @@ class Type:
 
     def is_float(self) -> bool:
         return self.data().kind == TypeData.K_FLOAT
+
+    def is_likely_float(self) -> bool:
+        data = self.data()
+        return data.kind == TypeData.K_FLOAT or data.likely_kind == TypeData.K_FLOAT
 
     def is_pointer(self) -> bool:
         return self.data().kind == TypeData.K_PTR
@@ -315,14 +323,18 @@ class Type:
         size = data.size or 32
         sign = "s" if data.sign & TypeData.SIGNED else "u"
 
-        if (
-            data.kind & TypeData.K_ANYREG
-        ) == TypeData.K_ANYREG and data.likely_kind & TypeData.K_FLOAT:
+        if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG and (
+            data.likely_kind & (TypeData.K_INT | TypeData.K_FLOAT)
+        ) not in (TypeData.K_INT, TypeData.K_FLOAT):
             if data.size is not None:
                 return simple_ctype(f"{unk_symbol}{size}")
             return simple_ctype(unk_symbol)
 
-        if data.kind == TypeData.K_FLOAT:
+        if (
+            data.kind == TypeData.K_FLOAT
+            or (data.likely_kind & (TypeData.K_FLOAT | TypeData.K_INT))
+            == TypeData.K_FLOAT
+        ):
             return simple_ctype(f"f{size}")
 
         if data.kind == TypeData.K_PTR:
@@ -476,14 +488,19 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT, size=64))
 
     @staticmethod
-    def of_size(size: int) -> "Type":
-        return Type(TypeData(kind=TypeData.K_ANY, size=size))
+    def int_of_size(size: int) -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, size=size))
 
     @staticmethod
-    def likely_intptr_of_size(size: int) -> "Type":
-        return Type(
-            TypeData(kind=TypeData.K_ANY, likely_kind=TypeData.K_INTPTR, size=size)
-        )
+    def reg32(*, likely_float: bool) -> "Type":
+        likely = TypeData.K_FLOAT if likely_float else TypeData.K_INTPTR
+        return Type(TypeData(kind=TypeData.K_ANYREG, likely_kind=likely, size=32))
+
+    @staticmethod
+    def reg64(*, likely_float: bool) -> "Type":
+        kind = TypeData.K_FLOAT | TypeData.K_INT
+        likely = TypeData.K_FLOAT if likely_float else TypeData.K_INT
+        return Type(TypeData(kind=kind, likely_kind=likely, size=64))
 
     @staticmethod
     def bool() -> "Type":
@@ -610,9 +627,7 @@ def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) ->
         if not size:
             return Type._ctype(ctype, typemap, size=None)
         sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
-        return Type(
-            TypeData(kind=TypeData.K_INT, size=size, sign=sign, typemap=typemap)
-        )
+        return Type(TypeData(kind=TypeData.K_INT, size=size, sign=sign))
 
 
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[int]]:

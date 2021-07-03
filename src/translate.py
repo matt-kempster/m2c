@@ -278,9 +278,9 @@ class StackInfo:
             type=self.unique_type_for("arg", real_location, Type.any_reg()),
         )
         if real_location == location - 3:
-            return as_type(arg, Type.of_size(8), True), arg
+            return as_type(arg, Type.int_of_size(8), True), arg
         if real_location == location - 2:
-            return as_type(arg, Type.of_size(16), True), arg
+            return as_type(arg, Type.int_of_size(16), True), arg
         return arg, arg
 
     def record_struct_access(self, ptr: "Expression", location: int) -> None:
@@ -1144,7 +1144,7 @@ class Literal(Expression):
         return []
 
     def format(self, fmt: Formatter) -> str:
-        if self.type.is_float():
+        if self.type.is_likely_float():
             if self.type.get_size_bits() == 32:
                 return format_f32_imm(self.value) + "f"
             else:
@@ -1848,6 +1848,7 @@ def elide_casts_for_store(expr: Expression) -> Expression:
     if isinstance(uw_expr, Cast) and not uw_expr.needed_for_store():
         return elide_casts_for_store(uw_expr.expr)
     if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
+        # Avoid suffixes for unsigned ints
         return Literal(uw_expr.value, type=Type.intish())
     return uw_expr
 
@@ -2141,7 +2142,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
         if (
             isinstance(target, AddressOf)
             and isinstance(target.expr, GlobalSymbol)
-            and type.is_float()
+            and type.is_likely_float()
         ):
             sym_name = target.expr.symbol_name
             ent = args.stack_info.global_info.asm_data_value(sym_name)
@@ -2214,7 +2215,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_raw = args.regs.get_raw(source_reg)
-    if type.is_float() and type.get_size_bits() == 64:
+    if type.is_likely_float() and type.get_size_bits() == 64:
         source_val = args.dreg(0)
     else:
         source_val = args.reg(0)
@@ -2635,16 +2636,16 @@ CASES_IGNORE: InstrSet = {
 }
 CASES_STORE: StoreInstrMap = {
     # Storage instructions
-    "sb": lambda a: make_store(a, type=Type.of_size(8)),
-    "sh": lambda a: make_store(a, type=Type.of_size(16)),
-    "sw": lambda a: make_store(a, type=Type.likely_intptr_of_size(32)),
-    "sd": lambda a: make_store(a, type=Type.likely_intptr_of_size(64)),
+    "sb": lambda a: make_store(a, type=Type.int_of_size(8)),
+    "sh": lambda a: make_store(a, type=Type.int_of_size(16)),
+    "sw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+    "sd": lambda a: make_store(a, type=Type.reg64(likely_float=False)),
     # Unaligned stores
     "swl": lambda a: handle_swl(a),
     "swr": lambda a: handle_swr(a),
     # Floating point storage/conversion
-    "swc1": lambda a: make_store(a, type=Type.f32()),
-    "sdc1": lambda a: make_store(a, type=Type.f64()),
+    "swc1": lambda a: make_store(a, type=Type.reg32(likely_float=True)),
+    "sdc1": lambda a: make_store(a, type=Type.reg64(likely_float=True)),
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
@@ -2932,10 +2933,10 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lbu": lambda a: handle_load(a, type=Type.u8()),
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
-    "lw": lambda a: handle_load(a, type=Type.likely_intptr_of_size(32)),
+    "lw": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
-    "lwc1": lambda a: handle_load(a, type=Type.f32()),
-    "ldc1": lambda a: handle_load(a, type=Type.f64()),
+    "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
+    "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
     # Unaligned load for the left part of a register (lwl can technically merge
     # with a pre-existing lwr, but doesn't in practice, so we treat this as a
     # standard destination-first operation)
@@ -3781,7 +3782,7 @@ class GlobalInfo:
 
         def for_element_type(type: Type) -> Optional[str]:
             """Return the initializer for a single element of type `type`"""
-            if type.is_int() or type.is_float():
+            if type.is_int() or type.is_likely_float():
                 size_bits = type.get_size_bits()
                 if size_bits == 0:
                     return None
@@ -3944,7 +3945,7 @@ class GlobalInfo:
                     # Float & string constants are almost always inlined and can be omitted
                     if sym.is_string_constant():
                         continue
-                    if sym.array_dim is None and sym.type.is_float():
+                    if sym.array_dim is None and sym.type.is_likely_float():
                         continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
