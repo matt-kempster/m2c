@@ -1532,11 +1532,14 @@ class BlockInfo:
         newline = "\n\t"
         return "\n".join(
             [
-                f"Statements: {newline.join(str(w) for w in self.to_write if w.should_write())}",
+                f"Statements: {newline.join(str(w) for w in self.statements_to_write())}",
                 f"Branch condition: {self.branch_condition}",
                 f"Final register states: {self.final_register_states}",
             ]
         )
+
+    def statements_to_write(self) -> List[Statement]:
+        return [st for st in self.to_write if st.should_write()]
 
 
 @dataclass
