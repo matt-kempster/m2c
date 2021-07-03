@@ -166,6 +166,9 @@ class Type:
     def is_int(self) -> bool:
         return self.data().kind == TypeData.K_INT
 
+    def is_reg(self) -> bool:
+        return (self.data().kind & ~TypeData.K_ANYREG) == 0
+
     def is_ctype(self) -> bool:
         return self.data().kind == TypeData.K_CTYPE
 

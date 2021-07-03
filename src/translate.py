@@ -3765,40 +3765,16 @@ class GlobalInfo:
 
         def read_pointer() -> Optional[Expression]:
             """Read the next label from `data`"""
-            if not data:
+            if not data or not isinstance(data[0], str):
                 return None
 
-            if not isinstance(data[0], str):
-                # Bare pointer
-                value = read_uint(4)
-                if value is None:
-                    return None
-                return Literal(value=value)
-
-            # Pointer label
-            label = data.pop(0)
-            assert isinstance(label, str)
+            label = data[0]
+            data.pop(0)
             return self.address_of_gsym(label)
 
         def for_element_type(type: Type) -> Optional[str]:
             """Return the initializer for a single element of type `type`"""
-            if type.is_int() or type.is_likely_float():
-                size_bits = type.get_size_bits()
-                if size_bits == 0:
-                    return None
-                elif size_bits is None:
-                    # Unknown size; guess 32 bits
-                    size_bits = 32
-                value = read_uint(size_bits // 8)
-                if value is not None:
-                    return Literal(value, type).format(fmt)
-
-            elif type.is_pointer():
-                ptr = read_pointer()
-                if ptr is not None:
-                    return as_type(ptr, type, True).format(fmt)
-
-            elif type.is_ctype():
+            if type.is_ctype():
                 ctype_fields = type.get_ctype_fields()
                 if not ctype_fields:
                     return None
@@ -3815,6 +3791,24 @@ class GlobalInfo:
                             return None
                         members.append(m)
                 return fmt.format_array(members)
+
+            if type.is_reg():
+                size_bits = type.get_size_bits()
+                if size_bits == 0:
+                    return None
+                elif size_bits is None:
+                    # Unknown size; guess 32 bits
+                    size_bits = 32
+
+                if size_bits == 32:
+                    ptr = read_pointer()
+                    if ptr is not None:
+                        return as_type(ptr, type, silent=True).format(fmt)
+
+                value = read_uint(size_bits // 8)
+                if value is not None:
+                    expr = as_type(Literal(value), type, True)
+                    return elide_casts_for_store(expr).format(fmt)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None
