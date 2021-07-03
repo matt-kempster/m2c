@@ -40,6 +40,7 @@ class TypeData:
     ANY_SIGN = 3
 
     kind: int = K_ANY
+    likely_kind: int = K_ANY  # subset of kind
     size: Optional[int] = None
     uf_parent: Optional["TypeData"] = None
 
@@ -97,6 +98,7 @@ class Type:
             return False
 
         kind = x.kind & y.kind
+        likely_kind = x.likely_kind & y.likely_kind
         size = x.size if x.size is not None else y.size
         typemap = x.typemap if x.typemap is not None else y.typemap
         ctype_ref = x.ctype_ref if x.ctype_ref is not None else y.ctype_ref
@@ -111,6 +113,7 @@ class Type:
             kind &= ~TypeData.K_FN
         if size not in (None, 0):
             kind &= ~TypeData.K_VOID
+        likely_kind &= kind
         if kind == 0 or sign == 0:
             return False
         if kind == TypeData.K_PTR:
@@ -130,6 +133,7 @@ class Type:
             if not x.fn_sig.unify(y.fn_sig, seen=seen):
                 return False
         x.kind = kind
+        x.likely_kind = likely_kind
         x.size = size
         x.sign = sign
         x.ptr_to = ptr_to
@@ -311,7 +315,9 @@ class Type:
         size = data.size or 32
         sign = "s" if data.sign & TypeData.SIGNED else "u"
 
-        if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG:
+        if (
+            data.kind & TypeData.K_ANYREG
+        ) == TypeData.K_ANYREG and data.likely_kind & TypeData.K_FLOAT:
             if data.size is not None:
                 return simple_ctype(f"{unk_symbol}{size}")
             return simple_ctype(unk_symbol)
@@ -406,10 +412,6 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INTPTR))
 
     @staticmethod
-    def intptr32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INTPTR, size=32))
-
-    @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
         return Type(TypeData(kind=TypeData.K_PTR, size=32, ptr_to=type))
 
@@ -476,6 +478,12 @@ class Type:
     @staticmethod
     def of_size(size: int) -> "Type":
         return Type(TypeData(kind=TypeData.K_ANY, size=size))
+
+    @staticmethod
+    def likely_intptr_of_size(size: int) -> "Type":
+        return Type(
+            TypeData(kind=TypeData.K_ANY, likely_kind=TypeData.K_INTPTR, size=size)
+        )
 
     @staticmethod
     def bool() -> "Type":

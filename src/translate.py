@@ -2637,8 +2637,8 @@ CASES_STORE: StoreInstrMap = {
     # Storage instructions
     "sb": lambda a: make_store(a, type=Type.of_size(8)),
     "sh": lambda a: make_store(a, type=Type.of_size(16)),
-    "sw": lambda a: make_store(a, type=Type.of_size(32)),
-    "sd": lambda a: make_store(a, type=Type.of_size(64)),
+    "sw": lambda a: make_store(a, type=Type.likely_intptr_of_size(32)),
+    "sd": lambda a: make_store(a, type=Type.likely_intptr_of_size(64)),
     # Unaligned stores
     "swl": lambda a: handle_swl(a),
     "swr": lambda a: handle_swr(a),
@@ -2932,7 +2932,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lbu": lambda a: handle_load(a, type=Type.u8()),
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
-    "lw": lambda a: handle_load(a, type=Type.of_size(32)),
+    "lw": lambda a: handle_load(a, type=Type.likely_intptr_of_size(32)),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.f32()),
     "ldc1": lambda a: handle_load(a, type=Type.f64()),

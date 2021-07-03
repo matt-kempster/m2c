@@ -1,5 +1,5 @@
 s32 func_00400140(?, ?, s32, ?, s32); // static
-? func_00400158(?32, s32, s32); // static
+? func_00400158(s32, s32, s32); // static
 s32 test(s32 arg0, ? arg1); // static
 extern s32 D_410170;
 extern ? D_410178;
@@ -7,7 +7,7 @@ extern ? D_410178;
 s32 test(s32 arg0, ? arg1) {
     s32 sp2C;
     s32 sp28;
-    ?32 sp24;
+    s32 sp24;
     s32 temp_a2;
     s32 temp_v0_2;
     void *temp_v0;
