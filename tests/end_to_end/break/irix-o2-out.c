@@ -1,5 +1,5 @@
 s32 test(s32 arg0); // static
-extern s32 D_410150;
+extern ? D_410150;
 
 s32 test(s32 arg0) {
     s32 temp_v0;

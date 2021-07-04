@@ -184,6 +184,10 @@ class Type:
     def get_size_bits(self) -> Optional[int]:
         return self.data().size
 
+    def get_size_bytes(self) -> Optional[int]:
+        size = self.get_size_bits()
+        return None if size is None else size // 8
+
     def get_size_align_bytes(self) -> Tuple[int, int]:
         data = self.data()
         if data.kind == TypeData.K_CTYPE and data.ctype_ref is not None:

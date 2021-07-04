@@ -1,15 +1,15 @@
-? func_004000B0(s32 *); // static
+? func_004000B0(? *); // static
 void test(); // static
-extern s32 D_400150;
+extern ? D_400150;
 extern ? D_400158;
-extern s32 D_410160;
+extern ? D_410160;
 extern ? D_410161;
 extern ? D_410169;
 extern ? D_410170;
 extern s32 D_410178;
 
 void test(void) {
-    s32 sp18;
+    ? sp18;
 
     sp18.unk0 = (s32) D_400150.unk0;
     sp18.unk4 = (first 3 bytes) D_400150.unk4;

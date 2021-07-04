@@ -1697,15 +1697,17 @@ def deref(
     # Dereferencing pointers of known types
     target = var.type.get_pointer_target()
     if field_name is None and target is not None:
-        sub_size, sub_align = target.get_size_align_bytes()
-        if sub_size == size and offset % size == 0 and sub_align != 0:
+        sub_size = target.get_size_bytes()
+        if sub_size == size and offset % size == 0:
             # TODO: This only turns the deref into an ArrayAccess if the type
             # is *known* to be an array (CType). This could be expanded to support
             # arrays of other types.
             if offset != 0 and target.is_ctype():
                 index = Literal(value=offset // size, type=Type.s32())
                 return ArrayAccess(var, index, type=target)
-            type = target
+            else:
+                # Don't emit an array access, but at least help type inference along
+                type = target
 
     return StructAccess(
         struct_var=var,
@@ -2132,8 +2134,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     # For now, make the cast silent so that output doesn't become cluttered.
     # Though really, it would be great to expose the load types somehow...
-    # If the type size is unknown, default to 32 bits
-    size = (type.get_size_bits() or 32) // 8
+    size = type.get_size_bytes()
+    assert size is not None
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     # Detect rodata constants
@@ -2210,12 +2212,12 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
-    # If the type size is unknown, default to 32 bits
-    size = (type.get_size_bits() or 32) // 8
+    size = type.get_size_bytes()
+    assert size is not None
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_raw = args.regs.get_raw(source_reg)
-    if type.is_likely_float() and type.get_size_bits() == 64:
+    if type.is_likely_float() and size == 8:
         source_val = args.dreg(0)
     else:
         source_val = args.reg(0)
@@ -3793,16 +3795,16 @@ class GlobalInfo:
                 return fmt.format_array(members)
 
             if type.is_reg():
-                size_bits = type.get_size_bits()
-                if not size_bits:
+                size = type.get_size_bytes()
+                if not size:
                     return None
 
-                if size_bits == 32:
+                if size == 4:
                     ptr = read_pointer()
                     if ptr is not None:
                         return as_type(ptr, type, silent=True).format(fmt)
 
-                value = read_uint(size_bits // 8)
+                value = read_uint(size)
                 if value is not None:
                     expr = as_type(Literal(value), type, True)
                     return elide_casts_for_store(expr).format(fmt)
@@ -3887,9 +3889,8 @@ class GlobalInfo:
                     # between sections. Generally `(max_data_size - data_size) < 16`.
                     min_data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
                     # The size of the element type (not the size of the array type)
-                    type_size_bits = sym.type.get_size_bits()
-                    type_size = (type_size_bits or 0) // 8
-                    if not type_size_bits:
+                    type_size = sym.type.get_size_bytes()
+                    if not type_size:
                         # If we don't know the type, we can't guess the array_dim
                         pass
                     elif type_size > max_data_size:
