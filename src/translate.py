@@ -3842,17 +3842,24 @@ class GlobalInfo:
             for name in sorted(names):
                 processed_names.add(name)
                 sym = self.global_symbol_map[name]
+                data_entry = sym.asm_data_entry
 
                 # Is the label defined in this unit (in the active AsmData file(s))
-                is_in_file = (sym.asm_data_entry is not None) or (
-                    name in self.local_functions
-                )
+                is_in_file = data_entry is not None or name in self.local_functions
                 # Is the label externally visible (mentioned in the context file)
                 is_global = sym.type_in_typemap
                 # Is the label a symbol in .rodata?
-                is_const = (
-                    sym.asm_data_entry is not None
-                ) and sym.asm_data_entry.is_readonly
+                is_const = data_entry is not None and data_entry.is_readonly
+
+                if data_entry and data_entry.is_jtbl:
+                    # Skip jump tables
+                    continue
+                if is_in_file and is_global and sym.type.is_function():
+                    # Skip externally-declared functions that are defined here
+                    continue
+                if not is_in_file and is_global:
+                    # Skip externally-declared symbols that are defined in other files
+                    continue
 
                 # TODO: Use original MIPSFile ordering for variables
                 sort_order = (
@@ -3881,13 +3888,11 @@ class GlobalInfo:
                 # Try to guess the symbol's `array_dim` if we have a data entry for it,
                 # and it does not exist in the typemap or dim is unknown.
                 # (Otherwise, if the dim is provided by the typemap, we trust it.)
-                if sym.asm_data_entry and (
-                    not sym.type_in_typemap or sym.array_dim == 0
-                ):
+                if data_entry and (not sym.type_in_typemap or sym.array_dim == 0):
                     assert sym.array_dim is None or sym.array_dim == 0
                     # The size of the data entry is uncertain, because of padding
                     # between sections. Generally `(max_data_size - data_size) < 16`.
-                    min_data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
+                    min_data_size, max_data_size = data_entry.size_range_bytes()
                     # The size of the element type (not the size of the array type)
                     type_size = sym.type.get_size_bytes()
                     if not type_size:
@@ -3918,19 +3923,13 @@ class GlobalInfo:
                             sym.array_dim = max_data_size // type_size
 
                 # Try to convert the data from .data/.rodata into an initializer
-                if sym.asm_data_entry is not None and not sym.asm_data_entry.is_bss:
+                if data_entry and not data_entry.is_bss:
                     value = self.initializer_for_symbol(sym, fmt)
                     if value is None:
                         # This warning helps distinguish .bss symbols from .data/.rodata,
                         # IDO only puts symbols in .bss if they don't have any initializer
                         comments.append("unable to generate initializer")
 
-                if not is_in_file and is_global:
-                    # Skip externally-declared symbols that are defined in other files
-                    continue
-                if is_in_file and is_global and sym.type.is_function():
-                    # Skip externally-declared functions that are defined here
-                    continue
                 if is_const:
                     comments.append("const")
 
