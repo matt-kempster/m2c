@@ -3004,7 +3004,7 @@ def output_regs_for_instr(
             if c_fn and c_fn.ret_type is None:
                 return []
     if mnemonic in CASES_FN_CALL:
-        return list(map(Register, ["return", "f0", "v0", "v1"]))
+        return list(map(Register, ["return", "f0", "f1", "v0", "v1"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
