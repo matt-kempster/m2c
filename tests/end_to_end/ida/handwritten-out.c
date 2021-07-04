@@ -1,4 +1,3 @@
-s32 test(); // static
 extern ? symbol;
 
 s32 test(void) {

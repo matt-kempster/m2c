@@ -1,4 +1,3 @@
-void test(s32 arg0); // static
 extern ? D_4101D0;
 
 void test(s32 arg0) {

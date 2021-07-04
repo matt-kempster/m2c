@@ -1,4 +1,3 @@
-void test(); // static
 extern s8 D_410140;
 extern u8 D_410141;
 extern s16 D_410142;

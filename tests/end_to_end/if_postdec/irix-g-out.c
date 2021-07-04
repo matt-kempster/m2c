@@ -1,4 +1,3 @@
-? test(); // static
 extern s32 D_4100F0;
 
 ? test(void) {

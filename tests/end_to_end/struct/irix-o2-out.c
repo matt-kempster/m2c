@@ -1,5 +1,3 @@
-void *test(void *arg0, void *arg1); // static
-
 void *test(void *arg0, void *arg1) {
     arg0->unk4 = (s32) (arg0->unk0 + arg0->unk4);
     arg1->unk0 = (s32) arg0->unk0;

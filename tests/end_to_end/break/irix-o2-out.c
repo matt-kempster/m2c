@@ -1,4 +1,3 @@
-s32 test(s32 arg0); // static
 extern ? D_410150;
 
 s32 test(s32 arg0) {

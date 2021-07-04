@@ -1,4 +1,3 @@
-s8 test(s8 arg0); // static
 extern s32 D_410110;
 
 s8 test(s8 arg0) {

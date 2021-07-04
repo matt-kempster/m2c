@@ -1,4 +1,3 @@
-? *test(); // static
 extern s8 D_410110;
 extern u8 D_410111;
 extern s16 D_410112;

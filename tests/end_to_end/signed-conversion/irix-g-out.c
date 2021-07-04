@@ -1,4 +1,3 @@
-void test(s8 arg0); // static
 extern s32 D_410140;
 
 void test(s8 arg0) {

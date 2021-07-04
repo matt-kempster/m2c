@@ -1,4 +1,3 @@
-f32 test(); // static
 extern f32 D_4100E0;
 extern f64 D_4100E8;
 

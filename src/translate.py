@@ -3857,6 +3857,9 @@ class GlobalInfo:
                 if is_in_file and is_global and sym.type.is_function():
                     # Skip externally-declared functions that are defined here
                     continue
+                if self.local_functions == {name}:
+                    # Skip the function being decompiled if just a single one
+                    continue
                 if not is_in_file and is_global:
                     # Skip externally-declared symbols that are defined in other files
                     continue
