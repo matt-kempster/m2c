@@ -3794,11 +3794,8 @@ class GlobalInfo:
 
             if type.is_reg():
                 size_bits = type.get_size_bits()
-                if size_bits == 0:
+                if not size_bits:
                     return None
-                elif size_bits is None:
-                    # Unknown size; guess 32 bits
-                    size_bits = 32
 
                 if size_bits == 32:
                     ptr = read_pointer()
