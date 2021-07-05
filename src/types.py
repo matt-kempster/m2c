@@ -55,10 +55,19 @@ class TypeData:
         self.likely_kind &= self.kind
 
     def get_representative(self) -> "TypeData":
-        if self.uf_parent is None:
-            return self
-        self.uf_parent = self.uf_parent.get_representative()
-        return self.uf_parent
+        # Follow `uf_parent` links until we hit the "root" TypeData
+        equivalent_typedatas = set()
+        root = self
+        while root.uf_parent is not None:
+            assert root not in equivalent_typedatas, "TypeData cycle detected"
+            equivalent_typedatas.add(root)
+            root = root.uf_parent
+
+        # Set the `uf_parent` pointer on all visited TypeDatas
+        for td in equivalent_typedatas:
+            td.uf_parent = root
+
+        return root
 
 
 @dataclass(eq=False, repr=False)
