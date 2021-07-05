@@ -1,5 +1,3 @@
-s32 test(); // static
-
 s32 test(void) {
     s32 phi_a0;
 

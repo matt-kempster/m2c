@@ -1,4 +1,3 @@
-void test(); // static
 extern f32 D_410120;
 extern f64 D_410128;
 extern f64 D_410130;

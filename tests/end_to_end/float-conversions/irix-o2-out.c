@@ -1,4 +1,3 @@
-u32 *test(); // static
 extern f32 D_410230;
 extern f64 D_410238;
 extern u32 D_410240;

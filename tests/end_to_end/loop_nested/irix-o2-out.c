@@ -1,5 +1,3 @@
-s32 test(s32 arg0); // static
-
 s32 test(s32 arg0) {
     s32 temp_a1;
     s32 temp_t1;

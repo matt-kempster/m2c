@@ -278,9 +278,9 @@ class StackInfo:
             type=self.unique_type_for("arg", real_location, Type.any_reg()),
         )
         if real_location == location - 3:
-            return as_type(arg, Type.of_size(8), True), arg
+            return as_type(arg, Type.int_of_size(8), True), arg
         if real_location == location - 2:
-            return as_type(arg, Type.of_size(16), True), arg
+            return as_type(arg, Type.int_of_size(16), True), arg
         return arg, arg
 
     def record_struct_access(self, ptr: "Expression", location: int) -> None:
@@ -1154,7 +1154,7 @@ class Literal(Expression):
         return []
 
     def format(self, fmt: Formatter) -> str:
-        if self.type.is_float():
+        if self.type.is_likely_float():
             if self.type.get_size_bits() == 32:
                 return format_f32_imm(self.value) + "f"
             else:
@@ -1710,15 +1710,17 @@ def deref(
     # Dereferencing pointers of known types
     target = var.type.get_pointer_target()
     if field_name is None and target is not None:
-        sub_size, sub_align = target.get_size_align_bytes()
-        if sub_size == size and offset % size == 0 and sub_align != 0:
+        sub_size = target.get_size_bytes()
+        if sub_size == size and offset % size == 0:
             # TODO: This only turns the deref into an ArrayAccess if the type
             # is *known* to be an array (CType). This could be expanded to support
             # arrays of other types.
             if offset != 0 and target.is_ctype():
                 index = Literal(value=offset // size, type=Type.s32())
                 return ArrayAccess(var, index, type=target)
-            type = target
+            else:
+                # Don't emit an array access, but at least help type inference along
+                type = target
 
     return StructAccess(
         struct_var=var,
@@ -1866,6 +1868,7 @@ def elide_casts_for_store(expr: Expression) -> Expression:
     if isinstance(uw_expr, Cast) and not uw_expr.needed_for_store():
         return elide_casts_for_store(uw_expr.expr)
     if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
+        # Avoid suffixes for unsigned ints
         return Literal(uw_expr.value, type=Type.intish())
     return uw_expr
 
@@ -2149,8 +2152,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     # For now, make the cast silent so that output doesn't become cluttered.
     # Though really, it would be great to expose the load types somehow...
-    # If the type size is unknown, default to 32 bits
-    size = (type.get_size_bits() or 32) // 8
+    size = type.get_size_bytes()
+    assert size is not None
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     # Detect rodata constants
@@ -2159,7 +2162,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
         if (
             isinstance(target, AddressOf)
             and isinstance(target.expr, GlobalSymbol)
-            and type.is_float()
+            and type.is_likely_float()
         ):
             sym_name = target.expr.symbol_name
             ent = args.stack_info.global_info.asm_data_value(sym_name)
@@ -2227,12 +2230,12 @@ def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
 
 
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
-    # If the type size is unknown, default to 32 bits
-    size = (type.get_size_bits() or 32) // 8
+    size = type.get_size_bytes()
+    assert size is not None
     stack_info = args.stack_info
     source_reg = args.reg_ref(0)
     source_raw = args.regs.get_raw(source_reg)
-    if type.is_float() and type.get_size_bits() == 64:
+    if type.is_likely_float() and size == 8:
         source_val = args.dreg(0)
     else:
         source_val = args.reg(0)
@@ -2653,16 +2656,16 @@ CASES_IGNORE: InstrSet = {
 }
 CASES_STORE: StoreInstrMap = {
     # Storage instructions
-    "sb": lambda a: make_store(a, type=Type.of_size(8)),
-    "sh": lambda a: make_store(a, type=Type.of_size(16)),
-    "sw": lambda a: make_store(a, type=Type.likely_intptr_of_size(32)),
-    "sd": lambda a: make_store(a, type=Type.likely_intptr_of_size(64)),
+    "sb": lambda a: make_store(a, type=Type.int_of_size(8)),
+    "sh": lambda a: make_store(a, type=Type.int_of_size(16)),
+    "sw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+    "sd": lambda a: make_store(a, type=Type.reg64(likely_float=False)),
     # Unaligned stores
     "swl": lambda a: handle_swl(a),
     "swr": lambda a: handle_swr(a),
     # Floating point storage/conversion
-    "swc1": lambda a: make_store(a, type=Type.f32()),
-    "sdc1": lambda a: make_store(a, type=Type.f64()),
+    "swc1": lambda a: make_store(a, type=Type.reg32(likely_float=True)),
+    "sdc1": lambda a: make_store(a, type=Type.reg64(likely_float=True)),
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
@@ -2950,10 +2953,10 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lbu": lambda a: handle_load(a, type=Type.u8()),
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
-    "lw": lambda a: handle_load(a, type=Type.likely_intptr_of_size(32)),
+    "lw": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
-    "lwc1": lambda a: handle_load(a, type=Type.f32()),
-    "ldc1": lambda a: handle_load(a, type=Type.f64()),
+    "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
+    "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
     # Unaligned load for the left part of a register (lwl can technically merge
     # with a pre-existing lwr, but doesn't in practice, so we treat this as a
     # standard destination-first operation)
@@ -3782,40 +3785,16 @@ class GlobalInfo:
 
         def read_pointer() -> Optional[Expression]:
             """Read the next label from `data`"""
-            if not data:
+            if not data or not isinstance(data[0], str):
                 return None
 
-            if not isinstance(data[0], str):
-                # Bare pointer
-                value = read_uint(4)
-                if value is None:
-                    return None
-                return Literal(value=value)
-
-            # Pointer label
-            label = data.pop(0)
-            assert isinstance(label, str)
+            label = data[0]
+            data.pop(0)
             return self.address_of_gsym(label)
 
         def for_element_type(type: Type) -> Optional[str]:
             """Return the initializer for a single element of type `type`"""
-            if type.is_int() or type.is_float():
-                size_bits = type.get_size_bits()
-                if size_bits == 0:
-                    return None
-                elif size_bits is None:
-                    # Unknown size; guess 32 bits
-                    size_bits = 32
-                value = read_uint(size_bits // 8)
-                if value is not None:
-                    return Literal(value, type).format(fmt)
-
-            elif type.is_pointer():
-                ptr = read_pointer()
-                if ptr is not None:
-                    return as_type(ptr, type, True).format(fmt)
-
-            elif type.is_ctype():
+            if type.is_ctype():
                 ctype_fields = type.get_ctype_fields()
                 if not ctype_fields:
                     return None
@@ -3832,6 +3811,21 @@ class GlobalInfo:
                             return None
                         members.append(m)
                 return fmt.format_array(members)
+
+            if type.is_reg():
+                size = type.get_size_bytes()
+                if not size:
+                    return None
+
+                if size == 4:
+                    ptr = read_pointer()
+                    if ptr is not None:
+                        return as_type(ptr, type, silent=True).format(fmt)
+
+                value = read_uint(size)
+                if value is not None:
+                    expr = as_type(Literal(value), type, True)
+                    return elide_casts_for_store(expr).format(fmt)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None
@@ -3866,17 +3860,27 @@ class GlobalInfo:
             for name in sorted(names):
                 processed_names.add(name)
                 sym = self.global_symbol_map[name]
+                data_entry = sym.asm_data_entry
 
                 # Is the label defined in this unit (in the active AsmData file(s))
-                is_in_file = (sym.asm_data_entry is not None) or (
-                    name in self.local_functions
-                )
+                is_in_file = data_entry is not None or name in self.local_functions
                 # Is the label externally visible (mentioned in the context file)
                 is_global = sym.type_in_typemap
                 # Is the label a symbol in .rodata?
-                is_const = (
-                    sym.asm_data_entry is not None
-                ) and sym.asm_data_entry.is_readonly
+                is_const = data_entry is not None and data_entry.is_readonly
+
+                if data_entry and data_entry.is_jtbl:
+                    # Skip jump tables
+                    continue
+                if is_in_file and is_global and sym.type.is_function():
+                    # Skip externally-declared functions that are defined here
+                    continue
+                if self.local_functions == {name}:
+                    # Skip the function being decompiled if just a single one
+                    continue
+                if not is_in_file and is_global:
+                    # Skip externally-declared symbols that are defined in other files
+                    continue
 
                 # TODO: Use original MIPSFile ordering for variables
                 sort_order = (
@@ -3905,17 +3909,14 @@ class GlobalInfo:
                 # Try to guess the symbol's `array_dim` if we have a data entry for it,
                 # and it does not exist in the typemap or dim is unknown.
                 # (Otherwise, if the dim is provided by the typemap, we trust it.)
-                if sym.asm_data_entry and (
-                    not sym.type_in_typemap or sym.array_dim == 0
-                ):
+                if data_entry and (not sym.type_in_typemap or sym.array_dim == 0):
                     assert sym.array_dim is None or sym.array_dim == 0
                     # The size of the data entry is uncertain, because of padding
                     # between sections. Generally `(max_data_size - data_size) < 16`.
-                    min_data_size, max_data_size = sym.asm_data_entry.size_range_bytes()
+                    min_data_size, max_data_size = data_entry.size_range_bytes()
                     # The size of the element type (not the size of the array type)
-                    type_size_bits = sym.type.get_size_bits()
-                    type_size = (type_size_bits or 0) // 8
-                    if not type_size_bits:
+                    type_size = sym.type.get_size_bytes()
+                    if not type_size:
                         # If we don't know the type, we can't guess the array_dim
                         pass
                     elif type_size > max_data_size:
@@ -3943,26 +3944,20 @@ class GlobalInfo:
                             sym.array_dim = max_data_size // type_size
 
                 # Try to convert the data from .data/.rodata into an initializer
-                if sym.asm_data_entry is not None and not sym.asm_data_entry.is_bss:
+                if data_entry and not data_entry.is_bss:
                     value = self.initializer_for_symbol(sym, fmt)
                     if value is None:
                         # This warning helps distinguish .bss symbols from .data/.rodata,
                         # IDO only puts symbols in .bss if they don't have any initializer
                         comments.append("unable to generate initializer")
 
-                if not is_in_file and is_global:
-                    # Skip externally-declared symbols that are defined in other files
-                    continue
-                if is_in_file and is_global and sym.type.is_function():
-                    # Skip externally-declared functions that are defined here
-                    continue
                 if is_const:
                     comments.append("const")
 
                     # Float & string constants are almost always inlined and can be omitted
                     if sym.is_string_constant():
                         continue
-                    if sym.array_dim is None and sym.type.is_float():
+                    if sym.array_dim is None and sym.type.is_likely_float():
                         continue
 
                 qualifier = f"{qualifier} " if qualifier else ""

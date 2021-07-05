@@ -1,4 +1,3 @@
-f32 test(); // static
 extern f32 D_410120;
 
 f32 test(void) {

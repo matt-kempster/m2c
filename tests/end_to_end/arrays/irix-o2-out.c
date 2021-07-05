@@ -1,5 +1,4 @@
-s32 test(s32 arg0, s32 arg1, s32 arg2); // static
-extern s32 D_400120;
+extern ? D_400120;
 extern ? D_410130;
 
 s32 test(s32 arg0, s32 arg1, s32 arg2) {

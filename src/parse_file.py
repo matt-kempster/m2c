@@ -47,6 +47,7 @@ class AsmDataEntry:
     is_string: bool = False
     is_readonly: bool = False
     is_bss: bool = False
+    is_jtbl: bool = False
 
     def size_range_bytes(self) -> Tuple[int, int]:
         """Return the range of possible sizes, if padding were stripped."""

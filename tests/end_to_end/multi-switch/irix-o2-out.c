@@ -1,7 +1,4 @@
-s32 test(s32 arg0); // static
 extern s32 D_410210;
-static ? jtbl_4001D0; // unable to generate initializer; const
-static ? jtbl_4001EC; // unable to generate initializer; const
 
 s32 test(s32 arg0) {
     u32 temp_t6;

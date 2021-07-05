@@ -1,5 +1,3 @@
-void test(s32 arg0, s32 arg1); // static
-
 void test(s32 arg0, s32 arg1) {
     s32 sp4;
     s32 temp_t9;

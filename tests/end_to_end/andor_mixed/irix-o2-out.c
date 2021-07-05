@@ -1,5 +1,3 @@
-? test(s32 arg0, s32 arg1, s32 arg2, s32 arg3); // static
-
 ? test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 phi_a0;
     ? phi_v1;
