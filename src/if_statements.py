@@ -354,6 +354,160 @@ def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
         return branch_condition
 
 
+def traverse_conditionals(
+    node: Node,
+    if_node: Node,
+    else_node: Node,
+    chained_cond_nodes: List[ConditionalNode],
+) -> Tuple[Node, Condition]:
+    """Iterate through the chain of conditionals, until we hit one of if/else body nodes"""
+    or_terms = []
+    while node not in (if_node, else_node):
+        assert isinstance(node, ConditionalNode)
+        assert node in chained_cond_nodes
+
+        block_info = node.block.block_info
+        assert block_info
+        if node is chained_cond_nodes[0]:
+            # The first condition in an if-statement will have unrelated
+            # statements in its to_write list, which our caller will already
+            # have emitted. Avoid emitting them twice.
+            cond = block_info.branch_condition
+        else:
+            # Otherwise, these statements will be added to the condition
+            cond = gather_any_comma_conditions(block_info)
+
+        if node.conditional_edge is if_node:
+            # This node represents `if (or_terms || cond) { if_node } else { node.fallthrough_edge }`,
+            # so append `cond` to `or_terms`, then check the fallthrough edge.
+            or_terms.append(cond)
+            node = node.fallthrough_edge
+        elif node.fallthrough_edge is if_node and node.conditional_edge is else_node:
+            # This node represents `if (cond) { else_body } else { if_body }`,
+            # so append `!cond` to `or_terms` and exit the loop,
+            # representing `if (or_terms || !cond) { if_node } else { else_body }`.
+            or_terms.append(cond.negated())
+            node = node.fallthrough_edge
+            break
+        elif node.fallthrough_edge is if_node:
+            # This node represents `if (cond) { node.conditional_edge } else { if_node }`.
+            # Here, we recursively expand `if_node`, which follows the following pattern:
+            # ```
+            #   if (or_terms || !cond) {
+            #       if (tail_cond) {            // tail_cond starts with the `if_node` condition
+            #           next_node;              // the returned `node` from traverse_conditionals(...)
+            #       } else {
+            #           node.conditional_edge
+            #       }
+            #   } else {
+            #       node.conditional_edge
+            #   }
+            # ```
+            # ...which can be re-written into a single if statement with `||`.
+            # ```
+            #   if (!(or_terms || !cond) || !tail_cond) {
+            #       node.conditional_edge;
+            #   } else {
+            #       next_node;
+            #   }
+            # ```
+            node, tail_cond = traverse_conditionals(
+                if_node, else_node, node.conditional_edge, chained_cond_nodes
+            )
+            or_terms = [
+                join_conditions(or_terms + [cond.negated()], "||").negated(),
+                tail_cond.negated(),
+            ]
+            break
+        else:
+            # Both branches from the node point to other conditions, rather than the if/else nodes.
+            # Like in the previous case, we'll need to recurse & create a parenthetical expression.
+            # Although `node` doesn't point to `if_node`, the previous nodes whose conditions are
+            # accumulated in `or_terms` do point there. `node` expands in the following pattern:
+            # ```
+            #   if (or_terms) {
+            #       if_node;
+            #   } else {
+            #       if (tail_cond) {            // `tail_cond` starts with the `node` condition
+            #           next_node;              // the returned `node` from traverse_conditionals(...)
+            #       } else {
+            #           if_node;
+            #       }
+            #   }
+            # ```
+            # ...which can be re-written into a single if statement with `||`.
+            # ```
+            #   if (or_terms || !tail_cond) {
+            #       if_node;
+            #   } else {
+            #       next_node;
+            #   }
+            # ```
+            # We continue iterating because, unlike above, we have not encountered the if/else nodes.
+            node, tail_cond = traverse_conditionals(
+                node, node.conditional_edge, if_node, chained_cond_nodes
+            )
+            or_terms.append(tail_cond.negated())
+    return node, join_conditions(or_terms, "||")
+
+
+def try_make_if_condition(
+    chained_cond_nodes: List[ConditionalNode], end: Node
+) -> Optional[Tuple[Condition, Node, Optional[Node]]]:
+    if_node = chained_cond_nodes[-1].fallthrough_edge
+    else_node: Optional[Node] = chained_cond_nodes[-1].conditional_edge
+    assert else_node is not None
+
+    # Check that all conditional edges point "forward" to other nodes in the if statement
+    allowed_nodes = set(chained_cond_nodes) | {if_node, else_node}
+    for node in chained_cond_nodes:
+        if node.conditional_edge not in allowed_nodes:
+            # Try again after shortening the chain by removing the last node
+            return None
+        allowed_nodes.remove(node)
+
+    # These properties were checked earlier
+    assert all(
+        node.fallthrough_edge in set(chained_cond_nodes) | {if_node}
+        for node in chained_cond_nodes
+    )
+    assert all(
+        node.conditional_edge in set(chained_cond_nodes) | {if_node, else_node}
+        for node in chained_cond_nodes
+    )
+
+    if len(chained_cond_nodes) == 1:
+        assert node.block.block_info
+        cond = node.block.block_info.branch_condition.negated()
+    else:
+        final_node, cond = traverse_conditionals(
+            chained_cond_nodes[0], if_node, else_node, chained_cond_nodes
+        )
+        assert final_node is if_node
+
+    if else_node is end:
+        # No need to emit an `else` block
+        else_node = None
+    elif if_node is end:
+        # This is rare, but re-write if/else statements with an empty if body
+        # from `if (cond) {} else { else_node; }` into `if (!cond) { else_node; }`
+        cond = cond.negated()
+        if_node = else_node
+        else_node = None
+
+    if else_node is None:
+        # If there is no `else`, then check the conditions in the outermost
+        # `&&` expression. Complex `&&` conditions are better represented
+        # with nested ifs, so try building a shorter condition.
+        c: Expression = cond
+        while isinstance(c, BinaryOp) and c.op == "&&":
+            if isinstance(c.right, CommaConditionExpr):
+                return None
+            c = c.left
+
+    return (cond, if_node, else_node)
+
+
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node
 ) -> IfElseStatement:
@@ -379,23 +533,27 @@ def build_conditional_subgraph(
     """
 
     # Find the longest fallthrough chain of ConditionalNodes.
-    # This is the starting point for finding the single complex and/or conditional.
-    # Exclude any loop nodes (except `start`) and nodes not postdominated by `end`.
+    # This is the starting point for finding the complex &&/|| Condition
     # The conditional edges will be checked in later step
+    curr_node: Node = start
     chained_cond_nodes: List[ConditionalNode] = []
-    curr_node: ConditionalNode = start
     while True:
-        if end not in curr_node.fallthrough_edge.postdominators:
-            break
+        assert isinstance(curr_node, ConditionalNode)
         chained_cond_nodes.append(curr_node)
-        # If and/or detection is disabled; limit the chain length to 1 node
-        if not context.options.andor_detection:
-            break
-        if not isinstance(curr_node.fallthrough_edge, ConditionalNode):
-            break
         curr_node = curr_node.fallthrough_edge
-        if curr_node.loop or any(
-            p not in chained_cond_nodes for p in curr_node.parents
+        if not (
+            # If &&/|| detection is disabled, then limit the condition to one node
+            context.options.andor_detection
+            # Only include ConditionalNodes
+            and isinstance(curr_node, ConditionalNode)
+            # Only include nodes that are postdominated by `end`
+            and end in curr_node.postdominators
+            # Exclude the `end` node
+            and end is not curr_node
+            # Exclude any loop nodes (except `start`)
+            and not curr_node.loop
+            # Exclude nodes with incoming edges that are not part of the condition
+            and all(p in chained_cond_nodes for p in curr_node.parents)
         ):
             break
 
@@ -403,154 +561,14 @@ def build_conditional_subgraph(
     # are only to: other nodes forward in the chain, the `if_node`, or the `else_node`.
     # We start with the largest chain computed above, and then trim it until it
     # meets this criteria. The resulting chain will always have at least one node.
-    if_node: Node
-    else_node: Optional[Node]
     while True:
         assert chained_cond_nodes
-        if_node = chained_cond_nodes[-1].fallthrough_edge
-        else_node = chained_cond_nodes[-1].conditional_edge
-
-        # Set of nodes that are permitted to be the target of conditional_edge
-        allowed_nodes = set(chained_cond_nodes) | {if_node, else_node}
-        all_nodes_valid = True
-        for node in chained_cond_nodes:
-            if node.conditional_edge not in allowed_nodes:
-                all_nodes_valid = False
-                break
-            # Conditional edges must point "forward," so remove `node` from the allowed set
-            allowed_nodes.remove(node)
-        if not all_nodes_valid:
-            # Shorten the chain by removing the last node, then try again.
-            chained_cond_nodes.pop()
-            continue
-
-        # No changes were made: we found the largest chain that matches the constraints
-
-        def traverse(
-            node: Node, if_node: Node, else_node: Node
-        ) -> Tuple[Node, Condition]:
-            """Iterate through the chain of conditionals, until we hit one of if/else body nodes"""
-            or_terms = []
-            # The `... or node is start` lets us reuse this logic to handle self loops.
-            # Although there aren't any loops *inside* the chain, `start` is allowed to
-            # be a loop, so it may point to itself.
-            while node not in (if_node, else_node) or node is start:
-                assert (
-                    isinstance(node, ConditionalNode) and node in chained_cond_nodes
-                ), repr(node)
-
-                block_info = node.block.block_info
-                assert block_info
-                if node is start:
-                    # The first condition in an if-statement will have unrelated
-                    # statements in its to_write list, which our caller will already
-                    # have emitted. Avoid emitting them twice.
-                    cond = block_info.branch_condition
-                else:
-                    # Otherwise, these statements will be added to the condition
-                    cond = gather_any_comma_conditions(block_info)
-
-                if node.conditional_edge is if_node:
-                    # This node represents `if (or_terms || cond) { if_node } else { node.fallthrough_edge }`,
-                    # so append `cond` to `or_terms`, then check the fallthrough edge.
-                    or_terms.append(cond)
-                    node = node.fallthrough_edge
-                elif (
-                    node.fallthrough_edge is if_node
-                    and node.conditional_edge is else_node
-                ):
-                    # This node represents `if (cond) { else_body } else { if_body }`,
-                    # so append `!cond` to `or_terms` and exit the loop,
-                    # representing `if (or_terms || !cond) { if_node } else { else_body }`.
-                    or_terms.append(cond.negated())
-                    node = node.fallthrough_edge
-                    break
-                elif node.fallthrough_edge is if_node:
-                    # This node represents `if (cond) { node.conditional_edge } else { if_node }`.
-                    # Here, we recursively expand `if_node`, which follows the following pattern:
-                    # ```
-                    #   if (or_terms || !cond) {
-                    #       if (tail_cond) {            // tail_cond starts with the `if_node` condition
-                    #           next_node;              // the returned `node` from traverse(...)
-                    #       } else {
-                    #           node.conditional_edge
-                    #       }
-                    #   } else {
-                    #       node.conditional_edge
-                    #   }
-                    # ```
-                    # ...which can be re-written into a single if statement with `||`.
-                    # ```
-                    #   if (!(or_terms || !cond) || !tail_cond) {
-                    #       node.conditional_edge;
-                    #   } else {
-                    #       next_node;
-                    #   }
-                    # ```
-                    assert if_node in chained_cond_nodes
-                    node, tail_cond = traverse(
-                        if_node, else_node, node.conditional_edge
-                    )
-                    or_terms = [
-                        join_conditions(or_terms + [cond.negated()], "||").negated(),
-                        tail_cond.negated(),
-                    ]
-                    break
-                else:
-                    # Both branches from the node point to other conditions, rather than the if/else nodes.
-                    # Like in the previous case, we'll need to recurse & create a parenthetical expression.
-                    # Although `node` doesn't point to `if_node`, the previous nodes whose conditions are
-                    # accumulated in `or_terms` do point there. `node` expands in the following pattern:
-                    # ```
-                    #   if (or_terms) {
-                    #       if_node;
-                    #   } else {
-                    #       if (tail_cond) {            // `tail_cond` starts with the `node` condition
-                    #           next_node;              // the returned `node` from traverse(...)
-                    #       } else {
-                    #           if_node;
-                    #       }
-                    #   }
-                    # ```
-                    # ...which can be re-written into a single if statement with `||`.
-                    # ```
-                    #   if (or_terms || !tail_cond) {
-                    #       if_node;
-                    #   } else {
-                    #       next_node;
-                    #   }
-                    # ```
-                    # We continue iterating because, unlike above, we have not encountered the if/else nodes.
-                    node, tail_cond = traverse(node, node.conditional_edge, if_node)
-                    or_terms.append(tail_cond.negated())
-            return node, join_conditions(or_terms, "||")
-
-        final_node, cond = traverse(start, if_node, else_node)
-        assert final_node is if_node
-
-        if else_node is end:
-            # No need to emit an `else` block
-            else_node = None
-
-            # If there is no `else`, then check the conditions in the outermost
-            # `&&` expression. Complex `&&` conditions are better represented
-            # with nested ifs, so try building a shorter condition.
-            has_and_comma_expression = False
-            c: Expression = cond
-            while isinstance(c, BinaryOp) and c.op == "&&":
-                if isinstance(c.right, CommaConditionExpr):
-                    has_and_comma_expression = True
-                    break
-                c = c.left
-            if has_and_comma_expression:
-                chained_cond_nodes.pop()
-                continue
-        elif if_node is end:
-            # This is rare, and either indicates an empty if, or some sort of loop
-            cond = cond.negated()
-            if_node, else_node = else_node, if_node
-
-        break
+        cond_result = try_make_if_condition(chained_cond_nodes, end)
+        if cond_result:
+            break
+        # Shorten the chain by removing the last node, then try again.
+        chained_cond_nodes.pop()
+    cond, if_node, else_node = cond_result
 
     # Mark nodes that may have comma expressions in `cond` as emitted
     context.emitted_nodes.update(chained_cond_nodes[1:])

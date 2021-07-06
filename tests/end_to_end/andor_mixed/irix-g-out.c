@@ -3,6 +3,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 sp8;
     s32 sp4;
     s32 phi_t0;
+    s32 phi_t0_2;
 
     spC = arg0 + arg1;
     sp8 = arg1 + arg2;
@@ -31,9 +32,22 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
         } else {
             phi_t0 = arg3;
         }
-        if (phi_t0 == (arg0 + 1)) {
+        if ((phi_t0 == (arg0 + 1)) && ((arg1 + 1) != 0)) {
             sp4 = 7;
         }
+    }
+    if (arg0 == 0) {
+        if (arg1 != 0) {
+            phi_t0_2 = arg2;
+        } else {
+            phi_t0_2 = arg3;
+        }
+        if ((phi_t0_2 == (arg0 + 1)) || ((arg1 + 1) != 0)) {
+block_53:
+            sp4 = 7;
+        }
+    } else {
+        goto block_53;
     }
     return sp4;
 }
