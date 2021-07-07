@@ -23,7 +23,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     if ((((arg0 != 0) || (arg1 != 0)) && (arg2 != 0)) || ((arg3 != 0) && ((arg0 + 1) != 0)) || ((arg1 + 1) != 0) || ((arg2 + 1) != 0)) {
         sp4 = 5;
     }
-    if (((arg0 == 0) || (arg1 == 0)) && ((arg2 != 0) && (arg3 != 0) && (((arg0 + 1) != 0) || ((arg1 + 1) != 0)))) {
+    if ((((arg0 != 0) && (arg1 != 0)) || ((arg2 != 0) && (arg3 != 0))) && (((arg0 + 1) != 0) || ((arg1 + 1) != 0))) {
         sp4 = 6;
     }
     if (arg0 != 0) {
@@ -44,7 +44,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
         }
         if ((phi_t0_2 == (arg0 + 1)) || ((arg1 + 1) != 0)) {
 block_53:
-            sp4 = 7;
+            sp4 = 8;
         }
     } else {
         goto block_53;

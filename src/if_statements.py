@@ -354,21 +354,49 @@ def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
         return branch_condition
 
 
-def traverse_conditionals(
-    node: Node,
-    if_node: Node,
-    else_node: Node,
-    chained_cond_nodes: List[ConditionalNode],
-) -> Tuple[Node, Condition]:
-    """Iterate through the chain of conditionals, until we hit one of if/else body nodes"""
-    or_terms = []
-    while node not in (if_node, else_node):
-        assert isinstance(node, ConditionalNode)
-        assert node in chained_cond_nodes
+def try_make_if_condition(
+    chained_cond_nodes: List[ConditionalNode], end: Node
+) -> Optional[Tuple[Condition, Node, Optional[Node]]]:
+    """
+    Try to express the nodes in `chained_cond_nodes` as a single `Condition` `cond`
+    to make an if-else statement.
+    Returns a tuple of `(cond, if_node, else_node)` representing:
+    ```
+        if (cond) {
+            goto if_node;
+        } else {
+            goto else_node;
+        }
+    ```
+    If `else_node` is `None`, then the else block is empty and can be omitted.
+
+    This function returns `None` if the topology of `chained_cond_nodes` cannot
+    be represented by a single `Condition`.
+
+    It also returns `None` if `cond` has an outermost && expression with a
+    `CommaConditionExpr`: these are better represented as nested if statements.
+    """
+    start_node = chained_cond_nodes[0]
+    if_node = chained_cond_nodes[-1].fallthrough_edge
+    else_node: Optional[Node] = chained_cond_nodes[-1].conditional_edge
+    assert else_node is not None
+
+    # Check that all edges point "forward" to other nodes in the if statement
+    # and translate this DAG of nodes into a dict we can easily modify
+    allowed_nodes = set(chained_cond_nodes) | {if_node, else_node}
+    node_cond_edges: Dict[ConditionalNode, Tuple[Condition, Node, Node]] = {}
+    for node in chained_cond_nodes:
+        if (
+            node.conditional_edge not in allowed_nodes
+            or node.fallthrough_edge not in allowed_nodes
+        ):
+            # Not a valid set of chained_cond_nodes
+            return None
+        allowed_nodes.remove(node)
 
         block_info = node.block.block_info
         assert block_info
-        if node is chained_cond_nodes[0]:
+        if node is start_node:
             # The first condition in an if-statement will have unrelated
             # statements in its to_write list, which our caller will already
             # have emitted. Avoid emitting them twice.
@@ -377,116 +405,85 @@ def traverse_conditionals(
             # Otherwise, these statements will be added to the condition
             cond = gather_any_comma_conditions(block_info)
 
-        if node.conditional_edge is if_node:
-            # This node represents `if (or_terms || cond) { if_node } else { node.fallthrough_edge }`,
-            # so append `cond` to `or_terms`, then check the fallthrough edge.
-            or_terms.append(cond)
-            node = node.fallthrough_edge
-        elif node.fallthrough_edge is if_node and node.conditional_edge is else_node:
-            # This node represents `if (cond) { else_body } else { if_body }`,
-            # so append `!cond` to `or_terms` and exit the loop,
-            # representing `if (or_terms || !cond) { if_node } else { else_body }`.
-            or_terms.append(cond.negated())
-            node = node.fallthrough_edge
-            break
-        elif node.fallthrough_edge is if_node:
-            # This node represents `if (cond) { node.conditional_edge } else { if_node }`.
-            # Here, we recursively expand `if_node`, which follows the following pattern:
-            # ```
-            #   if (or_terms || !cond) {
-            #       if (tail_cond) {            // tail_cond starts with the `if_node` condition
-            #           next_node;              // the returned `node` from traverse_conditionals(...)
-            #       } else {
-            #           node.conditional_edge
-            #       }
-            #   } else {
-            #       node.conditional_edge
-            #   }
-            # ```
-            # ...which can be re-written into a single if statement with `||`.
-            # ```
-            #   if (!(or_terms || !cond) || !tail_cond) {
-            #       node.conditional_edge;
-            #   } else {
-            #       next_node;
-            #   }
-            # ```
-            node, tail_cond = traverse_conditionals(
-                if_node, else_node, node.conditional_edge, chained_cond_nodes
-            )
-            or_terms = [
-                join_conditions(or_terms + [cond.negated()], "||").negated(),
-                tail_cond.negated(),
-            ]
+        node_cond_edges[node] = (cond, node.conditional_edge, node.fallthrough_edge)
+
+    # Iteratively (try to) reduce the nodes into a single condition
+    #
+    # This is done through a process similar to "Rule T2" used in interval analysis
+    # of control flow graphs, see ref. slides 17-21 of:
+    # http://misailo.web.engr.illinois.edu/courses/526-sp17/lec1.pdf
+    #
+    # We have already ensured that all edges point forward (no loops), and there
+    # are no incoming edges to internal nodes from outside the chain.
+    #
+    # Pick the first pair of nodes which form one of the 4 possible reducible
+    # subgraphs, and then "collapse" them together by combining their conditions
+    # and adjusting their edges. This process is repeated until no more changes
+    # are possible, and is a success if there is exactly 1 condition left.
+    while True:
+        # Calculate the parents for each node in our subgraph
+        node_parents: Dict[ConditionalNode, List[ConditionalNode]] = {
+            node: [] for node in node_cond_edges
+        }
+        for node in node_cond_edges:
+            for child in node_cond_edges[node][1:]:
+                if child not in (if_node, else_node):
+                    assert isinstance(child, ConditionalNode)
+                    node_parents[child].append(node)
+
+        # Find the first pair of nodes which form a reducible pair: one will always
+        # be the *only* parent of the other.
+        # Note: we do not include `if_node` or `else_node` in this search
+        for child, parents in node_parents.items():
+            if len(parents) != 1:
+                continue
+            parent = parents[0]
+            child_cond, child_if, child_else = node_cond_edges[child]
+            parent_cond, parent_if, parent_else = node_cond_edges[parent]
+
+            # The 4 reducible subgraphs, see ref. slides 21-22 of:
+            # https://www2.cs.arizona.edu/~collberg/Teaching/553/2011/Resources/ximing-slides.pdf
+            # In summary:
+            #   - The child must have exactly one incoming edge, from the parent
+            #   - The parent's other edge must be in common with one of the child's edges
+            #   - Replace the condition with a combined condition from the two nodes
+            #   - Replace the parent's edges with the child's edges
+            if parent_if == child_if and parent_else == child:
+                parent_else = child_else
+                cond = join_conditions([parent_cond, child_cond], "||")
+            elif parent_if == child_else and parent_else == child:
+                parent_else = child_if
+                cond = join_conditions([parent_cond, child_cond.negated()], "||")
+            elif parent_if == child and parent_else == child_if:
+                parent_if = child_else
+                cond = join_conditions([parent_cond, child_cond.negated()], "&&")
+            elif parent_if == child and parent_else == child_else:
+                parent_if = child_if
+                cond = join_conditions([parent_cond, child_cond], "&&")
+            else:
+                continue
+
+            # Modify the graph by replacing `parent`'s condition/edges, and deleting `child`
+            node_cond_edges[parent] = (cond, parent_if, parent_else)
+            node_cond_edges.pop(child)
             break
         else:
-            # Both branches from the node point to other conditions, rather than the if/else nodes.
-            # Like in the previous case, we'll need to recurse & create a parenthetical expression.
-            # Although `node` doesn't point to `if_node`, the previous nodes whose conditions are
-            # accumulated in `or_terms` do point there. `node` expands in the following pattern:
-            # ```
-            #   if (or_terms) {
-            #       if_node;
-            #   } else {
-            #       if (tail_cond) {            // `tail_cond` starts with the `node` condition
-            #           next_node;              // the returned `node` from traverse_conditionals(...)
-            #       } else {
-            #           if_node;
-            #       }
-            #   }
-            # ```
-            # ...which can be re-written into a single if statement with `||`.
-            # ```
-            #   if (or_terms || !tail_cond) {
-            #       if_node;
-            #   } else {
-            #       next_node;
-            #   }
-            # ```
-            # We continue iterating because, unlike above, we have not encountered the if/else nodes.
-            node, tail_cond = traverse_conditionals(
-                node, node.conditional_edge, if_node, chained_cond_nodes
-            )
-            or_terms.append(tail_cond.negated())
-    return node, join_conditions(or_terms, "||")
+            # No pair was found, we're done!
+            break
 
+    # Were we able to collapse all conditions from chained_cond_nodes into one?
+    if len(node_cond_edges) != 1 or start_node not in node_cond_edges:
+        return None
+    cond, left_node, right_node = node_cond_edges[start_node]
 
-def try_make_if_condition(
-    chained_cond_nodes: List[ConditionalNode], end: Node
-) -> Optional[Tuple[Condition, Node, Optional[Node]]]:
-    if_node = chained_cond_nodes[-1].fallthrough_edge
-    else_node: Optional[Node] = chained_cond_nodes[-1].conditional_edge
-    assert else_node is not None
-
-    # Check that all conditional edges point "forward" to other nodes in the if statement
-    allowed_nodes = set(chained_cond_nodes) | {if_node, else_node}
-    for node in chained_cond_nodes:
-        if node.conditional_edge not in allowed_nodes:
-            # Try again after shortening the chain by removing the last node
-            return None
-        allowed_nodes.remove(node)
-
-    # These properties were checked earlier
-    assert all(
-        node.fallthrough_edge in set(chained_cond_nodes) | {if_node}
-        for node in chained_cond_nodes
-    )
-    assert all(
-        node.conditional_edge in set(chained_cond_nodes) | {if_node, else_node}
-        for node in chained_cond_nodes
-    )
-
-    if len(chained_cond_nodes) == 1:
-        assert node.block.block_info
-        cond = node.block.block_info.branch_condition.negated()
+    # Negate the condition if the if/else nodes are backwards
+    if (left_node, right_node) == (else_node, if_node):
+        cond = cond.negated()
     else:
-        final_node, cond = traverse_conditionals(
-            chained_cond_nodes[0], if_node, else_node, chained_cond_nodes
-        )
-        assert final_node is if_node
+        assert (left_node, right_node) == (if_node, else_node)
 
+    # Check if the if/else needs an else block
     if else_node is end:
-        # No need to emit an `else` block
         else_node = None
     elif if_node is end:
         # This is rare, but re-write if/else statements with an empty if body
@@ -495,13 +492,13 @@ def try_make_if_condition(
         if_node = else_node
         else_node = None
 
+    # If there is no `else`, then check the conditions in the outermost `&&` expression.
+    # Complex `&&` conditions are better represented with nested ifs.
     if else_node is None:
-        # If there is no `else`, then check the conditions in the outermost
-        # `&&` expression. Complex `&&` conditions are better represented
-        # with nested ifs, so try building a shorter condition.
         c: Expression = cond
         while isinstance(c, BinaryOp) and c.op == "&&":
             if isinstance(c.right, CommaConditionExpr):
+                # Fail, to try building a shorter conditional expression
                 return None
             c = c.left
 

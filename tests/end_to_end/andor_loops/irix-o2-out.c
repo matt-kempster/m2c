@@ -52,15 +52,19 @@ loop_9:
     if (arg0 != 0) {
 loop_13:
         temp_v1_3 = phi_v1_5 + 1;
-        if (((arg1 != 0) && ((phi_v1_6 = temp_v1_3, (arg2 != 0)) || (phi_v1_6 = temp_v1_3, (arg3 != 0)))) || ((temp_v1_4 = temp_v1_3 + 1, phi_v1_6 = temp_v1_4, (arg1 == 0)) && ((arg2 == 0) || (phi_v1_6 = temp_v1_4, (arg3 == 0))))) {
+        if (((arg1 == 0) || ((phi_v1_6 = temp_v1_3, (arg2 == 0)) && (phi_v1_6 = temp_v1_3, (arg3 == 0)))) && (temp_v1_4 = temp_v1_3 + 1, phi_v1_6 = temp_v1_4, (arg1 == 0)) && ((arg2 == 0) || (phi_v1_6 = temp_v1_4, (arg3 == 0)))) {
             temp_v1_5 = temp_v1_4 + 1;
-            if (((arg1 != 0) && ((phi_v1_2 = temp_v1_5, (arg2 != 0)) || (phi_v1_2 = temp_v1_5, (arg3 != 0)))) || ((temp_v1_6 = temp_v1_5 + 1, phi_v1_2 = temp_v1_6, (arg1 == 0)) && ((arg2 == 0) || (phi_v1_2 = temp_v1_6, (arg3 == 0))))) {
-                phi_v1_6 = temp_v1_6 + 1;
+            if ((arg1 == 0) || ((phi_v1_2 = temp_v1_5, (arg2 == 0)) && (phi_v1_2 = temp_v1_5, (arg3 == 0)))) {
+                temp_v1_6 = temp_v1_5 + 1;
+                phi_v1_2 = temp_v1_6;
+                if ((arg1 == 0) && ((arg2 == 0) || (phi_v1_2 = temp_v1_6, (arg3 == 0)))) {
+                    phi_v1_6 = temp_v1_6 + 1;
 block_26:
-                phi_v1_2 = phi_v1_6;
-                phi_v1_5 = phi_v1_6;
-                if (arg0 != 0) {
-                    goto loop_13;
+                    phi_v1_2 = phi_v1_6;
+                    phi_v1_5 = phi_v1_6;
+                    if (arg0 != 0) {
+                        goto loop_13;
+                    }
                 }
             }
         } else {

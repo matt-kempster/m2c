@@ -29,14 +29,14 @@ int test(int a, int b, int c, int d) {
 
     if (((a && b) || (c && d)) && ((a + 1) || (b + 1))) {
         ret = 6;
-    }
+    } 
 
     if (a && (b ? c : d) == (a + 1) && (b + 1)) {
         ret = 7;
     }
 
     if (a || (b ? c : d) == (a + 1) || (b + 1)) {
-        ret = 7;
+        ret = 8;
     }
 
     return ret;
