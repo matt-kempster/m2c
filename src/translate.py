@@ -3407,12 +3407,17 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 switch_value = args.reg(0)
 
         elif mnemonic in CASES_FN_CALL:
+            is_known_void = False
             if mnemonic == "jal":
                 fn_target = args.imm(0)
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
                 ):
-                    pass
+                    typemap = stack_info.global_info.typemap
+                    if typemap:
+                        c_fn = typemap.functions.get(fn_target.expr.symbol_name)
+                        if c_fn and c_fn.ret_type is None:
+                            is_known_void = True
                 elif isinstance(fn_target, Literal):
                     pass
                 else:
@@ -3527,8 +3532,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # However, if we have type information that says the function is
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
-            # Note that this logic is duplicated in output_regs_for_instr.
-            if not fn_sig.return_type.is_void():
+            # Note that this logic is duplicated in output_regs_for_instr and
+            # needs to match exactly, which is why we can't look at
+            # fn_sig.return_type even though it may be more accurate.
+            if not is_known_void:
                 regs[Register("f0")] = eval_once(
                     Cast(
                         expr=call, reinterpret=True, silent=True, type=Type.floatish()
