@@ -638,7 +638,6 @@ class BinaryOp(Condition):
     op: str
     right: Expression
     type: Type
-    floating: bool = False
 
     @staticmethod
     def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -684,7 +683,6 @@ class BinaryOp(Condition):
             op=op,
             right=as_f32(right),
             type=Type.bool(),
-            floating=True,
         )
 
     @staticmethod
@@ -694,7 +692,6 @@ class BinaryOp(Condition):
             op=op,
             right=as_f64(right),
             type=Type.bool(),
-            floating=True,
         )
 
     @staticmethod
@@ -720,7 +717,6 @@ class BinaryOp(Condition):
             op=op,
             right=as_f32(right),
             type=Type.f32(),
-            floating=True,
         )
 
     @staticmethod
@@ -730,15 +726,29 @@ class BinaryOp(Condition):
             op=op,
             right=as_f64(right),
             type=Type.f64(),
-            floating=True,
         )
 
-    def is_boolean(self) -> bool:
+    def is_comparison(self) -> bool:
         return self.op in ["==", "!=", ">", "<", ">=", "<="]
 
+    def is_floating(self) -> bool:
+        return self.left.type.is_float() and self.right.type.is_float()
+
     def negated(self) -> "Condition":
-        if not self.is_boolean() or (
-            self.floating and self.op in ["<", ">", "<=", ">="]
+        if (
+            self.op in ["&&", "||"]
+            and isinstance(self.left, Condition)
+            and isinstance(self.right, Condition)
+        ):
+            # DeMorgan's Laws
+            return BinaryOp(
+                left=self.left.negated(),
+                op={"&&": "||", "||": "&&"}[self.op],
+                right=self.right.negated(),
+                type=Type.bool(),
+            )
+        if not self.is_comparison() or (
+            self.is_floating() and self.op in ["<", ">", "<=", ">="]
         ):
             # Floating-point comparisons cannot be negated in any nice way,
             # due to nans.
@@ -757,7 +767,7 @@ class BinaryOp(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if (
-            self.is_boolean()
+            self.is_comparison()
             and isinstance(self.left, Literal)
             and not isinstance(self.right, Literal)
         ):
@@ -769,7 +779,7 @@ class BinaryOp(Condition):
             ).format(fmt)
 
         if (
-            not self.floating
+            not self.is_floating()
             and isinstance(self.right, Literal)
             and self.right.value < 0
         ):
@@ -1522,11 +1532,14 @@ class BlockInfo:
         newline = "\n\t"
         return "\n".join(
             [
-                f"Statements: {newline.join(str(w) for w in self.to_write if w.should_write())}",
+                f"Statements: {newline.join(str(w) for w in self.statements_to_write())}",
                 f"Branch condition: {self.branch_condition}",
                 f"Final register states: {self.final_register_states}",
             ]
         )
+
+    def statements_to_write(self) -> List[Statement]:
+        return [st for st in self.to_write if st.should_write()]
 
 
 @dataclass
@@ -1784,10 +1797,15 @@ def simplify_condition(expr: Expression) -> Expression:
     """
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return simplify_condition(expr.wrapped_expr)
+    if isinstance(expr, UnaryOp):
+        inner = simplify_condition(expr.expr)
+        if expr.op == "!" and isinstance(inner, Condition):
+            return inner.negated()
+        return UnaryOp(expr=inner, op=expr.op, type=expr.type)
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
         right = simplify_condition(expr.right)
-        if isinstance(left, BinaryOp) and left.is_boolean() and right == Literal(0):
+        if isinstance(left, BinaryOp) and left.is_comparison() and right == Literal(0):
             if expr.op == "==":
                 return simplify_condition(left.negated())
             if expr.op == "!=":

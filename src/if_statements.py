@@ -17,6 +17,7 @@ from .translate import (
     BlockInfo,
     CommaConditionExpr,
     Condition,
+    Expression,
     Formatter,
     FunctionInfo,
 )
@@ -79,17 +80,6 @@ class IfElseStatement:
                     )
             if_str = if_str + else_str
         return if_str
-
-    def negated(self) -> "IfElseStatement":
-        """Return an IfElseStatement with the condition negated and the if/else
-        bodies swapped. The caller must check that `else_body` is present."""
-        assert self.else_body is not None, "checked by caller"
-        return replace(
-            self,
-            condition=self.condition.negated(),
-            if_body=self.else_body,
-            else_body=self.if_body,
-        )
 
 
 @dataclass
@@ -193,16 +183,14 @@ class Body:
 
     def add_node(self, node: Node, comment_empty: bool) -> None:
         assert isinstance(node.block.block_info, BlockInfo)
-        to_write = node.block.block_info.to_write
-        any_to_write = any(item.should_write() for item in to_write)
+        statements = node.block.block_info.statements_to_write()
 
         # Add node header comment
-        if self.print_node_comment and (any_to_write or comment_empty):
+        if self.print_node_comment and (statements or comment_empty):
             self.add_comment(f"Node {node.name()}")
         # Add node contents
-        for item in node.block.block_info.to_write:
-            if item.should_write():
-                self.statements.append(SimpleStatement(item))
+        for item in statements:
+            self.statements.append(SimpleStatement(item))
 
     def add_statement(self, statement: Statement) -> None:
         self.statements.append(statement)
@@ -355,65 +343,10 @@ def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> Non
         emit_goto(context, target, body)
 
 
-def build_conditional_subgraph(
-    context: Context, start: ConditionalNode, end: Node
-) -> IfElseStatement:
-    """
-    Output the subgraph between `start` and `end`, including the branch condition
-    in the ConditionalNode `start`.
-    This function will intelligently output if/else relationships.
-    """
-    if_block_info = start.block.block_info
-    assert isinstance(if_block_info, BlockInfo)
-    assert if_block_info.branch_condition is not None
-
-    else_body: Optional[Body] = None
-    fallthrough_node: Node = start.fallthrough_edge
-    conditional_node: Node = start.conditional_edge
-
-    if fallthrough_node is end:
-        # This case is quite rare, and either indicates an early return, an
-        # empty if, or some sort of loop. In the loop case, we expect
-        # build_flowgraph_between to end up noticing that the label has already
-        # been seen and emit a goto, but in rare cases this might not happen.
-        # If so it seems fine to emit the loop here.
-        if_condition = if_block_info.branch_condition
-        if_body = build_flowgraph_between(context, conditional_node, end)
-    elif (
-        isinstance(fallthrough_node, ConditionalNode)
-        and (
-            fallthrough_node.conditional_edge is conditional_node
-            or fallthrough_node.fallthrough_edge is conditional_node
-        )
-        and context.options.andor_detection
-    ):
-        # The fallthrough node is also a conditional, with an edge pointing to
-        # the same target as our conditional edge. This case comes up for
-        # &&-statements and ||-statements, but also sometimes for regular
-        # if-statements (a degenerate case of an &&/|| statement).
-        return get_andor_if_statement(context, start, end)
-    else:
-        # This case is the most common. Since we missed the if above, we will
-        # assume that taking the conditional edge does not perform any other
-        # ||/&&-chain checks, but instead represents skipping the if body.
-        # Thus, we split into an if-body and an else-body, though the latter
-        # (for one reason or another) can still be empty.
-        assert start.block.block_info
-        assert start.block.block_info.branch_condition
-        if_condition = start.block.block_info.branch_condition.negated()
-
-        if_body = build_flowgraph_between(context, fallthrough_node, end)
-        else_body = build_flowgraph_between(context, conditional_node, end)
-
-    return IfElseStatement(if_condition, if_body, else_body)
-
-
 def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
     branch_condition = block_info.branch_condition
     assert branch_condition is not None
-    comma_statements = [
-        statement for statement in block_info.to_write if statement.should_write()
-    ]
+    comma_statements = block_info.statements_to_write()
     if comma_statements:
         assert not isinstance(branch_condition, CommaConditionExpr)
         return CommaConditionExpr(comma_statements, branch_condition)
@@ -421,171 +354,237 @@ def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
         return branch_condition
 
 
-def get_andor_if_statement(
-    context: Context, start: ConditionalNode, end: Node
-) -> IfElseStatement:
+def try_make_if_condition(
+    chained_cond_nodes: List[ConditionalNode], end: Node
+) -> Optional[Tuple[Condition, Node, Optional[Node]]]:
     """
-    This function detects &&-statements, ||-statements, and
-    degenerate forms of those - i.e. singular if-statements.
+    Try to express the nodes in `chained_cond_nodes` as a single `Condition` `cond`
+    to make an if-else statement. `end` is the immediate postdominator of the first
+    node in `chained_cond_nodes`, and is the node following the if-else statement.
 
-    As generated by IDO, &&-statements and ||-statements are
-    emitted in a very particular way. In the below ASCII art,
-    if (X) is a "COND", then the subgraph is an &&-statement,
-    and 'alternative' represents the if body and 'bottom'
-    the else body. Otherwise, i.e. if (X) is "FALL", then it
-    is an ||-statement, and 'bottom' is the if body and
-    'alternative' the else.
+    Returns a tuple of `(cond, if_node, else_node)` representing:
+    ```
+        if (cond) {
+            goto if_node;
+        } else {
+            goto else_node;
+        }
+    ```
+    If `else_node` is `None`, then the else block is empty and can be omitted.
 
-          +-------+      COND
-          | start |---------------------+
-          +-------+                     |
-              | FALL                    |
-              v                         |
-          +-------+      COND           |
-          |   1   |-------------------+ |
-          +-------+                   | |
-              | FALL                  | |
-              v                       | |
-    ___________________________________________
-                                    . . .
-                                    . . .
-                                    . . .
-    ___________________________________________
-              |                     | | |
-              | FALL                | | |
-              v                     | | |
-          +-------+    COND         | | |
-          |  N-1  |---------------+ | | |
-          +-------+               | | | |
-              | FALL              | | | |
-              v                   v v v v
-          +-------+    (X)    +--------------+
-          |   N   |---------->|    bottom    |
-          +-------+           +--------------+
-              |                   |
-              | (Y)               |
-              v                   |
-     +-----------------+          |
-     |   alternative   |          |
-     +-----------------+          |
-              |                   |
-              v                   v
-          +---------------------------+
-          |            end            |
-          +---------------------------+
+    This function returns `None` if the topology of `chained_cond_nodes` cannot
+    be represented by a single `Condition`.
 
+    It also returns `None` if `cond` has an outermost && expression with a
+    `CommaConditionExpr`: these are better represented as nested if statements.
     """
-    conditions: List[Condition] = []
-    condition_nodes: List[ConditionalNode] = []
-    bottom = start.conditional_edge
-    curr_node: ConditionalNode = start
-    while True:
-        # Collect conditions as we accumulate them:
-        block_info = curr_node.block.block_info
+    start_node = chained_cond_nodes[0]
+    if_node = chained_cond_nodes[-1].fallthrough_edge
+    else_node: Optional[Node] = chained_cond_nodes[-1].conditional_edge
+    assert else_node is not None
+
+    # Check that all edges point "forward" to other nodes in the if statement
+    # and translate this DAG of nodes into a dict we can easily modify
+    allowed_nodes = set(chained_cond_nodes) | {if_node, else_node}
+    node_cond_edges: Dict[ConditionalNode, Tuple[Condition, Node, Node]] = {}
+    for node in chained_cond_nodes:
+        if (
+            node.conditional_edge not in allowed_nodes
+            or node.fallthrough_edge not in allowed_nodes
+        ):
+            # Not a valid set of chained_cond_nodes
+            return None
+        allowed_nodes.remove(node)
+
+        block_info = node.block.block_info
         assert isinstance(block_info, BlockInfo)
-        branch_condition = block_info.branch_condition
-        assert branch_condition is not None
-        if not conditions:
+        if node is start_node:
             # The first condition in an if-statement will have unrelated
             # statements in its to_write list, which our caller will already
             # have emitted. Avoid emitting them twice.
-            conditions.append(branch_condition)
+            cond = block_info.branch_condition
+            assert isinstance(cond, Condition)
         else:
-            # Include the statements in the condition by using a comma expression.
-            conditions.append(gather_any_comma_conditions(block_info))
-        condition_nodes.append(curr_node)
+            # Otherwise, these statements will be added to the condition
+            cond = gather_any_comma_conditions(block_info)
 
-        # The next node will tell us whether we are in an &&/|| statement.
-        # Our strategy will be:
-        #   - Check if we have reached the end of an &&-statement
-        #   - Check if we have reached the end of an ||-statement
-        #   - Otherwise, assert we still fit the criteria of an &&/|| statement.
-        next_node = curr_node.fallthrough_edge
+        node_cond_edges[node] = (cond, node.conditional_edge, node.fallthrough_edge)
 
-        if (
-            not isinstance(next_node, ConditionalNode)
-            or (
-                next_node.conditional_edge is not bottom
-                and next_node.fallthrough_edge is not bottom
-            )
-            # An edge-case of our pattern-matching technology: without
-            # this, self-loops match the pattern indefinitely, since a
-            # self-loop node's conditional edge points to itself.
-            or next_node.loop
-            or len(next_node.parents) > 1
+    # Iteratively (try to) reduce the nodes into a single condition
+    #
+    # This is done through a process similar to "Rule T2" used in interval analysis
+    # of control flow graphs, see ref. slides 17-21 of:
+    # http://misailo.web.engr.illinois.edu/courses/526-sp17/lec1.pdf
+    #
+    # We have already ensured that all edges point forward (no loops), and there
+    # are no incoming edges to internal nodes from outside the chain.
+    #
+    # Pick the first pair of nodes which form one of the 4 possible reducible
+    # subgraphs, and then "collapse" them together by combining their conditions
+    # and adjusting their edges. This process is repeated until no more changes
+    # are possible, and is a success if there is exactly 1 condition left.
+    while True:
+        # Calculate the parents for each node in our subgraph
+        node_parents: Dict[ConditionalNode, List[ConditionalNode]] = {
+            node: [] for node in node_cond_edges
+        }
+        for node in node_cond_edges:
+            for child in node_cond_edges[node][1:]:
+                if child not in (if_node, else_node):
+                    assert isinstance(child, ConditionalNode)
+                    node_parents[child].append(node)
+
+        # Find the first pair of nodes which form a reducible pair: one will always
+        # be the *only* parent of the other.
+        # Note: we do not include `if_node` or `else_node` in this search
+        for child, parents in node_parents.items():
+            if len(parents) != 1:
+                continue
+            parent = parents[0]
+            child_cond, child_if, child_else = node_cond_edges[child]
+            parent_cond, parent_if, parent_else = node_cond_edges[parent]
+
+            # The 4 reducible subgraphs, see ref. slides 21-22 of:
+            # https://www2.cs.arizona.edu/~collberg/Teaching/553/2011/Resources/ximing-slides.pdf
+            # In summary:
+            #   - The child must have exactly one incoming edge, from the parent
+            #   - The parent's other edge must be in common with one of the child's edges
+            #   - Replace the condition with a combined condition from the two nodes
+            #   - Replace the parent's edges with the child's edges
+            if parent_if is child_if and parent_else is child:
+                parent_else = child_else
+                cond = join_conditions(parent_cond, "||", child_cond)
+            elif parent_if is child_else and parent_else is child:
+                parent_else = child_if
+                cond = join_conditions(parent_cond, "||", child_cond.negated())
+            elif parent_if is child and parent_else is child_if:
+                parent_if = child_else
+                cond = join_conditions(parent_cond, "&&", child_cond.negated())
+            elif parent_if is child and parent_else is child_else:
+                parent_if = child_if
+                cond = join_conditions(parent_cond, "&&", child_cond)
+            else:
+                continue
+
+            # Modify the graph by replacing `parent`'s condition/edges, and deleting `child`
+            node_cond_edges[parent] = (cond, parent_if, parent_else)
+            node_cond_edges.pop(child)
+            break
+        else:
+            # No pair was found, we're done!
+            break
+
+    # Were we able to collapse all conditions from chained_cond_nodes into one?
+    if len(node_cond_edges) != 1 or start_node not in node_cond_edges:
+        return None
+    cond, left_node, right_node = node_cond_edges[start_node]
+
+    # Negate the condition if the if/else nodes are backwards
+    if (left_node, right_node) == (else_node, if_node):
+        cond = cond.negated()
+    else:
+        assert (left_node, right_node) == (if_node, else_node)
+
+    # Check if the if/else needs an else block
+    if else_node is end:
+        else_node = None
+    elif if_node is end:
+        # This is rare, but re-write if/else statements with an empty if body
+        # from `if (cond) {} else { else_node; }` into `if (!cond) { else_node; }`
+        cond = cond.negated()
+        if_node = else_node
+        else_node = None
+
+    # If there is no `else`, then check the conditions in the outermost `&&` expression.
+    # Complex `&&` conditions are better represented with nested ifs.
+    if else_node is None:
+        c: Expression = cond
+        while isinstance(c, BinaryOp) and c.op == "&&":
+            if isinstance(c.right, CommaConditionExpr):
+                # Fail, to try building a shorter conditional expression
+                return None
+            c = c.left
+
+    return (cond, if_node, else_node)
+
+
+def build_conditional_subgraph(
+    context: Context, start: ConditionalNode, end: Node
+) -> IfElseStatement:
+    """
+    Output the subgraph between `start` and `end`, including the branch condition
+    in the ConditionalNode `start`.
+
+    This function detects "plain" if conditions, as well as conditions containing
+    nested && and || terms.
+
+    As generated by IDO and GCC, conditions with && and || terms are emitted in a
+    very particular way. There will be a "chain" ConditionalNodes, where each node
+    falls through to the next node in the chain.
+    Each conditional edge from the nodes in this chain will go to one of:
+        - The head of the if block body (`if_node`)
+        - The head of the else block body (`else_node`)
+        - A *later* conditional node in the chain (no loops)
+
+    We know IDO likes to emit the assembly for basic blocks in the same order that
+    they appear in the C source. So, we generally call the fallthrough of the final
+    ConditionNode the `if_node` (unless it is empty). By construction, it will be
+    an earlier node than the `else_node`.
+    """
+
+    # Find the longest fallthrough chain of ConditionalNodes.
+    # This is the starting point for finding the complex &&/|| Condition
+    # The conditional edges will be checked in later step
+    curr_node: Node = start
+    chained_cond_nodes: List[ConditionalNode] = []
+    while True:
+        assert isinstance(curr_node, ConditionalNode)
+        chained_cond_nodes.append(curr_node)
+        curr_node = curr_node.fallthrough_edge
+        if not (
+            # If &&/|| detection is disabled, then limit the condition to one node
+            context.options.andor_detection
+            # Only include ConditionalNodes
+            and isinstance(curr_node, ConditionalNode)
+            # Only include nodes that are postdominated by `end`
+            and end in curr_node.postdominators
+            # Exclude the `end` node
+            and end is not curr_node
+            # Exclude any loop nodes (except `start`)
+            and not curr_node.loop
+            # Exclude nodes with incoming edges that are not part of the condition
+            and all(p in chained_cond_nodes for p in curr_node.parents)
         ):
-            # We reached the end of an && statement.
+            break
 
-            if bottom is end:
-                # If we don't need to emit an 'else', only emit && conditions up
-                # to the first comma-statement condition, to avoid too much of
-                # the output being sucked into if conditions.
-                index = next(
-                    (
-                        i
-                        for i, cond in enumerate(conditions)
-                        if isinstance(cond, CommaConditionExpr)
-                    ),
-                    None,
-                )
+    # We want to take the largest chain of ConditionalNodes that can be converted to
+    # a single condition with &&'s and ||'s. We start with the largest chain computed
+    # above, and then trim it until it meets this criteria. The resulting chain will
+    # always have at least one node.
+    while True:
+        assert chained_cond_nodes
+        cond_result = try_make_if_condition(chained_cond_nodes, end)
+        if cond_result:
+            break
+        # Shorten the chain by removing the last node, then try again.
+        chained_cond_nodes.pop()
+    cond, if_node, else_node = cond_result
 
-                if index is not None:
-                    context.emitted_nodes |= set(condition_nodes[:index])
-                    if_body = build_flowgraph_between(
-                        context, condition_nodes[index], end
-                    )
-                    return IfElseStatement(
-                        join_conditions(
-                            [cond.negated() for cond in conditions[:index]], "&&"
-                        ),
-                        if_body=if_body,
-                    )
+    # Mark nodes that may have comma expressions in `cond` as emitted
+    context.emitted_nodes.update(chained_cond_nodes[1:])
 
-            context.emitted_nodes |= set(condition_nodes)
-            if_body = build_flowgraph_between(context, next_node, end)
-            else_body = build_flowgraph_between(context, bottom, end)
-            return IfElseStatement(
-                # We negate everything, because the conditional edges will jump
-                # OVER the if body.
-                join_conditions([cond.negated() for cond in conditions], "&&"),
-                if_body=if_body,
-                else_body=else_body,
-            )
+    # Build the if & else bodies
+    if_body = build_flowgraph_between(context, if_node, end)
+    else_body: Optional[Body] = None
+    if else_node:
+        else_body = build_flowgraph_between(context, else_node, end)
 
-        if next_node.fallthrough_edge is bottom:
-            # End of || statement.
-            assert next_node.block.block_info
-            next_node_condition = gather_any_comma_conditions(
-                next_node.block.block_info
-            )
-            context.emitted_nodes |= set(condition_nodes) | {next_node}
-            if_body = build_flowgraph_between(context, bottom, end)
-            else_body = build_flowgraph_between(
-                context, next_node.conditional_edge, end
-            )
-            return IfElseStatement(
-                # Negate the last condition, for it must fall-through to the
-                # body instead of jumping to it, hence it must jump OVER the body.
-                join_conditions(conditions + [next_node_condition.negated()], "||"),
-                if_body=if_body,
-                # The else-body is wherever the code jumps to instead of the
-                # fallthrough (i.e. if-body).
-                else_body=else_body,
-            )
-
-        # Otherwise, still in the middle of an &&/|| condition.
-        assert next_node.conditional_edge is bottom
-        curr_node = next_node
-    assert False
+    return IfElseStatement(cond, if_body, else_body)
 
 
-def join_conditions(conditions: List[Condition], op: str) -> Condition:
+def join_conditions(left: Condition, op: str, right: Condition) -> Condition:
     assert op in ["&&", "||"]
-    assert conditions
-    ret: Condition = conditions[0]
-    for cond in conditions[1:]:
-        ret = BinaryOp(ret, op, cond, type=Type.bool())
-    return ret
+    return BinaryOp(left, op, right, type=Type.bool())
 
 
 def emit_return(context: Context, node: ReturnNode, body: Body) -> None:
