@@ -680,14 +680,14 @@ def get_field(
     if target_size is None and offset == 0:
         # We might as well take a pointer to the whole struct
         target = type.get_pointer_target() or Type.any()
-        return None, target, type, False
+        return None, target, type, None
 
     deref_type = type.get_pointer_target()
     if deref_type is None:
-        return None, Type.any(), Type.ptr(), False
+        return None, Type.any(), Type.ptr(), None
     ctype_and_typemap = deref_type.get_ctype_and_typemap()
     if ctype_and_typemap is None:
-        return None, Type.any(), Type.ptr(), False
+        return None, Type.any(), Type.ptr(), None
     ctype, typemap = ctype_and_typemap
     ctype = resolve_typedefs(ctype, typemap)
 
@@ -724,7 +724,7 @@ def get_field(
                     type_from_ctype(field.type, typemap),
                     *ptr_type_from_ctype(field.type, typemap),
                 )
-    return None, Type.any(), Type.ptr(), False
+    return None, Type.any(), Type.ptr(), None
 
 
 def find_substruct_array(
