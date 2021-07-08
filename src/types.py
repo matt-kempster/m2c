@@ -289,7 +289,9 @@ class Type:
             # Choose the first field in a union, or the unexpanded name in a struct
             field = fields[0]
             field_type = type_from_ctype(field.type, data.typemap, array_decay=False)
-            size, align = field_type.get_size_align_bytes()
+            size = field_type.get_size_bytes()
+            if not size:
+                return None
             output.append(field_type)
             position = offset + size
 

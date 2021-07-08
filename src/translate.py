@@ -2129,7 +2129,7 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         if isinstance(imm, Literal):
             target = source.type.get_pointer_target()
             if target:
-                target_size, _ = target.get_size_align_bytes()
+                target_size = target.get_size_bytes()
                 if target_size and imm.value % target_size == 0:
                     # Pointer addition.
                     return BinaryOp(
@@ -2436,7 +2436,7 @@ def array_access_from_add(
     if target_type is None:
         return None
 
-    if target_type.get_size_align_bytes()[0] == scale:
+    if target_type.get_size_bytes() == scale:
         # base[index]
         pass
     else:

@@ -30,7 +30,7 @@ block_23:
             phi_a0_2 = arg0;
             phi_a0_3 = arg0;
             phi_a0_5 = arg0;
-            goto *(&jtbl_4001D0)[temp_t6]; // switch 1
+            goto **(&jtbl_4001D0 + (temp_t6 * 4)); // switch 1
         case 1: // switch 1
 block_21:
             phi_a0 = phi_a0_3;
@@ -68,7 +68,7 @@ block_21:
             if (temp_t7 < 7U) {
                 phi_a0_2 = arg0;
                 phi_a0_4 = arg0;
-                goto *(&jtbl_4001EC)[temp_t7]; // switch 2
+                goto **(&jtbl_4001EC + (temp_t7 * 4)); // switch 2
             case 0: // switch 2
                 return arg0 * arg0;
             case 1: // switch 2
