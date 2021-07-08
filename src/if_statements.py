@@ -359,7 +359,9 @@ def try_make_if_condition(
 ) -> Optional[Tuple[Condition, Node, Optional[Node]]]:
     """
     Try to express the nodes in `chained_cond_nodes` as a single `Condition` `cond`
-    to make an if-else statement.
+    to make an if-else statement. `end` is the immediate postdominator of the first
+    node in `chained_cond_nodes`, and is the node following the if-else statement.
+
     Returns a tuple of `(cond, if_node, else_node)` representing:
     ```
         if (cond) {
@@ -395,12 +397,13 @@ def try_make_if_condition(
         allowed_nodes.remove(node)
 
         block_info = node.block.block_info
-        assert block_info
+        assert isinstance(block_info, BlockInfo)
         if node is start_node:
             # The first condition in an if-statement will have unrelated
             # statements in its to_write list, which our caller will already
             # have emitted. Avoid emitting them twice.
             cond = block_info.branch_condition
+            assert isinstance(cond, Condition)
         else:
             # Otherwise, these statements will be added to the condition
             cond = gather_any_comma_conditions(block_info)
@@ -448,18 +451,18 @@ def try_make_if_condition(
             #   - The parent's other edge must be in common with one of the child's edges
             #   - Replace the condition with a combined condition from the two nodes
             #   - Replace the parent's edges with the child's edges
-            if parent_if == child_if and parent_else == child:
+            if parent_if is child_if and parent_else is child:
                 parent_else = child_else
-                cond = join_conditions([parent_cond, child_cond], "||")
-            elif parent_if == child_else and parent_else == child:
+                cond = join_conditions(parent_cond, "||", child_cond)
+            elif parent_if is child_else and parent_else is child:
                 parent_else = child_if
-                cond = join_conditions([parent_cond, child_cond.negated()], "||")
-            elif parent_if == child and parent_else == child_if:
+                cond = join_conditions(parent_cond, "||", child_cond.negated())
+            elif parent_if is child and parent_else is child_if:
                 parent_if = child_else
-                cond = join_conditions([parent_cond, child_cond.negated()], "&&")
-            elif parent_if == child and parent_else == child_else:
+                cond = join_conditions(parent_cond, "&&", child_cond.negated())
+            elif parent_if is child and parent_else is child_else:
                 parent_if = child_if
-                cond = join_conditions([parent_cond, child_cond], "&&")
+                cond = join_conditions(parent_cond, "&&", child_cond)
             else:
                 continue
 
@@ -554,10 +557,10 @@ def build_conditional_subgraph(
         ):
             break
 
-    # We want to take the largest chain of ConditionalNodes where each node's edges
-    # are only to: other nodes forward in the chain, the `if_node`, or the `else_node`.
-    # We start with the largest chain computed above, and then trim it until it
-    # meets this criteria. The resulting chain will always have at least one node.
+    # We want to take the largest chain of ConditionalNodes that can be converted to
+    # a single condition with &&'s and ||'s. We start with the largest chain computed
+    # above, and then trim it until it meets this criteria. The resulting chain will
+    # always have at least one node.
     while True:
         assert chained_cond_nodes
         cond_result = try_make_if_condition(chained_cond_nodes, end)
@@ -579,13 +582,9 @@ def build_conditional_subgraph(
     return IfElseStatement(cond, if_body, else_body)
 
 
-def join_conditions(conditions: List[Condition], op: str) -> Condition:
+def join_conditions(left: Condition, op: str, right: Condition) -> Condition:
     assert op in ["&&", "||"]
-    assert conditions
-    ret: Condition = conditions[0]
-    for cond in conditions[1:]:
-        ret = BinaryOp(ret, op, cond, type=Type.bool())
-    return ret
+    return BinaryOp(left, op, right, type=Type.bool())
 
 
 def emit_return(context: Context, node: ReturnNode, body: Body) -> None:
