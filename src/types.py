@@ -259,9 +259,8 @@ class Type:
         # multidimensional arrays.
         # Treat an array of length N as a struct with N (identical) members
         if isinstance(ctype, ca.ArrayDecl):
-            inner_type, dim = ptr_type_from_ctype(ctype, data.typemap)
-            field_type = inner_type.get_pointer_target()
-            if not dim or field_type is None:
+            field_type, dim = array_type_and_dim(ctype, data.typemap)
+            if not dim:
                 # Do not support zero-sized arrays
                 return None
             return [field_type] * dim
@@ -603,12 +602,14 @@ class FunctionSignature:
 def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) -> Type:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
-        inner_type, dim = ptr_type_from_ctype(real_ctype, typemap)
+        inner_type, dim = array_type_and_dim(real_ctype, typemap)
         if array_decay:
-            return inner_type
+            return Type.ptr(inner_type)
         size = inner_type.get_size_bits()
         if size is not None and dim is not None:
             size *= dim
+        else:
+            size = None
         return Type._ctype(real_ctype, typemap, size=size)
     if isinstance(real_ctype, ca.PtrDecl):
         return Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False))
@@ -649,20 +650,25 @@ def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) ->
         return Type(TypeData(kind=TypeData.K_INT, size=size, sign=sign))
 
 
+def array_type_and_dim(ctype: ca.ArrayDecl, typemap: TypeMap) -> Tuple[Type, int]:
+    dim = 0
+    try:
+        if ctype.dim is not None:
+            dim = parse_constant_int(ctype.dim, typemap)
+    except DecompFailure:
+        pass
+    return (
+        type_from_ctype(ctype.type, typemap, array_decay=False),
+        dim,
+    )
+
+
 def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[int]]:
     real_ctype = resolve_typedefs(ctype, typemap)
     if isinstance(real_ctype, ca.ArrayDecl):
         # Array to pointer decay
-        dim = 0
-        try:
-            if real_ctype.dim is not None:
-                dim = parse_constant_int(real_ctype.dim, typemap)
-        except DecompFailure:
-            pass
-        return (
-            Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False)),
-            dim,
-        )
+        inner_type, dim = array_type_and_dim(real_ctype, typemap)
+        return Type.ptr(inner_type), dim
     return Type.ptr(type_from_ctype(ctype, typemap)), None
 
 
