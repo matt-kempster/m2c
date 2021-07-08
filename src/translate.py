@@ -2458,7 +2458,7 @@ def array_access_from_add(
 
     # Add .field if necessary
     ret: Expression = ArrayAccess(base, index, type=target_type)
-    field_name, new_type, ptr_type, is_array = get_field(
+    field_name, new_type, ptr_type, array_dim = get_field(
         base.type, offset, target_size=target_size
     )
     if offset != 0 or (target_size is not None and target_size != scale):
@@ -2468,10 +2468,10 @@ def array_access_from_add(
             target_size=target_size,
             field_name=field_name,
             stack_info=stack_info,
-            type=ptr_type if is_array else new_type,
+            type=ptr_type if array_dim is not None else new_type,
         )
 
-    if ptr and not is_array:
+    if ptr and array_dim is None:
         ret = AddressOf(ret, type=ptr_type)
     return ret
 
