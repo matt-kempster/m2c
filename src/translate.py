@@ -1025,7 +1025,6 @@ class StructAccess(Expression):
             self.field_name = get_field(
                 var.type,
                 self.offset,
-                self.stack_info.global_info.typemap,
                 target_size=self.target_size,
             )[0]
             self.has_late_field_name = True
@@ -1693,19 +1692,15 @@ def deref(
     type: Type = stack_info.unique_type_for("struct", (uw_var, offset), Type.any())
 
     # Struct access with type information.
-    typemap = stack_info.global_info.typemap
-    if typemap:
-        array_expr = array_access_from_add(
-            var, offset, stack_info, typemap, target_size=size, ptr=False
-        )
-        if array_expr is not None:
-            return array_expr
-        field_name, new_type, _, _ = get_field(
-            var.type, offset, typemap, target_size=size
-        )
-        if field_name is not None:
-            new_type.unify(type)
-            type = new_type
+    array_expr = array_access_from_add(
+        var, offset, stack_info, target_size=size, ptr=False
+    )
+    if array_expr is not None:
+        return array_expr
+    field_name, new_type, _, _ = get_field(var.type, offset, target_size=size)
+    if field_name is not None:
+        new_type.unify(type)
+        type = new_type
 
     # Dereferencing pointers of known types
     target = var.type.get_pointer_target()
@@ -2099,16 +2094,15 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
         # architecture.
-        typemap = stack_info.global_info.typemap
-        if typemap and isinstance(imm, Literal):
+        if isinstance(imm, Literal):
             array_access = array_access_from_add(
-                source, imm.value, stack_info, typemap, target_size=None, ptr=True
+                source, imm.value, stack_info, target_size=None, ptr=True
             )
             if array_access is not None:
                 return array_access
 
             field_name, subtype, ptr_type, array_dim = get_field(
-                source.type, imm.value, typemap, target_size=None
+                source.type, imm.value, target_size=None
             )
             if field_name is not None:
                 if array_dim is not None:
@@ -2405,7 +2399,6 @@ def array_access_from_add(
     expr: Expression,
     offset: int,
     stack_info: StackInfo,
-    typemap: TypeMap,
     *,
     target_size: Optional[int],
     ptr: bool,
@@ -2448,7 +2441,7 @@ def array_access_from_add(
         pass
     else:
         # base->subarray[index]
-        substr_array = find_substruct_array(base.type, offset, scale, typemap)
+        substr_array = find_substruct_array(base.type, offset, scale)
         if substr_array is None:
             return None
         sub_field_name, sub_offset, elem_type = substr_array
@@ -2466,7 +2459,7 @@ def array_access_from_add(
     # Add .field if necessary
     ret: Expression = ArrayAccess(base, index, type=target_type)
     field_name, new_type, ptr_type, is_array = get_field(
-        base.type, offset, typemap, target_size=target_size
+        base.type, offset, target_size=target_size
     )
     if offset != 0 or (target_size is not None and target_size != scale):
         ret = StructAccess(
@@ -2504,13 +2497,9 @@ def handle_add(args: InstrArgs) -> Expression:
     folded_expr = fold_mul_chains(expr)
     if folded_expr is not expr:
         return folded_expr
-    typemap = stack_info.global_info.typemap
-    if typemap is not None:
-        array_expr = array_access_from_add(
-            expr, 0, stack_info, typemap, target_size=None, ptr=True
-        )
-        if array_expr is not None:
-            return array_expr
+    array_expr = array_access_from_add(expr, 0, stack_info, target_size=None, ptr=True)
+    if array_expr is not None:
+        return array_expr
     return expr
 
 

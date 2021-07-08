@@ -222,11 +222,12 @@ class Type:
             return data.ptr_to
         return None
 
-    def get_pointer_to_ctype(self) -> Optional[CType]:
-        """If self is a pointer-to-a-CType, return the CType"""
-        ptr_to = self.get_pointer_target()
-        if ptr_to is not None and ptr_to.is_ctype():
-            return ptr_to.data().ctype_ref
+    def get_ctype_and_typemap(self) -> Optional[Tuple[CType, TypeMap]]:
+        """If self is a CType, return the CType and the TypeMap it came from"""
+        data = self.data()
+        if data.kind == TypeData.K_CTYPE:
+            assert data.ctype_ref is not None and data.typemap is not None
+            return data.ctype_ref, data.typemap
         return None
 
     def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
@@ -664,7 +665,7 @@ def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[
 
 
 def get_field(
-    type: Type, offset: int, typemap: TypeMap, *, target_size: Optional[int]
+    type: Type, offset: int, *, target_size: Optional[int]
 ) -> Tuple[Optional[str], Type, Type, Optional[int]]:
     """Returns field name, target type, target pointer type, and
     the field's array size (or None if the field is not an array)."""
@@ -672,10 +673,16 @@ def get_field(
         # We might as well take a pointer to the whole struct
         target = type.get_pointer_target() or Type.any()
         return None, target, type, False
-    ctype = type.get_pointer_to_ctype()
-    if ctype is None:
+
+    deref_type = type.get_pointer_target()
+    if deref_type is None:
         return None, Type.any(), Type.ptr(), False
+    ctype_and_typemap = deref_type.get_ctype_and_typemap()
+    if ctype_and_typemap is None:
+        return None, Type.any(), Type.ptr(), False
+    ctype, typemap = ctype_and_typemap
     ctype = resolve_typedefs(ctype, typemap)
+
     if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
         struct = get_struct(ctype.type, typemap)
         if struct:
@@ -713,13 +720,17 @@ def get_field(
 
 
 def find_substruct_array(
-    type: Type, offset: int, scale: int, typemap: TypeMap
+    type: Type, offset: int, scale: int
 ) -> Optional[Tuple[str, int, Type]]:
     if scale <= 0:
         return None
-    ctype = type.get_pointer_to_ctype()
-    if ctype is None:
+    deref_type = type.get_pointer_target()
+    if deref_type is None:
         return None
+    ctype_and_typemap = deref_type.get_ctype_and_typemap()
+    if ctype_and_typemap is None:
+        return None
+    ctype, typemap = ctype_and_typemap
     ctype = resolve_typedefs(ctype, typemap)
     if not isinstance(ctype, ca.TypeDecl):
         return None
