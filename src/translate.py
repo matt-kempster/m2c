@@ -1462,16 +1462,43 @@ class RawSymbolRef:
 
 
 @dataclass
+class RegDataMeta:
+    # True if this regdata is unchanged from the start of the block
+    inherited: bool = False
+
+    # True if this regdata is read by some later node
+    is_read: bool = False
+
+    # True if the value derives solely from function call return values
+    function_return: bool = False
+
+    # True if the value derives solely from regdata's with is_read = True or
+    # function_return = True
+    uninteresting: bool = False
+
+
+@dataclass
+class RegData:
+    value: Expression
+    meta: RegDataMeta
+
+
+@dataclass
 class RegInfo:
-    contents: Dict[Register, Expression]
+    contents: Dict[Register, RegData]
     stack_info: StackInfo = field(repr=False)
+    read_inherited: Set[Register] = field(default_factory=set)
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register("zero"):
             return Literal(0)
-        ret = self.get_raw(key)
-        if ret is None:
+        data = self.contents.get(key)
+        if data is None:
             return ErrorExpr(f"Read from unset register {key}")
+        ret = data.value
+        data.meta.is_read = True
+        if data.meta.inherited:
+            self.read_inherited.add(key)
         if isinstance(ret, PassedInArg) and not ret.copied:
             # Create a new argument object to better distinguish arguments we
             # are called with from arguments passed to subroutines. Also, unify
@@ -1494,20 +1521,25 @@ class RegInfo:
 
     def __setitem__(self, key: Register, value: Expression) -> None:
         assert key != Register("zero")
-        self.contents[key] = value
+        self.contents[key] = RegData(value, RegDataMeta())
+
+    def set_raw(self, key: Register, data: RegData) -> None:
+        assert key != Register("zero")
+        self.contents[key] = data
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register("zero")
         del self.contents[key]
 
     def get_raw(self, key: Register) -> Optional[Expression]:
-        return self.contents.get(key, None)
+        ret = self.contents.get(key)
+        return ret.value if ret is not None else None
 
     def __str__(self) -> str:
         return ", ".join(
-            f"{k}: {v}"
+            f"{k}: {v.value}"
             for k, v in sorted(self.contents.items(), key=lambda x: x[0].register_name)
-            if not self.stack_info.should_save(v, None)
+            if not self.stack_info.should_save(v.value, None)
         )
 
 
@@ -1523,7 +1555,6 @@ class BlockInfo:
     switch_value: Optional[Expression]
     branch_condition: Optional[Condition]
     final_register_states: RegInfo
-    has_custom_return: bool
     has_function_call: bool
 
     def __str__(self) -> str:
@@ -3119,24 +3150,102 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             stack_info.phi_vars.append(phi)
 
 
-def compute_has_custom_return(nodes: List[Node]) -> None:
-    """Propagate the "has_custom_return" property using fixed-point iteration."""
-    changed = True
-    while changed:
-        changed = False
-        for n in nodes:
-            if isinstance(n, TerminalNode):
-                continue
-            block_info = n.block.block_info
-            assert isinstance(block_info, BlockInfo)
-            if block_info.has_custom_return or block_info.has_function_call:
-                continue
+def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
+    """Propagate RegDataMeta bits forwards/backwards."""
+    non_terminal: List[Node] = [n for n in nodes if not isinstance(n, TerminalNode)]
+
+    # Set `is_read` based on `read_inherited`.
+    for n in non_terminal:
+        if reg in get_block_info(n).final_register_states.read_inherited:
             for p in n.parents:
-                block_info2 = p.block.block_info
-                assert isinstance(block_info2, BlockInfo)
-                if block_info2.has_custom_return:
-                    block_info.has_custom_return = True
-                    changed = True
+                par_data = get_block_info(p).final_register_states.contents.get(reg)
+                if par_data:
+                    par_data.meta.is_read = True
+
+    # Propagate `is_read` backwards.
+    todo = non_terminal[:]
+    while todo:
+        n = todo.pop()
+        data = get_block_info(n).final_register_states.contents.get(reg)
+        for p in n.parents:
+            par_data = get_block_info(p).final_register_states.contents.get(reg)
+            if (par_data and not par_data.meta.is_read) and (
+                data and data.meta.inherited and data.meta.is_read
+            ):
+                par_data.meta.is_read = True
+                todo.append(p)
+
+    # Set `uninteresting` and propagate it and `function_return` forwards. Start by
+    # assuming inherited values are all set; they will get unset iteratively, but for
+    # cyclic dependency purposes we want to assume them set.
+    for n in non_terminal:
+        data = get_block_info(n).final_register_states.contents.get(reg)
+        if data:
+            if data.meta.inherited:
+                data.meta.uninteresting = True
+                data.meta.function_return = True
+            else:
+                data.meta.uninteresting = data.meta.is_read or data.meta.function_return
+
+    todo = non_terminal[:]
+    while todo:
+        n = todo.pop()
+        if isinstance(n, TerminalNode):
+            continue
+        data = get_block_info(n).final_register_states.contents.get(reg)
+        if not data or not data.meta.inherited:
+            continue
+        all_uninteresting = True
+        all_function_return = True
+        for p in n.parents:
+            par_data = get_block_info(p).final_register_states.contents.get(reg)
+            if par_data:
+                all_uninteresting &= par_data.meta.uninteresting
+                all_function_return &= par_data.meta.function_return
+        if data.meta.uninteresting and not all_uninteresting and not data.meta.is_read:
+            data.meta.uninteresting = False
+            todo.extend(n.children())
+        if data.meta.function_return and not all_function_return:
+            data.meta.function_return = False
+            todo.extend(n.children())
+
+
+def determine_return_register(
+    return_blocks: List[BlockInfo], fn_decl_provided: bool
+) -> Optional[Register]:
+    """Determine which of v0 and f0 is the most likely to contain the return
+    value, or if the function is likely void."""
+
+    def priority(block_info: BlockInfo, reg: Register) -> int:
+        data = block_info.final_register_states.contents.get(reg)
+        if not data:
+            return 3
+        if data.meta.uninteresting:
+            return 1
+        if data.meta.function_return:
+            return 0
+        return 2
+
+    if not return_blocks:
+        return None
+
+    best_reg: Optional[Register] = None
+    best_prio = -1
+    for reg in [Register("v0"), Register("f0")]:
+        prios = [priority(b, reg) for b in return_blocks]
+        max_prio = max(prios)
+        if max_prio == 3:
+            # Register is not always set, skip it
+            continue
+        if max_prio <= 1 and not fn_decl_provided:
+            # Register is always read after being written, or comes from a
+            # function call; seems unlikely to be an intentional return.
+            # Skip it, unless we have a known non-void return type.
+            continue
+        if max_prio > best_prio:
+            best_prio = max_prio
+            best_reg = reg
+    return best_reg
 
 
 def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
@@ -3184,20 +3293,21 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def prevent_later_uses(expr_filter: Callable[[Expression], bool]) -> None:
         """Prevent later uses of registers whose contents match a callback filter."""
         for r in regs.contents.keys():
-            e = regs.get_raw(r)
-            assert e is not None
-            if not isinstance(e, ForceVarExpr) and expr_filter(e):
+            data = regs.contents.get(r)
+            assert data is not None
+            expr = data.value
+            if not isinstance(expr, ForceVarExpr) and expr_filter(expr):
                 # Mark the register as "if used, emit the expression's once
                 # var". I think we should always have a once var at this point,
                 # but if we don't, create one.
-                if not isinstance(e, EvalOnceExpr):
-                    e = eval_once(
-                        e,
+                if not isinstance(expr, EvalOnceExpr):
+                    expr = eval_once(
+                        expr,
                         emit_exactly_once=False,
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs[r] = ForceVarExpr(e, type=e.type)
+                regs.set_raw(r, RegData(ForceVarExpr(expr, type=expr.type), data.meta))
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -3222,10 +3332,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
-        nonlocal has_custom_return
         regs[reg] = expr
-        if reg.register_name in ["f0", "v0"]:
-            has_custom_return = True
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is None:
@@ -3322,7 +3429,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_value, has_custom_return, has_function_call
+        nonlocal branch_condition, switch_value, has_function_call
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
@@ -3531,31 +3638,34 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # needs to match exactly, which is why we can't look at
             # fn_sig.return_type even though it may be more accurate.
             if not is_known_void:
-                regs[Register("f0")] = eval_once(
+
+                def set_return_reg(reg: Register, val: Expression) -> None:
+                    val = eval_once(
+                        val,
+                        emit_exactly_once=False,
+                        trivial=False,
+                        prefix=reg.register_name,
+                    )
+                    regs.set_raw(reg, RegData(val, RegDataMeta(function_return=True)))
+
+                set_return_reg(
+                    Register("f0"),
                     Cast(
                         expr=call, reinterpret=True, silent=True, type=Type.floatish()
                     ),
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix="f0",
                 )
-                regs[Register("f1")] = SecondF64Half()
-                regs[Register("v0")] = eval_once(
+                set_return_reg(
+                    Register("v0"),
                     Cast(expr=call, reinterpret=True, silent=True, type=Type.intptr()),
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix="v0",
                 )
-                regs[Register("v1")] = eval_once(
+                set_return_reg(
+                    Register("v1"),
                     as_u32(
                         Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
                     ),
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix="v1",
                 )
+                regs[Register("f1")] = SecondF64Half()
 
-            has_custom_return = False
             has_function_call = True
 
         elif mnemonic in CASES_FLOAT_COMP:
@@ -3626,7 +3736,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         switch_value=switch_value,
         branch_condition=branch_condition,
         final_register_states=regs,
-        has_custom_return=has_custom_return,
         has_function_call=has_function_call,
     )
 
@@ -3683,7 +3792,6 @@ def translate_graph_from_block(
             switch_value=None,
             branch_condition=ErrorExpr(),
             final_register_states=regs,
-            has_custom_return=False,
             has_function_call=False,
         )
 
@@ -3697,17 +3805,19 @@ def translate_graph_from_block(
     for child in node.immediately_dominates:
         if isinstance(child, TerminalNode):
             continue
-        new_contents = regs.contents.copy()
+        new_contents = {
+            reg: RegData(data.value, RegDataMeta(inherited=True))
+            for reg, data in regs.contents.items()
+        }
         phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:
             if reg_always_set(child, reg, typemap, dom_set=(reg in regs)):
-                var = stack_info.maybe_get_register_var(reg)
-                if var is not None:
-                    new_contents[reg] = var
-                else:
-                    new_contents[reg] = PhiExpr(
+                expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
+                if expr is None:
+                    expr = PhiExpr(
                         reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
                     )
+                new_contents[reg] = RegData(expr, RegDataMeta(inherited=True))
             elif reg in new_contents:
                 del new_contents[reg]
         new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
@@ -4039,6 +4149,9 @@ def translate_to_ast(
                 Register("f14"): make_arg(4, Type.floatish()),
             }
         )
+    initial_reg_contents = {
+        reg: RegData(value, RegDataMeta()) for reg, value in initial_regs.items()
+    }
 
     if options.reg_vars == ["saved"]:
         reg_vars = SAVED_REGS
@@ -4055,7 +4168,7 @@ def translate_to_ast(
         print(stack_info)
         print("\nNow, we attempt to translate:")
 
-    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
+    start_reg: RegInfo = RegInfo(contents=initial_reg_contents, stack_info=stack_info)
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
@@ -4067,37 +4180,22 @@ def translate_to_ast(
         options,
     )
 
-    # A function can have a return type if all return nodes have return values.
-    # But without a provided signature, we only mark a function has having a
-    # return type if there is a nontrivial ("custom") return value (e.g. one
-    # not from a function call)
-    # TODO: check that the values aren't read from for some other purpose.
-    compute_has_custom_return(flow_graph.nodes)
-    could_have_v0_return = all(
-        b.final_register_states.get_raw(Register("v0")) for b in return_blocks
-    )
-    could_have_f0_return = all(
-        b.final_register_states.get_raw(Register("f0")) for b in return_blocks
-    )
-    could_have_return = could_have_v0_return or could_have_f0_return
-    has_custom_return = any(b.has_custom_return for b in return_blocks)
+    for reg in [Register("v0"), Register("f0")]:
+        propagate_register_meta(flow_graph.nodes, reg)
 
-    if options.void or return_type.is_void():
-        has_return = False
-    elif could_have_return and (fn_decl_provided or has_custom_return):
-        has_return = True
-    else:
-        has_return = False
+    return_reg: Optional[Register] = None
 
-    if has_return:
+    if not options.void and not return_type.is_void():
+        return_reg = determine_return_register(return_blocks, fn_decl_provided)
+
+    if return_reg is not None:
         for b in return_blocks:
-            if b.return_value is not None:
-                ret_val = as_type(b.return_value, return_type, True)
-                b.return_value = ret_val
+            ret_val = b.final_register_states.get_raw(return_reg)
+            if ret_val is not None:
+                ret_val = as_type(ret_val, return_type, True)
                 ret_val.use()
+                b.return_value = ret_val
     else:
-        for b in return_blocks:
-            b.return_value = None
         return_type.unify(Type.void())
 
     if not fn_sig.params_known:
