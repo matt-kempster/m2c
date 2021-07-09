@@ -97,7 +97,6 @@ TEMP_REGS: List[Register] = (
                 "hi",
                 "lo",
                 "condition_bit",
-                "return",
             ],
         )
     )
@@ -2982,10 +2981,7 @@ def output_regs_for_instr(
         if not isinstance(reg, Register):
             # We'll deal with this error later
             return []
-        ret = [reg]
-        if reg.register_name in ["f0", "v0"]:
-            ret.append(Register("return"))
-        return ret
+        return [reg]
 
     mnemonic = instr.mnemonic
     if (
@@ -3004,7 +3000,7 @@ def output_regs_for_instr(
             if c_fn and c_fn.ret_type is None:
                 return []
     if mnemonic in CASES_FN_CALL:
-        return list(map(Register, ["return", "f0", "f1", "v0", "v1"]))
+        return list(map(Register, ["f0", "f1", "v0", "v1"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
@@ -3229,7 +3225,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         nonlocal has_custom_return
         regs[reg] = expr
         if reg.register_name in ["f0", "v0"]:
-            regs[Register("return")] = expr
             has_custom_return = True
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
@@ -3559,7 +3554,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     trivial=False,
                     prefix="v1",
                 )
-                regs[Register("return")] = call
 
             has_custom_return = False
             has_function_call = True
@@ -3626,15 +3620,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         branch_condition.use()
     if switch_value is not None:
         switch_value.use()
-    return_value: Optional[Expression] = None
-    if isinstance(node, ReturnNode):
-        return_value = regs.get_raw(Register("return"))
     return BlockInfo(
-        to_write,
-        return_value,
-        switch_value,
-        branch_condition,
-        regs,
+        to_write=to_write,
+        return_value=None,
+        switch_value=switch_value,
+        branch_condition=branch_condition,
+        final_register_states=regs,
         has_custom_return=has_custom_return,
         has_function_call=has_function_call,
     )
@@ -3687,11 +3678,11 @@ def translate_graph_from_block(
             error_stmts.append(CommentStmt(f"At instruction: {instr}"))
         print(file=sys.stderr)
         block_info = BlockInfo(
-            error_stmts,
-            None,
-            None,
-            ErrorExpr(),
-            regs,
+            to_write=error_stmts,
+            return_value=None,
+            switch_value=None,
+            branch_condition=ErrorExpr(),
+            final_register_states=regs,
             has_custom_return=False,
             has_function_call=False,
         )
@@ -4082,7 +4073,13 @@ def translate_to_ast(
     # not from a function call)
     # TODO: check that the values aren't read from for some other purpose.
     compute_has_custom_return(flow_graph.nodes)
-    could_have_return = all(b.return_value is not None for b in return_blocks)
+    could_have_v0_return = all(
+        b.final_register_states.get_raw(Register("v0")) for b in return_blocks
+    )
+    could_have_f0_return = all(
+        b.final_register_states.get_raw(Register("f0")) for b in return_blocks
+    )
+    could_have_return = could_have_v0_return or could_have_f0_return
     has_custom_return = any(b.has_custom_return for b in return_blocks)
 
     if options.void or return_type.is_void():
