@@ -259,8 +259,16 @@ def parse_flags(flags: List[str]) -> Options:
     group.add_argument(
         "--void",
         dest="void",
-        action="store_true",
+        action="store_const",
+        const=True,
         help="assume the decompiled function returns void",
+    )
+    group.add_argument(
+        "--not-void",
+        dest="void",
+        action="store_const",
+        const=False,
+        help="assume the decompiled function returns non-void",
     )
     group.add_argument(
         "--gotos-only",

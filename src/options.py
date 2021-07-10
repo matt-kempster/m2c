@@ -16,7 +16,7 @@ class Options:
     filenames: List[str]
     function_indexes_or_names: List[Union[int, str]]
     debug: bool
-    void: bool
+    void: Optional[bool]
     ifs: bool
     andor_detection: bool
     skip_casts: bool
