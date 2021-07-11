@@ -1541,6 +1541,12 @@ class BlockInfo:
         return [st for st in self.to_write if st.should_write()]
 
 
+def get_block_info(node: Node) -> BlockInfo:
+    ret = node.block.block_info
+    assert isinstance(ret, BlockInfo)
+    return ret
+
+
 @dataclass
 class InstrArgs:
     raw_args: List[Argument]
@@ -3064,8 +3070,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
         assert len(phi.node.parents) >= 2
         exprs = []
         for node in phi.node.parents:
-            block_info = node.block.block_info
-            assert isinstance(block_info, BlockInfo)
+            block_info = get_block_info(node)
             exprs.append(block_info.final_register_states[phi.reg])
 
         first_uw = early_unwrap(exprs[0])
@@ -3086,8 +3091,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
                 first_uw.use()
         else:
             for node in phi.node.parents:
-                block_info = node.block.block_info
-                assert isinstance(block_info, BlockInfo)
+                block_info = get_block_info(node)
                 expr = block_info.final_register_states[phi.reg]
                 if isinstance(expr, PhiExpr):
                     # Explicitly mark how the expression is used if it's a phi,

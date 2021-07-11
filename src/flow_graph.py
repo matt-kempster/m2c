@@ -38,10 +38,12 @@ class Block:
     approx_label_name: str
     instructions: List[Instruction]
 
-    # TODO: fix "Any" to be "BlockInfo" (currently annoying due to circular imports)
-    block_info: Optional[Any] = None
+    # block_info is actually an Optional[BlockInfo], set by translate.py for
+    # non-TerminalNode's, but due to circular dependencies we cannot type it
+    # correctly. To access it, use the get_block_info method from translate.py.
+    block_info: object = None
 
-    def add_block_info(self, block_info: Any) -> None:
+    def add_block_info(self, block_info: object) -> None:
         assert self.block_info is None
         self.block_info = block_info
 
@@ -1377,7 +1379,7 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> str:
         },
     )
     for node in flow_graph.nodes:
-        block_info = node.block.block_info
+        block_info: Optional[Any] = node.block.block_info
         # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
         label = f"// Node {node.name()}\l"
         if block_info:

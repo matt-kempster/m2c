@@ -20,6 +20,7 @@ from .translate import (
     Expression,
     Formatter,
     FunctionInfo,
+    get_block_info,
 )
 from .translate import Statement as TrStatement
 from .translate import Type, format_expr, simplify_condition
@@ -182,8 +183,8 @@ class Body:
         self.statements.extend(other.statements)
 
     def add_node(self, node: Node, comment_empty: bool) -> None:
-        assert isinstance(node.block.block_info, BlockInfo)
-        statements = node.block.block_info.statements_to_write()
+        block_info = get_block_info(node)
+        statements = block_info.statements_to_write()
 
         # Add node header comment
         if self.print_node_comment and (statements or comment_empty):
@@ -320,8 +321,7 @@ def emit_goto(context: Context, target: Node, body: Body) -> None:
 
 
 def switch_jump(context: Context, node: SwitchNode) -> SimpleStatement:
-    block_info = node.block.block_info
-    assert isinstance(block_info, BlockInfo)
+    block_info = get_block_info(node)
     expr = block_info.switch_value
     assert expr is not None
     switch_index = context.switch_nodes.get(node, 0)
@@ -396,8 +396,7 @@ def try_make_if_condition(
             return None
         allowed_nodes.remove(node)
 
-        block_info = node.block.block_info
-        assert isinstance(block_info, BlockInfo)
+        block_info = get_block_info(node)
         if node is start_node:
             # The first condition in an if-statement will have unrelated
             # statements in its to_write list, which our caller will already
@@ -588,8 +587,7 @@ def join_conditions(left: Condition, op: str, right: Condition) -> Condition:
 
 
 def emit_return(context: Context, node: ReturnNode, body: Body) -> None:
-    ret_info = node.block.block_info
-    assert isinstance(ret_info, BlockInfo)
+    ret_info = get_block_info(node)
 
     ret = ret_info.return_value
     if ret is not None:
@@ -636,9 +634,9 @@ def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoo
             and isinstance(node, ConditionalNode)
             and node.fallthrough_edge == end
         ):
-            assert node.block.block_info
-            assert node.block.block_info.branch_condition
-            condition = node.block.block_info.branch_condition
+            block_info = get_block_info(node)
+            assert block_info.branch_condition is not None
+            condition = block_info.branch_condition
             new_end = node
             break
     if not condition:
@@ -775,8 +773,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             emit_node(context, node, body)
             if_body = Body(print_node_comment=True)
             emit_goto(context, node.conditional_edge, if_body)
-            block_info = node.block.block_info
-            assert isinstance(block_info, BlockInfo)
+            block_info = get_block_info(node)
             assert block_info.branch_condition is not None
             body.add_if_else(
                 IfElseStatement(
