@@ -1462,7 +1462,7 @@ class RawSymbolRef:
 
 
 @dataclass
-class RegDataMeta:
+class RegMeta:
     # True if this regdata is unchanged from the start of the block
     inherited: bool = False
 
@@ -1480,13 +1480,13 @@ class RegDataMeta:
 @dataclass
 class RegData:
     value: Expression
-    meta: RegDataMeta
+    meta: RegMeta
 
 
 @dataclass
 class RegInfo:
-    contents: Dict[Register, RegData]
     stack_info: StackInfo = field(repr=False)
+    contents: Dict[Register, RegData] = field(default_factory=dict)
     read_inherited: Set[Register] = field(default_factory=set)
 
     def __getitem__(self, key: Register) -> Expression:
@@ -1521,19 +1521,23 @@ class RegInfo:
 
     def __setitem__(self, key: Register, value: Expression) -> None:
         assert key != Register("zero")
-        self.contents[key] = RegData(value, RegDataMeta())
+        self.contents[key] = RegData(value, RegMeta())
 
-    def set_raw(self, key: Register, data: RegData) -> None:
+    def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
         assert key != Register("zero")
-        self.contents[key] = data
+        self.contents[key] = RegData(value, meta)
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register("zero")
         del self.contents[key]
 
     def get_raw(self, key: Register) -> Optional[Expression]:
-        ret = self.contents.get(key)
-        return ret.value if ret is not None else None
+        data = self.contents.get(key)
+        return data.value if data is not None else None
+
+    def get_meta(self, key: Register) -> Optional[RegMeta]:
+        data = self.contents.get(key)
+        return data.meta if data is not None else None
 
     def __str__(self) -> str:
         return ", ".join(
@@ -3151,62 +3155,62 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
 
 
 def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
-    """Propagate RegDataMeta bits forwards/backwards."""
+    """Propagate RegMeta bits forwards/backwards."""
     non_terminal: List[Node] = [n for n in nodes if not isinstance(n, TerminalNode)]
 
     # Set `is_read` based on `read_inherited`.
     for n in non_terminal:
         if reg in get_block_info(n).final_register_states.read_inherited:
             for p in n.parents:
-                par_data = get_block_info(p).final_register_states.contents.get(reg)
-                if par_data:
-                    par_data.meta.is_read = True
+                par_meta = get_block_info(p).final_register_states.get_meta(reg)
+                if par_meta:
+                    par_meta.is_read = True
 
     # Propagate `is_read` backwards.
     todo = non_terminal[:]
     while todo:
         n = todo.pop()
-        data = get_block_info(n).final_register_states.contents.get(reg)
+        meta = get_block_info(n).final_register_states.get_meta(reg)
         for p in n.parents:
-            par_data = get_block_info(p).final_register_states.contents.get(reg)
-            if (par_data and not par_data.meta.is_read) and (
-                data and data.meta.inherited and data.meta.is_read
+            par_meta = get_block_info(p).final_register_states.get_meta(reg)
+            if (par_meta and not par_meta.is_read) and (
+                meta and meta.inherited and meta.is_read
             ):
-                par_data.meta.is_read = True
+                par_meta.is_read = True
                 todo.append(p)
 
     # Set `uninteresting` and propagate it and `function_return` forwards. Start by
     # assuming inherited values are all set; they will get unset iteratively, but for
     # cyclic dependency purposes we want to assume them set.
     for n in non_terminal:
-        data = get_block_info(n).final_register_states.contents.get(reg)
-        if data:
-            if data.meta.inherited:
-                data.meta.uninteresting = True
-                data.meta.function_return = True
+        meta = get_block_info(n).final_register_states.get_meta(reg)
+        if meta:
+            if meta.inherited:
+                meta.uninteresting = True
+                meta.function_return = True
             else:
-                data.meta.uninteresting = data.meta.is_read or data.meta.function_return
+                meta.uninteresting = meta.is_read or meta.function_return
 
     todo = non_terminal[:]
     while todo:
         n = todo.pop()
         if isinstance(n, TerminalNode):
             continue
-        data = get_block_info(n).final_register_states.contents.get(reg)
-        if not data or not data.meta.inherited:
+        meta = get_block_info(n).final_register_states.get_meta(reg)
+        if not meta or not meta.inherited:
             continue
         all_uninteresting = True
         all_function_return = True
         for p in n.parents:
-            par_data = get_block_info(p).final_register_states.contents.get(reg)
-            if par_data:
-                all_uninteresting &= par_data.meta.uninteresting
-                all_function_return &= par_data.meta.function_return
-        if data.meta.uninteresting and not all_uninteresting and not data.meta.is_read:
-            data.meta.uninteresting = False
+            par_meta = get_block_info(p).final_register_states.get_meta(reg)
+            if par_meta:
+                all_uninteresting &= par_meta.uninteresting
+                all_function_return &= par_meta.function_return
+        if meta.uninteresting and not all_uninteresting and not meta.is_read:
+            meta.uninteresting = False
             todo.extend(n.children())
-        if data.meta.function_return and not all_function_return:
-            data.meta.function_return = False
+        if meta.function_return and not all_function_return:
+            meta.function_return = False
             todo.extend(n.children())
 
 
@@ -3217,12 +3221,12 @@ def determine_return_register(
     value, or if the function is likely void."""
 
     def priority(block_info: BlockInfo, reg: Register) -> int:
-        data = block_info.final_register_states.contents.get(reg)
-        if not data:
+        meta = block_info.final_register_states.get_meta(reg)
+        if not meta:
             return 3
-        if data.meta.uninteresting:
+        if meta.uninteresting:
             return 1
-        if data.meta.function_return:
+        if meta.function_return:
             return 0
         return 2
 
@@ -3307,7 +3311,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs.set_raw(r, RegData(ForceVarExpr(expr, type=expr.type), data.meta))
+                regs.set_with_meta(r, ForceVarExpr(expr, type=expr.type), data.meta)
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -3646,7 +3650,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         trivial=False,
                         prefix=reg.register_name,
                     )
-                    regs.set_raw(reg, RegData(val, RegDataMeta(function_return=True)))
+                    regs.set_with_meta(reg, val, RegMeta(function_return=True))
 
                 set_return_reg(
                     Register("f0"),
@@ -3805,10 +3809,10 @@ def translate_graph_from_block(
     for child in node.immediately_dominates:
         if isinstance(child, TerminalNode):
             continue
-        new_contents = {
-            reg: RegData(data.value, RegDataMeta(inherited=True))
-            for reg, data in regs.contents.items()
-        }
+        new_regs = RegInfo(stack_info=stack_info)
+        for reg, data in regs.contents.items():
+            new_regs.set_with_meta(reg, data.value, RegMeta(inherited=True))
+
         phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:
             if reg_always_set(child, reg, typemap, dom_set=(reg in regs)):
@@ -3817,10 +3821,9 @@ def translate_graph_from_block(
                     expr = PhiExpr(
                         reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
                     )
-                new_contents[reg] = RegData(expr, RegDataMeta(inherited=True))
-            elif reg in new_contents:
-                del new_contents[reg]
-        new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
+                new_regs.set_with_meta(reg, expr, RegMeta(inherited=True))
+            elif reg in new_regs:
+                del new_regs[reg]
         translate_graph_from_block(
             child, new_regs, stack_info, used_phis, return_blocks, options
         )
@@ -4105,12 +4108,12 @@ def translate_to_ast(
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
+    start_regs: RegInfo = RegInfo(stack_info=stack_info)
     typemap = global_info.typemap
 
-    initial_regs: Dict[Register, Expression] = {
-        Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
-        **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
-    }
+    start_regs[Register("sp")] = GlobalSymbol("sp", type=Type.ptr())
+    for reg in SAVED_REGS:
+        start_regs[reg] = stack_info.saved_reg_symbol(reg.register_name)
 
     def make_arg(offset: int, type: Type) -> PassedInArg:
         assert offset % 4 == 0
@@ -4134,24 +4137,17 @@ def translate_to_ast(
         for slot in abi.arg_slots:
             stack_info.add_known_param(slot.offset, slot.name, slot.type)
             if slot.reg is not None:
-                initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
+                start_regs[slot.reg] = make_arg(slot.offset, slot.type)
         for reg in abi.possible_regs:
             offset = 4 * int(reg.register_name[1])
-            initial_regs[reg] = make_arg(offset, Type.any_reg())
+            start_regs[reg] = make_arg(offset, Type.any_reg())
     else:
-        initial_regs.update(
-            {
-                Register("a0"): make_arg(0, Type.intptr()),
-                Register("a1"): make_arg(4, Type.any_reg()),
-                Register("a2"): make_arg(8, Type.any_reg()),
-                Register("a3"): make_arg(12, Type.any_reg()),
-                Register("f12"): make_arg(0, Type.floatish()),
-                Register("f14"): make_arg(4, Type.floatish()),
-            }
-        )
-    initial_reg_contents = {
-        reg: RegData(value, RegDataMeta()) for reg, value in initial_regs.items()
-    }
+        start_regs[Register("a0")] = make_arg(0, Type.intptr())
+        start_regs[Register("a1")] = make_arg(4, Type.any_reg())
+        start_regs[Register("a2")] = make_arg(8, Type.any_reg())
+        start_regs[Register("a3")] = make_arg(12, Type.any_reg())
+        start_regs[Register("f12")] = make_arg(0, Type.floatish())
+        start_regs[Register("f14")] = make_arg(4, Type.floatish())
 
     if options.reg_vars == ["saved"]:
         reg_vars = SAVED_REGS
@@ -4168,12 +4164,11 @@ def translate_to_ast(
         print(stack_info)
         print("\nNow, we attempt to translate:")
 
-    start_reg: RegInfo = RegInfo(contents=initial_reg_contents, stack_info=stack_info)
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
         flow_graph.entry_node(),
-        start_reg,
+        start_regs,
         stack_info,
         used_phis,
         return_blocks,
