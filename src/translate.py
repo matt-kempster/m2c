@@ -1357,37 +1357,45 @@ class PhiExpr(Expression):
 
 
 @dataclass
-class SwitchControl(Expression):
-    jump_table: GlobalSymbol
+class SwitchControl:
     control_expr: Expression
+    jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
 
-    def dependencies(self) -> List[Expression]:
-        return [self.control_expr]
-
     def format(self, fmt: Formatter) -> str:
-        return self.control_expr.format(fmt)
+        index = format_expr(self.control_expr, fmt)
+        if not self.jump_table:
+            return index
+        if self.offset:
+            index = f"{index} - {self.offset}"
+        return f"(&{format_expr(self.jump_table, fmt)})[{index}]"
 
     @staticmethod
-    def try_from_expr(expr: Expression) -> Optional["SwitchControl"]:
+    def from_expr(expr: Expression) -> "SwitchControl":
         """
         Try to convert `expr` into a SwitchControl from one of the following forms:
             - `*(&jump_table + (control_expr * 4))`
             - `*(&jump_table + ((control_expr + (-offset)) * 4))`
-        If `expr` does not match, return `None`. If `offset` is not present, it defaults to 0.
+        If `offset` is not present, it defaults to 0.
+        If `expr` does not match, return a thin wrapper around the input expression,
+        with `jump_table` set to `None`.
         """
+        # The "error" expression we use if we aren't able to parse `expr`
+        error_expr = SwitchControl(expr)
+        return error_expr
+
         # Match `*(&jump_table + (control_expr * 4))`
         struct_expr = early_unwrap(expr)
         if not isinstance(struct_expr, StructAccess) or struct_expr.offset != 0:
-            return None
+            return error_expr
         add_expr = early_unwrap(struct_expr.struct_var)
         if not isinstance(add_expr, BinaryOp) or add_expr.op != "+":
-            return None
+            return error_expr
         jtbl_addr_expr = early_unwrap(add_expr.left)
         if not isinstance(jtbl_addr_expr, AddressOf) or not isinstance(
             jtbl_addr_expr.expr, GlobalSymbol
         ):
-            return None
+            return error_expr
         jump_table = jtbl_addr_expr.expr
         mul_expr = early_unwrap(add_expr.right)
         if (
@@ -1395,7 +1403,7 @@ class SwitchControl(Expression):
             or mul_expr.op != "*"
             or early_unwrap(mul_expr.right) != Literal(4)
         ):
-            return None
+            return error_expr
         control_expr = mul_expr.left
 
         # Optionally match `control_expr + (-offset)`
@@ -1409,9 +1417,9 @@ class SwitchControl(Expression):
 
         # Check that it is really a jump table
         if not symbol_name_is_jump_table(jump_table.symbol_name):
-            return None
+            return error_expr
 
-        return SwitchControl(jump_table, control_expr, offset)
+        return SwitchControl(control_expr, jump_table, offset)
 
 
 @dataclass
@@ -1580,7 +1588,7 @@ class BlockInfo:
 
     to_write: List[Statement]
     return_value: Optional[Expression]
-    switch_value: Optional[Expression]
+    switch_control: Optional[SwitchControl]
     branch_condition: Optional[Condition]
     final_register_states: RegInfo
     has_custom_return: bool
@@ -3202,7 +3210,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
     subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
     branch_condition: Optional[Condition] = None
-    switch_value: Optional[Expression] = None
+    switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
     has_function_call: bool = False
 
@@ -3376,7 +3384,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_value, has_custom_return, has_function_call
+        nonlocal branch_condition, switch_expr, has_custom_return, has_function_call
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
@@ -3453,7 +3461,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             else:
                 # Switch jump.
                 assert isinstance(node, SwitchNode)
-                switch_value = args.reg(0)
+                switch_expr = args.reg(0)
 
         elif mnemonic in CASES_FN_CALL:
             if mnemonic == "jal":
@@ -3666,18 +3674,17 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     if branch_condition is not None:
         branch_condition.use()
-    if switch_value is not None:
-        switch_control = SwitchControl.try_from_expr(switch_value)
-        if switch_control is not None:
-            switch_value = switch_control
-        switch_value.use()
+    switch_control: Optional[SwitchControl] = None
+    if switch_expr is not None:
+        switch_control = SwitchControl.from_expr(switch_expr)
+        switch_control.control_expr.use()
     return_value: Optional[Expression] = None
     if isinstance(node, ReturnNode):
         return_value = regs.get_raw(Register("return"))
     return BlockInfo(
         to_write,
         return_value,
-        switch_value,
+        switch_control,
         branch_condition,
         regs,
         has_custom_return=has_custom_return,

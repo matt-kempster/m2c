@@ -87,9 +87,7 @@ class IfElseStatement:
 
 @dataclass
 class SwitchStatement:
-    # If `jump` is a `SwitchControl`, then we can emit a proper `switch (...) { ... }`
-    # block. Otherwise, it is a `SimpleStatement` with a `goto ...;`.
-    jump: Union[SwitchControl, "SimpleStatement"]
+    jump: SwitchControl
     body: "Body"
     # If there are multiple switch statements in a single function, each is given a
     # unique index starting at 1. This is used in comments to make control flow clear.
@@ -100,17 +98,17 @@ class SwitchStatement:
 
     def format(self, fmt: Formatter) -> str:
         lines = []
-        comment = f" // switch {self.index}" if self.index > 0 else ""
-        if isinstance(self.jump, SimpleStatement):
-            # We weren't able to parse the switch control expression, so emit a goto
-            lines.append(f"{self.jump.format(fmt)}{comment}")
-            lines.append(fmt.indent("{"))
-        else:
-            lines.append(
-                fmt.indent(
-                    f"switch ({format_expr(self.jump, fmt)}) {{{comment}",
-                )
+        comments = []
+        if self.index > 0:
+            comments.append(f"switch {self.index}")
+        if not self.jump.jump_table:
+            comments.append("unable to parse jump table")
+        comment = f" // {'; '.join(comments)}" if comments else ""
+        lines.append(
+            fmt.indent(
+                f"switch ({format_expr(self.jump.control_expr, fmt)}) {{{comment}",
             )
+        )
         with fmt.indented():
             lines.append(self.body.format(fmt))
         lines.append(fmt.indent("}"))
@@ -355,7 +353,7 @@ def add_labels_for_switch(
 
     # Determine offset
     offset = 0
-    switch_control = get_block_info(node).switch_value
+    switch_control = get_block_info(node).switch_control
     if isinstance(switch_control, SwitchControl):
         offset = switch_control.offset
 
@@ -375,11 +373,13 @@ def add_labels_for_switch(
 
 def switch_jump(context: Context, node: SwitchNode) -> SimpleStatement:
     switch_index = context.switch_nodes[node]
-    block_info = get_block_info(node)
-    expr = block_info.switch_value
-    assert expr is not None
+    comment = f" // switch {switch_index}" if switch_index > 0 else ""
+    switch_control = get_block_info(node).switch_control
+    assert isinstance(switch_control, SwitchControl)
 
-    return SimpleStatement(f"goto *{format_expr(expr, context.fmt)};", is_jump=True)
+    return SimpleStatement(
+        f"goto *{switch_control.format(context.fmt)};{comment}", is_jump=True
+    )
 
 
 def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> None:
@@ -671,10 +671,8 @@ def build_switch_between(
     add_labels_for_switch(context, switch, default_node)
     switch_index = context.switch_nodes[switch]
 
-    jump: Optional[Union[Expression, SimpleStatement]]
-    jump = get_block_info(switch).switch_value
-    if not isinstance(jump, SwitchControl):
-        jump = switch_jump(context, switch)
+    jump = get_block_info(switch).switch_control
+    assert isinstance(jump, SwitchControl)
 
     switch_body = Body(print_node_comment=context.options.debug)
 
