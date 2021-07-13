@@ -3211,7 +3211,7 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
 
 
 def determine_return_register(
-    return_blocks: List[BlockInfo], assume_non_void: bool
+    return_blocks: List[BlockInfo], fn_decl_provided: bool
 ) -> Optional[Register]:
     """Determine which of v0 and f0 is the most likely to contain the return
     value, or if the function is likely void."""
@@ -3237,10 +3237,10 @@ def determine_return_register(
         if max_prio == 3:
             # Register is not always set, skip it
             continue
-        if max_prio <= 1 and not assume_non_void:
+        if max_prio <= 1 and not fn_decl_provided:
             # Register is always read after being written, or comes from a
             # function call; seems unlikely to be an intentional return.
-            # Skip it, unless told not to.
+            # Skip it, unless we have a known non-void return type.
             continue
         if max_prio > best_prio:
             best_prio = max_prio
@@ -4185,9 +4185,8 @@ def translate_to_ast(
 
     return_reg: Optional[Register] = None
 
-    if options.void != True and not return_type.is_void():
-        force_non_void = fn_decl_provided or options.void == False
-        return_reg = determine_return_register(return_blocks, force_non_void)
+    if not options.void and not return_type.is_void():
+        return_reg = determine_return_register(return_blocks, fn_decl_provided)
 
     if return_reg is not None:
         for b in return_blocks:
