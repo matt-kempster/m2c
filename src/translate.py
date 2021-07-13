@@ -98,7 +98,6 @@ TEMP_REGS: List[Register] = (
                 "hi",
                 "lo",
                 "condition_bit",
-                "return",
             ],
         )
     )
@@ -1155,10 +1154,10 @@ class Literal(Expression):
 
     def format(self, fmt: Formatter) -> str:
         if self.type.is_likely_float():
-            if self.type.get_size_bits() == 32:
-                return format_f32_imm(self.value) + "f"
-            else:
+            if self.type.get_size_bits() == 64:
                 return format_f64_imm(self.value)
+            else:
+                return format_f32_imm(self.value) + "f"
         if self.type.is_pointer() and self.value == 0:
             return "NULL"
 
@@ -1530,16 +1529,43 @@ class RawSymbolRef:
 
 
 @dataclass
+class RegMeta:
+    # True if this regdata is unchanged from the start of the block
+    inherited: bool = False
+
+    # True if this regdata is read by some later node
+    is_read: bool = False
+
+    # True if the value derives solely from function call return values
+    function_return: bool = False
+
+    # True if the value derives solely from regdata's with is_read = True or
+    # function_return = True
+    uninteresting: bool = False
+
+
+@dataclass
+class RegData:
+    value: Expression
+    meta: RegMeta
+
+
+@dataclass
 class RegInfo:
-    contents: Dict[Register, Expression]
     stack_info: StackInfo = field(repr=False)
+    contents: Dict[Register, RegData] = field(default_factory=dict)
+    read_inherited: Set[Register] = field(default_factory=set)
 
     def __getitem__(self, key: Register) -> Expression:
         if key == Register("zero"):
             return Literal(0)
-        ret = self.get_raw(key)
-        if ret is None:
+        data = self.contents.get(key)
+        if data is None:
             return ErrorExpr(f"Read from unset register {key}")
+        ret = data.value
+        data.meta.is_read = True
+        if data.meta.inherited:
+            self.read_inherited.add(key)
         if isinstance(ret, PassedInArg) and not ret.copied:
             # Create a new argument object to better distinguish arguments we
             # are called with from arguments passed to subroutines. Also, unify
@@ -1562,20 +1588,29 @@ class RegInfo:
 
     def __setitem__(self, key: Register, value: Expression) -> None:
         assert key != Register("zero")
-        self.contents[key] = value
+        self.contents[key] = RegData(value, RegMeta())
+
+    def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
+        assert key != Register("zero")
+        self.contents[key] = RegData(value, meta)
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register("zero")
         del self.contents[key]
 
     def get_raw(self, key: Register) -> Optional[Expression]:
-        return self.contents.get(key, None)
+        data = self.contents.get(key)
+        return data.value if data is not None else None
+
+    def get_meta(self, key: Register) -> Optional[RegMeta]:
+        data = self.contents.get(key)
+        return data.meta if data is not None else None
 
     def __str__(self) -> str:
         return ", ".join(
-            f"{k}: {v}"
+            f"{k}: {v.value}"
             for k, v in sorted(self.contents.items(), key=lambda x: x[0].register_name)
-            if not self.stack_info.should_save(v, None)
+            if not self.stack_info.should_save(v.value, None)
         )
 
 
@@ -1591,7 +1626,6 @@ class BlockInfo:
     switch_control: Optional[SwitchControl]
     branch_condition: Optional[Condition]
     final_register_states: RegInfo
-    has_custom_return: bool
     has_function_call: bool
 
     def __str__(self) -> str:
@@ -2626,33 +2660,42 @@ def strip_macros(arg: Argument) -> Argument:
 
 
 @dataclass
-class AbiStackSlot:
+class AbiArgSlot:
     offset: int
     reg: Optional[Register]
     name: Optional[str]
     type: Type
 
 
-def function_abi(
-    fn_sig: FunctionSignature, *, for_call: bool
-) -> Tuple[List[AbiStackSlot], List[Register]]:
+@dataclass
+class Abi:
+    arg_slots: List[AbiArgSlot]
+    possible_regs: List[Register]
+
+
+def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
     """Compute stack positions/registers used by a function according to the o32 ABI,
     based on C type information. Additionally computes a list of registers that might
     contain arguments, if the function is a varargs function. (Additional varargs
     arguments may be passed on the stack; we could compute the offset at which that
     would start but right now don't care -- we just slurp up everything.)"""
     if not fn_sig.params_known:
-        return [], [Register(r) for r in ["f12", "f13", "f14", "a0", "a1", "a2", "a3"]]
+        return Abi(
+            arg_slots=[],
+            possible_regs=[
+                Register(r) for r in ["f12", "f13", "f14", "a0", "a1", "a2", "a3"]
+            ],
+        )
 
     offset = 0
     only_floats = True
-    slots: List[AbiStackSlot] = []
+    slots: List[AbiArgSlot] = []
     possible: List[Register] = []
     if fn_sig.return_type.is_struct_type():
         # The ABI for struct returns is to pass a pointer to where it should be written
         # as the first argument.
         slots.append(
-            AbiStackSlot(
+            AbiArgSlot(
                 offset=0,
                 reg=Register("a0"),
                 name="__return__",
@@ -2672,14 +2715,12 @@ def function_abi(
         if ind < 2 and only_floats:
             reg = Register("f12" if ind == 0 else "f14")
             is_double = param.type.is_float() and param.type.get_size_bits() == 64
-            slots.append(
-                AbiStackSlot(offset=offset, reg=reg, name=name, type=param.type)
-            )
+            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param.type))
             if is_double and not for_call:
                 name2 = f"{name}_lo" if name else None
                 reg2 = Register("f13" if ind == 0 else "f15")
                 slots.append(
-                    AbiStackSlot(
+                    AbiArgSlot(
                         offset=offset + 4, reg=reg2, name=name2, type=Type.any_reg()
                     )
                 )
@@ -2689,7 +2730,7 @@ def function_abi(
                 name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}") if i < 4 else None
                 slots.append(
-                    AbiStackSlot(offset=4 * i, reg=reg2, name=name2, type=param.type)
+                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param.type)
                 )
         offset += size
 
@@ -2697,7 +2738,10 @@ def function_abi(
         for i in range(offset // 4, 4):
             possible.append(Register(f"a{i}"))
 
-    return slots, possible
+    return Abi(
+        arg_slots=slots,
+        possible_regs=possible,
+    )
 
 
 InstrSet = Set[str]
@@ -3039,10 +3083,7 @@ def output_regs_for_instr(
         if not isinstance(reg, Register):
             # We'll deal with this error later
             return []
-        ret = [reg]
-        if reg.register_name in ["f0", "v0"]:
-            ret.append(Register("return"))
-        return ret
+        return [reg]
 
     mnemonic = instr.mnemonic
     if (
@@ -3061,7 +3102,7 @@ def output_regs_for_instr(
             if c_fn and c_fn.ret_type is None:
                 return []
     if mnemonic in CASES_FN_CALL:
-        return list(map(Register, ["return", "f0", "v0", "v1"]))
+        return list(map(Register, ["f0", "f1", "v0", "v1"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
@@ -3180,24 +3221,102 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             stack_info.phi_vars.append(phi)
 
 
-def compute_has_custom_return(nodes: List[Node]) -> None:
-    """Propagate the "has_custom_return" property using fixed-point iteration."""
-    changed = True
-    while changed:
-        changed = False
-        for n in nodes:
-            if isinstance(n, TerminalNode):
-                continue
-            block_info = n.block.block_info
-            assert isinstance(block_info, BlockInfo)
-            if block_info.has_custom_return or block_info.has_function_call:
-                continue
+def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
+    """Propagate RegMeta bits forwards/backwards."""
+    non_terminal: List[Node] = [n for n in nodes if not isinstance(n, TerminalNode)]
+
+    # Set `is_read` based on `read_inherited`.
+    for n in non_terminal:
+        if reg in get_block_info(n).final_register_states.read_inherited:
             for p in n.parents:
-                block_info2 = p.block.block_info
-                assert isinstance(block_info2, BlockInfo)
-                if block_info2.has_custom_return:
-                    block_info.has_custom_return = True
-                    changed = True
+                par_meta = get_block_info(p).final_register_states.get_meta(reg)
+                if par_meta:
+                    par_meta.is_read = True
+
+    # Propagate `is_read` backwards.
+    todo = non_terminal[:]
+    while todo:
+        n = todo.pop()
+        meta = get_block_info(n).final_register_states.get_meta(reg)
+        for p in n.parents:
+            par_meta = get_block_info(p).final_register_states.get_meta(reg)
+            if (par_meta and not par_meta.is_read) and (
+                meta and meta.inherited and meta.is_read
+            ):
+                par_meta.is_read = True
+                todo.append(p)
+
+    # Set `uninteresting` and propagate it and `function_return` forwards. Start by
+    # assuming inherited values are all set; they will get unset iteratively, but for
+    # cyclic dependency purposes we want to assume them set.
+    for n in non_terminal:
+        meta = get_block_info(n).final_register_states.get_meta(reg)
+        if meta:
+            if meta.inherited:
+                meta.uninteresting = True
+                meta.function_return = True
+            else:
+                meta.uninteresting = meta.is_read or meta.function_return
+
+    todo = non_terminal[:]
+    while todo:
+        n = todo.pop()
+        if isinstance(n, TerminalNode):
+            continue
+        meta = get_block_info(n).final_register_states.get_meta(reg)
+        if not meta or not meta.inherited:
+            continue
+        all_uninteresting = True
+        all_function_return = True
+        for p in n.parents:
+            par_meta = get_block_info(p).final_register_states.get_meta(reg)
+            if par_meta:
+                all_uninteresting &= par_meta.uninteresting
+                all_function_return &= par_meta.function_return
+        if meta.uninteresting and not all_uninteresting and not meta.is_read:
+            meta.uninteresting = False
+            todo.extend(n.children())
+        if meta.function_return and not all_function_return:
+            meta.function_return = False
+            todo.extend(n.children())
+
+
+def determine_return_register(
+    return_blocks: List[BlockInfo], fn_decl_provided: bool
+) -> Optional[Register]:
+    """Determine which of v0 and f0 is the most likely to contain the return
+    value, or if the function is likely void."""
+
+    def priority(block_info: BlockInfo, reg: Register) -> int:
+        meta = block_info.final_register_states.get_meta(reg)
+        if not meta:
+            return 3
+        if meta.uninteresting:
+            return 1
+        if meta.function_return:
+            return 0
+        return 2
+
+    if not return_blocks:
+        return None
+
+    best_reg: Optional[Register] = None
+    best_prio = -1
+    for reg in [Register("v0"), Register("f0")]:
+        prios = [priority(b, reg) for b in return_blocks]
+        max_prio = max(prios)
+        if max_prio == 3:
+            # Register is not always set, skip it
+            continue
+        if max_prio <= 1 and not fn_decl_provided:
+            # Register is always read after being written, or comes from a
+            # function call; seems unlikely to be an intentional return.
+            # Skip it, unless we have a known non-void return type.
+            continue
+        if max_prio > best_prio:
+            best_prio = max_prio
+            best_reg = reg
+    return best_reg
 
 
 def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
@@ -3245,20 +3364,21 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def prevent_later_uses(expr_filter: Callable[[Expression], bool]) -> None:
         """Prevent later uses of registers whose contents match a callback filter."""
         for r in regs.contents.keys():
-            e = regs.get_raw(r)
-            assert e is not None
-            if not isinstance(e, ForceVarExpr) and expr_filter(e):
+            data = regs.contents.get(r)
+            assert data is not None
+            expr = data.value
+            if not isinstance(expr, ForceVarExpr) and expr_filter(expr):
                 # Mark the register as "if used, emit the expression's once
                 # var". I think we should always have a once var at this point,
                 # but if we don't, create one.
-                if not isinstance(e, EvalOnceExpr):
-                    e = eval_once(
-                        e,
+                if not isinstance(expr, EvalOnceExpr):
+                    expr = eval_once(
+                        expr,
                         emit_exactly_once=False,
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs[r] = ForceVarExpr(e, type=e.type)
+                regs.set_with_meta(r, ForceVarExpr(expr, type=expr.type), data.meta)
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -3283,11 +3403,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
-        nonlocal has_custom_return
         regs[reg] = expr
-        if reg.register_name in ["f0", "v0"]:
-            regs[Register("return")] = expr
-            has_custom_return = True
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> None:
         if expr is None:
@@ -3384,7 +3500,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             )
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_expr, has_custom_return, has_function_call
+        nonlocal branch_condition, switch_expr, has_function_call
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
@@ -3464,12 +3580,17 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 switch_expr = args.reg(0)
 
         elif mnemonic in CASES_FN_CALL:
+            is_known_void = False
             if mnemonic == "jal":
                 fn_target = args.imm(0)
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
                 ):
-                    pass
+                    typemap = stack_info.global_info.typemap
+                    if typemap:
+                        c_fn = typemap.functions.get(fn_target.expr.symbol_name)
+                        if c_fn and c_fn.ret_type is None:
+                            is_known_void = True
                 elif isinstance(fn_target, Literal):
                     pass
                 else:
@@ -3490,15 +3611,15 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
             assert fn_sig is not None, "known function pointers must have a signature"
-            abi_slots, possible_regs = function_abi(fn_sig, for_call=True)
+            abi = function_abi(fn_sig, for_call=True)
 
             func_args: List[Expression] = []
-            for slot in abi_slots:
+            for slot in abi.arg_slots:
                 if slot.reg:
                     func_args.append(as_type(regs[slot.reg], slot.type, True))
 
             valid_extra_regs: Set[str] = set()
-            for register in possible_regs:
+            for register in abi.possible_regs:
                 expr = regs.get_raw(register)
                 if expr is None:
                     continue
@@ -3511,7 +3632,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # f12, f13, a2, a3
                 # f12, f13, f14, f15
                 require: Optional[List[str]] = None
-                if register == possible_regs[0]:
+                if register == abi.possible_regs[0]:
                     # For varargs, a subset of a0 .. a3 may be used. Don't check
                     # earlier registers for the first member of that subset.
                     pass
@@ -3549,7 +3670,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 func_args.append(expr)
 
             # Add the arguments after a3.
-            # TODO: limit this and unify types based on abi_slots
+            # TODO: limit this and unify types based on abi.arg_slots
             subroutine_args.sort(key=lambda a: a[1].value)
             for arg in subroutine_args:
                 func_args.append(arg[0])
@@ -3584,34 +3705,38 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # However, if we have type information that says the function is
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
-            # Note that this logic is duplicated in output_regs_for_instr.
-            if not fn_sig.return_type.is_void():
-                regs[Register("f0")] = eval_once(
+            # Note that this logic is duplicated in output_regs_for_instr and
+            # needs to match exactly, which is why we can't look at
+            # fn_sig.return_type even though it may be more accurate.
+            if not is_known_void:
+
+                def set_return_reg(reg: Register, val: Expression) -> None:
+                    val = eval_once(
+                        val,
+                        emit_exactly_once=False,
+                        trivial=False,
+                        prefix=reg.register_name,
+                    )
+                    regs.set_with_meta(reg, val, RegMeta(function_return=True))
+
+                set_return_reg(
+                    Register("f0"),
                     Cast(
                         expr=call, reinterpret=True, silent=True, type=Type.floatish()
                     ),
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix="f0",
                 )
-                regs[Register("f1")] = SecondF64Half()
-                regs[Register("v0")] = eval_once(
+                set_return_reg(
+                    Register("v0"),
                     Cast(expr=call, reinterpret=True, silent=True, type=Type.intptr()),
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix="v0",
                 )
-                regs[Register("v1")] = eval_once(
+                set_return_reg(
+                    Register("v1"),
                     as_u32(
                         Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
                     ),
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix="v1",
                 )
-                regs[Register("return")] = call
+                regs[Register("f1")] = SecondF64Half()
 
-            has_custom_return = False
             has_function_call = True
 
         elif mnemonic in CASES_FLOAT_COMP:
@@ -3678,16 +3803,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     if switch_expr is not None:
         switch_control = SwitchControl.from_expr(switch_expr)
         switch_control.control_expr.use()
-    return_value: Optional[Expression] = None
-    if isinstance(node, ReturnNode):
-        return_value = regs.get_raw(Register("return"))
     return BlockInfo(
-        to_write,
-        return_value,
-        switch_control,
-        branch_condition,
-        regs,
-        has_custom_return=has_custom_return,
+        to_write=to_write,
+        return_value=None,
+        switch_control=switch_control,
+        branch_condition=branch_condition,
+        final_register_states=regs,
         has_function_call=has_function_call,
     )
 
@@ -3739,12 +3860,11 @@ def translate_graph_from_block(
             error_stmts.append(CommentStmt(f"At instruction: {instr}"))
         print(file=sys.stderr)
         block_info = BlockInfo(
-            error_stmts,
-            None,
-            None,
-            ErrorExpr(),
-            regs,
-            has_custom_return=False,
+            to_write=error_stmts,
+            return_value=None,
+            switch_value=None,
+            branch_condition=ErrorExpr(),
+            final_register_states=regs,
             has_function_call=False,
         )
 
@@ -3758,20 +3878,21 @@ def translate_graph_from_block(
     for child in node.immediately_dominates:
         if isinstance(child, TerminalNode):
             continue
-        new_contents = regs.contents.copy()
+        new_regs = RegInfo(stack_info=stack_info)
+        for reg, data in regs.contents.items():
+            new_regs.set_with_meta(reg, data.value, RegMeta(inherited=True))
+
         phi_regs = regs_clobbered_until_dominator(child, typemap)
         for reg in phi_regs:
             if reg_always_set(child, reg, typemap, dom_set=(reg in regs)):
-                var = stack_info.maybe_get_register_var(reg)
-                if var is not None:
-                    new_contents[reg] = var
-                else:
-                    new_contents[reg] = PhiExpr(
+                expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
+                if expr is None:
+                    expr = PhiExpr(
                         reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
                     )
-            elif reg in new_contents:
-                del new_contents[reg]
-        new_regs = RegInfo(contents=new_contents, stack_info=stack_info)
+                new_regs.set_with_meta(reg, expr, RegMeta(inherited=True))
+            elif reg in new_regs:
+                del new_regs[reg]
         translate_graph_from_block(
             child, new_regs, stack_info, used_phis, return_blocks, options
         )
@@ -4056,12 +4177,12 @@ def translate_to_ast(
     # Initialize info about the function.
     flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
+    start_regs: RegInfo = RegInfo(stack_info=stack_info)
     typemap = global_info.typemap
 
-    initial_regs: Dict[Register, Expression] = {
-        Register("sp"): GlobalSymbol("sp", type=Type.ptr()),
-        **{reg: stack_info.saved_reg_symbol(reg.register_name) for reg in SAVED_REGS},
-    }
+    start_regs[Register("sp")] = GlobalSymbol("sp", type=Type.ptr())
+    for reg in SAVED_REGS:
+        start_regs[reg] = stack_info.saved_reg_symbol(reg.register_name)
 
     def make_arg(offset: int, type: Type) -> PassedInArg:
         assert offset % 4 == 0
@@ -4081,25 +4202,21 @@ def translate_to_ast(
     stack_info.is_variadic = fn_sig.is_variadic
 
     if fn_sig.params_known:
-        abi_slots, possible_regs = function_abi(fn_sig, for_call=False)
-        for slot in abi_slots:
+        abi = function_abi(fn_sig, for_call=False)
+        for slot in abi.arg_slots:
             stack_info.add_known_param(slot.offset, slot.name, slot.type)
             if slot.reg is not None:
-                initial_regs[slot.reg] = make_arg(slot.offset, slot.type)
-        for reg in possible_regs:
+                start_regs[slot.reg] = make_arg(slot.offset, slot.type)
+        for reg in abi.possible_regs:
             offset = 4 * int(reg.register_name[1])
-            initial_regs[reg] = make_arg(offset, Type.any_reg())
+            start_regs[reg] = make_arg(offset, Type.any_reg())
     else:
-        initial_regs.update(
-            {
-                Register("a0"): make_arg(0, Type.intptr()),
-                Register("a1"): make_arg(4, Type.any_reg()),
-                Register("a2"): make_arg(8, Type.any_reg()),
-                Register("a3"): make_arg(12, Type.any_reg()),
-                Register("f12"): make_arg(0, Type.floatish()),
-                Register("f14"): make_arg(4, Type.floatish()),
-            }
-        )
+        start_regs[Register("a0")] = make_arg(0, Type.intptr())
+        start_regs[Register("a1")] = make_arg(4, Type.any_reg())
+        start_regs[Register("a2")] = make_arg(8, Type.any_reg())
+        start_regs[Register("a3")] = make_arg(12, Type.any_reg())
+        start_regs[Register("f12")] = make_arg(0, Type.floatish())
+        start_regs[Register("f14")] = make_arg(4, Type.floatish())
 
     if options.reg_vars == ["saved"]:
         reg_vars = SAVED_REGS
@@ -4116,43 +4233,33 @@ def translate_to_ast(
         print(stack_info)
         print("\nNow, we attempt to translate:")
 
-    start_reg: RegInfo = RegInfo(contents=initial_regs, stack_info=stack_info)
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
         flow_graph.entry_node(),
-        start_reg,
+        start_regs,
         stack_info,
         used_phis,
         return_blocks,
         options,
     )
 
-    # A function can have a return type if all return nodes have return values.
-    # But without a provided signature, we only mark a function has having a
-    # return type if there is a nontrivial ("custom") return value (e.g. one
-    # not from a function call)
-    # TODO: check that the values aren't read from for some other purpose.
-    compute_has_custom_return(flow_graph.nodes)
-    could_have_return = all(b.return_value is not None for b in return_blocks)
-    has_custom_return = any(b.has_custom_return for b in return_blocks)
+    for reg in [Register("v0"), Register("f0")]:
+        propagate_register_meta(flow_graph.nodes, reg)
 
-    if options.void or return_type.is_void():
-        has_return = False
-    elif could_have_return and (fn_decl_provided or has_custom_return):
-        has_return = True
-    else:
-        has_return = False
+    return_reg: Optional[Register] = None
 
-    if has_return:
+    if not options.void and not return_type.is_void():
+        return_reg = determine_return_register(return_blocks, fn_decl_provided)
+
+    if return_reg is not None:
         for b in return_blocks:
-            if b.return_value is not None:
-                ret_val = as_type(b.return_value, return_type, True)
-                b.return_value = ret_val
+            ret_val = b.final_register_states.get_raw(return_reg)
+            if ret_val is not None:
+                ret_val = as_type(ret_val, return_type, True)
                 ret_val.use()
+                b.return_value = ret_val
     else:
-        for b in return_blocks:
-            b.return_value = None
         return_type.unify(Type.void())
 
     if not fn_sig.params_known:

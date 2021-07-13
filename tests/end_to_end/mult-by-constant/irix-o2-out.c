@@ -1,6 +1,6 @@
 extern s32 D_4101F0;
 
-s32 *test(s32 arg0) {
+void test(s32 arg0) {
     D_4101F0 = arg0;
     D_4101F0 = (s32) (arg0 * 2);
     D_4101F0 = (s32) (arg0 * 3);
@@ -23,5 +23,4 @@ s32 *test(s32 arg0) {
     D_4101F0 = (s32) (arg0 * 0x14);
     D_4101F0 = (s32) (arg0 * 0x15);
     D_4101F0 = (s32) (arg0 * 0x16);
-    return &D_4101F0;
 }

@@ -1,4 +1,4 @@
-s32 test(s8 *arg0, s32 arg1) {
+void test(s8 *arg0, s32 arg1) {
     s32 temp_a3;
     s32 temp_v0;
     s32 temp_v0_2;
@@ -7,10 +7,8 @@ s32 test(s8 *arg0, s32 arg1) {
     s32 phi_v0;
     void *phi_v1_2;
     s32 phi_v0_2;
-    s32 phi_return;
     s32 phi_v0_3;
 
-    phi_return = 0;
     if (arg1 > 0) {
         temp_a3 = arg1 & 3;
         phi_v0_3 = 0;
@@ -23,7 +21,6 @@ s32 test(s8 *arg0, s32 arg1) {
                 phi_v1 += 1;
                 phi_v0 = temp_v0;
             } while (temp_a3 != temp_v0);
-            phi_return = temp_v0;
             phi_v0_3 = temp_v0;
             if (temp_v0 != arg1) {
 block_5:
@@ -38,12 +35,10 @@ block_5:
                     temp_v1->unk-4 = 0;
                     phi_v1_2 = temp_v1;
                     phi_v0_2 = temp_v0_2;
-                    phi_return = temp_v0_2;
                 } while (temp_v0_2 != arg1);
             }
         } else {
             goto block_5;
         }
     }
-    return phi_return;
 }
