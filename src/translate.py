@@ -1381,7 +1381,6 @@ class SwitchControl:
         """
         # The "error" expression we use if we aren't able to parse `expr`
         error_expr = SwitchControl(expr)
-        return error_expr
 
         # Match `*(&jump_table + (control_expr * 4))`
         struct_expr = early_unwrap(expr)
