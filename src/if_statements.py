@@ -36,7 +36,7 @@ class Context:
     options: Options
     is_void: bool = True
     switch_nodes: Dict[SwitchNode, int] = field(default_factory=dict)
-    case_nodes: Dict[Node, List[Tuple[int, int]]] = field(
+    case_nodes: Dict[Node, List[Tuple[int, Optional[int]]]] = field(
         default_factory=lambda: defaultdict(list)
     )
     goto_nodes: Set[Node] = field(default_factory=set)
@@ -151,7 +151,7 @@ class LabelStatement:
         lines = []
         if self.node in self.context.case_nodes:
             for (switch, case) in self.context.case_nodes[self.node]:
-                case_str = f"case {case}" if case != -1 else "default"
+                case_str = f"case {case}" if case is not None else "default"
                 switch_str = f" // switch {switch}" if switch != 0 else ""
                 lines.append(fmt.indent(f"{case_str}:{switch_str}", -1))
         if self.node in self.context.goto_nodes:
@@ -342,12 +342,15 @@ def add_labels_for_switch(
     context: Context, node: SwitchNode, default_node: Optional[Node]
 ) -> None:
     assert node.cases, "jtbl list must not be empty"
-    if node not in context.switch_nodes:
-        if sum(isinstance(n, SwitchNode) for n in context.flow_graph.nodes) == 1:
-            # There is only one switch in this function (no need to label)
-            context.switch_nodes[node] = 0
-        else:
-            context.switch_nodes[node] = len(context.switch_nodes) + 1
+    if node in context.switch_nodes:
+        # Already added labels for this SwitchNode
+        return
+
+    if sum(isinstance(n, SwitchNode) for n in context.flow_graph.nodes) == 1:
+        # There is only one switch in this function (no need to label)
+        context.switch_nodes[node] = 0
+    else:
+        context.switch_nodes[node] = len(context.switch_nodes) + 1
     switch_index = context.switch_nodes[node]
 
     # Determine offset
@@ -358,8 +361,8 @@ def add_labels_for_switch(
 
     # Mark which labels we need to emit
     if default_node is not None:
-        # `-1` is a sentinel value to mark the `default:` block
-        context.case_nodes[default_node].append((switch_index, -1))
+        # `None` is a sentinel value to mark the `default:` block
+        context.case_nodes[default_node].append((switch_index, None))
     for index, target in enumerate(node.cases):
         # Do not emit extra `case N:` labels for the `default:` block
         if target == default_node:
@@ -667,7 +670,6 @@ def build_switch_between(
 
     add_labels_for_switch(context, switch, default_node)
     switch_index = context.switch_nodes[switch]
-    comment = f" // switch {switch_index}" if switch_index else ""
 
     jump: Optional[Union[Expression, SimpleStatement]]
     jump = get_block_info(switch).switch_value
@@ -677,7 +679,10 @@ def build_switch_between(
     switch_body = Body(print_node_comment=context.options.debug)
 
     # Order case blocks by their position in the asm, not by their order in the jump table
-    sorted_cases = sorted(set(switch.cases), key=lambda node: node.block.index)
+    # (but use the order in the jump table to break ties)
+    sorted_cases = sorted(
+        set(switch.cases), key=lambda node: (node.block.index, switch.cases.index(node))
+    )
     next_sorted_cases: List[Optional[Node]] = []
     next_sorted_cases.extend(sorted_cases[1:])
     next_sorted_cases.append(None)

@@ -18,6 +18,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
     build_flowgraph,
+    symbol_name_is_jump_table,
 )
 from .options import Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
@@ -1362,7 +1363,7 @@ class SwitchControl(Expression):
     offset: int = 0
 
     def dependencies(self) -> List[Expression]:
-        return [self.jump_table, self.control_expr]
+        return [self.control_expr]
 
     def format(self, fmt: Formatter) -> str:
         return self.control_expr.format(fmt)
@@ -1406,8 +1407,8 @@ class SwitchControl(Expression):
                 control_expr = uw_control_expr.left
                 offset = -offset_lit.value
 
-        # Check that it is really a jump table (these prefixes are copied from `build_graph_from_block`)
-        if not jump_table.symbol_name[:4] in ("jtbl", "jpt_"):
+        # Check that it is really a jump table
+        if not symbol_name_is_jump_table(jump_table.symbol_name):
             return None
 
         return SwitchControl(jump_table, control_expr, offset)
