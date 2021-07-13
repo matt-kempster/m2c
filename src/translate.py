@@ -3861,7 +3861,7 @@ def translate_graph_from_block(
         block_info = BlockInfo(
             to_write=error_stmts,
             return_value=None,
-            switch_value=None,
+            switch_control=None,
             branch_condition=ErrorExpr(),
             final_register_states=regs,
             has_function_call=False,
