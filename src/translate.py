@@ -1154,10 +1154,10 @@ class Literal(Expression):
 
     def format(self, fmt: Formatter) -> str:
         if self.type.is_likely_float():
-            if self.type.get_size_bits() == 32:
-                return format_f32_imm(self.value) + "f"
-            else:
+            if self.type.get_size_bits() == 64:
                 return format_f64_imm(self.value)
+            else:
+                return format_f32_imm(self.value) + "f"
         if self.type.is_pointer() and self.value == 0:
             return "NULL"
 
