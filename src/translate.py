@@ -1361,14 +1361,6 @@ class SwitchControl:
     jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
 
-    def format(self, fmt: Formatter) -> str:
-        index = format_expr(self.control_expr, fmt)
-        if not self.jump_table:
-            return index
-        if self.offset:
-            index = f"{index} - {self.offset}"
-        return f"(&{format_expr(self.jump_table, fmt)})[{index}]"
-
     @staticmethod
     def from_expr(expr: Expression) -> "SwitchControl":
         """

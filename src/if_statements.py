@@ -91,7 +91,7 @@ class SwitchStatement:
     body: "Body"
     # If there are multiple switch statements in a single function, each is given a
     # unique index starting at 1. This is used in comments to make control flow clear.
-    index: int = 0
+    index: int
 
     def should_write(self) -> bool:
         return True
@@ -99,19 +99,24 @@ class SwitchStatement:
     def format(self, fmt: Formatter) -> str:
         lines = []
         comments = []
+        body_is_empty = self.body.is_empty()
         if self.index > 0:
             comments.append(f"switch {self.index}")
         if not self.jump.jump_table:
             comments.append("unable to parse jump table")
+        elif body_is_empty:
+            comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
+        suffix = ";" if body_is_empty else " {"
         comment = f" // {'; '.join(comments)}" if comments else ""
         lines.append(
             fmt.indent(
-                f"switch ({format_expr(self.jump.control_expr, fmt)}) {{{comment}",
+                f"switch ({format_expr(self.jump.control_expr, fmt)}){suffix}{comment}",
             )
         )
-        with fmt.indented():
-            lines.append(self.body.format(fmt))
-        lines.append(fmt.indent("}"))
+        if not body_is_empty:
+            with fmt.indented():
+                lines.append(self.body.format(fmt))
+            lines.append(fmt.indent("}"))
         return "\n".join(lines)
 
 
@@ -338,11 +343,11 @@ def emit_goto(context: Context, target: Node, body: Body) -> None:
 
 def add_labels_for_switch(
     context: Context, node: SwitchNode, default_node: Optional[Node]
-) -> None:
+) -> int:
     assert node.cases, "jtbl list must not be empty"
     if node in context.switch_nodes:
         # Already added labels for this SwitchNode
-        return
+        return context.switch_nodes[node]
 
     if sum(isinstance(n, SwitchNode) for n in context.flow_graph.nodes) == 1:
         # There is only one switch in this function (no need to label)
@@ -370,16 +375,7 @@ def add_labels_for_switch(
             continue
         context.case_nodes[target].append((switch_index, index + offset))
 
-
-def switch_jump(context: Context, node: SwitchNode) -> SimpleStatement:
-    switch_index = context.switch_nodes[node]
-    comment = f" // switch {switch_index}" if switch_index > 0 else ""
-    switch_control = get_block_info(node).switch_control
-    assert isinstance(switch_control, SwitchControl)
-
-    return SimpleStatement(
-        f"goto *{switch_control.format(context.fmt)};{comment}", is_jump=True
-    )
+    return switch_index
 
 
 def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> None:
@@ -668,11 +664,10 @@ def build_switch_between(
     ):
         default_node = switch.parents[0].conditional_edge
 
-    add_labels_for_switch(context, switch, default_node)
-    switch_index = context.switch_nodes[switch]
+    switch_index = add_labels_for_switch(context, switch, default_node)
 
     jump = get_block_info(switch).switch_control
-    assert isinstance(jump, SwitchControl)
+    assert jump is not None
 
     switch_body = Body(print_node_comment=context.options.debug)
 
@@ -847,9 +842,17 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             emit_node(context, node, body)
             emit_successor(node.successor, i)
         elif isinstance(node, SwitchNode):
-            add_labels_for_switch(context, node, None)
+            index = add_labels_for_switch(context, node, None)
             emit_node(context, node, body)
-            body.add_statement(switch_jump(context, node))
+            jump = get_block_info(node).switch_control
+            assert jump is not None
+            body.add_switch(
+                SwitchStatement(
+                    jump=jump,
+                    body=Body(print_node_comment=False),
+                    index=index,
+                )
+            )
         elif isinstance(node, ConditionalNode):
             emit_node(context, node, body)
             if_body = Body(print_node_comment=True)
