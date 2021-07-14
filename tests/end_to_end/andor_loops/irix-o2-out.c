@@ -59,16 +59,16 @@ loop_13:
                 phi_v1_2 = temp_v1_6;
                 if ((arg1 == 0) && ((arg2 == 0) || (phi_v1_2 = temp_v1_6, (arg3 == 0)))) {
                     phi_v1_6 = temp_v1_6 + 1;
-block_26:
-                    phi_v1_2 = phi_v1_6;
-                    phi_v1_5 = phi_v1_6;
-                    if (arg0 != 0) {
-                        goto loop_13;
-                    }
+                    goto block_26;
                 }
             }
         } else {
-            goto block_26;
+block_26:
+            phi_v1_2 = phi_v1_6;
+            phi_v1_5 = phi_v1_6;
+            if (arg0 != 0) {
+                goto loop_13;
+            }
         }
     }
     phi_v0 = 0;

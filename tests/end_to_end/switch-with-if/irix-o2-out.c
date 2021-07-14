@@ -26,7 +26,7 @@ void test(s32 arg0) {
                 D_4101D0 = 2;
                 return;
             }
-        default: // switch 2
+            // Duplicate return node #14. Try simplifying control flow for better match
             return;
         case 2: // switch 2
             if (arg0 == 1) {
@@ -38,6 +38,6 @@ void test(s32 arg0) {
             return;
         }
     } else {
-        // Duplicate return node #14. Try simplifying control flow for better match
+    default: // switch 2
     }
 }

@@ -23,22 +23,22 @@ void test(s8 *arg0, s32 arg1) {
             } while (temp_a3 != temp_v0);
             phi_v0_3 = temp_v0;
             if (temp_v0 != arg1) {
-block_5:
-                phi_v1_2 = arg0 + phi_v0_3;
-                phi_v0_2 = phi_v0_3;
-                do {
-                    temp_v0_2 = phi_v0_2 + 4;
-                    phi_v1_2->unk1 = 0;
-                    phi_v1_2->unk2 = 0;
-                    phi_v1_2->unk3 = 0;
-                    temp_v1 = phi_v1_2 + 4;
-                    temp_v1->unk-4 = 0;
-                    phi_v1_2 = temp_v1;
-                    phi_v0_2 = temp_v0_2;
-                } while (temp_v0_2 != arg1);
+                goto block_5;
             }
         } else {
-            goto block_5;
+block_5:
+            phi_v1_2 = arg0 + phi_v0_3;
+            phi_v0_2 = phi_v0_3;
+            do {
+                temp_v0_2 = phi_v0_2 + 4;
+                phi_v1_2->unk1 = 0;
+                phi_v1_2->unk2 = 0;
+                phi_v1_2->unk3 = 0;
+                temp_v1 = phi_v1_2 + 4;
+                temp_v1->unk-4 = 0;
+                phi_v1_2 = temp_v1;
+                phi_v0_2 = temp_v0_2;
+            } while (temp_v0_2 != arg1);
         }
     }
 }
