@@ -1402,10 +1402,16 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> str:
                 label += "return;\l"
             dot.edge(node.name(), node.terminal.name())
         elif isinstance(node, SwitchNode):
-            if block_info:
-                label += f"switch ({block_info.switch_value.format(fmt)})\l"
+            assert block_info is not None
+            switch_control = block_info.switch_control
+            label += f"switch ({switch_control.control_expr.format(fmt)})\l"
             for i, case in enumerate(node.cases):
-                dot.edge(node.name(), case.name(), label=str(i), color="green")
+                dot.edge(
+                    node.name(),
+                    case.name(),
+                    label=str(i + switch_control.offset),
+                    color="green",
+                )
         else:
             assert isinstance(node, TerminalNode)
             label += "// exit\l"
