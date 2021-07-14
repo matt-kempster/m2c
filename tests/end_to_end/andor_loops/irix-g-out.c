@@ -27,25 +27,24 @@ loop_9:
 loop_13:
         sp0 += 1;
         if ((arg1 != 0) && ((arg2 != 0) || (arg3 != 0))) {
-block_30:
-            if (arg0 != 0) {
-                goto loop_13;
-            }
+            goto block_30;
+        }
+        sp0 += 1;
+        if ((arg1 != 0) || ((arg2 != 0) && (arg3 != 0))) {
+            goto block_30;
+        }
+        sp0 += 1;
+        if ((arg1 != 0) && ((arg2 != 0) || (arg3 != 0))) {
+
         } else {
             sp0 += 1;
             if ((arg1 != 0) || ((arg2 != 0) && (arg3 != 0))) {
-                goto block_30;
-            }
-            sp0 += 1;
-            if ((arg1 != 0) && ((arg2 != 0) || (arg3 != 0))) {
 
             } else {
                 sp0 += 1;
-                if ((arg1 != 0) || ((arg2 != 0) && (arg3 != 0))) {
-
-                } else {
-                    sp0 += 1;
-                    goto block_30;
+block_30:
+                if (arg0 != 0) {
+                    goto loop_13;
                 }
             }
         }

@@ -43,26 +43,26 @@ s32 test(s32 arg0) {
                     phi_v1_2 = temp_v1;
                     phi_v1_5 = temp_v1;
                     if (phi_a3 != arg0) {
-block_6:
-                        phi_a1 = phi_a1_2;
-                        phi_a2_2 = phi_v0 * phi_a1_2;
-                        phi_a3_2 = phi_v0 * (phi_a1_2 + 1);
-                        phi_t0 = phi_v0 * (phi_a1_2 + 2);
-                        phi_t1 = phi_v0 * (phi_a1_2 + 3);
-                        do {
-                            temp_v1_2 = phi_v1_5 + phi_a2_2 + phi_a3_2 + phi_t0 + phi_t1;
-                            temp_a1 = phi_a1 + 4;
-                            phi_a1 = temp_a1;
-                            phi_v1_2 = temp_v1_2;
-                            phi_v1_5 = temp_v1_2;
-                            phi_a2_2 += phi_v0 * 4;
-                            phi_a3_2 += phi_v0 * 4;
-                            phi_t0 += phi_v0 * 4;
-                            phi_t1 += phi_v0 * 4;
-                        } while (temp_a1 != arg0);
+                        goto block_6;
                     }
                 } else {
-                    goto block_6;
+block_6:
+                    phi_a1 = phi_a1_2;
+                    phi_a2_2 = phi_v0 * phi_a1_2;
+                    phi_a3_2 = phi_v0 * (phi_a1_2 + 1);
+                    phi_t0 = phi_v0 * (phi_a1_2 + 2);
+                    phi_t1 = phi_v0 * (phi_a1_2 + 3);
+                    do {
+                        temp_v1_2 = phi_v1_5 + phi_a2_2 + phi_a3_2 + phi_t0 + phi_t1;
+                        temp_a1 = phi_a1 + 4;
+                        phi_a1 = temp_a1;
+                        phi_v1_2 = temp_v1_2;
+                        phi_v1_5 = temp_v1_2;
+                        phi_a2_2 += phi_v0 * 4;
+                        phi_a3_2 += phi_v0 * 4;
+                        phi_t0 += phi_v0 * 4;
+                        phi_t1 += phi_v0 * 4;
+                    } while (temp_a1 != arg0);
                 }
             }
             temp_v0 = phi_v0 + 1;

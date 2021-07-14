@@ -38,11 +38,11 @@
             phi_t0_2 = arg3;
         }
         if ((phi_t0_2 == (arg0 + 1)) || ((arg1 + 1) != 0)) {
-block_53:
-            phi_v1 = 8;
+            goto block_53;
         }
     } else {
-        goto block_53;
+block_53:
+        phi_v1 = 8;
     }
     return phi_v1;
 }

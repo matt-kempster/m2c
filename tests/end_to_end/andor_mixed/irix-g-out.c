@@ -43,11 +43,11 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
             phi_t0_2 = arg3;
         }
         if ((phi_t0_2 == (arg0 + 1)) || ((arg1 + 1) != 0)) {
-block_53:
-            sp4 = 8;
+            goto block_53;
         }
     } else {
-        goto block_53;
+block_53:
+        sp4 = 8;
     }
     return sp4;
 }

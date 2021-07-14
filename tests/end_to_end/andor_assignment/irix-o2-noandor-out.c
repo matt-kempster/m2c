@@ -41,19 +41,17 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
             if (temp_v0 == 0) {
                 phi_t1 = temp_v0;
                 if (arg3 != 0) {
-block_4:
-                    phi_v1 = 1;
-                } else {
+                    goto block_4;
+                }
+                phi_t0 = temp_t0;
+                phi_t1 = temp_v0;
+                phi_v1 = -2;
+                phi_a2 = arg2;
+                if (arg0 != 0) {
                     phi_t0 = temp_t0;
                     phi_t1 = temp_v0;
-                    phi_v1 = -2;
+                    phi_v1 = -1;
                     phi_a2 = arg2;
-                    if (arg0 != 0) {
-                        phi_t0 = temp_t0;
-                        phi_t1 = temp_v0;
-                        phi_v1 = -1;
-                        phi_a2 = arg2;
-                    }
                 }
             } else {
                 goto block_4;
@@ -62,7 +60,8 @@ block_4:
             goto block_4;
         }
     } else {
-        goto block_4;
+block_4:
+        phi_v1 = 1;
     }
     temp_v1 = phi_v1 + phi_a2;
     phi_t1_2 = phi_t1;
@@ -114,8 +113,7 @@ block_4:
                     }
                     phi_v1_5 = phi_v1_7 + 5;
                 } else {
-block_21:
-                    phi_v1_5 = phi_v1_3 + 6;
+                    goto block_21;
                 }
             } else {
                 goto block_21;
@@ -124,7 +122,8 @@ block_21:
             goto block_21;
         }
     } else {
-        goto block_21;
+block_21:
+        phi_v1_5 = phi_v1_3 + 6;
     }
     return phi_v1_5;
 }

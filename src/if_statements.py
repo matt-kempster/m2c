@@ -345,15 +345,6 @@ def add_labels_for_switch(
     context: Context, node: SwitchNode, default_node: Optional[Node]
 ) -> int:
     assert node.cases, "jtbl list must not be empty"
-    if node in context.switch_nodes:
-        # Already added labels for this SwitchNode
-        return context.switch_nodes[node]
-
-    if sum(isinstance(n, SwitchNode) for n in context.flow_graph.nodes) == 1:
-        # There is only one switch in this function (no need to label)
-        context.switch_nodes[node] = 0
-    else:
-        context.switch_nodes[node] = len(context.switch_nodes) + 1
     switch_index = context.switch_nodes[node]
 
     # Determine offset
@@ -620,10 +611,10 @@ def build_conditional_subgraph(
     context.emitted_nodes.update(chained_cond_nodes[1:])
 
     # Build the if & else bodies
-    if_body = build_flowgraph_between(context, if_node, end)
     else_body: Optional[Body] = None
     if else_node:
         else_body = build_flowgraph_between(context, else_node, end)
+    if_body = build_flowgraph_between(context, if_node, end)
 
     return IfElseStatement(cond, if_body, else_body)
 
@@ -880,6 +871,15 @@ def build_body(context: Context, options: Options) -> Body:
 
     if options.debug:
         print("Here's the whole function!\n")
+
+    # Label switch nodes
+    switch_nodes = [n for n in context.flow_graph.nodes if isinstance(n, SwitchNode)]
+    if len(switch_nodes) == 1:
+        # There is only one switch in this function (no need to label)
+        context.switch_nodes[switch_nodes[0]] = 0
+    else:
+        for i, switch_node in enumerate(switch_nodes):
+            context.switch_nodes[switch_node] = i + 1
 
     body: Body
     if options.ifs and is_reducible:
