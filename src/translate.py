@@ -766,35 +766,36 @@ class BinaryOp(Condition):
         return [self.left, self.right]
 
     def format(self, fmt: Formatter) -> str:
+        left_expr = late_unwrap(self.left)
+        right_expr = late_unwrap(self.right)
         if (
             self.is_comparison()
-            and isinstance(self.left, Literal)
-            and not isinstance(self.right, Literal)
+            and isinstance(left_expr, Literal)
+            and not isinstance(right_expr, Literal)
         ):
             return BinaryOp(
-                left=self.right,
+                left=right_expr,
                 op=self.op.translate(str.maketrans("<>", "><")),
-                right=self.left,
+                right=left_expr,
                 type=self.type,
             ).format(fmt)
 
         if (
             not self.is_floating()
-            and isinstance(self.right, Literal)
-            and self.right.value < 0
+            and isinstance(right_expr, Literal)
+            and right_expr.value < 0
         ):
             if self.op == "+":
-                neg = Literal(value=-self.right.value, type=self.right.type)
-                sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
+                neg = Literal(value=-right_expr.value, type=right_expr.type)
+                sub = BinaryOp(op="-", left=left_expr, right=neg, type=self.type)
                 return sub.format(fmt)
             if self.op in ("&", "|"):
-                neg = Literal(value=~self.right.value, type=self.right.type)
+                neg = Literal(value=~right_expr.value, type=right_expr.type)
                 right = UnaryOp("~", neg, type=Type.any_reg())
-                expr = BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
+                expr = BinaryOp(op=self.op, left=left_expr, right=right, type=self.type)
                 return expr.format(fmt)
 
         # For commutative, left-associative operations, strip unnecessary parentheses.
-        left_expr = late_unwrap(self.left)
         lhs = left_expr.format(fmt)
         if (
             isinstance(left_expr, BinaryOp)
@@ -803,7 +804,7 @@ class BinaryOp(Condition):
         ):
             lhs = lhs[1:-1]
 
-        return f"({lhs} {self.op} {self.right.format(fmt)})"
+        return f"({lhs} {self.op} {right_expr.format(fmt)})"
 
 
 @dataclass(frozen=True, eq=False)
