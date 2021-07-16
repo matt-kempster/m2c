@@ -1227,7 +1227,9 @@ def compute_relations(nodes: List[Node]) -> None:
             # TODO: Infinite loops could be made reducible by introducing
             # branches like `if (false) { return; }` without breaking semantics
             if doms:
-                imdom = max(doms, key=lambda d: len(dominators(d)))
+                # There should be a unique max `len(dominators(d))` if the flowgraph
+                # is reducible. Fall back to largest index for irreducible graphs.
+                imdom = max(doms, key=lambda d: (len(dominators(d)), d.block.index))
                 immediately_dominates(imdom).append(node)
                 set_immediate_dominator(node, imdom)
             else:
