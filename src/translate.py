@@ -3160,6 +3160,35 @@ def reg_always_set(
     return True
 
 
+def pick_phi_assignment_nodes(
+    reg: Register, nodes: List[Node], uw_expr: Expression
+) -> List[Node]:
+    """
+    As part of `assign_phis()`, we need to pick a set of nodes where we can emit a
+    `SetPhiStmt` that assigns the phi for `reg` to `uw_expr`.
+    The final register state for `reg` for each node in `nodes` unwraps to `uw_expr`,
+    so the best case would be finding a single dominating node for the assignment.
+    """
+    # Find the set of nodes which dominate *all* of `nodes`, sorted by number
+    # of dominators. (This puts "earlier" nodes at the beginning of the list.)
+    dominators = sorted(
+        set.intersection(*(node.dominators for node in nodes)),
+        key=lambda n: len(n.dominators),
+    )
+
+    # Check the dominators for a node with the correct final state for `reg`
+    for node in dominators:
+        raw = get_block_info(node).final_register_states.get_raw(reg)
+        if raw is None:
+            continue
+        if early_unwrap(raw) == uw_expr:
+            return [node]
+
+    # We couldn't find anything, so fall back to the naive solution
+    # TODO: In some cases there may be a better solution (e.g. one that requires 2 nodes)
+    return nodes
+
+
 def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
     i = 0
     # Iterate over used phis until there are no more remaining. New ones may
@@ -3168,13 +3197,18 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
         phi = used_phis[i]
         assert phi.num_usages > 0
         assert len(phi.node.parents) >= 2
-        exprs = []
-        for node in phi.node.parents:
-            block_info = get_block_info(node)
-            exprs.append(block_info.final_register_states[phi.reg])
 
-        first_uw = early_unwrap(exprs[0])
-        if all(early_unwrap(e) == first_uw for e in exprs[1:]):
+        # Group parent nodes by the value of their phi register
+        equivalent_nodes: Dict[Expression, List[Node]] = {}
+        for node in phi.node.parents:
+            expr = get_block_info(node).final_register_states[phi.reg]
+            expr.type.unify(phi.type)
+            uw_expr = early_unwrap(expr)
+            if uw_expr not in equivalent_nodes:
+                equivalent_nodes[uw_expr] = []
+            equivalent_nodes[uw_expr].append(node)
+
+        if len(equivalent_nodes) == 1:
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
@@ -3184,23 +3218,23 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # eager unwrapping, and/or to emit an EvalOnceExpr at this point
             # (though it's too late for it to be able to participate in the
             # prevent_later_uses machinery).
+            first_uw, _ = equivalent_nodes.popitem()
             phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
-            for e in exprs:
-                e.type.unify(phi.type)
             for _ in range(phi.num_usages):
                 first_uw.use()
         else:
-            for node in phi.node.parents:
-                block_info = get_block_info(node)
-                expr = block_info.final_register_states[phi.reg]
-                if isinstance(expr, PhiExpr):
-                    # Explicitly mark how the expression is used if it's a phi,
-                    # so we can propagate phi sets (to get rid of temporaries).
-                    expr.use(from_phi=phi)
-                else:
-                    expr.use()
-                typed_expr = as_type(expr, phi.type, silent=True)
-                block_info.to_write.append(SetPhiStmt(phi, typed_expr))
+            for uw_expr, nodes in equivalent_nodes.items():
+                for node in pick_phi_assignment_nodes(phi.reg, nodes, uw_expr):
+                    block_info = get_block_info(node)
+                    expr = block_info.final_register_states[phi.reg]
+                    if isinstance(expr, PhiExpr):
+                        # Explicitly mark how the expression is used if it's a phi,
+                        # so we can propagate phi sets (to get rid of temporaries).
+                        expr.use(from_phi=phi)
+                    else:
+                        expr.use()
+                    typed_expr = as_type(expr, phi.type, silent=True)
+                    block_info.to_write.append(SetPhiStmt(phi, typed_expr))
         i += 1
 
     name_counter: Dict[Register, int] = {}

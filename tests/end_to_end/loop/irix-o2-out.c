@@ -9,19 +9,19 @@ void test(s8 *arg0, s32 arg1) {
     s32 phi_v0_2;
     s32 phi_v0_3;
 
+    phi_v0 = 0;
+    phi_v0_3 = 0;
     if (arg1 > 0) {
         temp_a3 = arg1 & 3;
-        phi_v0_3 = 0;
         if (temp_a3 != 0) {
             phi_v1 = arg0;
-            phi_v0 = 0;
             do {
                 temp_v0 = phi_v0 + 1;
                 *phi_v1 = 0;
                 phi_v1 += 1;
                 phi_v0 = temp_v0;
+                phi_v0_3 = temp_v0;
             } while (temp_a3 != temp_v0);
-            phi_v0_3 = temp_v0;
             if (temp_v0 != arg1) {
                 goto block_5;
             }
