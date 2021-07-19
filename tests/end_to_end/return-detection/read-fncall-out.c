@@ -1,6 +1,7 @@
 ? bar(); // extern
 
 void test(void) {
+    // Flowgraph is not reducible, falling back to gotos-only mode. (Are there infinite loops?)
     bar();
     if (4 == 0) {
         goto block_3;

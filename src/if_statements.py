@@ -886,7 +886,13 @@ def build_body(context: Context, options: Options) -> Body:
         body = build_flowgraph_between(context, start_node, terminal_node)
         body.elide_empty_returns()
     else:
-        body = build_naive(context, context.flow_graph.nodes)
+        body = Body(print_node_comment=context.options.debug)
+        if options.ifs and not is_reducible:
+            body.add_comment(
+                "Flowgraph is not reducible, falling back to gotos-only mode. "
+                "(Are there infinite loops?)"
+            )
+        body.extend(build_naive(context, context.flow_graph.nodes))
 
     # Check no nodes were skipped: build_flowgraph_between should hit every node in
     # well-formed (reducible) graphs; and build_naive explicitly emits every node
