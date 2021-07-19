@@ -1,12 +1,23 @@
 import abc
+from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 import math
 import struct
 import sys
 import traceback
-from contextlib import contextmanager
 import typing
-from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import (
+    Callable,
+    DefaultDict,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from .c_types import TypeMap
 from .error import DecompFailure
@@ -3199,12 +3210,10 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
         assert len(phi.node.parents) >= 2
 
         # Group parent nodes by the value of their phi register
-        equivalent_nodes: Dict[Expression, List[Node]] = {}
+        equivalent_nodes: DefaultDict[Expression, List[Node]] = defaultdict(list)
         for node in phi.node.parents:
             expr = get_block_info(node).final_register_states[phi.reg]
             expr.type.unify(phi.type)
-            if expr not in equivalent_nodes:
-                equivalent_nodes[expr] = []
             equivalent_nodes[expr].append(node)
 
         exprs = list(equivalent_nodes.keys())
