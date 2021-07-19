@@ -822,6 +822,9 @@ def build_flowgraph_between(
             # is_switch_guard checked that switch_node has no statements to write,
             # so it is OK to mark it as emitted
             context.emitted_nodes.add(switch_node)
+            if curr_end is switch_node:
+                curr_end = switch_node.immediate_postdominator
+                assert curr_end in curr_start.postdominators
             body.add_switch(
                 build_switch_between(context, switch_node, default_node, curr_end)
             )
