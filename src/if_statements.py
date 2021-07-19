@@ -398,7 +398,8 @@ def is_switch_guard(node: Node) -> bool:
     # The SwitchNode must have no statements, and the conditional
     # from the ConditionalNode must properly check the jump table bounds.
     return (
-        not switch_block_info.statements_to_write()
+        switch_node.parents == [node]
+        and not switch_block_info.statements_to_write()
         and switch_block_info.switch_control.matches_guard_condition(cond)
     )
 
@@ -824,10 +825,10 @@ def build_flowgraph_between(
             body.add_switch(
                 build_switch_between(context, switch_node, default_node, curr_end)
             )
-        elif isinstance(curr_start, ConditionalNode):
-            body.add_if_else(build_conditional_subgraph(context, curr_start, curr_end))
         elif isinstance(curr_start, SwitchNode):
             body.add_switch(build_switch_between(context, curr_start, None, curr_end))
+        elif isinstance(curr_start, ConditionalNode):
+            body.add_if_else(build_conditional_subgraph(context, curr_start, curr_end))
         else:
             # No branch, but double check that we didn't skip any nodes.
             # If the check fails, then the immediate_postdominator computation was wrong

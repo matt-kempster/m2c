@@ -17,7 +17,6 @@ glabel jtbl_4001B8
 .word .case3
 .word .case4
 .word .case4
-.word .case4
 
 .text
 

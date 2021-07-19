@@ -34,7 +34,6 @@ void test(s32 arg0) {
         return;
     case 5: // switch 2
     case 6: // switch 2
-    case 7: // switch 2
         if (arg0 == 1) {
             D_4101D0 = 1;
             return;

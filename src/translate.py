@@ -1400,14 +1400,18 @@ class SwitchControl:
             return False
 
         right_expr = late_unwrap(cmp_expr.right)
-        return (
-            self.jump_table is not None
-            and self.jump_table.asm_data_entry is not None
-            and self.jump_table.asm_data_entry.is_jtbl
-            and isinstance(right_expr, Literal)
-            # Allow inexact matches, as long as it is less than the detected jump table length
-            and right_expr.value <= len(self.jump_table.asm_data_entry.data)
+        if (
+            self.jump_table is None
+            or self.jump_table.asm_data_entry is None
+            or not self.jump_table.asm_data_entry.is_jtbl
+        ):
+            return False
+
+        # Count the number of labels (exclude padding bytes)
+        jump_table_len = sum(
+            isinstance(e, str) for e in self.jump_table.asm_data_entry.data
         )
+        return right_expr == Literal(jump_table_len)
 
     @staticmethod
     def from_expr(expr: Expression) -> "SwitchControl":
