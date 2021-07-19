@@ -4,8 +4,8 @@ s32 test(s32 arg0) {
     s32 phi_a0;
     s32 phi_a0_2;
 
+    phi_a0_2 = arg0;
     if ((u32) (arg0 - 1) < 7U) {
-        phi_a0_2 = arg0;
         switch (arg0) {
         case 1:
             return arg0 * arg0;

@@ -7,21 +7,19 @@ s32 test(s32 arg0) {
     s32 phi_a0_4;
     s32 phi_a0_5;
 
+    phi_a0_2 = arg0;
+    phi_a0_3 = arg0;
+    phi_a0_4 = arg0;
+    phi_a0_5 = arg0;
     if (arg0 >= 0x33) {
         if (arg0 >= 0x6C) {
-            phi_a0_2 = arg0;
             if (arg0 != 0xC8) {
-                phi_a0_4 = arg0;
                 goto block_23;
             }
             // Duplicate return node #16. Try simplifying control flow for better match
             return (phi_a0_2 + 1) ^ phi_a0_2;
         }
-        phi_a0_4 = arg0;
         if ((u32) (arg0 - 0x65) < 7U) {
-            phi_a0_2 = arg0;
-            phi_a0_3 = arg0;
-            phi_a0_5 = arg0;
             switch (arg0) { // switch 1
             case 107: // switch 1
                 phi_a0 = arg0 + 1;
@@ -35,7 +33,6 @@ s32 test(s32 arg0) {
     } else {
         if (arg0 >= 8) {
             if (arg0 != 0x32) {
-                phi_a0_4 = arg0;
                 goto block_23;
             }
             phi_a0 = arg0 + 1;
@@ -44,10 +41,7 @@ s32 test(s32 arg0) {
             return 2;
         }
         if (arg0 >= -0x31) {
-            phi_a0_4 = arg0;
             if ((u32) (arg0 - 1) < 7U) {
-                phi_a0_2 = arg0;
-                phi_a0_4 = arg0;
                 switch (arg0) { // switch 2
                 case 1: // switch 2
                     return arg0 * arg0;
@@ -80,7 +74,6 @@ s32 test(s32 arg0) {
             }
         } else {
             if (arg0 != -0x32) {
-                phi_a0_4 = arg0;
             default: // switch 2
             default: // switch 1
 block_23:

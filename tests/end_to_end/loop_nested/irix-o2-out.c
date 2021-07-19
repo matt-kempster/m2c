@@ -24,24 +24,24 @@ s32 test(s32 arg0) {
     phi_v1_3 = 0;
     if (arg0 > 0) {
         do {
+            phi_a1_2 = 0;
             phi_v1_2 = phi_v1_3;
+            phi_v1_4 = phi_v1_3;
+            phi_v1_5 = phi_v1_3;
             if (arg0 > 0) {
                 temp_t1 = arg0 & 3;
-                phi_a1_2 = 0;
-                phi_v1_5 = phi_v1_3;
                 if (temp_t1 != 0) {
                     phi_a3 = 1;
-                    phi_v1_4 = phi_v1_3;
                     phi_a2 = phi_v0 * 0;
                     do {
                         temp_v1 = phi_v1_4 + phi_a2;
                         phi_a3 += 1;
+                        phi_a1_2 = phi_a3;
+                        phi_v1_2 = temp_v1;
                         phi_v1_4 = temp_v1;
                         phi_a2 += phi_v0;
+                        phi_v1_5 = temp_v1;
                     } while (temp_t1 != phi_a3);
-                    phi_a1_2 = phi_a3;
-                    phi_v1_2 = temp_v1;
-                    phi_v1_5 = temp_v1;
                     if (phi_a3 != arg0) {
                         goto block_6;
                     }
