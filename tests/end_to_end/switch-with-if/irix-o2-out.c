@@ -20,7 +20,6 @@ void test(s32 arg0) {
         }
         break;
     }
-default: // switch 1
     switch (arg0) { // switch 2
     case 1: // switch 2
     case 2: // switch 2

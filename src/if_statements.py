@@ -670,20 +670,23 @@ def build_switch_between(
     Output the subgraph between `switch` and `end`, but not including `end`.
     The returned SwitchStatement starts with the jump to the switch's value.
     """
+    switch_cases = switch.cases[:]
+    if default is end:
+        default = None
+    elif default is not None:
+        switch_cases.append(default)
+
     switch_index = add_labels_for_switch(context, switch, default)
 
     jump = get_block_info(switch).switch_control
     assert jump is not None
 
     switch_body = Body(print_node_comment=context.options.debug)
-    cases = switch.cases[:]
-    if default is not None and default is not end:
-        cases.append(default)
 
     # Order case blocks by their position in the asm, not by their order in the jump table
     # (but use the order in the jump table to break ties)
     sorted_cases = sorted(
-        set(cases), key=lambda node: (node.block.index, cases.index(node))
+        set(switch_cases), key=lambda node: (node.block.index, switch_cases.index(node))
     )
     next_sorted_cases: List[Optional[Node]] = []
     next_sorted_cases.extend(sorted_cases[1:])
