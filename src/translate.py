@@ -29,7 +29,6 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
     build_flowgraph,
-    symbol_name_is_jump_table,
 )
 from .options import Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
@@ -1373,6 +1372,43 @@ class SwitchControl:
     jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
 
+    def matches_guard_condition(self, cond: Condition) -> bool:
+        """
+        Return True if `cond` is one of:
+            - `((control_expr + (-offset)) >= len(jump_table))`, if `offset != 0`
+            - `(control_expr >= len(jump_table))`, if `offset == 0`
+        These are the appropriate bounds checks before using `jump_table`.
+        """
+        cmp_expr = simplify_condition(cond)
+        if not isinstance(cmp_expr, BinaryOp) or cmp_expr.op != ">=":
+            return False
+
+        # The LHS may have been wrapped in a u32 cast
+        left_expr = late_unwrap(cmp_expr.left)
+        if isinstance(left_expr, Cast):
+            left_expr = late_unwrap(left_expr.expr)
+
+        if self.offset != 0:
+            if (
+                not isinstance(left_expr, BinaryOp)
+                or late_unwrap(left_expr.left) != late_unwrap(self.control_expr)
+                or left_expr.op != "+"
+                or late_unwrap(left_expr.right) != Literal(-self.offset)
+            ):
+                return False
+        elif left_expr != late_unwrap(self.control_expr):
+            return False
+
+        right_expr = late_unwrap(cmp_expr.right)
+        return (
+            self.jump_table is not None
+            and self.jump_table.asm_data_entry is not None
+            and self.jump_table.asm_data_entry.is_jtbl
+            and isinstance(right_expr, Literal)
+            # Allow inexact matches, as long as it is less than the detected jump table length
+            and right_expr.value <= len(self.jump_table.asm_data_entry.data)
+        )
+
     @staticmethod
     def from_expr(expr: Expression) -> "SwitchControl":
         """
@@ -1418,7 +1454,7 @@ class SwitchControl:
                 offset = -offset_lit.value
 
         # Check that it is really a jump table
-        if not symbol_name_is_jump_table(jump_table.symbol_name):
+        if jump_table.asm_data_entry is None or not jump_table.asm_data_entry.is_jtbl:
             return error_expr
 
         return SwitchControl(control_expr, jump_table, offset)
