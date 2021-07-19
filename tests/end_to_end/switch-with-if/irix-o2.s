@@ -4,10 +4,18 @@
 .late_rodata
 glabel jtbl_4001A0
 .word .case1
+.word .case1
+.word .case1
+.word .case1
+.word .case2
 .word .case2
 
 glabel jtbl_4001B8
 .word .case3
+.word .case3
+.word .case3
+.word .case3
+.word .case4
 .word .case4
 
 .text

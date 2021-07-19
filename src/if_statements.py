@@ -381,6 +381,29 @@ def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> Non
         emit_goto(context, target, body)
 
 
+def is_switch_guard(node: Node) -> bool:
+    """Return True if `node` is a ConditionalNode for checking the bounds of a
+    SwitchNode's control expression. These can usually be combined in the output."""
+    if not isinstance(node, ConditionalNode):
+        return False
+    cond = get_block_info(node).branch_condition
+    assert cond is not None
+
+    switch_node = node.fallthrough_edge
+    if not isinstance(switch_node, SwitchNode):
+        return False
+    switch_block_info = get_block_info(switch_node)
+    assert switch_block_info.switch_control is not None
+
+    # The SwitchNode must have no statements, and the conditional
+    # from the ConditionalNode must properly check the jump table bounds.
+    return (
+        switch_node.parents == [node]
+        and not switch_block_info.statements_to_write()
+        and switch_block_info.switch_control.matches_guard_condition(cond)
+    )
+
+
 def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
     branch_condition = block_info.branch_condition
     assert branch_condition is not None
@@ -591,6 +614,8 @@ def build_conditional_subgraph(
             and not curr_node.loop
             # Exclude nodes with incoming edges that are not part of the condition
             and all(p in chained_cond_nodes for p in curr_node.parents)
+            # Exclude guards for SwitchNodes (they may be elided)
+            and not is_switch_guard(curr_node)
         ):
             break
 
@@ -639,23 +664,20 @@ def emit_return(context: Context, node: ReturnNode, body: Body) -> None:
 def build_switch_between(
     context: Context,
     switch: SwitchNode,
+    default: Optional[Node],
     end: Node,
 ) -> SwitchStatement:
     """
     Output the subgraph between `switch` and `end`, but not including `end`.
     The returned SwitchStatement starts with the jump to the switch's value.
     """
-    # Try to detect the default node by looking at the switch's parent
-    default_node: Optional[Node] = None
-    if (
-        len(switch.parents) == 1
-        and isinstance(switch.parents[0], ConditionalNode)
-        and switch.parents[0].fallthrough_edge is switch
-        and switch.parents[0].conditional_edge is not end
-    ):
-        default_node = switch.parents[0].conditional_edge
+    switch_cases = switch.cases[:]
+    if default is end:
+        default = None
+    elif default is not None:
+        switch_cases.append(default)
 
-    switch_index = add_labels_for_switch(context, switch, default_node)
+    switch_index = add_labels_for_switch(context, switch, default)
 
     jump = get_block_info(switch).switch_control
     assert jump is not None
@@ -665,7 +687,7 @@ def build_switch_between(
     # Order case blocks by their position in the asm, not by their order in the jump table
     # (but use the order in the jump table to break ties)
     sorted_cases = sorted(
-        set(switch.cases), key=lambda node: (node.block.index, switch.cases.index(node))
+        set(switch_cases), key=lambda node: (node.block.index, switch_cases.index(node))
     )
     next_sorted_cases: List[Optional[Node]] = []
     next_sorted_cases.extend(sorted_cases[1:])
@@ -788,10 +810,25 @@ def build_flowgraph_between(
         assert curr_end is not None
 
         # For nodes with branches, curr_end is not a direct successor of curr_start
-        if isinstance(curr_start, ConditionalNode):
-            body.add_if_else(build_conditional_subgraph(context, curr_start, curr_end))
+        if is_switch_guard(curr_start):
+            # curr_start is a ConditionalNode that falls through to a SwitchNode,
+            # where the condition checks that the switch's control expression is
+            # within the jump table bounds.
+            # We can combine the if+switch into just a single switch block.
+            assert isinstance(curr_start, ConditionalNode), "checked by is_switch_guard"
+            switch_node = curr_start.fallthrough_edge
+            assert isinstance(switch_node, SwitchNode), "checked by is_switch_guard"
+            default_node = curr_start.conditional_edge
+            # is_switch_guard checked that switch_node has no statements to write,
+            # so it is OK to mark it as emitted
+            context.emitted_nodes.add(switch_node)
+            body.add_switch(
+                build_switch_between(context, switch_node, default_node, curr_end)
+            )
         elif isinstance(curr_start, SwitchNode):
-            body.add_switch(build_switch_between(context, curr_start, curr_end))
+            body.add_switch(build_switch_between(context, curr_start, None, curr_end))
+        elif isinstance(curr_start, ConditionalNode):
+            body.add_if_else(build_conditional_subgraph(context, curr_start, curr_end))
         else:
             # No branch, but double check that we didn't skip any nodes.
             # If the check fails, then the immediate_postdominator computation was wrong

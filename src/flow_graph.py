@@ -924,10 +924,6 @@ class NaturalLoop:
     backedges: Set[Node] = field(default_factory=set)
 
 
-def symbol_name_is_jump_table(sym_name: str) -> bool:
-    return any(sym_name.startswith(prefix) for prefix in ("jtbl", "jpt_"))
-
-
 def build_graph_from_block(
     block: Block, blocks: List[Block], nodes: List[Node], asm_data: AsmData
 ) -> Node:
@@ -988,7 +984,10 @@ def build_graph_from_block(
                         and isinstance(arg.lhs, Macro)
                         and arg.lhs.macro_name == "lo"
                         and isinstance(arg.lhs.argument, AsmGlobalSymbol)
-                        and symbol_name_is_jump_table(arg.lhs.argument.symbol_name)
+                        and any(
+                            arg.lhs.argument.symbol_name.startswith(prefix)
+                            for prefix in ("jtbl", "jpt_")
+                        )
                     ):
                         jtbl_names.append(arg.lhs.argument.symbol_name)
             if len(jtbl_names) != 1:
