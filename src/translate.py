@@ -403,14 +403,15 @@ def get_stack_info(
     # but outside of these two regions, is considered a local variable.
     callee_saved_offset_and_size: List[Tuple[int, int]] = []
     for inst in flow_graph.entry_node().block.instructions:
+        if inst.mnemonic == "jal":
+            break
+
         if not inst.args or not isinstance(inst.args[0], Register):
             continue
 
         destination = inst.args[0]
 
-        if inst.mnemonic == "jal":
-            break
-        elif inst.mnemonic == "addiu" and destination.register_name == "sp":
+        if inst.mnemonic == "addiu" and destination.register_name == "sp":
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
