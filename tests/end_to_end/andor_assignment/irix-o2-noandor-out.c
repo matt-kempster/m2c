@@ -78,7 +78,7 @@ block_4:
                             temp_t5 = (phi_v1_2 + 1) * 2;
                             phi_v1_2 = temp_t5;
                             phi_v1_6 = temp_t5;
-                        } while ((temp_t5 < 5) != 0);
+                        } while (temp_t5 < 5);
                     }
                     phi_v1_3 = phi_v1_6 + 5;
                 }
@@ -99,7 +99,7 @@ block_4:
                             temp_t9 = (phi_v1_4 + 1) * 2;
                             phi_v1_4 = temp_t9;
                             phi_v1_7 = temp_t9;
-                        } while ((temp_t9 < 5) != 0);
+                        } while (temp_t9 < 5);
                     }
                     phi_v1_5 = phi_v1_7 + 5;
                 } else {

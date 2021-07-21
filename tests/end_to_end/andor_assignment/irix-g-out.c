@@ -28,7 +28,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
                 do {
                     sp1C += 1;
                     sp1C *= 2;
-                } while ((sp1C < 5) != 0);
+                } while (sp1C < 5);
             }
             sp1C += 5;
         }
@@ -38,7 +38,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
             do {
                 sp1C += 1;
                 sp1C *= 2;
-            } while ((sp1C < 5) != 0);
+            } while (sp1C < 5);
         }
         sp1C += 5;
     } else {

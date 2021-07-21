@@ -173,7 +173,7 @@ class DoWhileLoop:
     def format(self, fmt: Formatter) -> str:
         space = fmt.indent("")
         after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
-        cond = format_expr(self.condition, fmt)
+        cond = format_expr(simplify_condition(self.condition), fmt)
         with fmt.indented():
             return "\n".join(
                 [

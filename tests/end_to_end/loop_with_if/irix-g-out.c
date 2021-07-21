@@ -9,7 +9,7 @@ s32 test(s32 arg0) {
             } else {
                 sp4 += 4;
             }
-        } while ((sp4 < arg0) != 0);
+        } while (sp4 < arg0);
     }
     return sp4;
 }

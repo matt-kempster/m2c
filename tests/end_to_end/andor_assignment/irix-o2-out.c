@@ -57,7 +57,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
                     temp_t3 = (phi_v1_2 + 1) * 2;
                     phi_v1_2 = temp_t3;
                     phi_v1_6 = temp_t3;
-                } while ((temp_t3 < 5) != 0);
+                } while (temp_t3 < 5);
             }
             phi_v1_3 = phi_v1_6 + 5;
         }
@@ -68,7 +68,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
                 temp_t5 = (phi_v1_4 + 1) * 2;
                 phi_v1_4 = temp_t5;
                 phi_v1_7 = temp_t5;
-            } while ((temp_t5 < 5) != 0);
+            } while (temp_t5 < 5);
         }
         phi_v1_5 = phi_v1_7 + 5;
     } else {

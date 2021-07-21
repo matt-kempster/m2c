@@ -12,10 +12,10 @@ s32 test(s32 arg0) {
                 do {
                     sp8 += spC * sp4;
                     sp4 += 1;
-                } while ((sp4 < arg0) != 0);
+                } while (sp4 < arg0);
             }
             spC += 1;
-        } while ((spC < arg0) != 0);
+        } while (spC < arg0);
     }
     return sp8;
 }
