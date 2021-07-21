@@ -832,6 +832,10 @@ def build_flowgraph_between(
             body.add_switch(build_switch_between(context, curr_start, None, curr_end))
         elif isinstance(curr_start, ConditionalNode):
             body.add_if_else(build_conditional_subgraph(context, curr_start, curr_end))
+        elif (
+            isinstance(curr_start, BasicNode) and curr_start.fake_successor == curr_end
+        ):
+            curr_end = curr_start.successor
         else:
             # No branch, but double check that we didn't skip any nodes.
             # If the check fails, then the immediate_postdominator computation was wrong
@@ -929,8 +933,7 @@ def build_body(context: Context, options: Options) -> Body:
         body = Body(print_node_comment=context.options.debug)
         if options.ifs and not is_reducible:
             body.add_comment(
-                "Flowgraph is not reducible, falling back to gotos-only mode. "
-                "(Are there infinite loops?)"
+                "Flowgraph is not reducible, falling back to gotos-only mode."
             )
         body.extend(build_naive(context, context.flow_graph.nodes))
 
