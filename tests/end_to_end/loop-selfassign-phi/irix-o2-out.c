@@ -4,7 +4,6 @@ void test(s32 arg0); // static
 void test(s32 arg0) {
     s32 phi_s0;
 
-    // Flowgraph is not reducible, falling back to gotos-only mode. (Are there infinite loops?)
     phi_s0 = arg0;
 loop_1:
     if (phi_s0 < 3) {
