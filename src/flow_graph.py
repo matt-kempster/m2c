@@ -1164,6 +1164,9 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
             node.successor = n
             extra_nodes.append(n)
 
+    nodes += extra_nodes
+    nodes.sort(key=lambda node: node.block.index)
+
     # Filter nodes to only include ones reachable from the entry node
     queue = {nodes[0]}
     # Always include the TerminalNode (even if it isn't reachable right now)
@@ -1172,8 +1175,7 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
         node = queue.pop()
         reachable_nodes.add(node)
         queue.update(set(node.children()) - reachable_nodes)
-    nodes = sorted(reachable_nodes, key=lambda node: node.block.index)
-    return nodes
+    return [n for n in nodes if n in reachable_nodes]
 
 
 def compute_relations(nodes: List[Node]) -> None:
