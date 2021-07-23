@@ -369,18 +369,6 @@ def add_labels_for_switch(
     return switch_index
 
 
-def emit_goto_or_early_return(context: Context, target: Node, body: Body) -> None:
-    """
-    Emit a goto to a node, *unless* that node is a return or terminal node.
-    This is similar to `emit_node`, but won't write the node body here unless
-    the node is a return.
-    """
-    if isinstance(target, ReturnNode):
-        emit_node(context, target, body)
-    elif not isinstance(target, TerminalNode):
-        emit_goto(context, target, body)
-
-
 def is_switch_guard(node: Node) -> bool:
     """Return True if `node` is a ConditionalNode for checking the bounds of a
     SwitchNode's control expression. These can usually be combined in the output."""
@@ -856,6 +844,12 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
 
     body = Body(print_node_comment=context.options.debug)
 
+    def emit_goto_or_early_return(node: Node, body: Body) -> None:
+        if isinstance(node, ReturnNode) and not node.is_real():
+            emit_node(context, node, body)
+        else:
+            emit_goto(context, node, body)
+
     def emit_successor(node: Node, cur_index: int) -> None:
         if (
             cur_index + 1 < len(nodes)
@@ -864,7 +858,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         ):
             # Fallthrough is fine
             return
-        emit_goto(context, node, body)
+        emit_goto_or_early_return(node, body)
 
     for i, node in enumerate(nodes):
         if isinstance(node, ReturnNode):
@@ -891,7 +885,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
         elif isinstance(node, ConditionalNode):
             emit_node(context, node, body)
             if_body = Body(print_node_comment=True)
-            emit_goto(context, node.conditional_edge, if_body)
+            emit_goto_or_early_return(node.conditional_edge, if_body)
             block_info = get_block_info(node)
             assert block_info.branch_condition is not None
             body.add_if_else(
