@@ -195,7 +195,7 @@ def parse_flags(flags: List[str]) -> Options:
         dest="valid_syntax",
         action="store_true",
         help="emit valid C syntax, using macros to indicate unknown types or other "
-        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
+        "unusual statements. Macro definitions are in `m2c_macros.h`.",
     )
     group.add_argument(
         "--no-emit-globals",
