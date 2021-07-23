@@ -230,6 +230,12 @@ def parse_flags(flags: List[str]) -> Options:
         default="right",
     )
     group.add_argument(
+        "--unk-underscore",
+        dest="unknown_underscore",
+        help="emit unk_X instead of unkX for unknown struct accesses",
+        action="store_true",
+    )
+    group.add_argument(
         "--dump-typemap",
         dest="dump_typemap",
         action="store_true",
@@ -321,6 +327,7 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
         pointer_style_left=args.pointer_style == "left",
+        unknown_underscore=args.unknown_underscore,
     )
     filenames = args.filename
 

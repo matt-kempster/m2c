@@ -1061,7 +1061,8 @@ class StructAccess(Expression):
             )
             return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
-            field_name = "unk" + format_hex(self.offset)
+            prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
+            field_name = prefix + format_hex(self.offset)
 
         if isinstance(var, AddressOf):
             if isinstance(var.expr, GlobalSymbol) and var.expr.array_dim is not None:

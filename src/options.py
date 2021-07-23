@@ -9,6 +9,7 @@ class CodingStyle:
     newline_after_if: bool
     newline_before_else: bool
     pointer_style_left: bool
+    unknown_underscore: bool
 
 
 @dataclass
@@ -47,6 +48,7 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     newline_after_if=False,
     newline_before_else=False,
     pointer_style_left=False,
+    unknown_underscore=False,
 )
 
 
