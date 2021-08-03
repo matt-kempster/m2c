@@ -1,4 +1,4 @@
-? bar(); // extern
+? bar();
 
 void test(void) {
     bar();

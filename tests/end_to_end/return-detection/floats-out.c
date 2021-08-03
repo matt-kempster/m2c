@@ -1,4 +1,4 @@
-f32 bar(); // extern
+f32 bar();
 
 f32 test(void) {
     f32 temp_f0;

@@ -4153,7 +4153,8 @@ class GlobalInfo:
                     qualifier = "extern"
 
                 if sym.type.is_function():
-                    comments.append(qualifier)
+                    if not qualifier == "extern":
+                        comments.append(qualifier)
                     qualifier = ""
 
                 # Try to guess the symbol's `array_dim` if we have a data entry for it,

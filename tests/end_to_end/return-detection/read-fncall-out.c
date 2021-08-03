@@ -1,4 +1,4 @@
-? bar(); // extern
+? bar();
 
 void test(void) {
     // Flowgraph is not reducible, falling back to gotos-only mode.

@@ -1,4 +1,4 @@
-MIPS2C_UNK extern_fn(struct A *); // extern
+MIPS2C_UNK extern_fn(struct A *);
 MIPS2C_UNK static_fn(struct A *); // static
 extern f32 extern_float;
 struct A static_A = {
