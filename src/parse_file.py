@@ -346,6 +346,12 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                                 try_parse(lambda: int(w.strip(), 0), ".short") & 0xFFFF
                             )
                             mips_file.new_data_bytes(struct.pack(">H", ival))
+                    elif line.startswith(".half"):
+                        for w in line[5:].split(","):
+                            ival = (
+                                try_parse(lambda: int(w.strip(), 0), ".half") & 0xFFFF
+                            )
+                            mips_file.new_data_bytes(struct.pack(">H", ival))
                     elif line.startswith(".byte"):
                         for w in line[5:].split(","):
                             ival = try_parse(lambda: int(w.strip(), 0), ".byte") & 0xFF
