@@ -154,7 +154,10 @@ class LabelStatement:
         lines = []
         if self.node in self.context.case_nodes:
             for (switch, case) in self.context.case_nodes[self.node]:
-                case_str = f"case {case}" if case is not None else "default"
+                case_num = None
+                if case is not None:
+                    case_num = f"0x{case:X}" if fmt.coding_style.hex_case else f"{case}"
+                case_str = f"case {case_num}" if case is not None else "default"
                 switch_str = f" // switch {switch}" if switch != 0 else ""
                 lines.append(fmt.indent(f"{case_str}:{switch_str}", -1))
         if self.node in self.context.goto_nodes:
