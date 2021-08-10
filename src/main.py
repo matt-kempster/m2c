@@ -236,6 +236,12 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
     )
     group.add_argument(
+        "--hex-case",
+        dest="hex_case",
+        help="Display case labels in hex rather than decimal",
+        action="store_true",
+    )
+    group.add_argument(
         "--dump-typemap",
         dest="dump_typemap",
         action="store_true",
@@ -328,6 +334,7 @@ def parse_flags(flags: List[str]) -> Options:
         newline_before_else=args.allman,
         pointer_style_left=args.pointer_style == "left",
         unknown_underscore=args.unknown_underscore,
+        hex_case=args.hex_case,
     )
     filenames = args.filename
 
