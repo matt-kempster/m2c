@@ -698,7 +698,7 @@ def dump_typemap(typemap: TypeMap) -> None:
     for name_or_id, struct in typemap.structs.items():
         if not isinstance(name_or_id, str):
             continue
-        print(f"{name_or_id}: size {struct.size}, align {struct.align}")
+        print(f"{name_or_id}: size {hex(struct.size)}, align {struct.align}")
         for offset, fields in struct.fields.items():
             print(f"  {hex(offset)}:", end="")
             for field in fields:

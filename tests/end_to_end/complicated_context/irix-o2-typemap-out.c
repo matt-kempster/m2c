@@ -10,12 +10,12 @@ void func_decl(void);
 short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_arg, ...);
 
 Structs:
-SomeUnion: size 8, align 8
+SomeUnion: size 0x8, align 8
   0x0: double_innerfield (double) char_innerfield (char)
-SomeBitfield: size 8, align 4
-SubStruct: size 4, align 4
+SomeBitfield: size 0x8, align 4
+SubStruct: size 0x4, align 4
   0x0: x (int)
-SomeStruct: size 640, align 8
+SomeStruct: size 0x280, align 8
   0x0: int_field (int)
   0x4: float_field (float)
   0x8: pointer_field (void *)
