@@ -2160,7 +2160,7 @@ def handle_la(args: InstrArgs) -> Expression:
 def handle_ori(args: InstrArgs) -> Expression:
     imm = args.unsigned_imm(2)
     r = args.reg(1)
-    if isinstance(r, Literal) and isinstance(imm, Literal):
+    if isinstance(r, Literal) and isinstance(imm, Literal) and (r.value & 0xFFFF) == 0:
         return Literal(value=(r.value | imm.value))
     # Regular bitwise OR.
     return BinaryOp.int(left=r, op="|", right=imm)
