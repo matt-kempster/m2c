@@ -597,7 +597,8 @@ def strip_macro_defs(text: str) -> str:
 
     Under the optimistic assumption that the macros aren't necessary for parsing the
     context file itself, we strip all macro definitions before parsing."""
-    return re.sub(r"^[ \t]*#[ \t]*define[ \t].*", "", text, flags=re.MULTILINE)
+    pattern = re.compile(r"^[ \t]*#[ \t]*define[ \t](\\\n|.)*", flags=re.MULTILINE)
+    return re.sub(pattern, lambda m: m.group(0).count("\n") * "\n", text)
 
 
 def parse_c(source: str) -> ca.FileAST:
