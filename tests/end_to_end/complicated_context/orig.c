@@ -1,6 +1,9 @@
 int globali;
 float globalf;
 
+#define IGNORED
+#define IGNORED2(...)
+
 union SomeUnion {
     double double_innerfield;
     char char_innerfield;

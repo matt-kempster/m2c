@@ -580,6 +580,26 @@ def strip_comments(text: str) -> str:
     return re.sub(pattern, replacer, text)
 
 
+def strip_macro_defs(text: str) -> str:
+    """Strip macro definitions from C source. mips_to_c does not run the preprocessor,
+    for a bunch of reasons:
+
+    - we don't know what include directories to use
+    - it avoids a dependency on cpp, which is commonly unavailable on MacOS/Windows
+    - web site security (#includes could read sensitive files)
+    - performance
+
+    Instead that responsibility is passed on to whoever generates the context file.
+
+    But the context file may sometimes still contain macro definitions, if generated
+    with the dual purpose of being used as a real include file that users expect to
+    preserve macros.
+
+    Under the optimistic assumption that the macros aren't necessary for parsing the
+    context file itself, we strip all macro definitions before parsing."""
+    return re.sub(r"^[ \t]*#[ \t]*define[ \t].*", "", text, flags=re.MULTILINE)
+
+
 def parse_c(source: str) -> ca.FileAST:
     try:
         return CParser().parse(source, "<source>")
@@ -607,6 +627,7 @@ def parse_c(source: str) -> ca.FileAST:
 def build_typemap(source: str) -> TypeMap:
     source = add_builtin_typedefs(source)
     source = strip_comments(source)
+    source = strip_macro_defs(source)
     ast: ca.FileAST = parse_c(source)
     ret = TypeMap()
 
