@@ -56,7 +56,9 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
         }
     } else {
 block_4:
+        phi_t0 = arg0 + arg1;
         phi_v1 = 1;
+        phi_a2 = arg2;
     }
     temp_v1 = phi_v1 + phi_a2;
     phi_t1_2 = phi_t1;

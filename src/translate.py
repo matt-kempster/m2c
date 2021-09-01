@@ -1348,7 +1348,7 @@ class PhiExpr(Expression):
         admittedly a bit sketchy, in case the phi is in scope here and used
         later on... but we have that problem with regular phi assignments as
         well."""
-        if self.used_by is None:
+        if self.used_by is None or self.replacement_expr is not None:
             return self
         return self.used_by.propagates_to()
 
