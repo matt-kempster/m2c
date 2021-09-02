@@ -32,6 +32,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     phi_t0 = temp_t7;
     if ((temp_s0 != 0) || (temp_t7 != 0) || (temp_v0 = func_00400090(temp_t7), phi_t0 = temp_v0, phi_a2 = arg2, phi_t0 = temp_v0, (temp_v0 != 0)) || (phi_s0 = 2, phi_s0 = 2, (arg3 != 0))) {
         phi_v1 = 1;
+        phi_a2 = arg2;
     } else {
         phi_v1 = -2;
         if (arg0 != 0) {
