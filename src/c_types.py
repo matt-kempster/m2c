@@ -97,20 +97,6 @@ def resolve_typedefs(type: CType, typemap: TypeMap) -> CType:
     return type
 
 
-def pointer_decay(type: CType, typemap: TypeMap) -> SimpleType:
-    real_type = resolve_typedefs(type, typemap)
-    if isinstance(real_type, ArrayDecl):
-        return PtrDecl(quals=[], type=real_type.type)
-    if isinstance(real_type, FuncDecl):
-        return PtrDecl(quals=[], type=type)
-    if isinstance(real_type, TypeDecl) and isinstance(real_type.type, ca.Enum):
-        return basic_type(["int"])
-    assert not isinstance(
-        type, (ArrayDecl, FuncDecl)
-    ), "resolve_typedefs can't hide arrays/functions"
-    return type
-
-
 def type_from_global_decl(decl: ca.Decl) -> CType:
     """Get the CType of a global Decl, stripping names of function parameters."""
     tp = decl.type
@@ -130,47 +116,12 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
     return ca.FuncDecl(args=ca.ParamList(new_params), type=tp.type)
 
 
-def deref_type(type: CType, typemap: TypeMap) -> CType:
-    type = resolve_typedefs(type, typemap)
-    assert isinstance(type, (ArrayDecl, PtrDecl)), "dereferencing non-pointer"
-    return type.type
-
-
 def is_void(type: CType) -> bool:
     return (
         isinstance(type, ca.TypeDecl)
         and isinstance(type.type, ca.IdentifierType)
         and type.type.names == ["void"]
     )
-
-
-def equal_types(a: CType, b: CType) -> bool:
-    def equal(a: object, b: object) -> bool:
-        if a is b:
-            return True
-        if type(a) != type(b):
-            return False
-        if a is None:
-            return b is None
-        if isinstance(a, list):
-            assert isinstance(b, list)
-            if len(a) != len(b):
-                return False
-            for i in range(len(a)):
-                if not equal(a[i], b[i]):
-                    return False
-            return True
-        if isinstance(a, (int, str)):
-            return bool(a == b)
-        assert isinstance(a, ca.Node)
-        for name in a.__slots__[:-2]:  # type: ignore
-            if name == "declname":
-                continue
-            if not equal(getattr(a, name), getattr(b, name)):
-                return False
-        return True
-
-    return equal(a, b)
 
 
 def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
@@ -208,11 +159,6 @@ def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
     if size == 0:
         raise DecompFailure("Function parameter has void type")
     return size, size
-
-
-def var_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
-    size, align, _ = parse_struct_member(type, "", typemap, allow_unsized=True)
-    return size, align
 
 
 def is_struct_type(type: CType, typemap: TypeMap) -> bool:
@@ -420,22 +366,6 @@ def parse_struct_member(
     return size, size, None
 
 
-def expand_detailed_struct_member(
-    substr: DetailedStructMember, type: CType, size: int
-) -> Iterator[Tuple[int, str, CType, int]]:
-    yield (0, "", type, size)
-    if isinstance(substr, Struct):
-        for off, sfields in substr.fields.items():
-            for field in sfields:
-                yield (off, "." + field.name, field.type, field.size)
-    elif isinstance(substr, Array) and substr.subsize != 1:
-        for i in range(substr.dim):
-            for (off, path, subtype, subsize) in expand_detailed_struct_member(
-                substr.subtype, substr.subctype, substr.subsize
-            ):
-                yield (substr.subsize * i + off, f"[{i}]" + path, subtype, subsize)
-
-
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
     is_union = isinstance(struct, ca.Union)
     assert struct.decls is not None, "enforced by caller"
@@ -495,12 +425,13 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             )
             align = max(align, salign)
             offset = (offset + salign - 1) & -salign
-            for off, path, ftype, fsize in expand_detailed_struct_member(
-                substr, type, ssize
-            ):
-                fields[offset + off].append(
-                    StructField(type=ftype, size=fsize, name=decl.name + path)
+            fields[offset].append(
+                StructField(
+                    type=type,
+                    size=ssize,
+                    name=decl.name,
                 )
+            )
             if is_union:
                 union_size = max(union_size, ssize)
             else:
