@@ -1004,19 +1004,26 @@ class StructAccess(Expression):
     struct_var: Expression
     offset: int
     target_size: Optional[int]
-    field_name: Optional[str] = field(compare=False)
+    field_path: Optional[AccessPath] = field(compare=False)
     stack_info: StackInfo = field(compare=False, repr=False)
     type: Type = field(compare=False)
-    has_late_field_name: bool = field(default=False, compare=False)
+    has_late_field_path: bool = field(default=False, compare=False)
 
     @staticmethod
-    def access_path_to_field_name(path: AccessPath) -> str:
-        # TODO: Document
+    def access_path_to_field_name(path: Optional[AccessPath], deref: bool) -> str:
+        """
+        Convert a path like `["foo", 3, "bar"]` into a field name like `.foo[3].bar`.
+        If deref is True, the initial `.` is replaced by `->`.
+        """
+        if path is None:
+            return ""
         output = ""
         for p in path:
             if isinstance(p, str):
-                if output:
+                if output or not deref:
                     output += "."
+                else:
+                    output += "->"
                 output += p
             else:
                 assert isinstance(p, int)
@@ -1026,13 +1033,20 @@ class StructAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def late_field_name(self) -> Optional[str]:
+    def make_reference(self) -> bool:
+        self.late_field_path()
+        if self.field_path and self.field_path[-1] == 0:
+            del self.field_path[-1]
+            return True
+        return False
+
+    def late_field_path(self) -> Optional[AccessPath]:
         # If we didn't have a type at the time when the struct access was
         # constructed, but now we do, compute field name.
 
         if (
-            self.field_name is None
-            and not self.has_late_field_name
+            self.field_path is None
+            and not self.has_late_field_path
             # TODO: The previous behavior only tried to resolve the late field name
             # if a typemap was available; however, even without a typemap, we can
             # resolve zero-offset cases like `*(int *) x`.
@@ -1047,12 +1061,12 @@ class StructAccess(Expression):
                 self.offset * 8, target_size_bits=target_size_bits
             )
             if remaining_bits == 0:
-                self.field_name = self.access_path_to_field_name(field_path)
-                self.has_late_field_name = True
-        return self.field_name
+                self.field_path = field_path
+                self.has_late_field_path = True
+        return self.field_path
 
     def late_has_known_type(self) -> bool:
-        if self.late_field_name() is not None:
+        if self.late_field_path() is not None:
             return True
         if self.offset == 0:
             var = late_unwrap(self.struct_var)
@@ -1072,9 +1086,9 @@ class StructAccess(Expression):
         var = late_unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
-        field_name = self.late_field_name()
+        field_path = self.late_field_path()
 
-        if field_name:
+        if field_path not in (None, [], [0]):
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = (
@@ -1083,27 +1097,28 @@ class StructAccess(Expression):
             return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
-            field_name = prefix + format_hex(self.offset)
+            field_path = [prefix + format_hex(self.offset)]
 
-        if isinstance(var, AddressOf):
-            if isinstance(var.expr, GlobalSymbol) and var.expr.array_dim is not None:
-                needs_deref = True
-            else:
-                needs_deref = False
-                var = var.expr
-        else:
-            needs_deref = True
+        deref = True
+        if isinstance(var, AddressOf) and not var.expr.type.is_array():
+            var = var.expr
+            deref = False
 
-        if needs_deref:
-            if self.offset == 0 and not has_nonzero_access:
-                return f"*{var.format(fmt)}"
-            else:
-                return f"{parenthesize_for_struct_access(var, fmt)}->{field_name}"
+        if self.offset == 0 and not has_nonzero_access:
+            return f"{'*' if deref else ''}{var.format(fmt)}"
+
+        if (
+            field_path
+            and len(field_path) >= 2
+            and field_path[0] == 0
+            and isinstance(field_path[1], str)
+        ):
+            # Rewrite `x[0].y` as `x->y` or `x.y`
+            field_name = self.access_path_to_field_name(field_path[1:], deref)
         else:
-            if self.offset == 0 and not has_nonzero_access:
-                return f"{var.format(fmt)}"
-            else:
-                return f"{parenthesize_for_struct_access(var, fmt)}.{field_name}"
+            field_name = self.access_path_to_field_name(field_path, deref)
+
+        return f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
 
 @dataclass(frozen=True, eq=True)
@@ -1212,12 +1227,15 @@ class AddressOf(Expression):
         if isinstance(self.expr, GlobalSymbol):
             if self.expr.is_string_constant():
                 return self.expr.format_string_constant(fmt)
-            if self.expr.array_dim is not None:
-                return f"{self.expr.format(fmt)}"
+        if self.expr.type.is_array():
+            return f"{self.expr.format(fmt)}"
 
         if self.expr.type.is_function():
             # Functions are automatically converted to function pointers
             # without an explicit `&` by the compiler
+            return f"{self.expr.format(fmt)}"
+        if isinstance(self.expr, StructAccess) and self.expr.make_reference():
+            # Simplify `&x[0]` into `x`
             return f"{self.expr.format(fmt)}"
         return f"&{self.expr.format(fmt)}"
 
@@ -1864,15 +1882,16 @@ def deref(
         offset * 8, target_size_bits=size * 8
     )
     if remaining_bits == 0:
-        field_name = StructAccess.access_path_to_field_name(field_path)
         field_type.unify(type)
         type = field_type
+    else:
+        field_path = None
 
     return StructAccess(
         struct_var=var,
         offset=offset,
         target_size=size,
-        field_name=field_name,
+        field_path=field_path,
         stack_info=stack_info,
         type=type,
     )
@@ -2231,7 +2250,7 @@ def handle_addi_real(
         var = stack_info.get_stack_var(imm.value, store=False)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
-        return AddressOf(var, type=var.type.as_reference())
+        return AddressOf(var, type=var.type.reference())
     else:
         return add_imm(source, imm, stack_info)
 
@@ -2241,13 +2260,13 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         # addiu $reg1, $reg2, 0 is a move
         # (this happens when replacing %lo(...) by 0)
         return source
-    elif source.type.is_pointer():
+    elif source.type.is_pointer_or_array():
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
         # architecture.
-        # If the imm is exactly a multiple of 0x10000, then it is likely that we are
+        # If the imm is exactly a multiple of 0x8000, then it is likely that we are
         # constructing a large offset (see deref)
-        if isinstance(imm, Literal) and imm.value % 0x10000 != 0:
+        if isinstance(imm, Literal) and imm.value % 0x8000 != 0:
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
             )
@@ -2258,17 +2277,16 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
                 imm.value * 8, target_size_bits=None
             )
             if remaining_bits == 0:
-                field_name = StructAccess.access_path_to_field_name(field_path)
                 return AddressOf(
                     StructAccess(
                         struct_var=source,
                         offset=imm.value,
                         target_size=None,
-                        field_name=field_name,
+                        field_path=field_path,
                         stack_info=stack_info,
                         type=field_type,
                     ),
-                    type=field_type.as_reference(),
+                    type=field_type.reference(),
                 )
         if isinstance(imm, Literal):
             target = source.type.get_pointer_target()
@@ -2552,7 +2570,7 @@ def array_access_from_add(
         return None
     base = expr.left
     addend = expr.right
-    if addend.type.is_pointer() and not base.type.is_pointer():
+    if addend.type.is_pointer_or_array() and not base.type.is_pointer_or_array():
         base, addend = addend, base
 
     index: Expression
@@ -2593,13 +2611,12 @@ def array_access_from_add(
         if remaining_bits is None or not (sub_path and sub_path[-1] == 0):
             return None
         del sub_path[-1]
-        sub_field_name = StructAccess.access_path_to_field_name(sub_path)
         offset = offset - (remaining_bits // 8)
         base = StructAccess(
             struct_var=base,
             offset=offset - (remaining_bits // 8),
             target_size=None,
-            field_name=sub_field_name,
+            field_path=sub_path,
             stack_info=stack_info,
             type=sub_type,
         )
@@ -2612,24 +2629,25 @@ def array_access_from_add(
     field_path, field_type, remaining_bits = base.type.get_field(
         offset * 8, target_size_bits=target_size_bits
     )
-    field_name: Optional[str]
     if remaining_bits == 0:
-        field_name = StructAccess.access_path_to_field_name(field_path)
+        if ptr and field_path and field_path[-1] == 0:
+            del field_path[-1]
+            ptr = False
     else:
-        field_name = None
+        field_path = None
 
     if offset != 0 or (target_size is not None and target_size != scale):
         ret = StructAccess(
             struct_var=AddressOf(ret, type=Type.ptr()),
             offset=offset,
             target_size=target_size,
-            field_name=field_name,
+            field_path=field_path,
             stack_info=stack_info,
             type=field_type,
         )
 
     if ptr:
-        ret = AddressOf(ret, type=ret.type.as_reference())
+        ret = AddressOf(ret, type=ret.type.reference())
 
     return ret
 
@@ -2639,9 +2657,9 @@ def handle_add(args: InstrArgs) -> Expression:
     rhs = args.reg(2)
     stack_info = args.stack_info
     type = Type.intptr()
-    if lhs.type.is_pointer():
+    if lhs.type.is_pointer_or_array():
         type = Type.ptr()
-    elif rhs.type.is_pointer():
+    elif rhs.type.is_pointer_or_array():
         type = Type.ptr()
 
     # addiu instructions can sometimes be emitted as addu instead, when the
@@ -2757,16 +2775,20 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
         only_floats = False
 
     for ind, param in enumerate(fn_sig.params):
-        size, align = param.type.get_size_align_bytes()
+        param_type = param.type
+        if param_type.is_array():
+            # Array arguments decay into pointers
+            param_type = param_type.reference()
+        size, align = param_type.get_size_align_bytes()
         size = (size + 3) & ~3
-        only_floats = only_floats and param.type.is_float()
+        only_floats = only_floats and param_type.is_float()
         offset = (offset + align - 1) & -align
         name = param.name
         reg2: Optional[Register]
         if ind < 2 and only_floats:
             reg = Register("f12" if ind == 0 else "f14")
-            is_double = param.type.is_float() and param.type.get_size_bits() == 64
-            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param.type))
+            is_double = param_type.is_float() and param_type.get_size_bits() == 64
+            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param_type))
             if is_double and not for_call:
                 name2 = f"{name}_lo" if name else None
                 reg2 = Register("f13" if ind == 0 else "f15")
@@ -2781,7 +2803,7 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
                 name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}") if i < 4 else None
                 slots.append(
-                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param.type)
+                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param_type)
                 )
         offset += size
 
@@ -4009,15 +4031,14 @@ class GlobalInfo:
                 asm_data_entry=self.asm_data_value(sym_name),
             )
 
-        type = Type.ptr(sym.type)
-        ctype_type = self.universe.get_var_type(sym_name)
-        if ctype_type is not None:
-            sym.type_in_typemap = True
-            arr = ctype_type.get_array()
-            if arr is not None:
-                ctype_type, sym.array_dim = arr
-            sym.type.unify(ctype_type)
-        return AddressOf(sym, type=type)
+            ctype_type = self.universe.get_var_type(sym_name)
+            if ctype_type is not None:
+                sym.type_in_typemap = True
+                arr = ctype_type.get_array()
+                sym.type.unify(ctype_type)
+                sym.array_dim = None
+
+        return AddressOf(sym, type=sym.type.reference())
 
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
@@ -4219,7 +4240,7 @@ class GlobalInfo:
                         continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
-                name = f"{name}[{sym.array_dim}]" if sym.array_dim is not None else name
+                # name = f"{name}[{sym.array_dim}]" if sym.array_dim is not None else name
                 value = f" = {value}" if value else ""
                 comment = f" // {'; '.join(comments)}" if comments else ""
                 lines.append(

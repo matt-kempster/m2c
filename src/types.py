@@ -19,30 +19,43 @@ from .c_types import (
 from .error import DecompFailure
 from .options import Formatter
 
+# AccessPath represents a struct/array path, with ints for array access, and
+# strs for struct fields. Ex: `["foo", 3, "bar"]` represents `.foo[3].bar`
 AccessPath = List[Union[str, int]]
 
 
 @dataclass(eq=False)
 class TypeUniverse:
-    # TODO: Document
+    """
+    Mutable shared state for Types, currently maintaining the set of available
+    struct types.
+    Unlike TypeMap, which is immutable and can be reused across tests/threads,
+    a new TypeUniverse instance should be created for each isolated run.
+    However, if the object is reused between functions, it may help provide
+    cross-function type resolution.
+    """
+
     typemap: TypeMap = field(default_factory=TypeMap)
     structs: Set["Type"] = field(default_factory=set)
     structs_by_tag_name: Dict[str, "Type"] = field(default_factory=dict)
     structs_by_ctype: Dict[int, "Type"] = field(default_factory=dict)
 
     def get_var_type(self, sym_name: str) -> Optional["Type"]:
+        """Get the type of a global variable declared in the TypeMap context"""
         ctype = self.typemap.var_types.get(sym_name)
         if ctype is None:
             return None
         return Type.ctype(ctype, self)
 
     def get_function_type(self, sym_name: str) -> Optional["Type"]:
+        """Get the type of a function declared in the TypeMap context"""
         fn = self.typemap.functions.get(sym_name)
         if fn is None:
             return None
         return Type.ctype(fn.type, self)
 
     def is_function_void(self, sym_name: str) -> bool:
+        """Return True if the function exists in the context, and has no return value"""
         fn = self.typemap.functions.get(sym_name)
         if fn is None:
             return False
@@ -51,6 +64,7 @@ class TypeUniverse:
     def get_struct_for_ctype(
         self, ctype: Union[ca.Struct, ca.Union]
     ) -> Optional["Type"]:
+        """Return the Type representing a given ctype struct, if known"""
         type = self.structs_by_ctype.get(id(ctype))
         if type is not None:
             return type
@@ -65,6 +79,7 @@ class TypeUniverse:
         ctype: Optional[Union[ca.Struct, ca.Union]] = None,
         tag_name: Optional[str] = None,
     ) -> None:
+        """Add struct_type to the set of known struct types for later access"""
         struct = struct_type.get_struct_declaration()
         assert struct is not None
 
@@ -234,6 +249,9 @@ class Type:
     def is_pointer(self) -> bool:
         return self.data().kind == TypeData.K_PTR
 
+    def is_pointer_or_array(self) -> bool:
+        return self.data().kind in (TypeData.K_PTR, TypeData.K_ARRAY)
+
     def is_int(self) -> bool:
         return self.data().kind == TypeData.K_INT
 
@@ -270,15 +288,6 @@ class Type:
         size = (self.get_size_bits() or 32) // 8
         return size, size
 
-    def get_array_field_size_bytes(self) -> int:
-        # TODO: Document
-        # NB: Array elements must be at least 1 byte apart, so use bytes not bits
-        assert self.data().size is not None
-        size_bytes, align_bytes = self.get_size_align_bytes()
-        if size_bytes % align_bytes != 0:
-            size_bytes += align_bytes - (size_bytes % align_bytes)
-        return size_bytes
-
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
         data = self.data()
@@ -286,8 +295,8 @@ class Type:
             return data.ptr_to
         return None
 
-    def as_reference(self) -> "Type":
-        # TODO: Document, maybe pick a better name ("decayed_pointer"?)
+    def reference(self) -> "Type":
+        """Return a pointer to self. If self is an array, decay the type to a pointer"""
         if self.is_array():
             data = self.data()
             assert data.ptr_to is not None and data.array_dim is not None
@@ -319,26 +328,37 @@ class Type:
             return data.struct
         return None
 
-    _GetFieldResult = Tuple[AccessPath, "Type", Optional[int]]
+    _GetFieldResult = Tuple[Optional[AccessPath], "Type", Optional[int]]
 
     def get_field(
         self, offset_bits: int, *, target_size_bits: Optional[int]
     ) -> _GetFieldResult:
-        # TODO: Document
-        NO_MATCHING_FIELD: Type._GetFieldResult = ([], Type.any(), None)
+        """
+        Locate the field in self at the appropriate offset (in bits), and optionally
+        with an exact target size (also in bits).
+        The target size can be used to disambiguate different fields in a union, or
+        different levels inside nested structs.
+
+        The return value is a tuple of `(field_path, field_type, remaining_bits)`.
+        If no field is found, the result is `(None, Type.any(), None)`.
+        If `remaining_bits` is nonzero, then there was *not* a field at the exact
+        offset provided; the returned field is at `(offset_bits - remaining_bits)`.
+        """
+        NO_MATCHING_FIELD: Type._GetFieldResult = (None, Type.any(), None)
 
         if self.is_array():
             data = self.data()
             assert data.ptr_to is not None and data.array_dim is not None
 
-            size = data.ptr_to.get_array_field_size_bytes() * 8
+            size = data.ptr_to.get_size_bits()
+            assert size is not None
             index, remaining_bits = divmod(offset_bits, size)
             if index >= data.array_dim:
                 return NO_MATCHING_FIELD
             subpath, subtype, sub_remainder_bits = data.ptr_to.get_field(
                 remaining_bits, target_size_bits=target_size_bits
             )
-            if sub_remainder_bits is None:
+            if subpath is None or sub_remainder_bits is None:
                 return NO_MATCHING_FIELD
             subpath.insert(0, index)
             return subpath, subtype, sub_remainder_bits
@@ -350,8 +370,6 @@ class Type:
             if not possible_fields:
                 return NO_MATCHING_FIELD
             possible_results: List[Type._GetFieldResult] = []
-            if target_size_bits is None and offset_bits == 0:
-                return ([], self, 0)
             if target_size_bits is None or target_size_bits == self.get_size_bits():
                 possible_results.append(([], self, offset_bits))
             for field in possible_fields:
@@ -359,7 +377,7 @@ class Type:
                 subpath, subtype, sub_remainder_bits = field.type.get_field(
                     inner_offset_bits, target_size_bits=target_size_bits
                 )
-                if sub_remainder_bits is None:
+                if subpath is None or sub_remainder_bits is None:
                     continue
                 subpath.insert(0, field.name)
                 possible_results.append((subpath, subtype, sub_remainder_bits))
@@ -368,8 +386,11 @@ class Type:
                     and target_size_bits == subtype.get_size_bits()
                 ):
                     return possible_results[-1]
+            zero_offset_results = [r for r in possible_results if r[2] == 0]
+            if zero_offset_results:
+                return zero_offset_results[0]
             if possible_results:
-                return possible_results[-1]
+                return possible_results[0]
 
         if offset_bits == 0 and (
             target_size_bits is None or target_size_bits == self.get_size_bits()
@@ -382,11 +403,31 @@ class Type:
     def get_deref_field(
         self, offset_bits: int, *, target_size_bits: Optional[int]
     ) -> _GetFieldResult:
-        ptr = self.get_pointer_target()
-        if ptr is None:
-            return [], Type.any(), None
-        f = ptr.get_field(offset_bits, target_size_bits=target_size_bits)
-        return f
+        """
+        Similar to `.get_field()`, but treat self as a pointer (or array) and find
+        the field in the pointer's target.
+        The return value has the same semantics as `.get_field()`.
+
+        If successful, the first item in the resulting `field_path` will be an int,
+        and for structs this will always be `0`. This mirrors how `foo[0].bar` and
+        `foo->bar` are equivalent in C.
+        """
+        target = self.get_pointer_target()
+        if target is not None:
+            size_bits = target.get_size_bits()
+            if size_bits:
+                # TODO: Should we do something special if index < 0?
+                index, offset_bits = divmod(offset_bits, size_bits)
+            else:
+                index = 0
+            if self.is_array() or index == 0:
+                field_path, field_type, remaining_bits = target.get_field(
+                    offset_bits, target_size_bits=target_size_bits
+                )
+                if field_path is not None:
+                    field_path.insert(0, index)
+                return field_path, field_type, remaining_bits
+        return None, Type.any(), None
 
     def get_initializer_fields(
         self,
@@ -402,13 +443,6 @@ class Type:
         data = self.data()
         if self.is_array():
             assert data.ptr_to is not None and data.array_dim is not None
-            total_size = data.ptr_to.get_array_field_size_bytes()
-            data_size = data.ptr_to.get_size_bytes()
-            if data_size is None:
-                return None
-            padding_size = total_size - data_size
-            if padding_size > 0:
-                return [data.ptr_to, padding_size] * data.array_dim
             return [data.ptr_to] * data.array_dim
 
         if self.is_struct():
@@ -690,9 +724,12 @@ class Type:
 
     @staticmethod
     def array(type: "Type", dim: int) -> "Type":
-        size = type.get_array_field_size_bytes() * 8 * dim
+        el_size = type.get_size_bits()
+        assert el_size is not None
         return Type(
-            TypeData(kind=TypeData.K_ARRAY, size=size, ptr_to=type, array_dim=dim)
+            TypeData(
+                kind=TypeData.K_ARRAY, size=el_size * dim, ptr_to=type, array_dim=dim
+            )
         )
 
     @staticmethod
@@ -824,20 +861,21 @@ class FunctionSignature:
 
 
 @dataclass(eq=False)
-class StructField:
-    type: Type
-    offset_bits: int
-    name: str
-
-
-@dataclass(eq=False)
 class StructDeclaration:
-    # TODO: Document
+    """Representation of a C struct or union"""
+
+    @dataclass(eq=False)
+    class StructField:
+        type: Type
+        offset_bits: int
+        name: str
+
     size_bits: int
     align_bits: int
+    padding_bits: int
     tag_name: Optional[str]
     typedef_name: Optional[str]
-    fields: List[StructField]
+    fields: List[StructField]  # sorted by `.offset_bits`
     has_bitfields: bool
     is_union: bool
 
@@ -847,13 +885,15 @@ class StructDeclaration:
         *,
         seen: Optional[Set["TypeData"]] = None,
     ) -> bool:
-        # TODO: Should this recursively attempt to check if fields unify?
+        # NB: Currently, the only structs that exist are defined from ctypes in the typemap,
+        # so for now we can use reference equality to check if two structs are compatible.
         return self is other
 
     def fields_at_offset(self, offset_bits: int) -> List[StructField]:
-        # TODO: Document
+        """Return the list of StructFields which contain the given offset (in bits)"""
         fields = []
         for field in self.fields:
+            # We assume fields are sorted by `offset_bits`, ascending
             if field.offset_bits > offset_bits:
                 break
             field_size_bits = field.type.get_size_bits()
@@ -865,7 +905,10 @@ class StructDeclaration:
 
     @staticmethod
     def from_ctype(ctype: Union[ca.Struct, ca.Union], universe: TypeUniverse) -> Type:
-        # TODO: Document
+        """
+        Return the Type representation of a given ctype struct or union, constructing a
+        StructDeclaration & registering it in the universe if it does not already exist.
+        """
         struct_type = universe.get_struct_for_ctype(ctype)
         if struct_type is not None:
             return struct_type
@@ -886,9 +929,17 @@ class StructDeclaration:
             )
             typedef_name = typedef.type.names[0]
 
+        size_bits = struct.size * 8
+        align_bits = struct.align * 8
+        padding_bits = 0
+        if (size_bits % align_bits) != 0:
+            padding_bits = align_bits - (size_bits % align_bits)
+            size_bits += padding_bits
+
         decl = StructDeclaration(
-            size_bits=struct.size * 8,
-            align_bits=struct.align * 8,
+            size_bits=size_bits,
+            align_bits=align_bits,
+            padding_bits=padding_bits,
             tag_name=ctype.name,
             typedef_name=typedef_name,
             fields=[],
@@ -908,11 +959,12 @@ class StructDeclaration:
                     field_type,
                 )
                 decl.fields.append(
-                    StructField(
+                    StructDeclaration.StructField(
                         type=field_type,
                         offset_bits=offset * 8,
                         name=field.name,
                     )
                 )
+        assert decl.fields == sorted(decl.fields, key=lambda f: f.offset_bits)
 
         return struct_type
