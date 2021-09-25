@@ -579,25 +579,11 @@ class Type:
             assert data.struct is not None
             if data.struct.typedef_name:
                 return simple_ctype(data.struct.typedef_name)
-            # TODO put in full struct name
-            name = data.struct.tag_name
-            decls: Optional[List[Union[ca.Decl, ca.Pragma]]] = None
-            if name is None:
-                decls = [
-                    ca.Decl(
-                        name=m.name,
-                        type=m.type._to_ctype(seen.copy(), fmt),
-                        quals=[],
-                        storage=[],
-                        funcspec=[],
-                        init=None,
-                        bitsize=None,
-                    )
-                    for m in data.struct.fields
-                ]
+            # If there's no typdef or tag name, then label it as `_anonymous`
+            name = data.struct.tag_name or "_anonymous"
             Class = ca.Union if data.struct.is_union else ca.Struct
             return ca.TypeDecl(
-                declname=name, type=ca.Struct(name=name, decls=decls), quals=[]
+                declname=name, type=ca.Struct(name=name, decls=None), quals=[]
             )
 
         return simple_ctype(f"{sign}{size}")
@@ -872,7 +858,6 @@ class StructDeclaration:
 
     size_bits: int
     align_bits: int
-    padding_bits: int
     tag_name: Optional[str]
     typedef_name: Optional[str]
     fields: List[StructField]  # sorted by `.offset_bits`
@@ -929,17 +914,13 @@ class StructDeclaration:
             )
             typedef_name = typedef.type.names[0]
 
-        size_bits = struct.size * 8
-        align_bits = struct.align * 8
-        padding_bits = 0
-        if (size_bits % align_bits) != 0:
-            padding_bits = align_bits - (size_bits % align_bits)
-            size_bits += padding_bits
+        assert (
+            struct.size % struct.align == 0
+        ), "struct size must be a multiple of its alignment"
 
         decl = StructDeclaration(
-            size_bits=size_bits,
-            align_bits=align_bits,
-            padding_bits=padding_bits,
+            size_bits=struct.size * 8,
+            align_bits=struct.align * 8,
             tag_name=ctype.name,
             typedef_name=typedef_name,
             fields=[],

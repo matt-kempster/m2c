@@ -1229,7 +1229,6 @@ class AddressOf(Expression):
                 return self.expr.format_string_constant(fmt)
         if self.expr.type.is_array():
             return f"{self.expr.format(fmt)}"
-
         if self.expr.type.is_function():
             # Functions are automatically converted to function pointers
             # without an explicit `&` by the compiler
@@ -3933,7 +3932,7 @@ def translate_graph_from_block(
         if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
-        if options.stop_on_error or True:
+        if options.stop_on_error:
             raise
 
         instr: Optional[Instruction] = None
@@ -4034,9 +4033,7 @@ class GlobalInfo:
             ctype_type = self.universe.get_var_type(sym_name)
             if ctype_type is not None:
                 sym.type_in_typemap = True
-                arr = ctype_type.get_array()
                 sym.type.unify(ctype_type)
-                sym.array_dim = None
 
         return AddressOf(sym, type=sym.type.reference())
 
@@ -4240,7 +4237,6 @@ class GlobalInfo:
                         continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
-                # name = f"{name}[{sym.array_dim}]" if sym.array_dim is not None else name
                 value = f" = {value}" if value else ""
                 comment = f" // {'; '.join(comments)}" if comments else ""
                 lines.append(
