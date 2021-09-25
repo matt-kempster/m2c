@@ -1044,15 +1044,7 @@ class StructAccess(Expression):
         # If we didn't have a type at the time when the struct access was
         # constructed, but now we do, compute field name.
 
-        if (
-            self.field_path is None
-            and not self.has_late_field_path
-            # TODO: The previous behavior only tried to resolve the late field name
-            # if a typemap was available; however, even without a typemap, we can
-            # resolve zero-offset cases like `*(int *) x`.
-            # The following line is a hack to preserve this old behavior.
-            and self.stack_info.global_info.universe.typemap.var_types
-        ):
+        if self.field_path is None and not self.has_late_field_path:
             var = late_unwrap(self.struct_var)
             target_size_bits = (
                 self.target_size * 8 if self.target_size is not None else None

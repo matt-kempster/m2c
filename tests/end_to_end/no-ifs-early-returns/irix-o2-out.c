@@ -10,9 +10,9 @@ void test(s32 *arg0, s32 *arg1) {
     }
     return;
 block_3:
-    *arg1 = (s32) (*arg1 + temp_v1);
+    *arg1 += temp_v1;
     return;
 block_4:
-    *arg1 = (s32) (*arg1 - temp_v1);
+    *arg1 -= temp_v1;
     return;
 }

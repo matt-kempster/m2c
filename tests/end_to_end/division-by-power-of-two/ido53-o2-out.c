@@ -1,3 +1,3 @@
 void test(s32 *arg0) {
-    *arg0 = (s32) ((s32) *arg0 / 2);
+    *arg0 = (s32) *arg0 / 2;
 }

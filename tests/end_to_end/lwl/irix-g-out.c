@@ -17,5 +17,5 @@ void test(void) {
     D_410181 = (unaligned s32) D_410189;
     D_410190.unk0 = (unaligned s32) D_410180.unk0;
     D_410190.unk4 = (u8) D_410180.unk4;
-    D_410198 = (s32) (unaligned s32) D_400178;
+    D_410198 = (unaligned s32) D_400178;
 }
