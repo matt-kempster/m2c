@@ -36,9 +36,9 @@ class TypeUniverse:
     """
 
     typemap: TypeMap = field(default_factory=TypeMap)
-    structs: Set["Type"] = field(default_factory=set)
-    structs_by_tag_name: Dict[str, "Type"] = field(default_factory=dict)
-    structs_by_ctype: Dict[int, "Type"] = field(default_factory=dict)
+    structs: Set["StructDeclaration"] = field(default_factory=set)
+    structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
+    structs_by_ctype: Dict[int, "StructDeclaration"] = field(default_factory=dict)
 
     def get_var_type(self, sym_name: str) -> Optional["Type"]:
         """Get the type of a global variable declared in the TypeMap context"""
@@ -63,25 +63,22 @@ class TypeUniverse:
 
     def get_struct_for_ctype(
         self, ctype: Union[ca.Struct, ca.Union]
-    ) -> Optional["Type"]:
-        """Return the Type representing a given ctype struct, if known"""
-        type = self.structs_by_ctype.get(id(ctype))
-        if type is not None:
-            return type
+    ) -> Optional["StructDeclaration"]:
+        """Return the StructDeclaration for a given ctype struct, if known"""
+        struct = self.structs_by_ctype.get(id(ctype))
+        if struct is not None:
+            return struct
         if ctype.name is not None:
             return self.structs_by_tag_name.get(ctype.name)
         return None
 
-    def add_struct_type(
+    def add_struct(
         self,
-        struct_type: "Type",
+        struct: "StructDeclaration",
         ctype_or_tag_name: Union[ca.Struct, ca.Union, str],
     ) -> None:
-        """Add struct_type to the set of known struct types for later access"""
-        struct = struct_type.get_struct_declaration()
-        assert struct is not None
-
-        self.structs.add(struct_type)
+        """Add the struct declaration to the set of known structs for later access"""
+        self.structs.add(struct)
 
         tag_name: Optional[str]
         if isinstance(ctype_or_tag_name, str):
@@ -89,13 +86,13 @@ class TypeUniverse:
         else:
             ctype = ctype_or_tag_name
             tag_name = ctype.name
-            self.structs_by_ctype[id(ctype)] = struct_type
+            self.structs_by_ctype[id(ctype)] = struct
 
         if tag_name is not None:
             assert (
                 tag_name not in self.structs_by_tag_name
             ), f"Duplicate tag: {tag_name}"
-            self.structs_by_tag_name[tag_name] = struct_type
+            self.structs_by_tag_name[tag_name] = struct
 
 
 @dataclass(eq=False)
@@ -776,7 +773,9 @@ class Type:
             return Type.function(fn_sig)
         if isinstance(real_ctype, ca.TypeDecl):
             if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
-                return StructDeclaration.from_ctype(real_ctype.type, universe)
+                return Type.struct(
+                    StructDeclaration.from_ctype(real_ctype.type, universe)
+                )
             names = (
                 ["int"]
                 if isinstance(real_ctype.type, ca.Enum)
@@ -907,14 +906,16 @@ class StructDeclaration:
         return fields
 
     @staticmethod
-    def from_ctype(ctype: Union[ca.Struct, ca.Union], universe: TypeUniverse) -> Type:
+    def from_ctype(
+        ctype: Union[ca.Struct, ca.Union], universe: TypeUniverse
+    ) -> "StructDeclaration":
         """
-        Return the Type representation of a given ctype struct or union, constructing a
-        StructDeclaration & registering it in the universe if it does not already exist.
+        Return StructDeclaration for a given ctype struct or union, constructing it
+        and registering it in the universe if it does not already exist.
         """
-        struct_type = universe.get_struct_for_ctype(ctype)
-        if struct_type is not None:
-            return struct_type
+        existing_struct = universe.get_struct_for_ctype(ctype)
+        if existing_struct:
+            return existing_struct
 
         struct = parse_struct(ctype, universe.typemap)
 
@@ -941,8 +942,7 @@ class StructDeclaration:
             has_bitfields=struct.has_bitfields,
             is_union=isinstance(ctype, ca.Union),
         )
-        struct_type = Type.struct(decl)
-        universe.add_struct_type(struct_type, ctype)
+        universe.add_struct(decl, ctype)
 
         for offset, fields in sorted(struct.fields.items()):
             for field in fields:
@@ -962,4 +962,4 @@ class StructDeclaration:
                 )
         assert decl.fields == sorted(decl.fields, key=lambda f: f.offset)
 
-        return struct_type
+        return decl
