@@ -1046,13 +1046,10 @@ class StructAccess(Expression):
 
         if self.field_path is None and not self.checked_late_field_path:
             var = late_unwrap(self.struct_var)
-            target_size_bits = (
-                self.target_size * 8 if self.target_size is not None else None
+            field_path, field_type, remaining_offset = var.type.get_deref_field(
+                self.offset, target_size=self.target_size
             )
-            field_path, field_type, remaining_bits = var.type.get_deref_field(
-                self.offset * 8, target_size_bits=target_size_bits
-            )
-            if field_path is not None and remaining_bits == 0:
+            if field_path is not None and remaining_offset == 0:
                 self.field_path = field_path
                 # TODO(@zbanks): Adding this improves type deduction, but was not present in the prev version
                 # self.type.unify(field_type)
@@ -1872,10 +1869,10 @@ def deref(
     )
     if array_expr is not None:
         return array_expr
-    field_path, field_type, remaining_bits = var.type.get_deref_field(
-        offset * 8, target_size_bits=size * 8
+    field_path, field_type, remaining_offset = var.type.get_deref_field(
+        offset, target_size=size
     )
-    if field_path is not None and remaining_bits == 0:
+    if field_path is not None and remaining_offset == 0:
         field_type.unify(type)
         type = field_type
     else:
@@ -2267,10 +2264,10 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
             if array_access is not None:
                 return array_access
 
-            field_path, field_type, remaining_bits = source.type.get_deref_field(
-                imm.value * 8, target_size_bits=None
+            field_path, field_type, remaining_offset = source.type.get_deref_field(
+                imm.value, target_size=None
             )
-            if field_path is not None and remaining_bits == 0:
+            if field_path is not None and remaining_offset == 0:
                 return AddressOf(
                     StructAccess(
                         struct_var=source,
@@ -2597,34 +2594,34 @@ def array_access_from_add(
         pass
     else:
         # base->subarray[index]
-        sub_path, sub_type, remaining_bits = base.type.get_deref_field(
-            offset * 8, target_size_bits=scale * 8
+        sub_path, sub_type, remaining_offset = base.type.get_deref_field(
+            offset, target_size=scale
         )
         # Check if the last item in the path is `0`, which indicates the start of an array
         # If it is, remove it: it will be replaced by `[index]`
         if not sub_path or sub_path[-1] != 0:
             return None
         del sub_path[-1]
-        offset = offset - (remaining_bits // 8)
+        # TODO(@zbanks): I think this is a bug
+        offset = offset - remaining_offset
         base = StructAccess(
             struct_var=base,
-            offset=offset - (remaining_bits // 8),
+            offset=offset - remaining_offset,
             target_size=None,
             field_path=sub_path,
             stack_info=stack_info,
             type=sub_type,
         )
-        offset = remaining_bits // 8
+        offset = remaining_offset
         target_type = sub_type
 
     ret: Expression = ArrayAccess(base, index, type=target_type)
 
     # Add .field if necessary
-    target_size_bits = target_size * 8 if target_size is not None else None
-    field_path, field_type, remaining_bits = base.type.get_field(
-        offset * 8, target_size_bits=target_size_bits
+    field_path, field_type, remaining_offset = base.type.get_field(
+        offset, target_size=target_size
     )
-    if remaining_bits == 0:
+    if remaining_offset == 0:
         # Rewrite terms like `&x.y.z[0]` as `x.y.z`
         if ptr and field_path and field_path[-1] == 0:
             del field_path[-1]

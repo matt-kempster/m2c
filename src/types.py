@@ -289,9 +289,9 @@ class Type:
         data = self.data()
         if self.is_struct():
             assert data.struct is not None
-            return data.struct.size_bits // 8, data.struct.align_bits // 8
-        size_bits = (self.get_size_bits() or 32) // 8
-        return size_bits, size_bits
+            return data.struct.size, data.struct.align
+        size = (self.get_size_bits() or 32) // 8
+        return size, size
 
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
@@ -335,41 +335,39 @@ class Type:
 
     GetFieldResult = Tuple[Optional[AccessPath], "Type", int]
 
-    def get_field(
-        self, offset_bits: int, *, target_size_bits: Optional[int]
-    ) -> GetFieldResult:
+    def get_field(self, offset: int, *, target_size: Optional[int]) -> GetFieldResult:
         """
         Locate the field in self at the appropriate offset (in bits), and optionally
         with an exact target size (also in bits).
         The target size can be used to disambiguate different fields in a union, or
         different levels inside nested structs.
 
-        The return value is a tuple of `(field_path, field_type, remaining_bits)`.
-        If no field is found, the result is `(None, Type.any(), offset_bits)`.
-        If `remaining_bits` is nonzero, then there was *not* a field at the exact
-        offset provided; the returned field is at `(offset_bits - remaining_bits)`.
+        The return value is a tuple of `(field_path, field_type, remaining_offset)`.
+        If no field is found, the result is `(None, Type.any(), offset)`.
+        If `remaining_offset` is nonzero, then there was *not* a field at the exact
+        offset provided; the returned field is at `(offset - remaining_offset)`.
         """
-        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset_bits)
+        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset)
 
-        if offset_bits < 0:
+        if offset < 0:
             return NO_MATCHING_FIELD
 
         if self.is_array():
             # Array types always have elements with known size
             data = self.data()
             assert data.ptr_to is not None
-            size_bits = data.ptr_to.get_size_bits()
-            assert size_bits is not None
+            size = data.ptr_to.get_size_bytes()
+            assert size is not None
 
-            index, remaining_bits = divmod(offset_bits, size_bits)
+            index, remaining_offset = divmod(offset, size)
             if data.array_dim is not None and index >= data.array_dim:
                 return NO_MATCHING_FIELD
-            assert index >= 0 and remaining_bits >= 0
+            assert index >= 0 and remaining_offset >= 0
 
             # Assume this is an array access at the computed `index`.
-            # Check if there is a field at the `remaining_bits` offset
+            # Check if there is a field at the `remaining_offset` offset
             subpath, subtype, sub_remainder_bits = data.ptr_to.get_field(
-                remaining_bits, target_size_bits=target_size_bits
+                remaining_offset, target_size=target_size
             )
             if subpath is not None:
                 # Success: prepend `index` and return
@@ -380,24 +378,24 @@ class Type:
         if self.is_struct():
             data = self.data()
             assert data.struct is not None
-            possible_fields = data.struct.fields_at_offset(offset_bits)
+            possible_fields = data.struct.fields_at_offset(offset)
             if not possible_fields:
                 return NO_MATCHING_FIELD
             possible_results: List[Type.GetFieldResult] = []
-            if target_size_bits is None or target_size_bits == self.get_size_bits():
-                possible_results.append(([], self, offset_bits))
+            if target_size is None or target_size == self.get_size_bytes():
+                possible_results.append(([], self, offset))
             for field in possible_fields:
-                inner_offset_bits = offset_bits - field.offset_bits
+                inner_offset_bits = offset - field.offset
                 subpath, subtype, sub_remainder_bits = field.type.get_field(
-                    inner_offset_bits, target_size_bits=target_size_bits
+                    inner_offset_bits, target_size=target_size
                 )
                 if subpath is None:
                     continue
                 subpath.insert(0, field.name)
                 possible_results.append((subpath, subtype, sub_remainder_bits))
                 if (
-                    target_size_bits is not None
-                    and target_size_bits == subtype.get_size_bits()
+                    target_size is not None
+                    and target_size == subtype.get_size_bytes()
                     # TODO(@zbanks): This suggestion from Simon is good, but changes diff output
                     # and sub_remainder_bits == 0
                 ):
@@ -408,8 +406,8 @@ class Type:
             if possible_results:
                 return possible_results[0]
 
-        if offset_bits == 0 and (
-            target_size_bits is None or target_size_bits == self.get_size_bits()
+        if offset == 0 and (
+            target_size is None or target_size == self.get_size_bytes()
         ):
             # The whole type itself is a match
             return [], self, 0
@@ -417,7 +415,7 @@ class Type:
         return NO_MATCHING_FIELD
 
     def get_deref_field(
-        self, offset_bits: int, *, target_size_bits: Optional[int]
+        self, offset: int, *, target_size: Optional[int]
     ) -> GetFieldResult:
         """
         Similar to `.get_field()`, but treat self as a pointer and find the field in the
@@ -426,23 +424,23 @@ class Type:
         If successful, the first item in the resulting `field_path` will be `0`.
         This mirrors how `foo[0].bar` and `foo->bar` are equivalent in C.
         """
-        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset_bits)
+        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset)
 
         target = self.get_pointer_target()
         if target is None:
             return NO_MATCHING_FIELD
 
         # Assume the pointer is to a single object, and not an array.
-        size_bits = target.get_size_bits()
-        if offset_bits < 0 or (size_bits is not None and offset_bits >= size_bits):
+        size = target.get_size_bytes()
+        if offset < 0 or (size is not None and offset >= size):
             return NO_MATCHING_FIELD
 
-        field_path, field_type, remaining_bits = target.get_field(
-            offset_bits, target_size_bits=target_size_bits
+        field_path, field_type, remaining_offset = target.get_field(
+            offset, target_size=target_size
         )
         if field_path is not None:
             field_path.insert(0, 0)
-        return field_path, field_type, remaining_bits
+        return field_path, field_type, remaining_offset
 
     def get_initializer_fields(
         self,
@@ -477,22 +475,20 @@ class Type:
                 nonlocal output
                 assert upto >= position
                 if upto > position:
-                    padding_size = upto - position
-                    assert (padding_size % 8) == 0
-                    output.append(padding_size // 8)
+                    output.append(upto - position)
 
             for field in data.struct.fields:
-                if field.offset_bits < position:
+                if field.offset < position:
                     # Overlapping fields, e.g. from unions
                     continue
 
-                add_padding(field.offset_bits)
-                field_size = field.type.get_size_bits()
+                add_padding(field.offset)
+                field_size = field.type.get_size_bytes()
                 assert field_size is not None
                 output.append(field.type)
-                position = field.offset_bits + field_size
+                position = field.offset + field_size
 
-            add_padding(data.struct.size_bits)
+            add_padding(data.struct.size)
             return output
 
         return None
@@ -744,7 +740,7 @@ class Type:
 
     @staticmethod
     def struct(st: "StructDeclaration") -> "Type":
-        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size_bits, struct=st))
+        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size * 8, struct=st))
 
     @staticmethod
     def ctype(ctype: CType, universe: TypeUniverse) -> "Type":
@@ -877,14 +873,14 @@ class StructDeclaration:
     @dataclass(eq=False)
     class StructField:
         type: Type
-        offset_bits: int
+        offset: int
         name: str
 
-    size_bits: int
-    align_bits: int
+    size: int
+    align: int
     tag_name: Optional[str]
     typedef_name: Optional[str]
-    fields: List[StructField]  # sorted by `.offset_bits`
+    fields: List[StructField]  # sorted by `.offset`
     has_bitfields: bool
     is_union: bool
 
@@ -898,16 +894,16 @@ class StructDeclaration:
         # so for now we can use reference equality to check if two structs are compatible.
         return self is other
 
-    def fields_at_offset(self, offset_bits: int) -> List[StructField]:
+    def fields_at_offset(self, offset: int) -> List[StructField]:
         """Return the list of StructFields which contain the given offset (in bits)"""
         fields = []
         for field in self.fields:
-            # We assume fields are sorted by `offset_bits`, ascending
-            if field.offset_bits > offset_bits:
+            # We assume fields are sorted by `offset`, ascending
+            if field.offset > offset:
                 break
-            field_size_bits = field.type.get_size_bits()
-            assert field_size_bits is not None
-            if field.offset_bits + field_size_bits < offset_bits:
+            field_size = field.type.get_size_bytes()
+            assert field_size is not None
+            if field.offset + field_size < offset:
                 continue
             fields.append(field)
         return fields
@@ -943,8 +939,8 @@ class StructDeclaration:
         ), "struct size must be a multiple of its alignment"
 
         decl = StructDeclaration(
-            size_bits=struct.size * 8,
-            align_bits=struct.align * 8,
+            size=struct.size,
+            align=struct.align,
             tag_name=ctype.name,
             typedef_name=typedef_name,
             fields=[],
@@ -966,10 +962,10 @@ class StructDeclaration:
                 decl.fields.append(
                     StructDeclaration.StructField(
                         type=field_type,
-                        offset_bits=offset * 8,
+                        offset=offset,
                         name=field.name,
                     )
                 )
-        assert decl.fields == sorted(decl.fields, key=lambda f: f.offset_bits)
+        assert decl.fields == sorted(decl.fields, key=lambda f: f.offset)
 
         return struct_type
