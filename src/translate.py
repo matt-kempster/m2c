@@ -2602,8 +2602,6 @@ def array_access_from_add(
         if not sub_path or sub_path[-1] != 0:
             return None
         del sub_path[-1]
-        # TODO(@zbanks): I think this is a bug
-        offset = offset - remaining_offset
         base = StructAccess(
             struct_var=base,
             offset=offset - remaining_offset,

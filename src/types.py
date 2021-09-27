@@ -923,15 +923,11 @@ class StructDeclaration:
         typedef_name: Optional[str] = None
         if id(ctype) in universe.typemap.struct_typedefs:
             typedef = universe.typemap.struct_typedefs[id(ctype)]
-            assert isinstance(typedef, ca.TypeDecl) and isinstance(
-                typedef.type, ca.IdentifierType
-            )
+            assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
         elif ctype.name and ctype.name in universe.typemap.struct_typedefs:
             typedef = universe.typemap.struct_typedefs[ctype.name]
-            assert isinstance(typedef, ca.TypeDecl) and isinstance(
-                typedef.type, ca.IdentifierType
-            )
+            assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
 
         assert (

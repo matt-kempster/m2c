@@ -69,7 +69,7 @@ class TypeMap:
     var_types: Dict[str, CType] = field(default_factory=dict)
     functions: Dict[str, Function] = field(default_factory=dict)
     structs: Dict[Union[str, int], Struct] = field(default_factory=dict)
-    struct_typedefs: Dict[Union[str, int], CType] = field(default_factory=dict)
+    struct_typedefs: Dict[Union[str, int], TypeDecl] = field(default_factory=dict)
     enum_values: Dict[str, int] = field(default_factory=dict)
 
 
