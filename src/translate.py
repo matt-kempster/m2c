@@ -1051,8 +1051,7 @@ class StructAccess(Expression):
             )
             if field_path is not None and remaining_offset == 0:
                 self.field_path = field_path
-                # TODO(@zbanks): Adding this improves type deduction, but was not present in the prev version
-                # self.type.unify(field_type)
+                self.type.unify(field_type)
 
             self.checked_late_field_path = True
         return self.field_path
