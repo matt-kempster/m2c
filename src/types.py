@@ -215,13 +215,14 @@ class Type:
             size_bits = 32
         if sign != TypeData.ANY_SIGN:
             assert kind == TypeData.K_INT
-        if kind == TypeData.K_ARRAY:
-            assert array_dim is not None
         if x.ptr_to is not None and y.ptr_to is not None:
             if not x.ptr_to.unify(y.ptr_to, seen=seen):
                 return False
         if x.fn_sig is not None and y.fn_sig is not None:
             if not x.fn_sig.unify(y.fn_sig, seen=seen):
+                return False
+        if x.array_dim is not None and y.array_dim is not None:
+            if x.array_dim != y.array_dim:
                 return False
         if x.struct is not None and y.struct is not None:
             if not x.struct.unify(y.struct, seen=seen):
@@ -337,8 +338,8 @@ class Type:
 
     def get_field(self, offset: int, *, target_size: Optional[int]) -> GetFieldResult:
         """
-        Locate the field in self at the appropriate offset (in bits), and optionally
-        with an exact target size (also in bits).
+        Locate the field in self at the appropriate offset, and optionally
+        with an exact target size (both values in bytes).
         The target size can be used to disambiguate different fields in a union, or
         different levels inside nested structs.
 
@@ -366,13 +367,13 @@ class Type:
 
             # Assume this is an array access at the computed `index`.
             # Check if there is a field at the `remaining_offset` offset
-            subpath, subtype, sub_remainder_bits = data.ptr_to.get_field(
+            subpath, subtype, sub_remaining_offset = data.ptr_to.get_field(
                 remaining_offset, target_size=target_size
             )
             if subpath is not None:
                 # Success: prepend `index` and return
                 subpath.insert(0, index)
-                return subpath, subtype, sub_remainder_bits
+                return subpath, subtype, sub_remaining_offset
             return NO_MATCHING_FIELD
 
         if self.is_struct():
@@ -386,17 +387,17 @@ class Type:
                 possible_results.append(([], self, offset))
             for field in possible_fields:
                 inner_offset_bits = offset - field.offset
-                subpath, subtype, sub_remainder_bits = field.type.get_field(
+                subpath, subtype, sub_remaining_offset = field.type.get_field(
                     inner_offset_bits, target_size=target_size
                 )
                 if subpath is None:
                     continue
                 subpath.insert(0, field.name)
-                possible_results.append((subpath, subtype, sub_remainder_bits))
+                possible_results.append((subpath, subtype, sub_remaining_offset))
                 if (
                     target_size is not None
                     and target_size == subtype.get_size_bytes()
-                    and sub_remainder_bits == 0
+                    and sub_remaining_offset == 0
                 ):
                     return possible_results[-1]
             zero_offset_results = [r for r in possible_results if r[2] == 0]
@@ -430,10 +431,6 @@ class Type:
             return NO_MATCHING_FIELD
 
         # Assume the pointer is to a single object, and not an array.
-        size = target.get_size_bytes()
-        if offset < 0 or (size is not None and offset >= size):
-            return NO_MATCHING_FIELD
-
         field_path, field_type, remaining_offset = target.get_field(
             offset, target_size=target_size
         )
@@ -477,15 +474,17 @@ class Type:
                     output.append(upto - position)
 
             for field in data.struct.fields:
-                if field.offset < position:
-                    # Overlapping fields, e.g. from unions
-                    continue
+                assert field.offset >= position, "overlapping fields"
 
                 add_padding(field.offset)
                 field_size = field.type.get_size_bytes()
                 assert field_size is not None
                 output.append(field.type)
                 position = field.offset + field_size
+
+                # Unions only have an initializer for the first field
+                if data.struct.is_union:
+                    break
 
             add_padding(data.struct.size)
             return output
@@ -746,7 +745,7 @@ class Type:
         typemap = universe.typemap
         real_ctype = resolve_typedefs(ctype, typemap)
         if isinstance(real_ctype, ca.ArrayDecl):
-            dim = 0
+            dim = None
             try:
                 if real_ctype.dim is not None:
                     dim = parse_constant_int(real_ctype.dim, typemap)
