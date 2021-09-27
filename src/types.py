@@ -396,8 +396,7 @@ class Type:
                 if (
                     target_size is not None
                     and target_size == subtype.get_size_bytes()
-                    # TODO(@zbanks): This suggestion from Simon is good, but changes diff output
-                    # and sub_remainder_bits == 0
+                    and sub_remainder_bits == 0
                 ):
                     return possible_results[-1]
             zero_offset_results = [r for r in possible_results if r[2] == 0]
