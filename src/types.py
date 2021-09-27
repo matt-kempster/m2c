@@ -54,7 +54,7 @@ class TypeUniverse:
             return None
         return Type.ctype(fn.type, self)
 
-    def is_function_void(self, sym_name: str) -> bool:
+    def is_function_known_void(self, sym_name: str) -> bool:
         """Return True if the function exists in the context, and has no return value"""
         fn = self.typemap.functions.get(sym_name)
         if fn is None:
@@ -75,9 +75,7 @@ class TypeUniverse:
     def add_struct_type(
         self,
         struct_type: "Type",
-        *,
-        ctype: Optional[Union[ca.Struct, ca.Union]] = None,
-        tag_name: Optional[str] = None,
+        ctype_or_tag_name: Union[ca.Struct, ca.Union, str],
     ) -> None:
         """Add struct_type to the set of known struct types for later access"""
         struct = struct_type.get_struct_declaration()
@@ -85,15 +83,18 @@ class TypeUniverse:
 
         self.structs.add(struct_type)
 
-        if ctype is not None:
-            if tag_name is not None:
-                raise ValueError("Provide either `ctype` or `tag_name` but not both")
-            assert tag_name is None
+        tag_name: Optional[str]
+        if isinstance(ctype_or_tag_name, str):
+            tag_name = ctype_or_tag_name
+        else:
+            ctype = ctype_or_tag_name
             tag_name = ctype.name
             self.structs_by_ctype[id(ctype)] = struct_type
 
         if tag_name is not None:
-            assert tag_name not in self.structs_by_tag_name, tag_name
+            assert (
+                tag_name not in self.structs_by_tag_name
+            ), f"Duplicate tag: {tag_name}"
             self.structs_by_tag_name[tag_name] = struct_type
 
 
@@ -291,7 +292,7 @@ class Type:
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
         data = self.data()
-        if (self.is_pointer() or self.is_array()) and data.ptr_to is not None:
+        if self.is_pointer() and data.ptr_to is not None:
             return data.ptr_to
         return None
 
@@ -299,16 +300,16 @@ class Type:
         """Return a pointer to self. If self is an array, decay the type to a pointer"""
         if self.is_array():
             data = self.data()
-            assert data.ptr_to is not None and data.array_dim is not None
+            assert data.ptr_to is not None
             return Type.ptr(data.ptr_to)
         return Type.ptr(self)
 
-    def get_array(self) -> Optional[Tuple["Type", int]]:
+    def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
         """If self is an array, return a tuple of the inner Type & the array dimension"""
         if not self.is_array():
-            return None
+            return None, None
         data = self.data()
-        assert data.ptr_to is not None and data.array_dim is not None
+        assert data.ptr_to is not None
         return (data.ptr_to, data.array_dim)
 
     def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
@@ -328,11 +329,11 @@ class Type:
             return data.struct
         return None
 
-    _GetFieldResult = Tuple[Optional[AccessPath], "Type", Optional[int]]
+    GetFieldResult = Tuple[Optional[AccessPath], "Type", int]
 
     def get_field(
         self, offset_bits: int, *, target_size_bits: Optional[int]
-    ) -> _GetFieldResult:
+    ) -> GetFieldResult:
         """
         Locate the field in self at the appropriate offset (in bits), and optionally
         with an exact target size (also in bits).
@@ -340,28 +341,37 @@ class Type:
         different levels inside nested structs.
 
         The return value is a tuple of `(field_path, field_type, remaining_bits)`.
-        If no field is found, the result is `(None, Type.any(), None)`.
+        If no field is found, the result is `(None, Type.any(), offset_bits)`.
         If `remaining_bits` is nonzero, then there was *not* a field at the exact
         offset provided; the returned field is at `(offset_bits - remaining_bits)`.
         """
-        NO_MATCHING_FIELD: Type._GetFieldResult = (None, Type.any(), None)
+        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset_bits)
+
+        if offset_bits < 0:
+            return NO_MATCHING_FIELD
 
         if self.is_array():
+            # Array types always have elements with known size
             data = self.data()
-            assert data.ptr_to is not None and data.array_dim is not None
-
+            assert data.ptr_to is not None
             size = data.ptr_to.get_size_bits()
             assert size is not None
+
             index, remaining_bits = divmod(offset_bits, size)
-            if index >= data.array_dim:
+            if data.array_dim is not None and index >= data.array_dim:
                 return NO_MATCHING_FIELD
+            assert index >= 0 and remaining_bits >= 0
+
+            # Assume this is an array access at the computed `index`.
+            # Check if there is a field at the `remaining_bits` offset
             subpath, subtype, sub_remainder_bits = data.ptr_to.get_field(
                 remaining_bits, target_size_bits=target_size_bits
             )
-            if subpath is None or sub_remainder_bits is None:
-                return NO_MATCHING_FIELD
-            subpath.insert(0, index)
-            return subpath, subtype, sub_remainder_bits
+            if subpath is not None:
+                # Success: prepend `index` and return
+                subpath.insert(0, index)
+                return subpath, subtype, sub_remainder_bits
+            return NO_MATCHING_FIELD
 
         if self.is_struct():
             data = self.data()
@@ -369,7 +379,7 @@ class Type:
             possible_fields = data.struct.fields_at_offset(offset_bits)
             if not possible_fields:
                 return NO_MATCHING_FIELD
-            possible_results: List[Type._GetFieldResult] = []
+            possible_results: List[Type.GetFieldResult] = []
             if target_size_bits is None or target_size_bits == self.get_size_bits():
                 possible_results.append(([], self, offset_bits))
             for field in possible_fields:
@@ -377,13 +387,15 @@ class Type:
                 subpath, subtype, sub_remainder_bits = field.type.get_field(
                     inner_offset_bits, target_size_bits=target_size_bits
                 )
-                if subpath is None or sub_remainder_bits is None:
+                if subpath is None:
                     continue
                 subpath.insert(0, field.name)
                 possible_results.append((subpath, subtype, sub_remainder_bits))
                 if (
                     target_size_bits is not None
                     and target_size_bits == subtype.get_size_bits()
+                    # TODO(@zbanks): This suggestion from Simon is good, but changes diff output
+                    # and sub_remainder_bits == 0
                 ):
                     return possible_results[-1]
             zero_offset_results = [r for r in possible_results if r[2] == 0]
@@ -395,54 +407,56 @@ class Type:
         if offset_bits == 0 and (
             target_size_bits is None or target_size_bits == self.get_size_bits()
         ):
-            # We might as well take a pointer to the whole struct/array
+            # The whole type itself is a match
             return [], self, 0
 
         return NO_MATCHING_FIELD
 
     def get_deref_field(
         self, offset_bits: int, *, target_size_bits: Optional[int]
-    ) -> _GetFieldResult:
+    ) -> GetFieldResult:
         """
-        Similar to `.get_field()`, but treat self as a pointer (or array) and find
-        the field in the pointer's target.
-        The return value has the same semantics as `.get_field()`.
+        Similar to `.get_field()`, but treat self as a pointer and find the field in the
+        pointer's target.  The return value has the same semantics as `.get_field()`.
 
-        If successful, the first item in the resulting `field_path` will be an int,
-        and for structs this will always be `0`. This mirrors how `foo[0].bar` and
-        `foo->bar` are equivalent in C.
+        If successful, the first item in the resulting `field_path` will be `0`.
+        This mirrors how `foo[0].bar` and `foo->bar` are equivalent in C.
         """
+        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset_bits)
+
         target = self.get_pointer_target()
-        if target is not None:
-            size_bits = target.get_size_bits()
-            if size_bits:
-                # TODO: Should we do something special if index < 0?
-                index, offset_bits = divmod(offset_bits, size_bits)
-            else:
-                index = 0
-            if self.is_array() or index == 0:
-                field_path, field_type, remaining_bits = target.get_field(
-                    offset_bits, target_size_bits=target_size_bits
-                )
-                if field_path is not None:
-                    field_path.insert(0, index)
-                return field_path, field_type, remaining_bits
-        return None, Type.any(), None
+        if target is None:
+            return NO_MATCHING_FIELD
+
+        # Assume the pointer is to a single object, and not an array.
+        size_bits = target.get_size_bits()
+        if offset_bits < 0 or (size_bits is not None and offset_bits >= size_bits):
+            return NO_MATCHING_FIELD
+
+        field_path, field_type, remaining_bits = target.get_field(
+            offset_bits, target_size_bits=target_size_bits
+        )
+        if field_path is not None:
+            field_path.insert(0, 0)
+        return field_path, field_type, remaining_bits
 
     def get_initializer_fields(
         self,
     ) -> Optional[List[Union[int, "Type"]]]:
         """
-        TODO: Reword
-        If self is a CType, get a list of fields, suitable for creating an initializer,
-        or return None if an initializer cannot be made (e.g. a struct with bitfields)
+        If self is a struct or array (i.e. initialized with `{...}` syntax), then
+        return a list of fields suitable for creating an initializer.
+        Return None if an initializer cannot be made (e.g. a struct with bitfields)
 
-        Struct padding is represented by an int in the list, otherwise the list fields
+        Padding is represented by an int in the list, otherwise the list fields
         denote the field's Type.
         """
         data = self.data()
         if self.is_array():
-            assert data.ptr_to is not None and data.array_dim is not None
+            assert data.ptr_to is not None
+            if data.array_dim is None:
+                return None
+
             return [data.ptr_to] * data.array_dim
 
         if self.is_struct():
@@ -568,10 +582,13 @@ class Type:
             return simple_ctype("void")
 
         if data.kind == TypeData.K_ARRAY:
-            assert data.ptr_to is not None and data.array_dim is not None
+            assert data.ptr_to is not None
+            dim: Optional[ca.Constant] = None
+            if data.array_dim is not None:
+                dim = ca.Constant(value=str(data.array_dim), type="")
             return ca.ArrayDecl(
                 type=data.ptr_to._to_ctype(seen.copy(), fmt),
-                dim=ca.Constant(value=str(data.array_dim), type=""),
+                dim=dim,
                 dim_quals=[],
             )
 
@@ -579,7 +596,7 @@ class Type:
             assert data.struct is not None
             if data.struct.typedef_name:
                 return simple_ctype(data.struct.typedef_name)
-            # If there's no typdef or tag name, then label it as `_anonymous`
+            # If there's no typedef or tag name, then label it as `_anonymous`
             name = data.struct.tag_name or "_anonymous"
             Class = ca.Union if data.struct.is_union else ca.Struct
             return ca.TypeDecl(
@@ -709,13 +726,14 @@ class Type:
         return Type(TypeData(kind=TypeData.K_VOID, size=0))
 
     @staticmethod
-    def array(type: "Type", dim: int) -> "Type":
+    def array(type: "Type", dim: Optional[int]) -> "Type":
+        # Array elements must have a known size
         el_size = type.get_size_bits()
         assert el_size is not None
+
+        size = None if dim is None else (el_size * dim)
         return Type(
-            TypeData(
-                kind=TypeData.K_ARRAY, size=el_size * dim, ptr_to=type, array_dim=dim
-            )
+            TypeData(kind=TypeData.K_ARRAY, size=size, ptr_to=type, array_dim=dim)
         )
 
     @staticmethod
@@ -928,7 +946,7 @@ class StructDeclaration:
             is_union=isinstance(ctype, ca.Union),
         )
         struct_type = Type.struct(decl)
-        universe.add_struct_type(struct_type, ctype=ctype)
+        universe.add_struct_type(struct_type, ctype)
 
         for offset, fields in sorted(struct.fields.items()):
             for field in fields:

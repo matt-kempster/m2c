@@ -1007,7 +1007,7 @@ class StructAccess(Expression):
     field_path: Optional[AccessPath] = field(compare=False)
     stack_info: StackInfo = field(compare=False, repr=False)
     type: Type = field(compare=False)
-    has_late_field_path: bool = field(default=False, compare=False)
+    checked_late_field_path: bool = field(default=False, compare=False)
 
     @staticmethod
     def access_path_to_field_name(path: Optional[AccessPath], deref: bool) -> str:
@@ -1044,7 +1044,7 @@ class StructAccess(Expression):
         # If we didn't have a type at the time when the struct access was
         # constructed, but now we do, compute field name.
 
-        if self.field_path is None and not self.has_late_field_path:
+        if self.field_path is None and not self.checked_late_field_path:
             var = late_unwrap(self.struct_var)
             target_size_bits = (
                 self.target_size * 8 if self.target_size is not None else None
@@ -1052,9 +1052,12 @@ class StructAccess(Expression):
             field_path, field_type, remaining_bits = var.type.get_deref_field(
                 self.offset * 8, target_size_bits=target_size_bits
             )
-            if remaining_bits == 0:
+            if field_path is not None and remaining_bits == 0:
                 self.field_path = field_path
-                self.has_late_field_path = True
+                # TODO(@zbanks): Adding this improves type deduction, but was not present in the prev version
+                # self.type.unify(field_type)
+
+            self.checked_late_field_path = True
         return self.field_path
 
     def late_has_known_type(self) -> bool:
@@ -1872,7 +1875,7 @@ def deref(
     field_path, field_type, remaining_bits = var.type.get_deref_field(
         offset * 8, target_size_bits=size * 8
     )
-    if remaining_bits == 0:
+    if field_path is not None and remaining_bits == 0:
         field_type.unify(type)
         type = field_type
     else:
@@ -2267,7 +2270,7 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
             field_path, field_type, remaining_bits = source.type.get_deref_field(
                 imm.value * 8, target_size_bits=None
             )
-            if remaining_bits == 0:
+            if field_path is not None and remaining_bits == 0:
                 return AddressOf(
                     StructAccess(
                         struct_var=source,
@@ -2599,7 +2602,7 @@ def array_access_from_add(
         )
         # Check if the last item in the path is `0`, which indicates the start of an array
         # If it is, remove it: it will be replaced by `[index]`
-        if remaining_bits is None or not (sub_path and sub_path[-1] == 0):
+        if not sub_path or sub_path[-1] != 0:
             return None
         del sub_path[-1]
         offset = offset - (remaining_bits // 8)
@@ -2614,13 +2617,15 @@ def array_access_from_add(
         offset = remaining_bits // 8
         target_type = sub_type
 
-    # Add .field if necessary
     ret: Expression = ArrayAccess(base, index, type=target_type)
+
+    # Add .field if necessary
     target_size_bits = target_size * 8 if target_size is not None else None
     field_path, field_type, remaining_bits = base.type.get_field(
         offset * 8, target_size_bits=target_size_bits
     )
     if remaining_bits == 0:
+        # Rewrite terms like `&x.y.z[0]` as `x.y.z`
         if ptr and field_path and field_path[-1] == 0:
             del field_path[-1]
             ptr = False
@@ -3160,7 +3165,7 @@ def output_regs_for_instr(instr: Instruction, universe: TypeUniverse) -> List[Re
     if mnemonic == "jal":
         fn_target = instr.args[0]
         if isinstance(fn_target, AsmGlobalSymbol):
-            if universe.is_function_void(fn_target.symbol_name):
+            if universe.is_function_known_void(fn_target.symbol_name):
                 return []
     if mnemonic in CASES_FN_CALL:
         return list(map(Register, ["f0", "f1", "v0", "v1"]))
@@ -3677,8 +3682,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
                 ):
-                    is_known_void = stack_info.global_info.universe.is_function_void(
-                        fn_target.expr.symbol_name
+                    is_known_void = (
+                        stack_info.global_info.universe.is_function_known_void(
+                            fn_target.expr.symbol_name
+                        )
                     )
                 elif isinstance(fn_target, Literal):
                     pass
