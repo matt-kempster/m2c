@@ -117,7 +117,7 @@ class TypeData:
 
     kind: int = K_ANY
     likely_kind: int = K_ANY  # subset of kind
-    size: Optional[int] = None
+    size_bits: Optional[int] = None
     uf_parent: Optional["TypeData"] = None
 
     sign: int = ANY_SIGN  # K_INT
@@ -184,31 +184,35 @@ class Type:
         else:
             seen = seen | {x, y}
 
-        if x.size is not None and y.size is not None and x.size != y.size:
+        if (
+            x.size_bits is not None
+            and y.size_bits is not None
+            and x.size_bits != y.size_bits
+        ):
             return False
 
         kind = x.kind & y.kind
         likely_kind = x.likely_kind & y.likely_kind
-        size = x.size if x.size is not None else y.size
+        size_bits = x.size_bits if x.size_bits is not None else y.size_bits
         universe = x.universe if x.universe is not None else y.universe
         ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
         fn_sig = x.fn_sig if x.fn_sig is not None else y.fn_sig
         array_dim = x.array_dim if x.array_dim is not None else y.array_dim
         struct = x.struct if x.struct is not None else y.struct
         sign = x.sign & y.sign
-        if size not in (None, 32, 64):
+        if size_bits not in (None, 32, 64):
             kind &= ~TypeData.K_FLOAT
-        if size not in (None, 32):
+        if size_bits not in (None, 32):
             kind &= ~TypeData.K_PTR
-        if size not in (None,):
+        if size_bits not in (None,):
             kind &= ~TypeData.K_FN
-        if size not in (None, 0):
+        if size_bits not in (None, 0):
             kind &= ~TypeData.K_VOID
         likely_kind &= kind
         if kind == 0 or sign == 0:
             return False
         if kind == TypeData.K_PTR:
-            size = 32
+            size_bits = 32
         if sign != TypeData.ANY_SIGN:
             assert kind == TypeData.K_INT
         if kind == TypeData.K_ARRAY:
@@ -224,7 +228,7 @@ class Type:
                 return False
         x.kind = kind
         x.likely_kind = likely_kind
-        x.size = size
+        x.size_bits = size_bits
         x.sign = sign
         x.ptr_to = ptr_to
         x.universe = universe
@@ -275,19 +279,19 @@ class Type:
         return self.data().sign == TypeData.UNSIGNED
 
     def get_size_bits(self) -> Optional[int]:
-        return self.data().size
+        return self.data().size_bits
 
     def get_size_bytes(self) -> Optional[int]:
-        size = self.get_size_bits()
-        return None if size is None else size // 8
+        size_bits = self.get_size_bits()
+        return None if size_bits is None else size_bits // 8
 
     def get_size_align_bytes(self) -> Tuple[int, int]:
         data = self.data()
         if self.is_struct():
             assert data.struct is not None
             return data.struct.size_bits // 8, data.struct.align_bits // 8
-        size = (self.get_size_bits() or 32) // 8
-        return size, size
+        size_bits = (self.get_size_bits() or 32) // 8
+        return size_bits, size_bits
 
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
@@ -354,10 +358,10 @@ class Type:
             # Array types always have elements with known size
             data = self.data()
             assert data.ptr_to is not None
-            size = data.ptr_to.get_size_bits()
-            assert size is not None
+            size_bits = data.ptr_to.get_size_bits()
+            assert size_bits is not None
 
-            index, remaining_bits = divmod(offset_bits, size)
+            index, remaining_bits = divmod(offset_bits, size_bits)
             if data.array_dim is not None and index >= data.array_dim:
                 return NO_MATCHING_FIELD
             assert index >= 0 and remaining_bits >= 0
@@ -530,14 +534,14 @@ class Type:
         if data in seen:
             return simple_ctype(unk_symbol)
         seen.add(data)
-        size = data.size or 32
+        size_bits = data.size_bits or 32
         sign = "s" if data.sign & TypeData.SIGNED else "u"
 
         if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG and (
             data.likely_kind & (TypeData.K_INT | TypeData.K_FLOAT)
         ) not in (TypeData.K_INT, TypeData.K_FLOAT):
-            if data.size is not None:
-                return simple_ctype(f"{unk_symbol}{size}")
+            if data.size_bits is not None:
+                return simple_ctype(f"{unk_symbol}{size_bits}")
             return simple_ctype(unk_symbol)
 
         if (
@@ -545,7 +549,7 @@ class Type:
             or (data.likely_kind & (TypeData.K_FLOAT | TypeData.K_INT))
             == TypeData.K_FLOAT
         ):
-            return simple_ctype(f"f{size}")
+            return simple_ctype(f"f{size_bits}")
 
         if data.kind == TypeData.K_PTR:
             if data.ptr_to is None:
@@ -603,7 +607,7 @@ class Type:
                 declname=name, type=ca.Struct(name=name, decls=None), quals=[]
             )
 
-        return simple_ctype(f"{sign}{size}")
+        return simple_ctype(f"{sign}{size_bits}")
 
     def format(self, fmt: Formatter) -> str:
         return self.to_decl("", fmt)
@@ -625,7 +629,7 @@ class Type:
             + ("A" if data.kind & TypeData.K_ARRAY else "")
             + ("S" if data.kind & TypeData.K_STRUCT else "")
         )
-        sizestr = str(data.size) if data.size is not None else "?"
+        sizestr = str(data.size_bits) if data.size_bits is not None else "?"
         return f"Type({signstr + kindstr + sizestr})"
 
     @staticmethod
@@ -646,7 +650,7 @@ class Type:
 
     @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
-        return Type(TypeData(kind=TypeData.K_PTR, size=32, ptr_to=type))
+        return Type(TypeData(kind=TypeData.K_PTR, size_bits=32, ptr_to=type))
 
     @staticmethod
     def function(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
@@ -656,7 +660,7 @@ class Type:
 
     @staticmethod
     def f32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_FLOAT, size=32))
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=32))
 
     @staticmethod
     def floatish() -> "Type":
@@ -664,58 +668,58 @@ class Type:
 
     @staticmethod
     def f64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_FLOAT, size=64))
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=64))
 
     @staticmethod
     def s8() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=8, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=8, sign=TypeData.SIGNED))
 
     @staticmethod
     def u8() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=8, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=8, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s16() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=16, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=16, sign=TypeData.SIGNED))
 
     @staticmethod
     def u16() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=16, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=16, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=32, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=32, sign=TypeData.SIGNED))
 
     @staticmethod
     def u32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=32, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=32, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=64, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=64, sign=TypeData.SIGNED))
 
     @staticmethod
     def u64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=64, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=64, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def int64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=64))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=64))
 
     @staticmethod
-    def int_of_size(size: int) -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=size))
+    def int_of_size(size_bits: int) -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits))
 
     @staticmethod
     def reg32(*, likely_float: bool) -> "Type":
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INTPTR
-        return Type(TypeData(kind=TypeData.K_ANYREG, likely_kind=likely, size=32))
+        return Type(TypeData(kind=TypeData.K_ANYREG, likely_kind=likely, size_bits=32))
 
     @staticmethod
     def reg64(*, likely_float: bool) -> "Type":
         kind = TypeData.K_FLOAT | TypeData.K_INT
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INT
-        return Type(TypeData(kind=kind, likely_kind=likely, size=64))
+        return Type(TypeData(kind=kind, likely_kind=likely, size_bits=64))
 
     @staticmethod
     def bool() -> "Type":
@@ -723,7 +727,7 @@ class Type:
 
     @staticmethod
     def void() -> "Type":
-        return Type(TypeData(kind=TypeData.K_VOID, size=0))
+        return Type(TypeData(kind=TypeData.K_VOID, size_bits=0))
 
     @staticmethod
     def array(type: "Type", dim: Optional[int]) -> "Type":
@@ -731,14 +735,16 @@ class Type:
         el_size = type.get_size_bits()
         assert el_size is not None
 
-        size = None if dim is None else (el_size * dim)
+        size_bits = None if dim is None else (el_size * dim)
         return Type(
-            TypeData(kind=TypeData.K_ARRAY, size=size, ptr_to=type, array_dim=dim)
+            TypeData(
+                kind=TypeData.K_ARRAY, size_bits=size_bits, ptr_to=type, array_dim=dim
+            )
         )
 
     @staticmethod
     def struct(st: "StructDeclaration") -> "Type":
-        return Type(TypeData(kind=TypeData.K_STRUCT, size=st.size_bits, struct=st))
+        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size_bits, struct=st))
 
     @staticmethod
     def ctype(ctype: CType, universe: TypeUniverse) -> "Type":
@@ -788,10 +794,10 @@ class Type:
                 return Type.f32()
             if "void" in names:
                 return Type.void()
-            size = 8 * primitive_size(real_ctype.type)
-            assert size > 0
+            size_bits = 8 * primitive_size(real_ctype.type)
+            assert size_bits > 0
             sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
-            return Type(TypeData(kind=TypeData.K_INT, size=size, sign=sign))
+            return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
 
 
 @dataclass(eq=False)
