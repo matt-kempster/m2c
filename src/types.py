@@ -16,7 +16,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
-from .error import DecompFailure
+from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
 # AccessPath represents a struct/array path, with ints for array access, and
@@ -83,10 +83,12 @@ class TypeUniverse:
         tag_name: Optional[str]
         if isinstance(ctype_or_tag_name, str):
             tag_name = ctype_or_tag_name
-        else:
+        elif isinstance(ctype_or_tag_name, (ca.Struct, ca.Union)):
             ctype = ctype_or_tag_name
             tag_name = ctype.name
             self.structs_by_ctype[id(ctype)] = struct
+        else:
+            static_assert_unreachable(ctype_or_tag_name)
 
         if tag_name is not None:
             assert (
@@ -283,7 +285,8 @@ class Type:
         size_bits = self.get_size_bits()
         return None if size_bits is None else size_bits // 8
 
-    def get_size_align_bytes(self) -> Tuple[int, int]:
+    def get_parameter_size_align_bytes(self) -> Tuple[int, int]:
+        """Return the size & alignment of self when used as a function argument"""
         data = self.data()
         if self.is_struct():
             assert data.struct is not None
@@ -791,6 +794,7 @@ class Type:
             assert size_bits > 0
             sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
             return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
+        static_assert_unreachable(real_ctype)
 
 
 @dataclass(eq=False)
@@ -942,6 +946,8 @@ class StructDeclaration:
             has_bitfields=struct.has_bitfields,
             is_union=isinstance(ctype, ca.Union),
         )
+        # Register the struct in the universe now, before parsing the fields,
+        # in case there are any self-referential fields in this struct.
         universe.add_struct(decl, ctype)
 
         for offset, fields in sorted(struct.fields.items()):

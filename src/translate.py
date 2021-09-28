@@ -19,7 +19,7 @@ from typing import (
     Union,
 )
 
-from .error import DecompFailure
+from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     FlowGraph,
     Function,
@@ -1012,9 +1012,11 @@ class StructAccess(Expression):
     @staticmethod
     def access_path_to_field_name(path: Optional[AccessPath], deref: bool) -> str:
         """
-        Convert a path like `["foo", 3, "bar"]` into a field name like `.foo[3].bar`.
-        If deref is True, the initial `.` is replaced by `->`.
+        Convert a path like `["foo", 3, "bar"]` into a field name like `->foo[3].bar`.
+        If deref is False, the initial `.` is replaced with `->` and the first item in
+        the path must be a str.
         """
+        assert deref or (path and isinstance(path[0], str))
         if path is None:
             return ""
         output = ""
@@ -1025,9 +1027,10 @@ class StructAccess(Expression):
                 else:
                     output += "->"
                 output += p
-            else:
-                assert isinstance(p, int)
+            elif isinstance(p, int):
                 output += f"[{p}]"
+            else:
+                static_assert_unreachable(p)
         return output
 
     def dependencies(self) -> List[Expression]:
@@ -1036,7 +1039,7 @@ class StructAccess(Expression):
     def make_reference(self) -> bool:
         self.late_field_path()
         if self.field_path and self.field_path[-1] == 0:
-            del self.field_path[-1]
+            self.field_path.pop()
             return True
         return False
 
@@ -1090,25 +1093,31 @@ class StructAccess(Expression):
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [prefix + format_hex(self.offset)]
 
-        deref = True
-        if isinstance(var, AddressOf) and not var.expr.type.is_array():
-            var = var.expr
-            deref = False
-
-        if self.offset == 0 and not has_nonzero_access:
-            return f"{'*' if deref else ''}{var.format(fmt)}"
-
+        # Rewrite `x[0].y` to `x->y` by dropping the initial `0` in field_path
         if (
             field_path
             and len(field_path) >= 2
             and field_path[0] == 0
             and isinstance(field_path[1], str)
         ):
-            # Rewrite `x[0].y` as `x->y` or `x.y`
-            field_name = self.access_path_to_field_name(field_path[1:], deref)
-        else:
-            field_name = self.access_path_to_field_name(field_path, deref)
+            field_path = field_path[1:]
 
+        # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
+        deref = True
+        if (
+            isinstance(var, AddressOf)
+            and not var.expr.type.is_array()
+            and field_path
+            and isinstance(field_path[0], str)
+        ):
+            var = var.expr
+            deref = False
+
+        # Rewrite `x->unk0` to `*x` and `x.unk0` to `x`, unless has_nonzero_access
+        if self.offset == 0 and not has_nonzero_access:
+            return f"{'*' if deref else ''}{var.format(fmt)}"
+
+        field_name = self.access_path_to_field_name(field_path, deref)
         return f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
 
@@ -2600,7 +2609,7 @@ def array_access_from_add(
         # If it is, remove it: it will be replaced by `[index]`
         if not sub_path or sub_path[-1] != 0:
             return None
-        del sub_path[-1]
+        sub_path.pop()
         base = StructAccess(
             struct_var=base,
             offset=offset - remaining_offset,
@@ -2621,7 +2630,7 @@ def array_access_from_add(
     if remaining_offset == 0:
         # Rewrite terms like `&x.y.z[0]` as `x.y.z`
         if ptr and field_path and field_path[-1] == 0:
-            del field_path[-1]
+            field_path.pop()
             ptr = False
     else:
         field_path = None
@@ -2767,9 +2776,9 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
     for ind, param in enumerate(fn_sig.params):
         param_type = param.type
         if param_type.is_array():
-            # Array arguments decay into pointers
+            # Array parameters decay into pointers
             param_type = param_type.reference()
-        size, align = param_type.get_size_align_bytes()
+        size, align = param_type.get_parameter_size_align_bytes()
         size = (size + 3) & ~3
         only_floats = only_floats and param_type.is_float()
         offset = (offset + align - 1) & -align
