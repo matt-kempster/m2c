@@ -1045,7 +1045,7 @@ class StructAccess(Expression):
 
     def make_reference(self) -> Optional["StructAccess"]:
         field_path = self.late_field_path()
-        if field_path and field_path[-1] == 0:
+        if field_path and len(field_path) >= 2 and field_path[-1] == 0:
             return replace(self, field_path=field_path[:-1])
         return None
 
