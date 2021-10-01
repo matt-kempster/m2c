@@ -1012,12 +1012,16 @@ class StructAccess(Expression):
     checked_late_field_path: bool = field(default=False, compare=False)
 
     def __post_init__(self) -> None:
-        assert self.field_path is None or (
-            self.field_path and isinstance(self.field_path[0], int)
-        ), "The first element of field_path, if present, must be an int"
+        self.assert_valid_field_path(self.field_path)
 
     @staticmethod
-    def access_path_to_field_name(path: AccessPath) -> str:
+    def assert_valid_field_path(path: Optional[AccessPath]) -> None:
+        assert path is None or (
+            path and isinstance(path[0], int)
+        ), "The first element of the field path, if present, must be an int"
+
+    @classmethod
+    def access_path_to_field_name(cls, path: AccessPath) -> str:
         """
         Convert an access path into a dereferencing field name, like the following examples:
             - `[0, "foo", 3, "bar"]` into `"->foo[3].bar"`
@@ -1026,9 +1030,7 @@ class StructAccess(Expression):
             - `[0]` into `"[0]"`
         The path must have at least one element, and the first element must be an int.
         """
-        assert path and isinstance(
-            path[0], int
-        ), "The first element of path must be an int"
+        cls.assert_valid_field_path(path)
         output = ""
 
         # Replace an initial "[0]." with "->"
@@ -1064,11 +1066,9 @@ class StructAccess(Expression):
                 self.offset, target_size=self.target_size
             )
             if field_path is not None and remaining_offset == 0:
+                self.assert_valid_field_path(field_path)
                 self.field_path = field_path
                 self.type.unify(field_type)
-
-                # Check invariant on self.field_path
-                self.__post_init__()
 
             self.checked_late_field_path = True
         return self.field_path
