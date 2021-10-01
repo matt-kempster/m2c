@@ -19,6 +19,7 @@ from typing import (
     Union,
 )
 
+from .c_types import CType, StructUnion as CStructUnion, TypeMap
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     FlowGraph,
@@ -45,8 +46,9 @@ from .types import (
     AccessPath,
     FunctionParam,
     FunctionSignature,
+    StructDeclaration,
     Type,
-    TypeUniverse,
+    GlobalTypeInfo,
 )
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
@@ -1068,10 +1070,7 @@ class StructAccess(Expression):
                 not self.stack_info.has_nonzero_access(var)
                 and isinstance(var, AddressOf)
                 and isinstance(var.expr, GlobalSymbol)
-                and self.stack_info.global_info.universe.get_var_type(
-                    var.expr.symbol_name
-                )
-                is not None
+                and var.expr.type_in_typemap
             ):
                 return True
         return False
@@ -3147,7 +3146,9 @@ CASES_LWR: LwrInstrMap = {
 }
 
 
-def output_regs_for_instr(instr: Instruction, universe: TypeUniverse) -> List[Register]:
+def output_regs_for_instr(
+    instr: Instruction, global_info: "GlobalInfo"
+) -> List[Register]:
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
         if not isinstance(reg, Register):
@@ -3168,7 +3169,7 @@ def output_regs_for_instr(instr: Instruction, universe: TypeUniverse) -> List[Re
     if mnemonic == "jal":
         fn_target = instr.args[0]
         if isinstance(fn_target, AsmGlobalSymbol):
-            if universe.is_function_known_void(fn_target.symbol_name):
+            if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
     if mnemonic in CASES_FN_CALL:
         return list(map(Register, ["f0", "f1", "v0", "v1"]))
@@ -3187,7 +3188,9 @@ def output_regs_for_instr(instr: Instruction, universe: TypeUniverse) -> List[Re
     return []
 
 
-def regs_clobbered_until_dominator(node: Node, universe: TypeUniverse) -> Set[Register]:
+def regs_clobbered_until_dominator(
+    node: Node, global_info: "GlobalInfo"
+) -> Set[Register]:
     if node.immediate_dominator is None:
         return set()
     seen = {node.immediate_dominator}
@@ -3200,7 +3203,7 @@ def regs_clobbered_until_dominator(node: Node, universe: TypeUniverse) -> Set[Re
         seen.add(n)
         for instr in n.block.instructions:
             with current_instr(instr):
-                clobbered.update(output_regs_for_instr(instr, universe))
+                clobbered.update(output_regs_for_instr(instr, global_info))
                 if instr.mnemonic in CASES_FN_CALL:
                     clobbered.update(TEMP_REGS)
         stack.extend(n.parents)
@@ -3208,7 +3211,7 @@ def regs_clobbered_until_dominator(node: Node, universe: TypeUniverse) -> Set[Re
 
 
 def reg_always_set(
-    node: Node, reg: Register, universe: TypeUniverse, *, dom_set: bool
+    node: Node, reg: Register, global_info: "GlobalInfo", *, dom_set: bool
 ) -> bool:
     if node.immediate_dominator is None:
         return False
@@ -3226,7 +3229,7 @@ def reg_always_set(
             with current_instr(instr):
                 if instr.mnemonic in CASES_FN_CALL and reg in TEMP_REGS:
                     clobbered = True
-                if reg in output_regs_for_instr(instr, universe):
+                if reg in output_regs_for_instr(instr, global_info):
                     clobbered = False
         if clobbered == True:
             return False
@@ -3685,10 +3688,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
                 ):
-                    is_known_void = (
-                        stack_info.global_info.universe.is_function_known_void(
-                            fn_target.expr.symbol_name
-                        )
+                    is_known_void = stack_info.global_info.is_function_known_void(
+                        fn_target.expr.symbol_name
                     )
                 elif isinstance(fn_target, Literal):
                     pass
@@ -3973,7 +3974,6 @@ def translate_graph_from_block(
 
     # Translate everything dominated by this node, now that we know our own
     # final register state. This will eventually reach every node.
-    universe = stack_info.global_info.universe
     for child in node.immediately_dominates:
         if isinstance(child, TerminalNode):
             continue
@@ -3981,9 +3981,11 @@ def translate_graph_from_block(
         for reg, data in regs.contents.items():
             new_regs.set_with_meta(reg, data.value, RegMeta(inherited=True))
 
-        phi_regs = regs_clobbered_until_dominator(child, universe)
+        phi_regs = regs_clobbered_until_dominator(child, stack_info.global_info)
         for reg in phi_regs:
-            if reg_always_set(child, reg, universe, dom_set=(reg in regs)):
+            if reg_always_set(
+                child, reg, stack_info.global_info, dom_set=(reg in regs)
+            ):
                 expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
                 if expr is None:
                     expr = PhiExpr(
@@ -4013,11 +4015,15 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 
 
 @dataclass
-class GlobalInfo:
+class GlobalInfo(GlobalTypeInfo):
     asm_data: AsmData
     local_functions: Set[str]
-    universe: TypeUniverse
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
+
+    typemap: TypeMap = field(default_factory=TypeMap)
+    structs: Set["StructDeclaration"] = field(default_factory=set)
+    structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
+    structs_by_ctype: Dict[int, "StructDeclaration"] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -4032,12 +4038,58 @@ class GlobalInfo:
                 asm_data_entry=self.asm_data_value(sym_name),
             )
 
-            ctype_type = self.universe.get_var_type(sym_name)
-            if ctype_type is not None:
+            fn = self.typemap.functions.get(sym_name)
+            ctype: Optional[CType]
+            if fn is not None:
+                ctype = fn.type
+            else:
+                ctype = self.typemap.var_types.get(sym_name)
+            if ctype is not None:
                 sym.type_in_typemap = True
-                sym.type.unify(ctype_type)
+                sym.type.unify(Type.ctype(ctype, self))
 
         return AddressOf(sym, type=sym.type.reference())
+
+    def is_function_known_void(self, sym_name: str) -> bool:
+        """Return True if the function exists in the context, and has no return value"""
+        fn = self.typemap.functions.get(sym_name)
+        if fn is None:
+            return False
+        return fn.ret_type is None
+
+    def get_struct_for_ctype(
+        self,
+        ctype: CStructUnion,
+    ) -> Optional["StructDeclaration"]:
+        """Return the StructDeclaration for a given ctype struct, if known"""
+        struct = self.structs_by_ctype.get(id(ctype))
+        if struct is not None:
+            return struct
+        if ctype.name is not None:
+            return self.structs_by_tag_name.get(ctype.name)
+        return None
+
+    def add_struct(
+        self,
+        struct: "StructDeclaration",
+        ctype_or_tag_name: Union[CStructUnion, str],
+    ) -> None:
+        """Add the struct declaration to the set of known structs for later access"""
+        self.structs.add(struct)
+
+        tag_name: Optional[str]
+        if isinstance(ctype_or_tag_name, str):
+            tag_name = ctype_or_tag_name
+        else:
+            ctype = ctype_or_tag_name
+            tag_name = ctype.name
+            self.structs_by_ctype[id(ctype)] = struct
+
+        if tag_name is not None:
+            assert (
+                tag_name not in self.structs_by_tag_name
+            ), f"Duplicate tag: {tag_name}"
+            self.structs_by_tag_name[tag_name] = struct
 
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
@@ -4272,7 +4324,6 @@ def translate_to_ast(
     flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
-    universe = global_info.universe
 
     start_regs[Register("sp")] = GlobalSymbol("sp", type=Type.ptr())
     for reg in SAVED_REGS:
@@ -4282,13 +4333,11 @@ def translate_to_ast(
         assert offset % 4 == 0
         return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
 
-    fn_type = universe.get_function_type(function.name)
-    fn_decl_provided = True
-    if fn_type is None:
-        fn_type = Type.function()
-        fn_decl_provided = False
-    fn_type.unify(global_info.address_of_gsym(function.name).expr.type)
+    fn_sym = global_info.address_of_gsym(function.name).expr
+    assert isinstance(fn_sym, GlobalSymbol)
 
+    fn_type = fn_sym.type
+    fn_type.unify(Type.function())
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"
     return_type = fn_sig.return_type
@@ -4343,7 +4392,7 @@ def translate_to_ast(
     return_reg: Optional[Register] = None
 
     if not options.void and not return_type.is_void():
-        return_reg = determine_return_register(return_blocks, fn_decl_provided)
+        return_reg = determine_return_register(return_blocks, fn_sym.type_in_typemap)
 
     if return_reg is not None:
         for b in return_blocks:

@@ -5,7 +5,7 @@ import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from .c_types import build_typemap, dump_typemap
+from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import visualize_flowgraph
 from .if_statements import get_function_text
@@ -17,7 +17,6 @@ from .translate import (
     InstrProcessingFailure,
     translate_to_ast,
 )
-from .types import TypeUniverse
 
 
 def print_exception(sanitize: bool) -> None:
@@ -42,7 +41,7 @@ def print_exception(sanitize: bool) -> None:
 def run(options: Options) -> int:
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
-    universe = TypeUniverse()
+    typemap: TypeMap = TypeMap()
     try:
         for filename in options.filenames:
             if filename == "-":
@@ -55,7 +54,7 @@ def run(options: Options) -> int:
 
         if options.c_context is not None:
             with open(options.c_context, "r", encoding="utf-8-sig") as f:
-                universe.typemap = build_typemap(f.read())
+                typemap = build_typemap(f.read())
     except (OSError, DecompFailure) as e:
         print(e)
         return 1
@@ -64,7 +63,7 @@ def run(options: Options) -> int:
         return 1
 
     if options.dump_typemap:
-        dump_typemap(universe.typemap)
+        dump_typemap(typemap)
         return 0
 
     if not options.function_indexes_or_names:
@@ -88,7 +87,7 @@ def run(options: Options) -> int:
                 functions.append(all_functions[index_or_name])
 
     function_names = set(all_functions.keys())
-    global_info = GlobalInfo(asm_data, function_names, universe)
+    global_info = GlobalInfo(asm_data, function_names, typemap=typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
