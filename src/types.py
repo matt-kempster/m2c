@@ -537,7 +537,7 @@ class Type:
             params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = []
             for param in data.fn_sig.params:
                 decl = ca.Decl(
-                    name=param.name,
+                    name=None,
                     type=param.type._to_ctype(seen.copy(), fmt),
                     quals=[],
                     storage=[],
