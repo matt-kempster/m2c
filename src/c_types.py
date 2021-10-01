@@ -68,8 +68,10 @@ class TypeMap:
     typedefs: Dict[str, CType] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
     functions: Dict[str, Function] = field(default_factory=dict)
-    structs: Dict[Union[str, int], Struct] = field(default_factory=dict)
-    struct_typedefs: Dict[Union[str, int], TypeDecl] = field(default_factory=dict)
+    structs: Dict[Union[str, StructUnion], Struct] = field(default_factory=dict)
+    struct_typedefs: Dict[Union[str, StructUnion], TypeDecl] = field(
+        default_factory=dict
+    )
     enum_values: Dict[str, int] = field(default_factory=dict)
 
 
@@ -319,7 +321,7 @@ def get_struct(
     if struct.name:
         return typemap.structs.get(struct.name)
     else:
-        return typemap.structs.get(id(struct))
+        return typemap.structs.get(struct)
 
 
 def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
@@ -331,7 +333,7 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
     ret = do_parse_struct(struct, typemap)
     if struct.name:
         typemap.structs[struct.name] = ret
-    typemap.structs[id(struct)] = ret
+    typemap.structs[struct] = ret
     return ret
 
 
@@ -462,8 +464,8 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
         offset += 1
 
     # If there is a typedef for this struct, prefer using that name
-    if id(struct) in typemap.struct_typedefs:
-        ctype = typemap.struct_typedefs[id(struct)]
+    if struct in typemap.struct_typedefs:
+        ctype = typemap.struct_typedefs[struct]
     elif struct.name and struct.name in typemap.struct_typedefs:
         ctype = typemap.struct_typedefs[struct.name]
     else:
@@ -572,7 +574,7 @@ def build_typemap(source: str) -> TypeMap:
                 typedef = basic_type([item.name])
                 if item.type.type.name:
                     ret.struct_typedefs[item.type.type.name] = typedef
-                ret.struct_typedefs[id(item.type.type)] = typedef
+                ret.struct_typedefs[item.type.type] = typedef
         if isinstance(item, ca.FuncDef):
             assert item.decl.name is not None, "cannot define anonymous function"
             fn = parse_function(item.decl.type)

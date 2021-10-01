@@ -33,14 +33,16 @@ class TypePool:
 
     structs: Set["StructDeclaration"] = field(default_factory=set)
     structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
-    structs_by_ctype: Dict[int, "StructDeclaration"] = field(default_factory=dict)
+    structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
+        default_factory=dict
+    )
 
     def get_struct_for_ctype(
         self,
         ctype: CStructUnion,
     ) -> Optional["StructDeclaration"]:
         """Return the StructDeclaration for a given ctype struct, if known"""
-        struct = self.structs_by_ctype.get(id(ctype))
+        struct = self.structs_by_ctype.get(ctype)
         if struct is not None:
             return struct
         if ctype.name is not None:
@@ -61,7 +63,7 @@ class TypePool:
         else:
             ctype = ctype_or_tag_name
             tag_name = ctype.name
-            self.structs_by_ctype[id(ctype)] = struct
+            self.structs_by_ctype[ctype] = struct
 
         if tag_name is not None:
             assert (
@@ -893,8 +895,8 @@ class StructDeclaration:
         struct = parse_struct(ctype, typemap)
 
         typedef_name: Optional[str] = None
-        if id(ctype) in typemap.struct_typedefs:
-            typedef = typemap.struct_typedefs[id(ctype)]
+        if ctype in typemap.struct_typedefs:
+            typedef = typemap.struct_typedefs[ctype]
             assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
         elif ctype.name and ctype.name in typemap.struct_typedefs:
