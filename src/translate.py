@@ -19,8 +19,8 @@ from typing import (
     Union,
 )
 
-from .c_types import TypeMap
-from .error import DecompFailure
+from .c_types import CType, TypeMap
+from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     FlowGraph,
     Function,
@@ -43,13 +43,12 @@ from .parse_instruction import (
     Register,
 )
 from .types import (
+    AccessPath,
     FunctionParam,
     FunctionSignature,
+    StructDeclaration,
     Type,
-    find_substruct_array,
-    get_field,
-    ptr_type_from_ctype,
-    type_from_ctype,
+    TypePool,
 )
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
@@ -1007,42 +1006,83 @@ class StructAccess(Expression):
     struct_var: Expression
     offset: int
     target_size: Optional[int]
-    field_name: Optional[str] = field(compare=False)
+    field_path: Optional[AccessPath] = field(compare=False)
     stack_info: StackInfo = field(compare=False, repr=False)
     type: Type = field(compare=False)
-    has_late_field_name: bool = field(default=False, compare=False)
+    checked_late_field_path: bool = field(default=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self.assert_valid_field_path(self.field_path)
+
+    @staticmethod
+    def assert_valid_field_path(path: Optional[AccessPath]) -> None:
+        assert path is None or (
+            path and isinstance(path[0], int)
+        ), "The first element of the field path, if present, must be an int"
+
+    @classmethod
+    def access_path_to_field_name(cls, path: AccessPath) -> str:
+        """
+        Convert an access path into a dereferencing field name, like the following examples:
+            - `[0, "foo", 3, "bar"]` into `"->foo[3].bar"`
+            - `[0, 3, "bar"]` into `"[0][3].bar"`
+            - `[0, 1, 2]` into `"[0][1][2]"
+            - `[0]` into `"[0]"`
+        The path must have at least one element, and the first element must be an int.
+        """
+        cls.assert_valid_field_path(path)
+        output = ""
+
+        # Replace an initial "[0]." with "->"
+        if len(path) >= 2 and path[0] == 0 and isinstance(path[1], str):
+            output += f"->{path[1]}"
+            path = path[2:]
+
+        for p in path:
+            if isinstance(p, str):
+                output += f".{p}"
+            elif isinstance(p, int):
+                output += f"[{p}]"
+            else:
+                static_assert_unreachable(p)
+        return output
 
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def late_field_name(self) -> Optional[str]:
+    def make_reference(self) -> Optional["StructAccess"]:
+        field_path = self.late_field_path()
+        if field_path and len(field_path) >= 2 and field_path[-1] == 0:
+            return replace(self, field_path=field_path[:-1])
+        return None
+
+    def late_field_path(self) -> Optional[AccessPath]:
         # If we didn't have a type at the time when the struct access was
         # constructed, but now we do, compute field name.
-        if (
-            self.field_name is None
-            and self.stack_info.global_info.typemap
-            and not self.has_late_field_name
-        ):
+
+        if self.field_path is None and not self.checked_late_field_path:
             var = late_unwrap(self.struct_var)
-            self.field_name = get_field(
-                var.type,
-                self.offset,
-                target_size=self.target_size,
-            )[0]
-            self.has_late_field_name = True
-        return self.field_name
+            field_path, field_type, remaining_offset = var.type.get_deref_field(
+                self.offset, target_size=self.target_size
+            )
+            if field_path is not None and remaining_offset == 0:
+                self.assert_valid_field_path(field_path)
+                self.field_path = field_path
+                self.type.unify(field_type)
+
+            self.checked_late_field_path = True
+        return self.field_path
 
     def late_has_known_type(self) -> bool:
-        if self.late_field_name() is not None:
+        if self.late_field_path() is not None:
             return True
-        if self.offset == 0 and self.stack_info.global_info.typemap:
+        if self.offset == 0:
             var = late_unwrap(self.struct_var)
             if (
                 not self.stack_info.has_nonzero_access(var)
                 and isinstance(var, AddressOf)
                 and isinstance(var.expr, GlobalSymbol)
-                and var.expr.symbol_name
-                in self.stack_info.global_info.typemap.var_types
+                and var.expr.type_in_typemap
             ):
                 return True
         return False
@@ -1051,9 +1091,9 @@ class StructAccess(Expression):
         var = late_unwrap(self.struct_var)
         has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
-        field_name = self.late_field_name()
+        field_path = self.late_field_path()
 
-        if field_name:
+        if field_path is not None and field_path != [0]:
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = (
@@ -1062,27 +1102,25 @@ class StructAccess(Expression):
             return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
-            field_name = prefix + format_hex(self.offset)
+            field_path = [0, prefix + format_hex(self.offset)]
+        field_name = self.access_path_to_field_name(field_path)
 
-        if isinstance(var, AddressOf):
-            if isinstance(var.expr, GlobalSymbol) and var.expr.array_dim is not None:
-                needs_deref = True
-            else:
-                needs_deref = False
-                var = var.expr
-        else:
-            needs_deref = True
+        # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
+        deref = True
+        if (
+            isinstance(var, AddressOf)
+            and not var.expr.type.is_array()
+            and field_name.startswith("->")
+        ):
+            var = var.expr
+            field_name = field_name.replace("->", ".", 1)
+            deref = False
 
-        if needs_deref:
-            if self.offset == 0 and not has_nonzero_access:
-                return f"*{var.format(fmt)}"
-            else:
-                return f"{parenthesize_for_struct_access(var, fmt)}->{field_name}"
-        else:
-            if self.offset == 0 and not has_nonzero_access:
-                return f"{var.format(fmt)}"
-            else:
-                return f"{parenthesize_for_struct_access(var, fmt)}.{field_name}"
+        # Rewrite `x->unk0` to `*x` and `x.unk0` to `x`, unless has_nonzero_access
+        if self.offset == 0 and not has_nonzero_access:
+            return f"{'*' if deref else ''}{var.format(fmt)}"
+
+        return f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
 
 @dataclass(frozen=True, eq=True)
@@ -1178,6 +1216,9 @@ class Literal(Expression):
         )
         return prefix + mid + suffix
 
+    def likely_partial_offset(self) -> bool:
+        return self.value % 2 ** 15 in (0, 2 ** 15 - 1) and self.value < 0x1000000
+
 
 @dataclass(frozen=True, eq=True)
 class AddressOf(Expression):
@@ -1191,13 +1232,17 @@ class AddressOf(Expression):
         if isinstance(self.expr, GlobalSymbol):
             if self.expr.is_string_constant():
                 return self.expr.format_string_constant(fmt)
-            if self.expr.array_dim is not None:
-                return f"{self.expr.format(fmt)}"
-
+        if self.expr.type.is_array():
+            return f"{self.expr.format(fmt)}"
         if self.expr.type.is_function():
             # Functions are automatically converted to function pointers
             # without an explicit `&` by the compiler
             return f"{self.expr.format(fmt)}"
+        if isinstance(self.expr, StructAccess):
+            # Simplify `&x[0]` into `x`
+            ref = self.expr.make_reference()
+            if ref:
+                return f"{ref.format(fmt)}"
         return f"&{self.expr.format(fmt)}"
 
 
@@ -1819,11 +1864,7 @@ def deref(
     uw_var = early_unwrap(var)
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
-            if (
-                isinstance(addend, Literal)
-                and addend.value % 2 ** 15 in [0, 2 ** 15 - 1]
-                and addend.value < 0x1000000
-            ):
+            if isinstance(addend, Literal) and addend.likely_partial_offset():
                 offset += addend.value
                 var = base
                 break
@@ -1839,31 +1880,20 @@ def deref(
     )
     if array_expr is not None:
         return array_expr
-    field_name, new_type, _, _ = get_field(var.type, offset, target_size=size)
-    if field_name is not None:
-        new_type.unify(type)
-        type = new_type
-
-    # Dereferencing pointers of known types
-    target = var.type.get_pointer_target()
-    if field_name is None and target is not None:
-        sub_size = target.get_size_bytes()
-        if sub_size == size and offset % size == 0:
-            # TODO: This only turns the deref into an ArrayAccess if the type
-            # is *known* to be an array (CType). This could be expanded to support
-            # arrays of other types.
-            if offset != 0 and target.is_ctype():
-                index = Literal(value=offset // size, type=Type.s32())
-                return ArrayAccess(var, index, type=target)
-            else:
-                # Don't emit an array access, but at least help type inference along
-                type = target
+    field_path, field_type, remaining_offset = var.type.get_deref_field(
+        offset, target_size=size
+    )
+    if field_path is not None and remaining_offset == 0:
+        field_type.unify(type)
+        type = field_type
+    else:
+        field_path = None
 
     return StructAccess(
         struct_var=var,
         offset=offset,
         target_size=size,
-        field_name=field_name,
+        field_path=field_path,
         stack_info=stack_info,
         type=type,
     )
@@ -2222,7 +2252,7 @@ def handle_addi_real(
         var = stack_info.get_stack_var(imm.value, store=False)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
-        return AddressOf(var, type=Type.ptr(var.type))
+        return AddressOf(var, type=var.type.reference())
     else:
         return add_imm(source, imm, stack_info)
 
@@ -2232,42 +2262,32 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         # addiu $reg1, $reg2, 0 is a move
         # (this happens when replacing %lo(...) by 0)
         return source
-    elif source.type.is_pointer():
+    elif source.type.is_pointer_or_array():
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
-        # architecture.
-        if isinstance(imm, Literal):
+        # architecture).
+        if isinstance(imm, Literal) and not imm.likely_partial_offset():
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
             )
             if array_access is not None:
                 return array_access
 
-            field_name, subtype, ptr_type, array_dim = get_field(
-                source.type, imm.value, target_size=None
+            field_path, field_type, remaining_offset = source.type.get_deref_field(
+                imm.value, target_size=None
             )
-            if field_name is not None:
-                if array_dim is not None:
-                    return StructAccess(
+            if field_path is not None and remaining_offset == 0:
+                return AddressOf(
+                    StructAccess(
                         struct_var=source,
                         offset=imm.value,
                         target_size=None,
-                        field_name=field_name,
+                        field_path=field_path,
                         stack_info=stack_info,
-                        type=ptr_type,
-                    )
-                else:
-                    return AddressOf(
-                        StructAccess(
-                            struct_var=source,
-                            offset=imm.value,
-                            target_size=None,
-                            field_name=field_name,
-                            stack_info=stack_info,
-                            type=subtype,
-                        ),
-                        type=ptr_type,
-                    )
+                        type=field_type,
+                    ),
+                    type=field_type.reference(),
+                )
         if isinstance(imm, Literal):
             target = source.type.get_pointer_target()
             if target:
@@ -2550,7 +2570,7 @@ def array_access_from_add(
         return None
     base = expr.left
     addend = expr.right
-    if addend.type.is_pointer() and not base.type.is_pointer():
+    if addend.type.is_pointer_or_array() and not base.type.is_pointer_or_array():
         base, addend = addend, base
 
     index: Expression
@@ -2583,38 +2603,48 @@ def array_access_from_add(
         pass
     else:
         # base->subarray[index]
-        substr_array = find_substruct_array(base.type, offset, scale)
-        if substr_array is None:
+        sub_path, sub_type, remaining_offset = base.type.get_deref_field(
+            offset, target_size=scale
+        )
+        # Check if the last item in the path is `0`, which indicates the start of an array
+        # If it is, remove it: it will be replaced by `[index]`
+        if sub_path is None or len(sub_path) < 2 or sub_path[-1] != 0:
             return None
-        sub_field_name, sub_offset, elem_type = substr_array
+        sub_path.pop()
         base = StructAccess(
             struct_var=base,
-            offset=sub_offset,
+            offset=offset - remaining_offset,
             target_size=None,
-            field_name=sub_field_name,
+            field_path=sub_path,
             stack_info=stack_info,
-            type=Type.ptr(elem_type),
+            type=sub_type,
         )
-        offset -= sub_offset
-        target_type = elem_type
+        offset = remaining_offset
+        target_type = sub_type
 
-    # Add .field if necessary
     ret: Expression = ArrayAccess(base, index, type=target_type)
-    field_name, new_type, ptr_type, array_dim = get_field(
-        base.type, offset, target_size=target_size
+
+    # Add .field if necessary by wrapping ret in StructAccess(AddressOf(...))
+    ret_ref = AddressOf(ret, type=ret.type.reference())
+    field_path, field_type, remaining_offset = ret_ref.type.get_deref_field(
+        offset, target_size=target_size
     )
+    if remaining_offset != 0:
+        field_path = None
+
     if offset != 0 or (target_size is not None and target_size != scale):
         ret = StructAccess(
-            struct_var=AddressOf(ret, type=Type.ptr()),
+            struct_var=ret_ref,
             offset=offset,
             target_size=target_size,
-            field_name=field_name,
+            field_path=field_path,
             stack_info=stack_info,
-            type=ptr_type if array_dim is not None else new_type,
+            type=field_type,
         )
 
-    if ptr and array_dim is None:
-        ret = AddressOf(ret, type=ptr_type)
+    if ptr:
+        ret = AddressOf(ret, type=ret.type.reference())
+
     return ret
 
 
@@ -2623,9 +2653,11 @@ def handle_add(args: InstrArgs) -> Expression:
     rhs = args.reg(2)
     stack_info = args.stack_info
     type = Type.intptr()
-    if lhs.type.is_pointer():
+    # Because lhs & rhs are in registers, it shouldn't be possible for them to be arrays.
+    # If they are, treat them the same as pointers anyways.
+    if lhs.type.is_pointer_or_array():
         type = Type.ptr()
-    elif rhs.type.is_pointer():
+    elif rhs.type.is_pointer_or_array():
         type = Type.ptr()
 
     # addiu instructions can sometimes be emitted as addu instead, when the
@@ -2726,7 +2758,7 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
     only_floats = True
     slots: List[AbiArgSlot] = []
     possible: List[Register] = []
-    if fn_sig.return_type.is_struct_type():
+    if fn_sig.return_type.is_struct():
         # The ABI for struct returns is to pass a pointer to where it should be written
         # as the first argument.
         slots.append(
@@ -2741,16 +2773,18 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
         only_floats = False
 
     for ind, param in enumerate(fn_sig.params):
-        size, align = param.type.get_size_align_bytes()
+        # Array parameters decay into pointers
+        param_type = param.type.decay()
+        size, align = param_type.get_parameter_size_align_bytes()
         size = (size + 3) & ~3
-        only_floats = only_floats and param.type.is_float()
+        only_floats = only_floats and param_type.is_float()
         offset = (offset + align - 1) & -align
         name = param.name
         reg2: Optional[Register]
         if ind < 2 and only_floats:
             reg = Register("f12" if ind == 0 else "f14")
-            is_double = param.type.is_float() and param.type.get_size_bits() == 64
-            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param.type))
+            is_double = param_type.is_float() and param_type.get_size_bits() == 64
+            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param_type))
             if is_double and not for_call:
                 name2 = f"{name}_lo" if name else None
                 reg2 = Register("f13" if ind == 0 else "f15")
@@ -2765,7 +2799,7 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
                 name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}") if i < 4 else None
                 slots.append(
-                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param.type)
+                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param_type)
                 )
         offset += size
 
@@ -3111,7 +3145,7 @@ CASES_LWR: LwrInstrMap = {
 
 
 def output_regs_for_instr(
-    instr: Instruction, typemap: Optional[TypeMap]
+    instr: Instruction, global_info: "GlobalInfo"
 ) -> List[Register]:
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
@@ -3130,11 +3164,10 @@ def output_regs_for_instr(
         or mnemonic in CASES_NO_DEST
     ):
         return []
-    if mnemonic == "jal" and typemap:
+    if mnemonic == "jal":
         fn_target = instr.args[0]
         if isinstance(fn_target, AsmGlobalSymbol):
-            c_fn = typemap.functions.get(fn_target.symbol_name)
-            if c_fn and c_fn.ret_type is None:
+            if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
     if mnemonic in CASES_FN_CALL:
         return list(map(Register, ["f0", "f1", "v0", "v1"]))
@@ -3154,7 +3187,7 @@ def output_regs_for_instr(
 
 
 def regs_clobbered_until_dominator(
-    node: Node, typemap: Optional[TypeMap]
+    node: Node, global_info: "GlobalInfo"
 ) -> Set[Register]:
     if node.immediate_dominator is None:
         return set()
@@ -3168,7 +3201,7 @@ def regs_clobbered_until_dominator(
         seen.add(n)
         for instr in n.block.instructions:
             with current_instr(instr):
-                clobbered.update(output_regs_for_instr(instr, typemap))
+                clobbered.update(output_regs_for_instr(instr, global_info))
                 if instr.mnemonic in CASES_FN_CALL:
                     clobbered.update(TEMP_REGS)
         stack.extend(n.parents)
@@ -3176,7 +3209,7 @@ def regs_clobbered_until_dominator(
 
 
 def reg_always_set(
-    node: Node, reg: Register, typemap: Optional[TypeMap], *, dom_set: bool
+    node: Node, reg: Register, global_info: "GlobalInfo", *, dom_set: bool
 ) -> bool:
     if node.immediate_dominator is None:
         return False
@@ -3194,7 +3227,7 @@ def reg_always_set(
             with current_instr(instr):
                 if instr.mnemonic in CASES_FN_CALL and reg in TEMP_REGS:
                     clobbered = True
-                if reg in output_regs_for_instr(instr, typemap):
+                if reg in output_regs_for_instr(instr, global_info):
                     clobbered = False
         if clobbered == True:
             return False
@@ -3653,11 +3686,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
                 ):
-                    typemap = stack_info.global_info.typemap
-                    if typemap:
-                        c_fn = typemap.functions.get(fn_target.expr.symbol_name)
-                        if c_fn and c_fn.ret_type is None:
-                            is_known_void = True
+                    is_known_void = stack_info.global_info.is_function_known_void(
+                        fn_target.expr.symbol_name
+                    )
                 elif isinstance(fn_target, Literal):
                     pass
                 else:
@@ -3941,7 +3972,6 @@ def translate_graph_from_block(
 
     # Translate everything dominated by this node, now that we know our own
     # final register state. This will eventually reach every node.
-    typemap = stack_info.global_info.typemap
     for child in node.immediately_dominates:
         if isinstance(child, TerminalNode):
             continue
@@ -3949,9 +3979,11 @@ def translate_graph_from_block(
         for reg, data in regs.contents.items():
             new_regs.set_with_meta(reg, data.value, RegMeta(inherited=True))
 
-        phi_regs = regs_clobbered_until_dominator(child, typemap)
+        phi_regs = regs_clobbered_until_dominator(child, stack_info.global_info)
         for reg in phi_regs:
-            if reg_always_set(child, reg, typemap, dom_set=(reg in regs)):
+            if reg_always_set(
+                child, reg, stack_info.global_info, dom_set=(reg in regs)
+            ):
                 expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
                 if expr is None:
                     expr = PhiExpr(
@@ -3984,8 +4016,9 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
-    typemap: Optional[TypeMap]
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
+    typemap: TypeMap = field(default_factory=TypeMap)
+    typepool: TypePool = field(default_factory=TypePool)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -4000,16 +4033,24 @@ class GlobalInfo:
                 asm_data_entry=self.asm_data_value(sym_name),
             )
 
-        type = Type.ptr(sym.type)
-        if self.typemap:
-            ctype = self.typemap.var_types.get(sym_name)
-            if ctype:
-                ctype_type, dim = ptr_type_from_ctype(ctype, self.typemap)
-                sym.array_dim = dim
+            fn = self.typemap.functions.get(sym_name)
+            ctype: Optional[CType]
+            if fn is not None:
+                ctype = fn.type
+            else:
+                ctype = self.typemap.var_types.get(sym_name)
+            if ctype is not None:
                 sym.type_in_typemap = True
-                type.unify(ctype_type)
-                type = ctype_type
-        return AddressOf(sym, type=type)
+                sym.type.unify(Type.ctype(ctype, self.typemap, self.typepool))
+
+        return AddressOf(sym, type=sym.type.reference())
+
+    def is_function_known_void(self, sym_name: str) -> bool:
+        """Return True if the function exists in the context, and has no return value"""
+        fn = self.typemap.functions.get(sym_name)
+        if fn is None:
+            return False
+        return fn.ret_type is None
 
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
@@ -4044,12 +4085,12 @@ class GlobalInfo:
 
         def for_element_type(type: Type) -> Optional[str]:
             """Return the initializer for a single element of type `type`"""
-            if type.is_ctype():
-                ctype_fields = type.get_ctype_fields()
-                if not ctype_fields:
+            if type.is_struct() or type.is_array():
+                struct_fields = type.get_initializer_fields()
+                if not struct_fields:
                     return None
                 members = []
-                for field in ctype_fields:
+                for field in struct_fields:
                     if isinstance(field, int):
                         # Check that all padding bytes are 0
                         padding = read_uint(field)
@@ -4211,7 +4252,6 @@ class GlobalInfo:
                         continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
-                name = f"{name}[{sym.array_dim}]" if sym.array_dim is not None else name
                 value = f" = {value}" if value else ""
                 comment = f" // {'; '.join(comments)}" if comments else ""
                 lines.append(
@@ -4245,7 +4285,6 @@ def translate_to_ast(
     flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
-    typemap = global_info.typemap
 
     start_regs[Register("sp")] = GlobalSymbol("sp", type=Type.ptr())
     for reg in SAVED_REGS:
@@ -4255,14 +4294,11 @@ def translate_to_ast(
         assert offset % 4 == 0
         return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
 
-    if typemap and function.name in typemap.functions:
-        fn_type = type_from_ctype(typemap.functions[function.name].type, typemap)
-        fn_decl_provided = True
-    else:
-        fn_type = Type.function()
-        fn_decl_provided = False
-    fn_type.unify(global_info.address_of_gsym(function.name).expr.type)
+    fn_sym = global_info.address_of_gsym(function.name).expr
+    assert isinstance(fn_sym, GlobalSymbol)
 
+    fn_type = fn_sym.type
+    fn_type.unify(Type.function())
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"
     return_type = fn_sig.return_type
@@ -4317,7 +4353,7 @@ def translate_to_ast(
     return_reg: Optional[Register] = None
 
     if not options.void and not return_type.is_void():
-        return_reg = determine_return_register(return_blocks, fn_decl_provided)
+        return_reg = determine_return_register(return_blocks, fn_sym.type_in_typemap)
 
     if return_reg is not None:
         for b in return_blocks:

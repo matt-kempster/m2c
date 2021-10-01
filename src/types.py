@@ -1,15 +1,14 @@
 import copy
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import pycparser.c_ast as ca
 
 from .c_types import (
     CType,
     Struct,
+    StructUnion as CStructUnion,
     TypeMap,
-    equal_types,
-    get_struct,
     parse_constant_int,
     parse_function,
     parse_struct,
@@ -17,23 +16,74 @@ from .c_types import (
     resolve_typedefs,
     set_decl_name,
     to_c,
-    var_size_align,
 )
-from .error import DecompFailure
+from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
+
+# AccessPath represents a struct/array path, with ints for array access, and
+# strs for struct fields. Ex: `["foo", 3, "bar"]` represents `.foo[3].bar`
+AccessPath = List[Union[str, int]]
+
+
+@dataclass
+class TypePool:
+    """
+    Mutable shared state for Types, maintaining the set of available struct types.
+    """
+
+    structs: Set["StructDeclaration"] = field(default_factory=set)
+    structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
+    structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
+        default_factory=dict
+    )
+
+    def get_struct_for_ctype(
+        self,
+        ctype: CStructUnion,
+    ) -> Optional["StructDeclaration"]:
+        """Return the StructDeclaration for a given ctype struct, if known"""
+        struct = self.structs_by_ctype.get(ctype)
+        if struct is not None:
+            return struct
+        if ctype.name is not None:
+            return self.structs_by_tag_name.get(ctype.name)
+        return None
+
+    def add_struct(
+        self,
+        struct: "StructDeclaration",
+        ctype_or_tag_name: Union[CStructUnion, str],
+    ) -> None:
+        """Add the struct declaration to the set of known structs for later access"""
+        self.structs.add(struct)
+
+        tag_name: Optional[str]
+        if isinstance(ctype_or_tag_name, str):
+            tag_name = ctype_or_tag_name
+        else:
+            ctype = ctype_or_tag_name
+            tag_name = ctype.name
+            self.structs_by_ctype[ctype] = struct
+
+        if tag_name is not None:
+            assert (
+                tag_name not in self.structs_by_tag_name
+            ), f"Duplicate tag: {tag_name}"
+            self.structs_by_tag_name[tag_name] = struct
 
 
 @dataclass(eq=False)
 class TypeData:
-    K_INT = 1
-    K_PTR = 2
-    K_FLOAT = 4
-    K_CTYPE = 8
-    K_FN = 16
-    K_VOID = 32
+    K_INT = 1 << 0
+    K_PTR = 1 << 1
+    K_FLOAT = 1 << 2
+    K_FN = 1 << 3
+    K_VOID = 1 << 4
+    K_ARRAY = 1 << 5
+    K_STRUCT = 1 << 6
     K_INTPTR = K_INT | K_PTR
     K_ANYREG = K_INT | K_PTR | K_FLOAT
-    K_ANY = K_INT | K_PTR | K_FLOAT | K_CTYPE | K_FN | K_VOID
+    K_ANY = K_INT | K_PTR | K_FLOAT | K_FN | K_VOID | K_ARRAY | K_STRUCT
 
     SIGNED = 1
     UNSIGNED = 2
@@ -41,14 +91,14 @@ class TypeData:
 
     kind: int = K_ANY
     likely_kind: int = K_ANY  # subset of kind
-    size: Optional[int] = None
+    size_bits: Optional[int] = None
     uf_parent: Optional["TypeData"] = None
 
     sign: int = ANY_SIGN  # K_INT
-    ptr_to: Optional["Type"] = None  # K_PTR
-    typemap: Optional[TypeMap] = None  # K_CTYPE
-    ctype_ref: Optional[CType] = None  # K_CTYPE
+    ptr_to: Optional["Type"] = None  # K_PTR | K_ARRAY
     fn_sig: Optional["FunctionSignature"] = None  # K_FN
+    array_dim: Optional[int] = None  # K_ARRAY
+    struct: Optional["StructDeclaration"] = None  # K_STRUCT
 
     def __post_init__(self) -> None:
         assert self.kind
@@ -107,52 +157,56 @@ class Type:
         else:
             seen = seen | {x, y}
 
-        if x.size is not None and y.size is not None and x.size != y.size:
+        if (
+            x.size_bits is not None
+            and y.size_bits is not None
+            and x.size_bits != y.size_bits
+        ):
             return False
 
         kind = x.kind & y.kind
         likely_kind = x.likely_kind & y.likely_kind
-        size = x.size if x.size is not None else y.size
-        typemap = x.typemap if x.typemap is not None else y.typemap
-        ctype_ref = x.ctype_ref if x.ctype_ref is not None else y.ctype_ref
+        size_bits = x.size_bits if x.size_bits is not None else y.size_bits
         ptr_to = x.ptr_to if x.ptr_to is not None else y.ptr_to
         fn_sig = x.fn_sig if x.fn_sig is not None else y.fn_sig
+        array_dim = x.array_dim if x.array_dim is not None else y.array_dim
+        struct = x.struct if x.struct is not None else y.struct
         sign = x.sign & y.sign
-        if size not in (None, 32, 64):
+        if size_bits not in (None, 32, 64):
             kind &= ~TypeData.K_FLOAT
-        if size not in (None, 32):
+        if size_bits not in (None, 32):
             kind &= ~TypeData.K_PTR
-        if size not in (None,):
+        if size_bits not in (None,):
             kind &= ~TypeData.K_FN
-        if size not in (None, 0):
+        if size_bits not in (None, 0):
             kind &= ~TypeData.K_VOID
         likely_kind &= kind
         if kind == 0 or sign == 0:
             return False
         if kind == TypeData.K_PTR:
-            size = 32
+            size_bits = 32
         if sign != TypeData.ANY_SIGN:
             assert kind == TypeData.K_INT
-        if x.ctype_ref is not None and y.ctype_ref is not None:
-            assert typemap is not None
-            x_ctype = resolve_typedefs(x.ctype_ref, typemap)
-            y_ctype = resolve_typedefs(y.ctype_ref, typemap)
-            if not equal_types(x_ctype, y_ctype):
-                return False
         if x.ptr_to is not None and y.ptr_to is not None:
             if not x.ptr_to.unify(y.ptr_to, seen=seen):
                 return False
         if x.fn_sig is not None and y.fn_sig is not None:
             if not x.fn_sig.unify(y.fn_sig, seen=seen):
                 return False
+        if x.array_dim is not None and y.array_dim is not None:
+            if x.array_dim != y.array_dim:
+                return False
+        if x.struct is not None and y.struct is not None:
+            if not x.struct.unify(y.struct, seen=seen):
+                return False
         x.kind = kind
         x.likely_kind = likely_kind
-        x.size = size
+        x.size_bits = size_bits
         x.sign = sign
         x.ptr_to = ptr_to
-        x.typemap = typemap
-        x.ctype_ref = ctype_ref
         x.fn_sig = fn_sig
+        x.array_dim = array_dim
+        x.struct = struct
         y.uf_parent = x
         return True
 
@@ -172,14 +226,14 @@ class Type:
     def is_pointer(self) -> bool:
         return self.data().kind == TypeData.K_PTR
 
+    def is_pointer_or_array(self) -> bool:
+        return self.data().kind in (TypeData.K_PTR, TypeData.K_ARRAY)
+
     def is_int(self) -> bool:
         return self.data().kind == TypeData.K_INT
 
     def is_reg(self) -> bool:
         return (self.data().kind & ~TypeData.K_ANYREG) == 0
-
-    def is_ctype(self) -> bool:
-        return self.data().kind == TypeData.K_CTYPE
 
     def is_function(self) -> bool:
         return self.data().kind == TypeData.K_FN
@@ -187,33 +241,30 @@ class Type:
     def is_void(self) -> bool:
         return self.data().kind == TypeData.K_VOID
 
+    def is_array(self) -> bool:
+        return self.data().kind == TypeData.K_ARRAY
+
+    def is_struct(self) -> bool:
+        return self.data().kind == TypeData.K_STRUCT
+
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
 
     def get_size_bits(self) -> Optional[int]:
-        return self.data().size
+        return self.data().size_bits
 
     def get_size_bytes(self) -> Optional[int]:
-        size = self.get_size_bits()
-        return None if size is None else size // 8
+        size_bits = self.get_size_bits()
+        return None if size_bits is None else size_bits // 8
 
-    def get_size_align_bytes(self) -> Tuple[int, int]:
+    def get_parameter_size_align_bytes(self) -> Tuple[int, int]:
+        """Return the size & alignment of self when used as a function argument"""
         data = self.data()
-        if data.kind == TypeData.K_CTYPE and data.ctype_ref is not None:
-            assert data.typemap is not None
-            return var_size_align(data.ctype_ref, data.typemap)
+        if self.is_struct():
+            assert data.struct is not None
+            return data.struct.size, data.struct.align
         size = (self.get_size_bits() or 32) // 8
         return size, size
-
-    def is_struct_type(self) -> bool:
-        data = self.data()
-        if data.kind != TypeData.K_CTYPE or data.ctype_ref is None:
-            return False
-        assert data.typemap is not None
-        ctype = resolve_typedefs(data.ctype_ref, data.typemap)
-        if not isinstance(ctype, ca.TypeDecl):
-            return False
-        return isinstance(ctype.type, (ca.Struct, ca.Union))
 
     def get_pointer_target(self) -> Optional["Type"]:
         """If self is a pointer-to-a-Type, return the Type"""
@@ -222,13 +273,29 @@ class Type:
             return data.ptr_to
         return None
 
-    def get_ctype_and_typemap(self) -> Optional[Tuple[CType, TypeMap]]:
-        """If self is a CType, return the CType and the TypeMap it came from"""
+    def reference(self) -> "Type":
+        """Return a pointer to self. If self is an array, decay the type to a pointer"""
+        if self.is_array():
+            data = self.data()
+            assert data.ptr_to is not None
+            return Type.ptr(data.ptr_to)
+        return Type.ptr(self)
+
+    def decay(self) -> "Type":
+        """If self is an array, return a pointer to the element type. Otherwise, return self."""
+        if self.is_array():
+            data = self.data()
+            assert data.ptr_to is not None
+            return Type.ptr(data.ptr_to)
+        return self
+
+    def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
+        """If self is an array, return a tuple of the inner Type & the array dimension"""
+        if not self.is_array():
+            return None, None
         data = self.data()
-        if data.kind == TypeData.K_CTYPE:
-            assert data.ctype_ref is not None and data.typemap is not None
-            return data.ctype_ref, data.typemap
-        return None
+        assert data.ptr_to is not None
+        return (data.ptr_to, data.array_dim)
 
     def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
         """If self is a function pointer, return the FunctionSignature"""
@@ -239,67 +306,170 @@ class Type:
                 return ptr_to.fn_sig
         return None
 
-    def get_ctype_fields(
+    def get_struct_declaration(self) -> Optional["StructDeclaration"]:
+        """If self is a struct, return the StructDeclaration"""
+        if self.is_struct():
+            data = self.data()
+            assert data.struct is not None
+            return data.struct
+        return None
+
+    GetFieldResult = Tuple[Optional[AccessPath], "Type", int]
+
+    def get_field(self, offset: int, *, target_size: Optional[int]) -> GetFieldResult:
+        """
+        Locate the field in self at the appropriate offset, and optionally
+        with an exact target size (both values in bytes).
+        The target size can be used to disambiguate different fields in a union, or
+        different levels inside nested structs.
+
+        The return value is a tuple of `(field_path, field_type, remaining_offset)`.
+        If no field is found, the result is `(None, Type.any(), offset)`.
+        If `remaining_offset` is nonzero, then there was *not* a field at the exact
+        offset provided; the returned field is at `(offset - remaining_offset)`.
+        """
+        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset)
+
+        if offset < 0:
+            return NO_MATCHING_FIELD
+
+        if self.is_array():
+            # Array types always have elements with known size
+            data = self.data()
+            assert data.ptr_to is not None
+            size = data.ptr_to.get_size_bytes()
+            assert size is not None
+
+            index, remaining_offset = divmod(offset, size)
+            if data.array_dim is not None and index >= data.array_dim:
+                return NO_MATCHING_FIELD
+            assert index >= 0 and remaining_offset >= 0
+
+            # Assume this is an array access at the computed `index`.
+            # Check if there is a field at the `remaining_offset` offset
+            subpath, subtype, sub_remaining_offset = data.ptr_to.get_field(
+                remaining_offset, target_size=target_size
+            )
+            if subpath is not None:
+                # Success: prepend `index` and return
+                subpath.insert(0, index)
+                return subpath, subtype, sub_remaining_offset
+            return NO_MATCHING_FIELD
+
+        if self.is_struct():
+            data = self.data()
+            assert data.struct is not None
+            possible_fields = data.struct.fields_at_offset(offset)
+            if not possible_fields:
+                return NO_MATCHING_FIELD
+            possible_results: List[Type.GetFieldResult] = []
+            if target_size is None or target_size == self.get_size_bytes():
+                possible_results.append(([], self, offset))
+            for field in possible_fields:
+                inner_offset_bits = offset - field.offset
+                subpath, subtype, sub_remaining_offset = field.type.get_field(
+                    inner_offset_bits, target_size=target_size
+                )
+                if subpath is None:
+                    continue
+                subpath.insert(0, field.name)
+                possible_results.append((subpath, subtype, sub_remaining_offset))
+                if (
+                    target_size is not None
+                    and target_size == subtype.get_size_bytes()
+                    and sub_remaining_offset == 0
+                ):
+                    return possible_results[-1]
+            zero_offset_results = [r for r in possible_results if r[2] == 0]
+            if zero_offset_results:
+                return zero_offset_results[0]
+            if possible_results:
+                return possible_results[0]
+
+        if offset == 0 and (
+            target_size is None or target_size == self.get_size_bytes()
+        ):
+            # The whole type itself is a match
+            return [], self, 0
+
+        return NO_MATCHING_FIELD
+
+    def get_deref_field(
+        self, offset: int, *, target_size: Optional[int]
+    ) -> GetFieldResult:
+        """
+        Similar to `.get_field()`, but treat self as a pointer and find the field in the
+        pointer's target.  The return value has the same semantics as `.get_field()`.
+
+        If successful, the first item in the resulting `field_path` will be `0`.
+        This mirrors how `foo[0].bar` and `foo->bar` are equivalent in C.
+        """
+        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), offset)
+
+        target = self.get_pointer_target()
+        if target is None:
+            return NO_MATCHING_FIELD
+
+        # Assume the pointer is to a single object, and not an array.
+        field_path, field_type, remaining_offset = target.get_field(
+            offset, target_size=target_size
+        )
+        if field_path is not None:
+            field_path.insert(0, 0)
+        return field_path, field_type, remaining_offset
+
+    def get_initializer_fields(
         self,
     ) -> Optional[List[Union[int, "Type"]]]:
         """
-        If self is a CType, get a list of fields, suitable for creating an initializer,
-        or return None if an initializer cannot be made (e.g. a struct with bitfields)
+        If self is a struct or array (i.e. initialized with `{...}` syntax), then
+        return a list of fields suitable for creating an initializer.
+        Return None if an initializer cannot be made (e.g. a struct with bitfields)
 
-        Struct padding is represented by an int in the list, otherwise the list members
+        Padding is represented by an int in the list, otherwise the list fields
         denote the field's Type.
         """
         data = self.data()
-        if data.kind != TypeData.K_CTYPE or data.ctype_ref is None:
-            return None
-        assert data.typemap is not None
-        ctype = resolve_typedefs(data.ctype_ref, data.typemap)
-
-        # ArrayDecls are still used to when representing pointers-to-arrays, or
-        # multidimensional arrays.
-        # Treat an array of length N as a struct with N (identical) members
-        if isinstance(ctype, ca.ArrayDecl):
-            field_type, dim = array_type_and_dim(ctype, data.typemap)
-            if not dim:
-                # Do not support zero-sized arrays
+        if self.is_array():
+            assert data.ptr_to is not None
+            if data.array_dim is None:
                 return None
-            return [field_type] * dim
 
-        # Lookup the c_types.Struct representation
-        if not isinstance(ctype, ca.TypeDecl):
-            return None
-        if not isinstance(ctype.type, (ca.Struct, ca.Union)):
-            return None
-        struct = get_struct(ctype.type, data.typemap)
-        if not struct or struct.has_bitfields:
-            # Bitfields aren't supported; they aren't represented in `struct.fields`
-            return None
+            return [data.ptr_to] * data.array_dim
 
-        output: List[Union[int, Type]] = []
-        position = 0
-        for offset, fields in sorted(struct.fields.items()):
-            if offset < position:
-                # Overlapping fields, e.g. from expanded struct paths
-                continue
-            elif offset > position:
-                # Padding bytes
-                output.append(offset - position)
-
-            # Choose the first field in a union, or the unexpanded name in a struct
-            field = fields[0]
-            field_type = type_from_ctype(field.type, data.typemap, array_decay=False)
-            size = field_type.get_size_bytes()
-            if not size:
+        if self.is_struct():
+            assert data.struct is not None
+            if data.struct.has_bitfields:
+                # TODO: Support bitfields
                 return None
-            output.append(field_type)
-            position = offset + size
 
-        assert position <= struct.size
-        if position < struct.size:
-            # Insert padding bytes
-            output.append(struct.size - position)
+            output: List[Union[int, Type]] = []
+            position = 0
 
-        return output
+            def add_padding(upto: int) -> None:
+                nonlocal position
+                nonlocal output
+                assert upto >= position
+                if upto > position:
+                    output.append(upto - position)
+
+            for field in data.struct.fields:
+                assert field.offset >= position, "overlapping fields"
+
+                add_padding(field.offset)
+                field_size = field.type.get_size_bytes()
+                assert field_size is not None
+                output.append(field.type)
+                position = field.offset + field_size
+
+                # Unions only have an initializer for the first field
+                if data.struct.is_union:
+                    break
+
+            add_padding(data.struct.size)
+            return output
+
+        return None
 
     def to_decl(self, name: str, fmt: Formatter) -> str:
         decl = ca.Decl(
@@ -338,14 +508,14 @@ class Type:
         if data in seen:
             return simple_ctype(unk_symbol)
         seen.add(data)
-        size = data.size or 32
+        size_bits = data.size_bits or 32
         sign = "s" if data.sign & TypeData.SIGNED else "u"
 
         if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG and (
             data.likely_kind & (TypeData.K_INT | TypeData.K_FLOAT)
         ) not in (TypeData.K_INT, TypeData.K_FLOAT):
-            if data.size is not None:
-                return simple_ctype(f"{unk_symbol}{size}")
+            if data.size_bits is not None:
+                return simple_ctype(f"{unk_symbol}{size_bits}")
             return simple_ctype(unk_symbol)
 
         if (
@@ -353,24 +523,12 @@ class Type:
             or (data.likely_kind & (TypeData.K_FLOAT | TypeData.K_INT))
             == TypeData.K_FLOAT
         ):
-            return simple_ctype(f"f{size}")
+            return simple_ctype(f"f{size_bits}")
 
         if data.kind == TypeData.K_PTR:
             if data.ptr_to is None:
                 return ca.PtrDecl(type=simple_ctype("void"), quals=[])
             return ca.PtrDecl(type=data.ptr_to._to_ctype(seen, fmt), quals=[])
-
-        if data.kind == TypeData.K_CTYPE:
-            if data.ctype_ref is None:
-                return simple_ctype(unk_symbol)
-            ctype = copy.deepcopy(data.ctype_ref)
-            if isinstance(ctype, ca.TypeDecl) and isinstance(
-                ctype.type, (ca.Struct, ca.Union)
-            ):
-                if ctype.type.name is not None:
-                    # Remove struct field declarations for named structs
-                    ctype.type.decls = None
-            return ctype
 
         if data.kind == TypeData.K_FN:
             assert data.fn_sig is not None
@@ -401,7 +559,29 @@ class Type:
         if data.kind == TypeData.K_VOID:
             return simple_ctype("void")
 
-        return simple_ctype(f"{sign}{size}")
+        if data.kind == TypeData.K_ARRAY:
+            assert data.ptr_to is not None
+            dim: Optional[ca.Constant] = None
+            if data.array_dim is not None:
+                dim = ca.Constant(value=str(data.array_dim), type="")
+            return ca.ArrayDecl(
+                type=data.ptr_to._to_ctype(seen.copy(), fmt),
+                dim=dim,
+                dim_quals=[],
+            )
+
+        if data.kind == TypeData.K_STRUCT:
+            assert data.struct is not None
+            if data.struct.typedef_name:
+                return simple_ctype(data.struct.typedef_name)
+            # If there's no typedef or tag name, then label it as `_anonymous`
+            name = data.struct.tag_name or "_anonymous"
+            Class = ca.Union if data.struct.is_union else ca.Struct
+            return ca.TypeDecl(
+                declname=name, type=ca.Struct(name=name, decls=None), quals=[]
+            )
+
+        return simple_ctype(f"{sign}{size_bits}")
 
     def format(self, fmt: Formatter) -> str:
         return self.to_decl("", fmt)
@@ -418,11 +598,12 @@ class Type:
             ("I" if data.kind & TypeData.K_INT else "")
             + ("P" if data.kind & TypeData.K_PTR else "")
             + ("F" if data.kind & TypeData.K_FLOAT else "")
-            + ("C" if data.kind & TypeData.K_CTYPE else "")
             + ("N" if data.kind & TypeData.K_FN else "")
             + ("V" if data.kind & TypeData.K_VOID else "")
+            + ("A" if data.kind & TypeData.K_ARRAY else "")
+            + ("S" if data.kind & TypeData.K_STRUCT else "")
         )
-        sizestr = str(data.size) if data.size is not None else "?"
+        sizestr = str(data.size_bits) if data.size_bits is not None else "?"
         return f"Type({signstr + kindstr + sizestr})"
 
     @staticmethod
@@ -443,13 +624,7 @@ class Type:
 
     @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
-        return Type(TypeData(kind=TypeData.K_PTR, size=32, ptr_to=type))
-
-    @staticmethod
-    def _ctype(ctype: CType, typemap: TypeMap, size: Optional[int]) -> "Type":
-        return Type(
-            TypeData(kind=TypeData.K_CTYPE, size=size, ctype_ref=ctype, typemap=typemap)
-        )
+        return Type(TypeData(kind=TypeData.K_PTR, size_bits=32, ptr_to=type))
 
     @staticmethod
     def function(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
@@ -459,7 +634,7 @@ class Type:
 
     @staticmethod
     def f32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_FLOAT, size=32))
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=32))
 
     @staticmethod
     def floatish() -> "Type":
@@ -467,58 +642,58 @@ class Type:
 
     @staticmethod
     def f64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_FLOAT, size=64))
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=64))
 
     @staticmethod
     def s8() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=8, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=8, sign=TypeData.SIGNED))
 
     @staticmethod
     def u8() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=8, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=8, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s16() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=16, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=16, sign=TypeData.SIGNED))
 
     @staticmethod
     def u16() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=16, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=16, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=32, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=32, sign=TypeData.SIGNED))
 
     @staticmethod
     def u32() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=32, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=32, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def s64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=64, sign=TypeData.SIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=64, sign=TypeData.SIGNED))
 
     @staticmethod
     def u64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=64, sign=TypeData.UNSIGNED))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=64, sign=TypeData.UNSIGNED))
 
     @staticmethod
     def int64() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=64))
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=64))
 
     @staticmethod
-    def int_of_size(size: int) -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, size=size))
+    def int_of_size(size_bits: int) -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits))
 
     @staticmethod
     def reg32(*, likely_float: bool) -> "Type":
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INTPTR
-        return Type(TypeData(kind=TypeData.K_ANYREG, likely_kind=likely, size=32))
+        return Type(TypeData(kind=TypeData.K_ANYREG, likely_kind=likely, size_bits=32))
 
     @staticmethod
     def reg64(*, likely_float: bool) -> "Type":
         kind = TypeData.K_FLOAT | TypeData.K_INT
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INT
-        return Type(TypeData(kind=kind, likely_kind=likely, size=64))
+        return Type(TypeData(kind=kind, likely_kind=likely, size_bits=64))
 
     @staticmethod
     def bool() -> "Type":
@@ -526,7 +701,79 @@ class Type:
 
     @staticmethod
     def void() -> "Type":
-        return Type(TypeData(kind=TypeData.K_VOID, size=0))
+        return Type(TypeData(kind=TypeData.K_VOID, size_bits=0))
+
+    @staticmethod
+    def array(type: "Type", dim: Optional[int]) -> "Type":
+        # Array elements must have a known size
+        el_size = type.get_size_bits()
+        assert el_size is not None
+
+        size_bits = None if dim is None else (el_size * dim)
+        return Type(
+            TypeData(
+                kind=TypeData.K_ARRAY, size_bits=size_bits, ptr_to=type, array_dim=dim
+            )
+        )
+
+    @staticmethod
+    def struct(st: "StructDeclaration") -> "Type":
+        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size * 8, struct=st))
+
+    @staticmethod
+    def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> "Type":
+        real_ctype = resolve_typedefs(ctype, typemap)
+        if isinstance(real_ctype, ca.ArrayDecl):
+            dim = None
+            try:
+                if real_ctype.dim is not None:
+                    dim = parse_constant_int(real_ctype.dim, typemap)
+            except DecompFailure:
+                pass
+            inner_type = Type.ctype(real_ctype.type, typemap, typepool)
+            return Type.array(inner_type, dim)
+        if isinstance(real_ctype, ca.PtrDecl):
+            return Type.ptr(Type.ctype(real_ctype.type, typemap, typepool))
+        if isinstance(real_ctype, ca.FuncDecl):
+            fn = parse_function(real_ctype)
+            assert fn is not None
+            fn_sig = FunctionSignature(
+                return_type=Type.void(),
+                is_variadic=fn.is_variadic,
+            )
+            if fn.ret_type is not None:
+                fn_sig.return_type = Type.ctype(fn.ret_type, typemap, typepool)
+            if fn.params is not None:
+                fn_sig.params = [
+                    FunctionParam(
+                        name=param.name or "",
+                        type=Type.ctype(param.type, typemap, typepool),
+                    )
+                    for param in fn.params
+                ]
+                fn_sig.params_known = True
+            return Type.function(fn_sig)
+        if isinstance(real_ctype, ca.TypeDecl):
+            if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
+                return Type.struct(
+                    StructDeclaration.from_ctype(real_ctype.type, typemap, typepool)
+                )
+            names = (
+                ["int"]
+                if isinstance(real_ctype.type, ca.Enum)
+                else real_ctype.type.names
+            )
+            if "double" in names:
+                return Type.f64()
+            if "float" in names:
+                return Type.f32()
+            if "void" in names:
+                return Type.void()
+            size_bits = 8 * primitive_size(real_ctype.type)
+            assert size_bits > 0
+            sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
+            return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
+        static_assert_unreachable(real_ctype)
 
 
 @dataclass(eq=False)
@@ -599,164 +846,105 @@ class FunctionSignature:
         return can_unify
 
 
-def type_from_ctype(ctype: CType, typemap: TypeMap, array_decay: bool = True) -> Type:
-    real_ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(real_ctype, ca.ArrayDecl):
-        inner_type, dim = array_type_and_dim(real_ctype, typemap)
-        if array_decay:
-            return Type.ptr(inner_type)
-        size = inner_type.get_size_bits()
-        if size is not None and dim is not None:
-            size *= dim
-        else:
-            size = None
-        return Type._ctype(real_ctype, typemap, size=size)
-    if isinstance(real_ctype, ca.PtrDecl):
-        return Type.ptr(type_from_ctype(real_ctype.type, typemap, array_decay=False))
-    if isinstance(real_ctype, ca.FuncDecl):
-        fn = parse_function(real_ctype)
-        assert fn is not None
-        fn_sig = FunctionSignature(
-            return_type=Type.void(),
-            is_variadic=fn.is_variadic,
+@dataclass(eq=False)
+class StructDeclaration:
+    """Representation of a C struct or union"""
+
+    @dataclass(eq=False)
+    class StructField:
+        type: Type
+        offset: int
+        name: str
+
+    size: int
+    align: int
+    tag_name: Optional[str]
+    typedef_name: Optional[str]
+    fields: List[StructField]  # sorted by `.offset`
+    has_bitfields: bool
+    is_union: bool
+
+    def unify(
+        self,
+        other: "StructDeclaration",
+        *,
+        seen: Optional[Set["TypeData"]] = None,
+    ) -> bool:
+        # NB: Currently, the only structs that exist are defined from ctypes in the typemap,
+        # so for now we can use reference equality to check if two structs are compatible.
+        return self is other
+
+    def fields_at_offset(self, offset: int) -> List[StructField]:
+        """Return the list of StructFields which contain the given offset (in bits)"""
+        fields = []
+        for field in self.fields:
+            # We assume fields are sorted by `offset`, ascending
+            if field.offset > offset:
+                break
+            field_size = field.type.get_size_bytes()
+            assert field_size is not None
+            if field.offset + field_size < offset:
+                continue
+            fields.append(field)
+        return fields
+
+    @staticmethod
+    def from_ctype(
+        ctype: CStructUnion, typemap: TypeMap, typepool: TypePool
+    ) -> "StructDeclaration":
+        """
+        Return StructDeclaration for a given ctype struct or union, constructing it
+        and registering it in the typepool if it does not already exist.
+        """
+        existing_struct = typepool.get_struct_for_ctype(ctype)
+        if existing_struct:
+            return existing_struct
+
+        struct = parse_struct(ctype, typemap)
+
+        typedef_name: Optional[str] = None
+        if ctype in typemap.struct_typedefs:
+            typedef = typemap.struct_typedefs[ctype]
+            assert isinstance(typedef.type, ca.IdentifierType)
+            typedef_name = typedef.type.names[0]
+        elif ctype.name and ctype.name in typemap.struct_typedefs:
+            typedef = typemap.struct_typedefs[ctype.name]
+            assert isinstance(typedef.type, ca.IdentifierType)
+            typedef_name = typedef.type.names[0]
+
+        assert (
+            struct.size % struct.align == 0
+        ), "struct size must be a multiple of its alignment"
+
+        decl = StructDeclaration(
+            size=struct.size,
+            align=struct.align,
+            tag_name=ctype.name,
+            typedef_name=typedef_name,
+            fields=[],
+            has_bitfields=struct.has_bitfields,
+            is_union=isinstance(ctype, ca.Union),
         )
-        if fn.ret_type is not None:
-            fn_sig.return_type = type_from_ctype(fn.ret_type, typemap)
-        if fn.params is not None:
-            fn_sig.params = [
-                FunctionParam(
-                    name=param.name or "",
-                    type=type_from_ctype(param.type, typemap),
-                )
-                for param in fn.params
-            ]
-            fn_sig.params_known = True
-        return Type.function(fn_sig)
-    if isinstance(real_ctype, ca.TypeDecl):
-        if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
-            struct = parse_struct(real_ctype.type, typemap)
-            return Type._ctype(struct.type, typemap, size=struct.size * 8)
-        names = (
-            ["int"] if isinstance(real_ctype.type, ca.Enum) else real_ctype.type.names
-        )
-        if "double" in names:
-            return Type.f64()
-        if "float" in names:
-            return Type.f32()
-        size = 8 * primitive_size(real_ctype.type)
-        if not size:
-            return Type._ctype(ctype, typemap, size=None)
-        sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
-        return Type(TypeData(kind=TypeData.K_INT, size=size, sign=sign))
+        # Register the struct in the typepool now, before parsing the fields,
+        # in case there are any self-referential fields in this struct.
+        typepool.add_struct(decl, ctype)
 
-
-def array_type_and_dim(ctype: ca.ArrayDecl, typemap: TypeMap) -> Tuple[Type, int]:
-    dim = 0
-    try:
-        if ctype.dim is not None:
-            dim = parse_constant_int(ctype.dim, typemap)
-    except DecompFailure:
-        pass
-    return (
-        type_from_ctype(ctype.type, typemap, array_decay=False),
-        dim,
-    )
-
-
-def ptr_type_from_ctype(ctype: CType, typemap: TypeMap) -> Tuple[Type, Optional[int]]:
-    real_ctype = resolve_typedefs(ctype, typemap)
-    if isinstance(real_ctype, ca.ArrayDecl):
-        # Array to pointer decay
-        inner_type, dim = array_type_and_dim(real_ctype, typemap)
-        return Type.ptr(inner_type), dim
-    return Type.ptr(type_from_ctype(ctype, typemap)), None
-
-
-def get_field(
-    type: Type, offset: int, *, target_size: Optional[int]
-) -> Tuple[Optional[str], Type, Type, Optional[int]]:
-    """Returns field name, target type, target pointer type, and
-    the field's array size (or None if the field is not an array)."""
-    if target_size is None and offset == 0:
-        # We might as well take a pointer to the whole struct
-        target = type.get_pointer_target() or Type.any()
-        return None, target, type, None
-
-    deref_type = type.get_pointer_target()
-    if deref_type is None:
-        return None, Type.any(), Type.ptr(), None
-    ctype_and_typemap = deref_type.get_ctype_and_typemap()
-    if ctype_and_typemap is None:
-        return None, Type.any(), Type.ptr(), None
-    ctype, typemap = ctype_and_typemap
-    ctype = resolve_typedefs(ctype, typemap)
-
-    if isinstance(ctype, ca.TypeDecl) and isinstance(ctype.type, (ca.Struct, ca.Union)):
-        struct = get_struct(ctype.type, typemap)
-        if struct:
-            fields = struct.fields.get(offset)
-            if fields:
-                # Ideally, we should use target_size and the target pointer type to
-                # determine which struct field to use if there are multiple at the
-                # same offset (e.g. if a struct starts here, or we have a union).
-                # For now though, we just use target_size as a boolean signal -- if
-                # it's known we take an arbitrary subfield that's as concrete as
-                # possible, if unknown we prefer a whole substruct. (The latter case
-                # happens when taking pointers to fields -- pointers to substructs are
-                # more common and can later be converted to concrete field pointers.)
-                if target_size is None:
-                    # Structs will be placed first in the field list.
-                    field = fields[0]
-                else:
-                    # Pick the first subfield in case of unions.
-                    correct_size_fields = [f for f in fields if f.size == target_size]
-                    if len(correct_size_fields) == 1:
-                        field = correct_size_fields[0]
-                    else:
-                        ind = 0
-                        while ind + 1 < len(fields) and fields[ind + 1].name.startswith(
-                            fields[ind].name + "."
-                        ):
-                            ind += 1
-                        field = fields[ind]
-                return (
+        for offset, fields in sorted(struct.fields.items()):
+            for field in fields:
+                field_type = Type.ctype(field.type, typemap, typepool)
+                assert field.size == field_type.get_size_bytes(), (
+                    field.size,
+                    field_type.get_size_bytes(),
                     field.name,
-                    type_from_ctype(field.type, typemap),
-                    *ptr_type_from_ctype(field.type, typemap),
+                    field_type,
                 )
-    return None, Type.any(), Type.ptr(), None
+                decl.fields.append(
+                    StructDeclaration.StructField(
+                        type=field_type,
+                        offset=offset,
+                        name=field.name,
+                    )
+                )
+        assert decl.fields == sorted(decl.fields, key=lambda f: f.offset)
 
-
-def find_substruct_array(
-    type: Type, offset: int, scale: int
-) -> Optional[Tuple[str, int, Type]]:
-    if scale <= 0:
-        return None
-    deref_type = type.get_pointer_target()
-    if deref_type is None:
-        return None
-    ctype_and_typemap = deref_type.get_ctype_and_typemap()
-    if ctype_and_typemap is None:
-        return None
-    ctype, typemap = ctype_and_typemap
-    ctype = resolve_typedefs(ctype, typemap)
-    if not isinstance(ctype, ca.TypeDecl):
-        return None
-    if not isinstance(ctype.type, (ca.Struct, ca.Union)):
-        return None
-    struct = get_struct(ctype.type, typemap)
-    if not struct:
-        return None
-    for off, fields in sorted(struct.fields.items()):
-        if offset < off:
-            continue
-        for field in fields:
-            if offset >= off + field.size:
-                continue
-            field_type = resolve_typedefs(field.type, typemap)
-            if not isinstance(field_type, ca.ArrayDecl):
-                continue
-            size = var_size_align(field_type.type, typemap)[0]
-            if size == scale:
-                return field.name, off, type_from_ctype(field_type.type, typemap)
-    return None
+        return decl

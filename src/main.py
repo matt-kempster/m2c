@@ -41,7 +41,7 @@ def print_exception(sanitize: bool) -> None:
 def run(options: Options) -> int:
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
-    typemap: Optional[TypeMap] = None
+    typemap: TypeMap = TypeMap()
     try:
         for filename in options.filenames:
             if filename == "-":
@@ -63,7 +63,6 @@ def run(options: Options) -> int:
         return 1
 
     if options.dump_typemap:
-        assert typemap
         dump_typemap(typemap)
         return 0
 
@@ -88,7 +87,7 @@ def run(options: Options) -> int:
                 functions.append(all_functions[index_or_name])
 
     function_names = set(all_functions.keys())
-    global_info = GlobalInfo(asm_data, function_names, typemap)
+    global_info = GlobalInfo(asm_data, function_names, typemap=typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:

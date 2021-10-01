@@ -19,12 +19,12 @@ SomeStruct: size 0x280, align 8
   0x0: int_field (int)
   0x4: float_field (float)
   0x8: pointer_field (void *)
-  0x10: data_field (union SomeUnion) data_field.double_innerfield (double) data_field.char_innerfield (char)
+  0x10: data_field (union SomeUnion)
   0x18: enum_field (enum SomeEnum)
   0x1c: anon_enum_field (anon enum)
-  0x20: anon_struct_field (anon struct) anon_struct_field.sub (int)
+  0x20: anon_struct_field (anon struct)
   0x24: anon_union_field1 (int) anon_union_field2 (float)
-  0x28: inner_struct_field (struct SubStruct) inner_struct_field.x (int)
+  0x28: inner_struct_field (struct SubStruct)
   0x30: long_long_field (long long)
   0x38: bitfield_field (struct SomeBitfield)
   0x40: array_arithmetic_1 (char [1 + 1])
@@ -63,8 +63,7 @@ SomeStruct: size 0x280, align 8
   0x20d: array_arithmetic_34 (char [16 + ((0) ? (2) : (3))])
   0x220: array_arithmetic_35 (char [16 + ((2, 3))])
   0x233: char_array (char [2])
-  0x238: int_array (int [2]) int_array[0] (int)
-  0x23c: int_array[1] (int)
+  0x238: int_array (int [2])
   0x240: sub_array (struct 
 {
   int a;
@@ -72,26 +71,8 @@ SomeStruct: size 0x280, align 8
   {
     int c;
   } b[3];
-} [2]) sub_array[0] (anon struct) sub_array[0].a (int)
-  0x244: sub_array[0].b (struct 
-{
-  int c;
-} [3]) sub_array[0].b[0] (anon struct) sub_array[0].b[0].c (int)
-  0x248: sub_array[0].b[1] (anon struct) sub_array[0].b[1].c (int)
-  0x24c: sub_array[0].b[2] (anon struct) sub_array[0].b[2].c (int)
-  0x250: sub_array[1] (anon struct) sub_array[1].a (int)
-  0x254: sub_array[1].b (struct 
-{
-  int c;
-} [3]) sub_array[1].b[0] (anon struct) sub_array[1].b[0].c (int)
-  0x258: sub_array[1].b[1] (anon struct) sub_array[1].b[1].c (int)
-  0x25c: sub_array[1].b[2] (anon struct) sub_array[1].b[2].c (int)
-  0x260: multidim_array (int [2][3]) multidim_array[0] (int [3]) multidim_array[0][0] (int)
-  0x264: multidim_array[0][1] (int)
-  0x268: multidim_array[0][2] (int)
-  0x26c: multidim_array[1] (int [3]) multidim_array[1][0] (int)
-  0x270: multidim_array[1][1] (int)
-  0x274: multidim_array[1][2] (int)
+} [2])
+  0x260: multidim_array (int [2][3])
   0x278: end (char)
 
 Enums:
