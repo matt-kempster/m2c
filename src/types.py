@@ -25,25 +25,49 @@ from .options import Formatter
 AccessPath = List[Union[str, int]]
 
 
-class GlobalTypeInfo:
+@dataclass
+class TypePool:
     """
-    Mutable shared state for Types, implemented by GlobalInfo in translate.py.
+    Mutable shared state for Types, maintaining the set of available struct types.
     """
 
-    typemap: TypeMap
+    structs: Set["StructDeclaration"] = field(default_factory=set)
+    structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
+    structs_by_ctype: Dict[int, "StructDeclaration"] = field(default_factory=dict)
 
     def get_struct_for_ctype(
         self,
         ctype: CStructUnion,
     ) -> Optional["StructDeclaration"]:
-        ...
+        """Return the StructDeclaration for a given ctype struct, if known"""
+        struct = self.structs_by_ctype.get(id(ctype))
+        if struct is not None:
+            return struct
+        if ctype.name is not None:
+            return self.structs_by_tag_name.get(ctype.name)
+        return None
 
     def add_struct(
         self,
         struct: "StructDeclaration",
         ctype_or_tag_name: Union[CStructUnion, str],
     ) -> None:
-        ...
+        """Add the struct declaration to the set of known structs for later access"""
+        self.structs.add(struct)
+
+        tag_name: Optional[str]
+        if isinstance(ctype_or_tag_name, str):
+            tag_name = ctype_or_tag_name
+        else:
+            ctype = ctype_or_tag_name
+            tag_name = ctype.name
+            self.structs_by_ctype[id(ctype)] = struct
+
+        if tag_name is not None:
+            assert (
+                tag_name not in self.structs_by_tag_name
+            ), f"Duplicate tag: {tag_name}"
+            self.structs_by_tag_name[tag_name] = struct
 
 
 @dataclass(eq=False)
@@ -687,8 +711,7 @@ class Type:
         return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size * 8, struct=st))
 
     @staticmethod
-    def ctype(ctype: CType, global_info: GlobalTypeInfo) -> "Type":
-        typemap = global_info.typemap
+    def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> "Type":
         real_ctype = resolve_typedefs(ctype, typemap)
         if isinstance(real_ctype, ca.ArrayDecl):
             dim = None
@@ -697,10 +720,10 @@ class Type:
                     dim = parse_constant_int(real_ctype.dim, typemap)
             except DecompFailure:
                 pass
-            inner_type = Type.ctype(real_ctype.type, global_info)
+            inner_type = Type.ctype(real_ctype.type, typemap, typepool)
             return Type.array(inner_type, dim)
         if isinstance(real_ctype, ca.PtrDecl):
-            return Type.ptr(Type.ctype(real_ctype.type, global_info))
+            return Type.ptr(Type.ctype(real_ctype.type, typemap, typepool))
         if isinstance(real_ctype, ca.FuncDecl):
             fn = parse_function(real_ctype)
             assert fn is not None
@@ -709,12 +732,12 @@ class Type:
                 is_variadic=fn.is_variadic,
             )
             if fn.ret_type is not None:
-                fn_sig.return_type = Type.ctype(fn.ret_type, global_info)
+                fn_sig.return_type = Type.ctype(fn.ret_type, typemap, typepool)
             if fn.params is not None:
                 fn_sig.params = [
                     FunctionParam(
                         name=param.name or "",
-                        type=Type.ctype(param.type, global_info),
+                        type=Type.ctype(param.type, typemap, typepool),
                     )
                     for param in fn.params
                 ]
@@ -723,7 +746,7 @@ class Type:
         if isinstance(real_ctype, ca.TypeDecl):
             if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
                 return Type.struct(
-                    StructDeclaration.from_ctype(real_ctype.type, global_info)
+                    StructDeclaration.from_ctype(real_ctype.type, typemap, typepool)
                 )
             names = (
                 ["int"]
@@ -857,25 +880,25 @@ class StructDeclaration:
 
     @staticmethod
     def from_ctype(
-        ctype: CStructUnion, global_info: GlobalTypeInfo
+        ctype: CStructUnion, typemap: TypeMap, typepool: TypePool
     ) -> "StructDeclaration":
         """
         Return StructDeclaration for a given ctype struct or union, constructing it
-        and registering it in the global_info if it does not already exist.
+        and registering it in the typepool if it does not already exist.
         """
-        existing_struct = global_info.get_struct_for_ctype(ctype)
+        existing_struct = typepool.get_struct_for_ctype(ctype)
         if existing_struct:
             return existing_struct
 
-        struct = parse_struct(ctype, global_info.typemap)
+        struct = parse_struct(ctype, typemap)
 
         typedef_name: Optional[str] = None
-        if id(ctype) in global_info.typemap.struct_typedefs:
-            typedef = global_info.typemap.struct_typedefs[id(ctype)]
+        if id(ctype) in typemap.struct_typedefs:
+            typedef = typemap.struct_typedefs[id(ctype)]
             assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
-        elif ctype.name and ctype.name in global_info.typemap.struct_typedefs:
-            typedef = global_info.typemap.struct_typedefs[ctype.name]
+        elif ctype.name and ctype.name in typemap.struct_typedefs:
+            typedef = typemap.struct_typedefs[ctype.name]
             assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
 
@@ -892,13 +915,13 @@ class StructDeclaration:
             has_bitfields=struct.has_bitfields,
             is_union=isinstance(ctype, ca.Union),
         )
-        # Register the struct in the global_info now, before parsing the fields,
+        # Register the struct in the typepool now, before parsing the fields,
         # in case there are any self-referential fields in this struct.
-        global_info.add_struct(decl, ctype)
+        typepool.add_struct(decl, ctype)
 
         for offset, fields in sorted(struct.fields.items()):
             for field in fields:
-                field_type = Type.ctype(field.type, global_info)
+                field_type = Type.ctype(field.type, typemap, typepool)
                 assert field.size == field_type.get_size_bytes(), (
                     field.size,
                     field_type.get_size_bytes(),

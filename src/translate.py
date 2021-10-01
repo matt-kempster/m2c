@@ -19,7 +19,7 @@ from typing import (
     Union,
 )
 
-from .c_types import CType, StructUnion as CStructUnion, TypeMap
+from .c_types import CType, TypeMap
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     FlowGraph,
@@ -48,7 +48,7 @@ from .types import (
     FunctionSignature,
     StructDeclaration,
     Type,
-    GlobalTypeInfo,
+    TypePool,
 )
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
@@ -4009,15 +4009,12 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 
 
 @dataclass
-class GlobalInfo(GlobalTypeInfo):
+class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
-
     typemap: TypeMap = field(default_factory=TypeMap)
-    structs: Set["StructDeclaration"] = field(default_factory=set)
-    structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
-    structs_by_ctype: Dict[int, "StructDeclaration"] = field(default_factory=dict)
+    typepool: TypePool = field(default_factory=TypePool)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -4040,7 +4037,7 @@ class GlobalInfo(GlobalTypeInfo):
                 ctype = self.typemap.var_types.get(sym_name)
             if ctype is not None:
                 sym.type_in_typemap = True
-                sym.type.unify(Type.ctype(ctype, self))
+                sym.type.unify(Type.ctype(ctype, self.typemap, self.typepool))
 
         return AddressOf(sym, type=sym.type.reference())
 
@@ -4050,40 +4047,6 @@ class GlobalInfo(GlobalTypeInfo):
         if fn is None:
             return False
         return fn.ret_type is None
-
-    def get_struct_for_ctype(
-        self,
-        ctype: CStructUnion,
-    ) -> Optional["StructDeclaration"]:
-        """Return the StructDeclaration for a given ctype struct, if known"""
-        struct = self.structs_by_ctype.get(id(ctype))
-        if struct is not None:
-            return struct
-        if ctype.name is not None:
-            return self.structs_by_tag_name.get(ctype.name)
-        return None
-
-    def add_struct(
-        self,
-        struct: "StructDeclaration",
-        ctype_or_tag_name: Union[CStructUnion, str],
-    ) -> None:
-        """Add the struct declaration to the set of known structs for later access"""
-        self.structs.add(struct)
-
-        tag_name: Optional[str]
-        if isinstance(ctype_or_tag_name, str):
-            tag_name = ctype_or_tag_name
-        else:
-            ctype = ctype_or_tag_name
-            tag_name = ctype.name
-            self.structs_by_ctype[id(ctype)] = struct
-
-        if tag_name is not None:
-            assert (
-                tag_name not in self.structs_by_tag_name
-            ), f"Duplicate tag: {tag_name}"
-            self.structs_by_tag_name[tag_name] = struct
 
     def initializer_for_symbol(
         self, sym: GlobalSymbol, fmt: Formatter
