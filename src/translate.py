@@ -1011,6 +1011,11 @@ class StructAccess(Expression):
     type: Type = field(compare=False)
     checked_late_field_path: bool = field(default=False, compare=False)
 
+    def __post_init__(self) -> None:
+        assert self.field_path is None or (
+            self.field_path and isinstance(self.field_path[0], int)
+        ), "The first element of field_path, if present, must be an int"
+
     @staticmethod
     def access_path_to_field_name(path: AccessPath) -> str:
         """
@@ -1062,6 +1067,9 @@ class StructAccess(Expression):
                 self.field_path = field_path
                 self.type.unify(field_type)
 
+                # Check invariant on self.field_path
+                self.__post_init__()
+
             self.checked_late_field_path = True
         return self.field_path
 
@@ -1085,7 +1093,7 @@ class StructAccess(Expression):
 
         field_path = self.late_field_path()
 
-        if field_path not in (None, [0]):
+        if field_path is not None and field_path != [0]:
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = (
@@ -1095,10 +1103,6 @@ class StructAccess(Expression):
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [0, prefix + format_hex(self.offset)]
-
-        assert field_path and isinstance(
-            field_path[0], int
-        ), "The first element of field_path must be an int"
         field_name = self.access_path_to_field_name(field_path)
 
         # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
@@ -2649,6 +2653,8 @@ def handle_add(args: InstrArgs) -> Expression:
     rhs = args.reg(2)
     stack_info = args.stack_info
     type = Type.intptr()
+    # Because lhs & rhs are in registers, it shouldn't be possible for them to be arrays.
+    # If they are, treat them the same as pointers anyways.
     if lhs.type.is_pointer_or_array():
         type = Type.ptr()
     elif rhs.type.is_pointer_or_array():
@@ -2767,10 +2773,8 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
         only_floats = False
 
     for ind, param in enumerate(fn_sig.params):
-        param_type = param.type
-        if param_type.is_array():
-            # Array parameters decay into pointers
-            param_type = param_type.reference()
+        # Array parameters decay into pointers
+        param_type = param.type.decay()
         size, align = param_type.get_parameter_size_align_bytes()
         size = (size + 3) & ~3
         only_floats = only_floats and param_type.is_float()

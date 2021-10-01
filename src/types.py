@@ -281,6 +281,14 @@ class Type:
             return Type.ptr(data.ptr_to)
         return Type.ptr(self)
 
+    def decay(self) -> "Type":
+        """If self is an array, return a pointer to the element type. Otherwise, return self."""
+        if self.is_array():
+            data = self.data()
+            assert data.ptr_to is not None
+            return Type.ptr(data.ptr_to)
+        return self
+
     def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
         """If self is an array, return a tuple of the inner Type & the array dimension"""
         if not self.is_array():
