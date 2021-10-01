@@ -1012,23 +1012,28 @@ class StructAccess(Expression):
     checked_late_field_path: bool = field(default=False, compare=False)
 
     @staticmethod
-    def access_path_to_field_name(path: Optional[AccessPath], deref: bool) -> str:
+    def access_path_to_field_name(path: AccessPath) -> str:
         """
-        Convert a path like `["foo", 3, "bar"]` into a field name like `->foo[3].bar`.
-        If deref is False, the initial `.` is replaced with `->` and the first item in
-        the path must be a str.
+        Convert an access path into a dereferencing field name, like the following examples:
+            - `[0, "foo", 3, "bar"]` into `"->foo[3].bar"`
+            - `[0, 3, "bar"]` into `"[0][3].bar"`
+            - `[0, 1, 2]` into `"[0][1][2]"
+            - `[0]` into `"[0]"`
+        The path must have at least one element, and the first element must be an int.
         """
-        assert deref or (path and isinstance(path[0], str))
-        if path is None:
-            return ""
+        assert path and isinstance(
+            path[0], int
+        ), "The first element of path must be an int"
         output = ""
+
+        # Replace an initial "[0]." with "->"
+        if len(path) >= 2 and path[0] == 0 and isinstance(path[1], str):
+            output += f"->{path[1]}"
+            path = path[2:]
+
         for p in path:
             if isinstance(p, str):
-                if output or not deref:
-                    output += "."
-                else:
-                    output += "->"
-                output += p
+                output += f".{p}"
             elif isinstance(p, int):
                 output += f"[{p}]"
             else:
@@ -1038,12 +1043,11 @@ class StructAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def make_reference(self) -> bool:
-        self.late_field_path()
-        if self.field_path and self.field_path[-1] == 0:
-            self.field_path.pop()
-            return True
-        return False
+    def make_reference(self) -> Optional["StructAccess"]:
+        field_path = self.late_field_path()
+        if field_path and field_path[-1] == 0:
+            return replace(self, field_path=field_path[:-1])
+        return None
 
     def late_field_path(self) -> Optional[AccessPath]:
         # If we didn't have a type at the time when the struct access was
@@ -1081,7 +1085,7 @@ class StructAccess(Expression):
 
         field_path = self.late_field_path()
 
-        if field_path not in (None, [], [0]):
+        if field_path not in (None, [0]):
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = (
@@ -1090,33 +1094,28 @@ class StructAccess(Expression):
             return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
-            field_path = [prefix + format_hex(self.offset)]
+            field_path = [0, prefix + format_hex(self.offset)]
 
-        # Rewrite `x[0].y` to `x->y` by dropping the initial `0` in field_path
-        if (
-            field_path
-            and len(field_path) >= 2
-            and field_path[0] == 0
-            and isinstance(field_path[1], str)
-        ):
-            field_path = field_path[1:]
+        assert field_path and isinstance(
+            field_path[0], int
+        ), "The first element of field_path must be an int"
+        field_name = self.access_path_to_field_name(field_path)
 
         # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
         deref = True
         if (
             isinstance(var, AddressOf)
             and not var.expr.type.is_array()
-            and field_path
-            and isinstance(field_path[0], str)
+            and field_name.startswith("->")
         ):
             var = var.expr
+            field_name = field_name.replace("->", ".", 1)
             deref = False
 
         # Rewrite `x->unk0` to `*x` and `x.unk0` to `x`, unless has_nonzero_access
         if self.offset == 0 and not has_nonzero_access:
             return f"{'*' if deref else ''}{var.format(fmt)}"
 
-        field_name = self.access_path_to_field_name(field_path, deref)
         return f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
 
@@ -1213,6 +1212,9 @@ class Literal(Expression):
         )
         return prefix + mid + suffix
 
+    def likely_partial_offset(self) -> bool:
+        return self.value % 2 ** 15 in (0, 2 ** 15 - 1) and self.value < 0x1000000
+
 
 @dataclass(frozen=True, eq=True)
 class AddressOf(Expression):
@@ -1232,9 +1234,11 @@ class AddressOf(Expression):
             # Functions are automatically converted to function pointers
             # without an explicit `&` by the compiler
             return f"{self.expr.format(fmt)}"
-        if isinstance(self.expr, StructAccess) and self.expr.make_reference():
+        if isinstance(self.expr, StructAccess):
             # Simplify `&x[0]` into `x`
-            return f"{self.expr.format(fmt)}"
+            ref = self.expr.make_reference()
+            if ref:
+                return f"{ref.format(fmt)}"
         return f"&{self.expr.format(fmt)}"
 
 
@@ -1856,11 +1860,7 @@ def deref(
     uw_var = early_unwrap(var)
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
-            if (
-                isinstance(addend, Literal)
-                and addend.value % 2 ** 15 in [0, 2 ** 15 - 1]
-                and addend.value < 0x1000000
-            ):
+            if isinstance(addend, Literal) and addend.likely_partial_offset():
                 offset += addend.value
                 var = base
                 break
@@ -2261,10 +2261,8 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
     elif source.type.is_pointer_or_array():
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
-        # architecture.
-        # If the imm is exactly a multiple of 0x8000, then it is likely that we are
-        # constructing a large offset (see deref)
-        if isinstance(imm, Literal) and imm.value % 0x8000 != 0:
+        # architecture).
+        if isinstance(imm, Literal) and not imm.likely_partial_offset():
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
             )
@@ -2606,7 +2604,7 @@ def array_access_from_add(
         )
         # Check if the last item in the path is `0`, which indicates the start of an array
         # If it is, remove it: it will be replaced by `[index]`
-        if not sub_path or sub_path[-1] != 0:
+        if sub_path is None or len(sub_path) < 2 or sub_path[-1] != 0:
             return None
         sub_path.pop()
         base = StructAccess(
@@ -2622,21 +2620,17 @@ def array_access_from_add(
 
     ret: Expression = ArrayAccess(base, index, type=target_type)
 
-    # Add .field if necessary
-    field_path, field_type, remaining_offset = base.type.get_field(
+    # Add .field if necessary by wrapping ret in StructAccess(AddressOf(...))
+    ret_ref = AddressOf(ret, type=ret.type.reference())
+    field_path, field_type, remaining_offset = ret_ref.type.get_deref_field(
         offset, target_size=target_size
     )
-    if remaining_offset == 0:
-        # Rewrite terms like `&x.y.z[0]` as `x.y.z`
-        if ptr and field_path and field_path[-1] == 0:
-            field_path.pop()
-            ptr = False
-    else:
+    if remaining_offset != 0:
         field_path = None
 
     if offset != 0 or (target_size is not None and target_size != scale):
         ret = StructAccess(
-            struct_var=AddressOf(ret, type=Type.ptr()),
+            struct_var=ret_ref,
             offset=offset,
             target_size=target_size,
             field_path=field_path,
