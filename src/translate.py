@@ -3129,6 +3129,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
     "lw": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
     "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
