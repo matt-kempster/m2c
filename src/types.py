@@ -527,8 +527,17 @@ class Type:
 
         if data.kind == TypeData.K_PTR:
             if data.ptr_to is None:
-                return ca.PtrDecl(type=simple_ctype("void"), quals=[])
-            return ca.PtrDecl(type=data.ptr_to._to_ctype(seen, fmt), quals=[])
+                target_ctype = simple_ctype("void")
+            else:
+                target_ctype = data.ptr_to._to_ctype(seen.copy(), fmt)
+
+            # Strip parameter names from function pointers
+            if isinstance(target_ctype, ca.FuncDecl):
+                for arg in target_ctype.args.params:
+                    arg.name = None
+                    set_decl_name(arg)
+
+            return ca.PtrDecl(type=target_ctype, quals=[])
 
         if data.kind == TypeData.K_FN:
             assert data.fn_sig is not None
@@ -537,7 +546,7 @@ class Type:
             params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = []
             for param in data.fn_sig.params:
                 decl = ca.Decl(
-                    name=None,
+                    name=param.name,
                     type=param.type._to_ctype(seen.copy(), fmt),
                     quals=[],
                     storage=[],
