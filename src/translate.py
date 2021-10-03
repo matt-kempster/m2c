@@ -2356,6 +2356,9 @@ def deref_unaligned(
 
 
 def handle_lwl(args: InstrArgs) -> Expression:
+    # Unaligned load for the left part of a register (lwl can technically merge with
+    # a pre-existing lwr, but doesn't in practice, so we treat this as a standard
+    # destination-first operation)
     ref = args.memory_ref(1)
     expr = deref_unaligned(ref, args.regs, args.stack_info)
     key: Tuple[int, object]
@@ -2366,10 +2369,10 @@ def handle_lwl(args: InstrArgs) -> Expression:
     return Lwl(expr, key)
 
 
-def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
-    # This lwr may merge with an existing lwl, if it loads from the same target
-    # but with an offset that's +3.
-    uw_old_value = early_unwrap(old_value)
+def handle_lwr(args: InstrArgs) -> Expression:
+    # Unaligned load for the right part of a register. This lwr may merge with an
+    # existing lwl, if it loads from the same target but with an offset that's +3.
+    uw_old_value = early_unwrap(args.reg(0))
     ref = args.memory_ref(1)
     lwl_key: Tuple[int, object]
     if isinstance(ref, AddressMode):
@@ -2815,7 +2818,6 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
 
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
-LwrInstrMap = Dict[str, Callable[[InstrArgs, Expression], Expression]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
@@ -3133,15 +3135,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
     "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
-    # Unaligned load for the left part of a register (lwl can technically merge
-    # with a pre-existing lwr, but doesn't in practice, so we treat this as a
-    # standard destination-first operation)
+    # Unaligned loads
     "lwl": lambda a: handle_lwl(a),
-}
-CASES_LWR: LwrInstrMap = {
-    # Unaligned load for the right part of a register. Only writes a partial
-    # register.
-    "lwr": lambda a, old_value: handle_lwr(a, old_value),
+    "lwr": lambda a: handle_lwr(a),
 }
 
 
@@ -3175,8 +3171,6 @@ def output_regs_for_instr(
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
-        return reg_at(0)
-    if mnemonic in CASES_LWR:
         return reg_at(0)
     if mnemonic in CASES_FLOAT_COMP:
         return [Register("condition_bit")]
@@ -3869,13 +3863,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             mn_parts = mnemonic.split(".")
             if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
-
-        elif mnemonic in CASES_LWR:
-            assert mnemonic == "lwr"
-            target = args.reg_ref(0)
-            old_value = args.reg(0)
-            val = CASES_LWR[mnemonic](args, old_value)
-            set_reg(target, val)
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
