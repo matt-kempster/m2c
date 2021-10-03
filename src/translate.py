@@ -808,6 +808,23 @@ class BinaryOp(Condition):
 
 
 @dataclass(frozen=True, eq=False)
+class TernaryOp(Expression):
+    cond: Condition
+    left: Expression
+    right: Expression
+    type: Type
+
+    def dependencies(self) -> List[Expression]:
+        return [self.cond, self.left, self.right]
+
+    def format(self, fmt: Formatter) -> str:
+        cond_str = simplify_condition(self.cond).format(fmt)
+        left_str = self.left.format(fmt)
+        right_str = self.right.format(fmt)
+        return f"({cond_str} ? {left_str} : {right_str})"
+
+
+@dataclass(frozen=True, eq=False)
 class UnaryOp(Condition):
     op: str
     expr: Expression
@@ -2452,6 +2469,17 @@ def handle_sra(args: InstrArgs) -> Expression:
     return BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
 
 
+def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
+    op = "!=" if nonzero else "=="
+    type = Type.any_reg()
+    return TernaryOp(
+        BinaryOp.scmp(args.reg(2), op, Literal(0)),
+        as_type(args.reg(1), type, silent=True),
+        as_type(args.reg(0), type, silent=True),
+        type,
+    )
+
+
 def format_f32_imm(num: int) -> str:
     packed = struct.pack(">I", num & (2 ** 32 - 1))
     value = struct.unpack(">f", packed)[0]
@@ -3119,6 +3147,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "mfc1": lambda a: a.reg(1),
     "mov.s": lambda a: a.reg(1),
     "mov.d": lambda a: as_f64(a.dreg(1)),
+    # Conditional moves
+    "movn": lambda a: handle_conditional_move(a, True),
+    "movz": lambda a: handle_conditional_move(a, False),
     # FCSR get
     "cfc1": lambda a: ErrorExpr("cfc1"),
     # Immediates
