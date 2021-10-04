@@ -444,11 +444,8 @@ class Type:
                     # TODO Loosen this to Type.any()
                     field_type = Type.any_reg()
                     field_name = f"{data.struct.field_prefix}{offset:X}"
-                    new_field = data.struct.try_add_field(
-                        field_type, offset, field_name
-                    )
-                    if new_field:
-                        return [field_name], field_type, 0
+                    new_field = data.struct.add_field(field_type, offset, field_name)
+                    return [field_name], field_type, 0
             elif possible_results:
                 return possible_results[0]
 
@@ -961,11 +958,7 @@ class StructDeclaration:
             fields.append(field)
         return fields
 
-    def try_add_field(
-        self, type: Type, offset: int, name: str
-    ) -> Optional[StructField]:
-        if False and not self.is_hidden:
-            return None
+    def add_field(self, type: Type, offset: int, name: str) -> Optional[StructField]:
         assert (
             offset < self.size
         ), f"Cannot add field {name} at {offset}; struct size is {self.size}"
