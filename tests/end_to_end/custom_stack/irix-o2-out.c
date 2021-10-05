@@ -17,7 +17,7 @@ s32 test(struct Vec *v) {
     b = v->x + v->z;
     temp_t4 = v->y + v->z;
     c = temp_t4;
-    e = v->x * a;
+    e.x = v->x * a;
     e.y = v->y * b;
     e.z = v->z * temp_t4;
     if (a != 0) {

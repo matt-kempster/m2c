@@ -322,7 +322,9 @@ class StackInfo:
             return True
         return False
 
-    def get_stack_var(self, location: int, *, store: bool) -> "Expression":
+    def get_stack_var(
+        self, location: int, *, store: bool, size: Optional[int]
+    ) -> "Expression":
         # See `get_stack_info` for explanation
         if self.location_above_stack(location):
             ret, arg = self.get_argument(location - self.allocated_stack_size)
@@ -339,7 +341,7 @@ class StackInfo:
             # Local variable
             assert self.stack_pointer_type is not None
             field_path, field_type, _ = self.stack_pointer_type.get_deref_field(
-                location, target_size=None
+                location, target_size=size
             )
             if field_path is None:
                 raise DecompFailure(f"Failed to add local variable at sp+{location:#x}")
@@ -1898,7 +1900,7 @@ def deref(
     offset = arg.offset
     if isinstance(arg, AddressMode):
         if stack_info.is_stack_reg(arg.rhs):
-            return stack_info.get_stack_var(offset, store=store)
+            return stack_info.get_stack_var(offset, store=store, size=size)
         var = regs[arg.rhs]
     else:
         var = stack_info.global_info.address_of_gsym(arg.sym.symbol_name)
@@ -2297,7 +2299,7 @@ def handle_addi_real(
             # Changing sp. Just ignore that.
             return source
         # Keep track of all local variables that we take addresses of.
-        var = stack_info.get_stack_var(imm.value, store=False)
+        var = stack_info.get_stack_var(imm.value, store=False, size=None)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
         return AddressOf(var, type=var.type.reference())

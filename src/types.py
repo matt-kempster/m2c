@@ -970,10 +970,14 @@ class StructDeclaration:
         if not (0 <= offset < self.size):
             return None
 
-        # Check if the new field would overlap with any known fields
         # For now, assume that the type is only one byte wide
-        if any(f.known for f in self.fields_at_offset(offset)):
-            return None
+        for field in self.fields_at_offset(offset):
+            # Do not allow a new field to overlap with a known field
+            if field.known:
+                return None
+            # If we're trying to add a field that already exists, return that instead
+            if field.offset == offset and field.name == name and field.type.unify(type):
+                return field
 
         field = self.StructField(type=type, offset=offset, name=name, known=False)
         self.fields.append(field)
