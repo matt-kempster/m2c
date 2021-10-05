@@ -438,13 +438,12 @@ class Type:
                 # but has the wrong size
                 return zero_offset_results[0]
             elif exact:
-                # TODO: Apply this to all structs where `offset != 0 or not can_return_self`
-                if data.struct.is_hidden:
-                    # Try to insert a new field into the struct at the given offset
-                    # TODO Loosen this to Type.any()
-                    field_type = Type.any_reg()
-                    field_name = f"{data.struct.field_prefix}{offset:X}"
-                    new_field = data.struct.add_field(field_type, offset, field_name)
+                # Try to insert a new field into the struct at the given offset
+                # TODO Loosen this to Type.any()
+                field_type = Type.any_reg()
+                field_name = f"{data.struct.field_prefix}{offset:X}"
+                new_field = data.struct.try_add_field(field_type, offset, field_name)
+                if new_field is not None:
                     return [field_name], field_type, 0
             elif possible_results:
                 return possible_results[0]
@@ -922,6 +921,7 @@ class StructDeclaration:
         type: Type
         offset: int
         name: str
+        known: bool
 
     size: int
     align: int
@@ -958,11 +958,26 @@ class StructDeclaration:
             fields.append(field)
         return fields
 
-    def add_field(self, type: Type, offset: int, name: str) -> Optional[StructField]:
-        assert (
-            offset < self.size
-        ), f"Cannot add field {name} at {offset}; struct size is {self.size}"
-        field = self.StructField(type=type, offset=offset, name=name)
+    def try_add_field(
+        self, type: Type, offset: int, name: str
+    ) -> Optional[StructField]:
+        """
+        Try to add a field into the struct, and return it if successful.
+        Return None if the offset is outside of the bounds of the struct, or if the
+        added field would overlap with a field marked as "known".
+        """
+        # Check that the offset is within the struct bounds
+        if not (0 <= offset < self.size):
+            return None
+
+        # Check if the new field would overlap with any known fields
+        # For now, assume that the type is only one byte wide
+        if any(f.known for f in self.fields_at_offset(offset)):
+            return None
+
+        if not self.is_hidden:
+            print(f"> adding field at {offset:x} to {self}")
+        field = self.StructField(type=type, offset=offset, name=name, known=False)
         self.fields.append(field)
         self.fields.sort(key=lambda f: f.offset)
         return field
@@ -1035,6 +1050,7 @@ class StructDeclaration:
                         type=field_type,
                         offset=offset,
                         name=field.name,
+                        known=True,
                     )
                 )
         assert decl.fields == sorted(decl.fields, key=lambda f: f.offset)
