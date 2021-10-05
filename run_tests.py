@@ -152,6 +152,45 @@ def create_e2e_tests(
     cases.sort()
     return cases
 
+def find_tests_oot(asm_dir: Path) -> Iterator[List[Path]]:
+    rodata_suffixes = [".rodata.s", ".rodata2.s"]
+    for asm_file in asm_dir.rglob("*.s"):
+        # Skip .rodata files
+        asm_name = asm_file.name
+        if any(asm_name.endswith(s) for s in rodata_suffixes):
+            continue
+        path_list = [asm_file]
+
+        # Check for .rodata in the same directory
+        for suffix in rodata_suffixes:
+            path = asm_file.parent / asm_name.replace(".s", suffix)
+            if path.exists():
+                path_list.append(path)
+
+        yield path_list
+
+def find_tests_mm(asm_dir: Path) -> Iterator[List[Path]]:
+    for asm_file in asm_dir.rglob("*.text.s"):
+        path_list = [asm_file]
+
+        # Find .data/.rodata/.bss files in their data directory
+        data_path = Path(str(asm_file).replace("/asm/overlays/", "/data/").replace("/asm/", "/data/")).parent
+        for f in data_path.glob("*.s"):
+            path_list.append(f)
+
+        yield path_list
+
+def find_tests_splat(asm_dir: Path) -> Iterator[List[Path]]:
+    # This has only been tested with Paper Mario, but should work with other splat projects
+    for asm_file in (asm_dir / "nonmatchings").rglob("*.s"):
+        path_list = [asm_file]
+
+        # Find .data/.rodata/.bss files in their data directory
+        data_path = Path(str(asm_file).replace("/nonmatchings/", "/data/")).parent.parent
+        for f in data_path.glob("*.s"):
+            path_list.append(f)
+
+        yield path_list
 
 def create_project_tests(
     base_dir: Path,
@@ -161,73 +200,32 @@ def create_project_tests(
 ) -> List[TestCase]:
     cases: List[TestCase] = []
     asm_dir = base_dir / "asm"
-    for asm_file in asm_dir.rglob("*"):
-        if asm_file.suffix not in (".asm", ".s"):
-            continue
+    if "oot" in base_dir.parts:
+        file_iter = find_tests_oot(asm_dir)
+    elif "mm" in base_dir.parts:
+        file_iter = find_tests_mm(asm_dir)
+    elif "papermario" in base_dir.parts:
+        file_iter = find_tests_splat(asm_dir)
 
-        asm_name = asm_file.name
-        if (
-            asm_name.startswith("code_data")
-            or asm_name.startswith("code_rodata")
-            or asm_name.startswith("boot_data")
-            or asm_name.startswith("boot_rodata")
-            or asm_name.endswith("_data.asm")
-            or asm_name.endswith("_rodata.asm")
-            or asm_name.endswith(".data.s")
-            or asm_name.endswith(".rodata.s")
-            or asm_name.endswith(".rodata2.s")
-        ):
+    for file_list in file_iter:
+        if not file_list:
             continue
 
         flags = []
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 
-        # Guess the name of .data/.rodata file(s) for various decomp projects
-        for candidate in [
-            # mm code/*.asm
-            "code_data_" + asm_name,
-            "code_rodata_" + asm_name,
-            asm_name.replace("code_", "code_data_"),
-            asm_name.replace("code_", "code_rodata_"),
-            # mm boot/*.asm
-            "boot_data_" + asm_name,
-            "boot_rodata_" + asm_name,
-            asm_name.replace("boot_", "boot_data_"),
-            asm_name.replace("boot_", "boot_rodata_"),
-            # mm overlays/*.asm
-            asm_name.rpartition("_0x")[0] + "_data.asm",
-            asm_name.rpartition("_0x")[0] + "_rodata.asm",
-            asm_name.rpartition("_0x")[0] + "_late_rodata.asm",
-            # oot *.s
-            asm_name.replace(".s", ".rodata.s"),
-            asm_name.replace(".s", ".rodata2.s"),
-        ]:
-            if candidate == asm_name:
-                continue
-            f = asm_file.parent / candidate
-            if f.exists():
-                flags.append(str(f))
-        # papermario
-        papermario_data_path = Path(
-            str(asm_file).replace("/nonmatchings/", "/data/")
-        ).parent.parent
-        for f in papermario_data_path.glob("*.data.s"):
-            flags.append(str(f))
-        for f in papermario_data_path.glob("*.rodata.s"):
-            flags.append(str(f))
-
-        test_path = asm_file.relative_to(asm_dir)
+        test_path = file_list[0].relative_to(base_dir / "asm")
         name = f"{name_prefix}:{test_path}"
         output_file = (output_dir / test_path).with_suffix(".c")
 
         cases.append(
             TestCase(
                 name=name,
-                asm_file=asm_file,
+                asm_file=file_list[0],
                 output_file=output_file,
                 brief_crashes=False,
-                flags=flags,
+                flags=flags + [str(p) for p in file_list[1:]],
             )
         )
     cases.sort()
