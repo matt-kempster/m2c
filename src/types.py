@@ -975,8 +975,6 @@ class StructDeclaration:
         if any(f.known for f in self.fields_at_offset(offset)):
             return None
 
-        if not self.is_hidden:
-            print(f"> adding field at {offset:x} to {self}")
         field = self.StructField(type=type, offset=offset, name=name, known=False)
         self.fields.append(field)
         self.fields.sort(key=lambda f: f.offset)
