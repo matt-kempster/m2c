@@ -41,7 +41,7 @@ def print_exception(sanitize: bool) -> None:
 def run(options: Options) -> int:
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
-    typemap: TypeMap = TypeMap()
+    typemap = TypeMap.empty()
     try:
         for filename in options.filenames:
             if filename == "-":
@@ -52,9 +52,10 @@ def run(options: Options) -> int:
             all_functions.update((fn.name, fn) for fn in mips_file.functions)
             mips_file.asm_data.merge_into(asm_data)
 
-        if options.c_context is not None:
-            with open(options.c_context, "r", encoding="utf-8-sig") as f:
-                typemap = build_typemap(f.read())
+        for c_context in options.c_contexts:
+            typemap = build_typemap(
+                c_context, parent=typemap, use_cache=options.use_cache
+            )
     except (OSError, DecompFailure) as e:
         print(e)
         return 1
@@ -87,7 +88,7 @@ def run(options: Options) -> int:
                 functions.append(all_functions[index_or_name])
 
     function_names = set(all_functions.keys())
-    global_info = GlobalInfo(asm_data, function_names, typemap=typemap)
+    global_info = GlobalInfo(asm_data, function_names, typemap)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
@@ -160,9 +161,20 @@ def parse_flags(flags: List[str]) -> Options:
     group.add_argument(
         "--context",
         metavar="C_FILE",
-        dest="c_context",
+        dest="c_contexts",
+        action="append",
+        type=Path,
+        default=[],
         help="read variable types/function signatures/structs from an existing C file. "
         "The file must already have been processed by the C preprocessor.",
+    )
+    group.add_argument(
+        "--cache",
+        action="store_true",
+        dest="use_cache",
+        help="Enable caching of variable types/function signatures/structs from the parsed C context. "
+        "This option should not be used in untrusted environments. "
+        'The cache for "foo/ctx_bar.c" is stored in "foo/ctx_bar.c.m2c"',
     )
     group.add_argument(
         "-D",
@@ -371,7 +383,8 @@ def parse_flags(flags: List[str]) -> Options:
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize,
-        c_context=args.c_context,
+        c_contexts=args.c_contexts,
+        use_cache=args.use_cache,
         dump_typemap=args.dump_typemap,
         pdb_translate=args.pdb_translate,
         preproc_defines=preproc_defines,

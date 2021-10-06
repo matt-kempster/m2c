@@ -2,11 +2,25 @@
 based on a C AST. Based on the pycparser library."""
 
 import copy
-from dataclasses import dataclass, field
 import functools
+import hashlib
+import pickle
 import re
 from collections import defaultdict
-from typing import Dict, Iterator, List, Match, Optional, Set, Tuple, Union
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import (
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Match,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 
 from pycparser import c_ast as ca
 from pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
@@ -19,6 +33,7 @@ from .error import DecompFailure
 CType = Union[PtrDecl, ArrayDecl, TypeDecl, FuncDecl]
 StructUnion = Union[ca.Struct, ca.Union]
 SimpleType = Union[PtrDecl, TypeDecl]
+CParserScope = Dict[str, bool]
 
 
 @dataclass
@@ -63,8 +78,13 @@ class Function:
     is_variadic: bool
 
 
-@dataclass
+@dataclass(eq=False)
 class TypeMap:
+    # Change VERSION if TypeMap changes to invalidate all preexisting caches
+    VERSION: ClassVar[int] = 1
+    _empty: ClassVar["TypeMap"]
+
+    source_hash: str
     typedefs: Dict[str, CType] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
     functions: Dict[str, Function] = field(default_factory=dict)
@@ -73,6 +93,15 @@ class TypeMap:
         default_factory=dict
     )
     enum_values: Dict[str, int] = field(default_factory=dict)
+    cparser_scope: CParserScope = field(default_factory=dict)
+
+    @classmethod
+    def empty(cls) -> "TypeMap":
+        # Use a single global instance so it can be cached by lru_cache
+        return cls._empty
+
+
+TypeMap._empty = TypeMap("")
 
 
 def to_c(node: ca.Node) -> str:
@@ -534,9 +563,19 @@ def strip_macro_defs(text: str) -> str:
     return re.sub(pattern, lambda m: m.group(0).count("\n") * "\n", text)
 
 
-def parse_c(source: str) -> ca.FileAST:
+def parse_c(
+    source: str, initial_scope: CParserScope
+) -> Tuple[ca.FileAST, CParserScope]:
+    # This is a modified version of `CParser.parse()` which initializes `_scope_stack`,
+    # which contains the only stateful part of the parser that needs to be preserved
+    # when parsing multiple files.
+    c_parser = CParser()
+    c_parser.clex.filename = "<source>"
+    c_parser.clex.reset_lineno()
+    c_parser._scope_stack = [initial_scope.copy()]
+    c_parser._last_yielded_token = None
     try:
-        return CParser().parse(source, "<source>")
+        ast = c_parser.cparser.parse(input=source, lexer=c_parser.clex)
     except ParseError as e:
         msg = str(e)
         position, msg = msg.split(": ", 1)
@@ -555,15 +594,42 @@ def parse_c(source: str) -> ca.FileAST:
         else:
             posstr = ""
         raise DecompFailure(f"Syntax error when parsing C context.\n{msg}{posstr}")
+    return ast, c_parser._scope_stack[0].copy()
 
 
-@functools.lru_cache(maxsize=4)
-def build_typemap(source: str) -> TypeMap:
+@functools.lru_cache(maxsize=16)
+def build_typemap(source_path: Path, parent: TypeMap, use_cache: bool) -> TypeMap:
+    source = source_path.read_text(encoding="utf-8-sig")
+
+    # Compute a hash of the inputs to the TypeMap, which is used to check if the cached
+    # version is still valid. The hashing process does not need to be cryptographically
+    # secure, caching should only be enabled in trusted environments. (Unpickling files
+    # can lead to arbitrary code execution.)
+    hasher = hashlib.sha256()
+    hasher.update(f"version={TypeMap.VERSION}\n".encode("utf-8"))
+    hasher.update(f"parent={parent.source_hash}\n".encode("utf-8"))
+    hasher.update(source.encode("utf-8"))
+    source_hash = hasher.hexdigest()
+
+    cache_path = source_path.with_name(f"{source_path.name}.m2c")
+    if use_cache and cache_path.exists():
+        try:
+            with cache_path.open("rb") as f:
+                cache = cast(TypeMap, pickle.load(f))
+        except Exception as e:
+            print(f"Warning: Unable to read cache file {cache_path}, skipping ({e})")
+        else:
+            if cache.source_hash == source_hash:
+                return cache
+
     source = add_builtin_typedefs(source)
     source = strip_comments(source)
     source = strip_macro_defs(source)
-    ast: ca.FileAST = parse_c(source)
-    ret = TypeMap()
+
+    ast, result_scope = parse_c(source, parent.cparser_scope)
+    ret = replace(
+        copy.deepcopy(parent), cparser_scope=result_scope, source_hash=source_hash
+    )
 
     for item in ast.ext:
         if isinstance(item, ca.Typedef):
@@ -611,6 +677,14 @@ def build_typemap(source: str) -> TypeMap:
                 ret.var_types[fn.decl.name] = type_from_global_decl(fn.decl)
 
     Visitor().visit(ast)
+
+    if use_cache:
+        try:
+            with cache_path.open("wb") as f:
+                pickle.dump(ret, f)
+        except Exception as e:
+            print(f"Warning: Unable to write cache file {cache_path}, skipping ({e})")
+
     return ret
 
 
