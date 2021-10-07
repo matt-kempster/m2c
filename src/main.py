@@ -41,7 +41,6 @@ def print_exception(sanitize: bool) -> None:
 def run(options: Options) -> int:
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
-    typemap = TypeMap.empty()
     try:
         for filename in options.filenames:
             if filename == "-":
@@ -52,10 +51,7 @@ def run(options: Options) -> int:
             all_functions.update((fn.name, fn) for fn in mips_file.functions)
             mips_file.asm_data.merge_into(asm_data)
 
-        for c_context in options.c_contexts:
-            typemap = build_typemap(
-                c_context, parent=typemap, use_cache=options.use_cache
-            )
+        typemap = build_typemap(options.c_contexts, use_cache=options.use_cache)
     except (OSError, DecompFailure) as e:
         print(e)
         return 1

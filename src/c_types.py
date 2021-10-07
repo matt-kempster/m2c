@@ -597,95 +597,105 @@ def parse_c(
     return ast, c_parser._scope_stack[0].copy()
 
 
+def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
+    # Wrapper to convert `source_paths` into a hashable type
+    return _build_typemap(tuple(source_paths), use_cache)
+
+
 @functools.lru_cache(maxsize=16)
-def build_typemap(source_path: Path, parent: TypeMap, use_cache: bool) -> TypeMap:
-    source = source_path.read_text(encoding="utf-8-sig")
+def _build_typemap(source_paths: Tuple[Path], use_cache: bool) -> TypeMap:
+    typemap = TypeMap.empty()
 
-    # Compute a hash of the inputs to the TypeMap, which is used to check if the cached
-    # version is still valid. The hashing process does not need to be cryptographically
-    # secure, caching should only be enabled in trusted environments. (Unpickling files
-    # can lead to arbitrary code execution.)
-    hasher = hashlib.sha256()
-    hasher.update(f"version={TypeMap.VERSION}\n".encode("utf-8"))
-    hasher.update(f"parent={parent.source_hash}\n".encode("utf-8"))
-    hasher.update(source.encode("utf-8"))
-    source_hash = hasher.hexdigest()
+    for source_path in source_paths:
+        source = source_path.read_text(encoding="utf-8-sig")
 
-    cache_path = source_path.with_name(f"{source_path.name}.m2c")
-    if use_cache and cache_path.exists():
-        try:
-            with cache_path.open("rb") as f:
-                cache = cast(TypeMap, pickle.load(f))
-        except Exception as e:
-            print(f"Warning: Unable to read cache file {cache_path}, skipping ({e})")
-        else:
-            if cache.source_hash == source_hash:
-                return cache
+        # Compute a hash of the inputs to the TypeMap, which is used to check if the cached
+        # version is still valid. The hashing process does not need to be cryptographically
+        # secure, caching should only be enabled in trusted environments. (Unpickling files
+        # can lead to arbitrary code execution.)
+        hasher = hashlib.sha256()
+        hasher.update(f"version={TypeMap.VERSION}\n".encode("utf-8"))
+        hasher.update(f"parent={typemap.source_hash}\n".encode("utf-8"))
+        hasher.update(source.encode("utf-8"))
+        source_hash = hasher.hexdigest()
 
-    source = add_builtin_typedefs(source)
-    source = strip_comments(source)
-    source = strip_macro_defs(source)
+        cache_path = source_path.with_name(f"{source_path.name}.m2c")
+        if use_cache and cache_path.exists():
+            try:
+                with cache_path.open("rb") as f:
+                    cache = cast(TypeMap, pickle.load(f))
+            except Exception as e:
+                print(
+                    f"Warning: Unable to read cache file {cache_path}, skipping ({e})"
+                )
+            else:
+                if cache.source_hash == source_hash:
+                    return cache
 
-    ast, result_scope = parse_c(source, parent.cparser_scope)
-    ret = replace(
-        copy.deepcopy(parent), cparser_scope=result_scope, source_hash=source_hash
-    )
+        source = add_builtin_typedefs(source)
+        source = strip_comments(source)
+        source = strip_macro_defs(source)
 
-    for item in ast.ext:
-        if isinstance(item, ca.Typedef):
-            ret.typedefs[item.name] = item.type
-            if isinstance(item.type, TypeDecl) and isinstance(
-                item.type.type, (ca.Struct, ca.Union)
-            ):
-                typedef = basic_type([item.name])
-                if item.type.type.name:
-                    ret.struct_typedefs[item.type.type.name] = typedef
-                ret.struct_typedefs[item.type.type] = typedef
-        if isinstance(item, ca.FuncDef):
-            assert item.decl.name is not None, "cannot define anonymous function"
-            fn = parse_function(item.decl.type)
-            assert fn is not None
-            ret.functions[item.decl.name] = fn
-        if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
-            assert item.name is not None, "cannot define anonymous function"
-            fn = parse_function(item.type)
-            assert fn is not None
-            ret.functions[item.name] = fn
+        ast, result_scope = parse_c(source, typemap.cparser_scope)
+        typemap = replace(typemap, cparser_scope=result_scope, source_hash=source_hash)
 
-    defined_function_decls: Set[ca.Decl] = set()
+        for item in ast.ext:
+            if isinstance(item, ca.Typedef):
+                typemap.typedefs[item.name] = item.type
+                if isinstance(item.type, TypeDecl) and isinstance(
+                    item.type.type, (ca.Struct, ca.Union)
+                ):
+                    typedef = basic_type([item.name])
+                    if item.type.type.name:
+                        typemap.struct_typedefs[item.type.type.name] = typedef
+                    typemap.struct_typedefs[item.type.type] = typedef
+            if isinstance(item, ca.FuncDef):
+                assert item.decl.name is not None, "cannot define anonymous function"
+                fn = parse_function(item.decl.type)
+                assert fn is not None
+                typemap.functions[item.decl.name] = fn
+            if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
+                assert item.name is not None, "cannot define anonymous function"
+                fn = parse_function(item.type)
+                assert fn is not None
+                typemap.functions[item.name] = fn
 
-    class Visitor(ca.NodeVisitor):
-        def visit_Struct(self, struct: ca.Struct) -> None:
-            if struct.decls is not None:
-                parse_struct(struct, ret)
+        defined_function_decls: Set[ca.Decl] = set()
 
-        def visit_Union(self, union: ca.Union) -> None:
-            if union.decls is not None:
-                parse_struct(union, ret)
+        class Visitor(ca.NodeVisitor):
+            def visit_Struct(self, struct: ca.Struct) -> None:
+                if struct.decls is not None:
+                    parse_struct(struct, typemap)
 
-        def visit_Decl(self, decl: ca.Decl) -> None:
-            if decl.name is not None:
-                ret.var_types[decl.name] = type_from_global_decl(decl)
-            if not isinstance(decl.type, FuncDecl):
-                self.visit(decl.type)
+            def visit_Union(self, union: ca.Union) -> None:
+                if union.decls is not None:
+                    parse_struct(union, typemap)
 
-        def visit_Enum(self, enum: ca.Enum) -> None:
-            parse_enum(enum, ret)
+            def visit_Decl(self, decl: ca.Decl) -> None:
+                if decl.name is not None:
+                    typemap.var_types[decl.name] = type_from_global_decl(decl)
+                if not isinstance(decl.type, FuncDecl):
+                    self.visit(decl.type)
 
-        def visit_FuncDef(self, fn: ca.FuncDef) -> None:
-            if fn.decl.name is not None:
-                ret.var_types[fn.decl.name] = type_from_global_decl(fn.decl)
+            def visit_Enum(self, enum: ca.Enum) -> None:
+                parse_enum(enum, typemap)
 
-    Visitor().visit(ast)
+            def visit_FuncDef(self, fn: ca.FuncDef) -> None:
+                if fn.decl.name is not None:
+                    typemap.var_types[fn.decl.name] = type_from_global_decl(fn.decl)
 
-    if use_cache:
-        try:
-            with cache_path.open("wb") as f:
-                pickle.dump(ret, f)
-        except Exception as e:
-            print(f"Warning: Unable to write cache file {cache_path}, skipping ({e})")
+        Visitor().visit(ast)
 
-    return ret
+        if use_cache:
+            try:
+                with cache_path.open("wb") as f:
+                    pickle.dump(typemap, f)
+            except Exception as e:
+                print(
+                    f"Warning: Unable to write cache file {cache_path}, skipping ({e})"
+                )
+
+    return typemap
 
 
 def set_decl_name(decl: ca.Decl) -> None:
