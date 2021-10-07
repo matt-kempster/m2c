@@ -7,7 +7,7 @@ import hashlib
 import pickle
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     ClassVar,
@@ -94,14 +94,6 @@ class TypeMap:
     )
     enum_values: Dict[str, int] = field(default_factory=dict)
     cparser_scope: CParserScope = field(default_factory=dict)
-
-    @classmethod
-    def empty(cls) -> "TypeMap":
-        # Use a single global instance so it can be cached by lru_cache
-        return cls._empty
-
-
-TypeMap._empty = TypeMap("")
 
 
 def to_c(node: ca.Node) -> str:
@@ -599,12 +591,12 @@ def parse_c(
 
 def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
     # Wrapper to convert `source_paths` into a hashable type
-    return _build_typemap(tuple(source_paths), use_cache)
+    return _build_typemap(tuple(source_paths), True)
 
 
 @functools.lru_cache(maxsize=16)
-def _build_typemap(source_paths: Tuple[Path], use_cache: bool) -> TypeMap:
-    typemap = TypeMap.empty()
+def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
+    typemap = TypeMap(source_hash="")
 
     for source_path in source_paths:
         source = source_path.read_text(encoding="utf-8-sig")
@@ -638,7 +630,8 @@ def _build_typemap(source_paths: Tuple[Path], use_cache: bool) -> TypeMap:
         source = strip_macro_defs(source)
 
         ast, result_scope = parse_c(source, typemap.cparser_scope)
-        typemap = replace(typemap, cparser_scope=result_scope, source_hash=source_hash)
+        typemap.cparser_scope = result_scope
+        typemap.source_hash = source_hash
 
         for item in ast.ext:
             if isinstance(item, ca.Typedef):
