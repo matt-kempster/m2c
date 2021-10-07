@@ -169,11 +169,11 @@ def parse_flags(flags: List[str]) -> Options:
         "The file must already have been processed by the C preprocessor.",
     )
     group.add_argument(
-        "--cache",
-        action="store_true",
+        "--no-cache",
+        action="store_false",
         dest="use_cache",
         help="Enable caching of variable types/function signatures/structs from the parsed C context. "
-        "This option should not be used in untrusted environments. "
+        "This option should be used for untrusted environments. "
         'The cache for "foo/ctx_bar.c" is stored in "foo/ctx_bar.c.m2c"',
     )
     group.add_argument(

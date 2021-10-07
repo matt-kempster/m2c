@@ -69,7 +69,8 @@ if "source" in form:
             with tempfile.NamedTemporaryFile() as f:
                 f.write(bytes(context, "utf-8"))
                 f.file.close()
-                cmd.extend(["--context", f.name])
+                # There's no need to do caching on the temporary context file
+                cmd.extend(["--no-cache", "--context", f.name])
                 res = subprocess.run(
                     cmd,
                     stdout=subprocess.PIPE,

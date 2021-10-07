@@ -81,7 +81,7 @@ def decompile_and_compare(
             return None, f"{test_case.output_file} does not exist. Skippping."
         original_contents = "(file did not exist)"
 
-    test_flags = ["--sanitize-tracebacks", "--stop-on-error", "--cache"]
+    test_flags = ["--sanitize-tracebacks", "--stop-on-error"]
     test_flags.extend(test_case.flags)
     if test_case.flags_path is not None:
         test_flags.extend(get_test_flags(test_case.flags_path))
