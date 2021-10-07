@@ -84,7 +84,9 @@ class TypeMap:
     VERSION: ClassVar[int] = 1
     _empty: ClassVar["TypeMap"]
 
-    source_hash: str
+    cparser_scope: CParserScope = field(default_factory=dict)
+    source_hash: Optional[str] = None
+
     typedefs: Dict[str, CType] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
     functions: Dict[str, Function] = field(default_factory=dict)
@@ -93,7 +95,6 @@ class TypeMap:
         default_factory=dict
     )
     enum_values: Dict[str, int] = field(default_factory=dict)
-    cparser_scope: CParserScope = field(default_factory=dict)
 
 
 def to_c(node: ca.Node) -> str:
@@ -596,7 +597,7 @@ def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
 
 @functools.lru_cache(maxsize=16)
 def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
-    typemap = TypeMap(source_hash="")
+    typemap = TypeMap()
 
     for source_path in source_paths:
         source = source_path.read_text(encoding="utf-8-sig")
