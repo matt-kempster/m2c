@@ -630,7 +630,8 @@ def _build_typemap(source_paths: Tuple[Path], use_cache: bool) -> TypeMap:
                 )
             else:
                 if cache.source_hash == source_hash:
-                    return cache
+                    typemap = cache
+                    continue
 
         source = add_builtin_typedefs(source)
         source = strip_comments(source)
