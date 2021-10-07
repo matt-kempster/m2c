@@ -4035,9 +4035,9 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
-    global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
-    typemap: TypeMap = field(default_factory=TypeMap)
+    typemap: TypeMap
     typepool: TypePool = field(default_factory=TypePool)
+    global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)

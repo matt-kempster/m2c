@@ -1,5 +1,6 @@
 import contextlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
 
 
@@ -27,7 +28,8 @@ class Options:
     stop_on_error: bool
     print_assembly: bool
     visualize_flowgraph: bool
-    c_context: Optional[str]
+    c_contexts: List[Path]
+    use_cache: bool
     dump_typemap: bool
     pdb_translate: bool
     preproc_defines: Dict[str, int]

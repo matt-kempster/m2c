@@ -50,15 +50,15 @@ def get_test_flags(flags_path: Path) -> List[str]:
 
     flags_str = flags_path.read_text()
     flags_list = shlex.split(flags_str)
-    try:
-        context_index = flags_list.index("--context")
-        relative_context_path: str = flags_list[context_index + 1]
+    for i, flag in enumerate(flags_list):
+        if flag != "--context":
+            continue
+        try:
+            relative_context_path: str = flags_list[i + 1]
+        except IndexError:
+            raise Exception(f"{flags_path} contains --context without argument") from None
         absolute_context_path: Path = flags_path.parent / relative_context_path
-        flags_list[context_index + 1] = str(absolute_context_path)
-    except ValueError:
-        pass  # doesn't have --context flag
-    except IndexError:
-        raise Exception(f"{flags_path} contains --context without argument") from None
+        flags_list[i + 1] = str(absolute_context_path)
 
     return flags_list
 
