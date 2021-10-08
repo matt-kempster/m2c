@@ -1,5 +1,6 @@
 *.o
 tests/project/
+*.m2c
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

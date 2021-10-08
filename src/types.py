@@ -592,9 +592,20 @@ class Type:
             return simple_ctype(f"f{size_bits}")
 
         if data.kind == TypeData.K_PTR:
+            target_ctype: CType
             if data.ptr_to is None:
-                return ca.PtrDecl(type=simple_ctype("void"), quals=[])
-            return ca.PtrDecl(type=data.ptr_to._to_ctype(seen, fmt), quals=[])
+                target_ctype = simple_ctype("void")
+            else:
+                target_ctype = data.ptr_to._to_ctype(seen.copy(), fmt)
+
+            # Strip parameter names from function pointers
+            if isinstance(target_ctype, ca.FuncDecl) and target_ctype.args:
+                for arg in target_ctype.args.params:
+                    if isinstance(arg, ca.Decl):
+                        arg.name = None
+                        set_decl_name(arg)
+
+            return ca.PtrDecl(type=target_ctype, quals=[])
 
         if data.kind == TypeData.K_FN:
             assert data.fn_sig is not None

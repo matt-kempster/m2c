@@ -839,6 +839,23 @@ class BinaryOp(Condition):
 
 
 @dataclass(frozen=True, eq=False)
+class TernaryOp(Expression):
+    cond: Condition
+    left: Expression
+    right: Expression
+    type: Type
+
+    def dependencies(self) -> List[Expression]:
+        return [self.cond, self.left, self.right]
+
+    def format(self, fmt: Formatter) -> str:
+        cond_str = simplify_condition(self.cond).format(fmt)
+        left_str = self.left.format(fmt)
+        right_str = self.right.format(fmt)
+        return f"({cond_str} ? {left_str} : {right_str})"
+
+
+@dataclass(frozen=True, eq=False)
 class UnaryOp(Condition):
     op: str
     expr: Expression
@@ -2406,6 +2423,9 @@ def deref_unaligned(
 
 
 def handle_lwl(args: InstrArgs) -> Expression:
+    # Unaligned load for the left part of a register (lwl can technically merge with
+    # a pre-existing lwr, but doesn't in practice, so we treat this as a standard
+    # destination-first operation)
     ref = args.memory_ref(1)
     expr = deref_unaligned(ref, args.regs, args.stack_info)
     key: Tuple[int, object]
@@ -2416,10 +2436,10 @@ def handle_lwl(args: InstrArgs) -> Expression:
     return Lwl(expr, key)
 
 
-def handle_lwr(args: InstrArgs, old_value: Expression) -> Expression:
-    # This lwr may merge with an existing lwl, if it loads from the same target
-    # but with an offset that's +3.
-    uw_old_value = early_unwrap(old_value)
+def handle_lwr(args: InstrArgs) -> Expression:
+    # Unaligned load for the right part of a register. This lwr may merge with an
+    # existing lwl, if it loads from the same target but with an offset that's +3.
+    uw_old_value = early_unwrap(args.reg(0))
     ref = args.memory_ref(1)
     lwl_key: Tuple[int, object]
     if isinstance(ref, AddressMode):
@@ -2497,6 +2517,17 @@ def handle_sra(args: InstrArgs) -> Expression:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
     return BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
+
+
+def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
+    op = "!=" if nonzero else "=="
+    type = Type.any_reg()
+    return TernaryOp(
+        BinaryOp.scmp(args.reg(2), op, Literal(0)),
+        as_type(args.reg(1), type, silent=True),
+        as_type(args.reg(0), type, silent=True),
+        type,
+    )
 
 
 def format_f32_imm(num: int) -> str:
@@ -2863,7 +2894,6 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
 
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
-LwrInstrMap = Dict[str, Callable[[InstrArgs, Expression], Expression]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
@@ -3165,6 +3195,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "mfc1": lambda a: a.reg(1),
     "mov.s": lambda a: a.reg(1),
     "mov.d": lambda a: as_f64(a.dreg(1)),
+    # Conditional moves
+    "movn": lambda a: handle_conditional_move(a, True),
+    "movz": lambda a: handle_conditional_move(a, False),
     # FCSR get
     "cfc1": lambda a: ErrorExpr("cfc1"),
     # Immediates
@@ -3177,18 +3210,13 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lh": lambda a: handle_load(a, type=Type.s16()),
     "lhu": lambda a: handle_load(a, type=Type.u16()),
     "lw": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
     "lwu": lambda a: handle_load(a, type=Type.u32()),
     "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
     "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
-    # Unaligned load for the left part of a register (lwl can technically merge
-    # with a pre-existing lwr, but doesn't in practice, so we treat this as a
-    # standard destination-first operation)
+    # Unaligned loads
     "lwl": lambda a: handle_lwl(a),
-}
-CASES_LWR: LwrInstrMap = {
-    # Unaligned load for the right part of a register. Only writes a partial
-    # register.
-    "lwr": lambda a, old_value: handle_lwr(a, old_value),
+    "lwr": lambda a: handle_lwr(a),
 }
 
 
@@ -3222,8 +3250,6 @@ def output_regs_for_instr(
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
-        return reg_at(0)
-    if mnemonic in CASES_LWR:
         return reg_at(0)
     if mnemonic in CASES_FLOAT_COMP:
         return [Register("condition_bit")]
@@ -3917,13 +3943,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
 
-        elif mnemonic in CASES_LWR:
-            assert mnemonic == "lwr"
-            target = args.reg_ref(0)
-            old_value = args.reg(0)
-            val = CASES_LWR[mnemonic](args, old_value)
-            set_reg(target, val)
-
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
             if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
@@ -4064,9 +4083,9 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
-    global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
-    typemap: TypeMap = field(default_factory=TypeMap)
+    typemap: TypeMap
     typepool: TypePool = field(default_factory=TypePool)
+    global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
