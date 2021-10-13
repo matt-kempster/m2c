@@ -31,6 +31,7 @@ class TypePool:
     Mutable shared state for Types, maintaining the set of available struct types.
     """
 
+    unknown_field_prefix: str
     structs: Set["StructDeclaration"] = field(default_factory=set)
     structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
     structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
@@ -391,7 +392,7 @@ class Type:
 
             # Get a list of fields which contain the byte at offset. There may be more
             # than one if the StructDeclaration is for a union.
-            possible_fields = data.struct.fields_at_offset(offset)
+            possible_fields = data.struct.fields_containing_offset(offset)
 
             # We don't support bitfield access. If there isn't a field at the given offset,
             # it's better to bail early. We're likely recursively resolving a field, and
@@ -441,15 +442,15 @@ class Type:
                 # Try to insert a new field into the struct at the given offset
                 # TODO Loosen this to Type.any()
                 field_type = Type.any_reg()
-                field_name = f"{data.struct.field_prefix}{offset:X}"
+                field_name = f"{data.struct.new_field_prefix}{offset:X}"
                 new_field = data.struct.try_add_field(field_type, offset, field_name)
                 if new_field is not None:
                     return [field_name], field_type, 0
             elif possible_results:
                 return possible_results[0]
 
-        if (target_size is None or target_size == self.get_size_bytes()) and (
-            not exact or offset == 0
+        if (target_size is None or target_size == self.get_size_bytes() or self.get_size_bytes() is None) and (
+            offset == 0
         ):
             # The whole type itself is a match
             return [], self, offset
@@ -520,7 +521,9 @@ class Type:
                     output.append(upto - position)
 
             for field in data.struct.fields:
-                assert field.offset >= position, "overlapping fields"
+                # Overlapping fields aren't supported
+                if field.offset < position:
+                    return None
 
                 add_padding(field.offset)
                 field_size = field.type.get_size_bytes()
@@ -758,6 +761,10 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=64))
 
     @staticmethod
+    def reg_of_size(size_bits: Optional[int]) -> "Type":
+        return Type(TypeData(kind=TypeData.K_ANYREG, size_bits=size_bits))
+
+    @staticmethod
     def int_of_size(size_bits: int) -> "Type":
         return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits))
 
@@ -936,13 +943,13 @@ class StructDeclaration:
 
     size: int
     align: int
+    new_field_prefix: str
     tag_name: Optional[str] = None
     typedef_name: Optional[str] = None
     fields: List[StructField] = field(default_factory=list)  # sorted by `.offset`
     has_bitfields: bool = False
     is_union: bool = False
     is_hidden: bool = False
-    field_prefix: str = "unk"
 
     def unify(
         self,
@@ -954,7 +961,7 @@ class StructDeclaration:
         # so for now we can use reference equality to check if two structs are compatible.
         return self is other
 
-    def fields_at_offset(self, offset: int) -> List[StructField]:
+    def fields_containing_offset(self, offset: int) -> List[StructField]:
         """Return the list of StructFields which contain the given offset (in bytes)"""
         fields = []
         for field in self.fields:
@@ -977,18 +984,18 @@ class StructDeclaration:
         Return None if the offset is outside of the bounds of the struct, or if the
         added field would overlap with a field marked as "known".
         """
+        # TODO: Support unions
+        if self.is_union:
+            return None
+
         # Check that the offset is within the struct bounds
         if not (0 <= offset < self.size):
             return None
 
-        # For now, assume that the type is only one byte wide
-        for field in self.fields_at_offset(offset):
-            # Do not allow a new field to overlap with a known field
-            if field.known:
-                return None
-            # If we're trying to add a field that already exists, return that instead
-            if field.offset == offset and field.name == name and field.type.unify(type):
-                return field
+        # For now, assume that the type is only one byte wide, and do not allow
+        # the new field to overlap with any other field.
+        if self.fields_containing_offset(offset):
+            return None
 
         field = self.StructField(type=type, offset=offset, name=name, known=False)
         self.fields.append(field)
@@ -997,16 +1004,19 @@ class StructDeclaration:
 
     @staticmethod
     def unknown_of_size(
-        size: int, align: int, tag_name: Optional[str] = None
+            typepool: TypePool, size: int, tag_name: str, align: int = 1
     ) -> "StructDeclaration":
         """
         Return an StructDeclaration of a given size, but without any known fields
         """
-        return StructDeclaration(
+        decl = StructDeclaration(
             size=size,
             align=align,
             tag_name=tag_name,
+            new_field_prefix=typepool.unknown_field_prefix,
         )
+        typepool.add_struct(decl, tag_name)
+        return decl
 
     @staticmethod
     def from_ctype(
@@ -1044,6 +1054,7 @@ class StructDeclaration:
             fields=[],
             has_bitfields=struct.has_bitfields,
             is_union=isinstance(ctype, ca.Union),
+            new_field_prefix=typepool.unknown_field_prefix,
         )
         # Register the struct in the typepool now, before parsing the fields,
         # in case there are any self-referential fields in this struct.

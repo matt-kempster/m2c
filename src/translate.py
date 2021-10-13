@@ -323,7 +323,7 @@ class StackInfo:
         return False
 
     def get_stack_var(
-        self, location: int, *, store: bool, size: Optional[int]
+        self, location: int, *, store: bool
     ) -> "Expression":
         # See `get_stack_info` for explanation
         if self.location_above_stack(location):
@@ -341,10 +341,8 @@ class StackInfo:
             # Local variable
             assert self.stack_pointer_type is not None
             field_path, field_type, _ = self.stack_pointer_type.get_deref_field(
-                location, target_size=size
+                location, target_size=None
             )
-            if field_path is None:
-                raise DecompFailure(f"Failed to add local variable at sp+{location:#x}")
             return LocalVar(location, type=field_type, path=field_path)
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
@@ -526,11 +524,12 @@ def get_stack_info(
             )
     else:
         stack_struct = StructDeclaration.unknown_of_size(
-            size=info.allocated_stack_size, align=4, tag_name=stack_struct_name
+            global_info.typepool,
+            size=info.allocated_stack_size, tag_name=stack_struct_name
         )
     # Mark the struct as "hidden" so we never try to use a reference to the struct itself
     stack_struct.is_hidden = True
-    stack_struct.field_prefix = "sp"
+    stack_struct.new_field_prefix = "sp"
 
     # This acts as the type of the $sp register
     info.stack_pointer_type = Type.ptr(Type.struct(stack_struct))
@@ -997,12 +996,14 @@ class LocalVar(Expression):
     value: int
     type: Type = field(compare=False)
     path: Optional[AccessPath] = field(compare=False)
+    original_type: Optional[Type] = field(default=None, compare=False)
 
     def dependencies(self) -> List[Expression]:
         return []
 
     def format(self, fmt: Formatter) -> str:
-        fallback_name = f"unksp{format_hex(self.value)}"
+        unk_prefix = "unksp" + ("_" if fmt.coding_style.unknown_underscore else "")
+        fallback_name = f"{unk_prefix}{format_hex(self.value)}"
         if self.path is None:
             return fallback_name
 
@@ -1010,7 +1011,10 @@ class LocalVar(Expression):
         if not name.startswith("->"):
             return fallback_name
 
-        return name[2:]
+        name = name[2:]
+        if False and self.original_type:
+            return f"({self.type.format(fmt)}) {name}"
+        return name
 
     def toplevel_decl(self, fmt: Formatter) -> Optional[str]:
         """Return a declaration for this LocalVar, if required."""
@@ -1917,7 +1921,7 @@ def deref(
     offset = arg.offset
     if isinstance(arg, AddressMode):
         if stack_info.is_stack_reg(arg.rhs):
-            return stack_info.get_stack_var(offset, store=store, size=size)
+            return stack_info.get_stack_var(offset, store=store)
         var = regs[arg.rhs]
     else:
         var = stack_info.global_info.address_of_gsym(arg.sym.symbol_name)
@@ -2316,7 +2320,7 @@ def handle_addi_real(
             # Changing sp. Just ignore that.
             return source
         # Keep track of all local variables that we take addresses of.
-        var = stack_info.get_stack_var(imm.value, store=False, size=None)
+        var = stack_info.get_stack_var(imm.value, store=False)
         if isinstance(var, LocalVar):
             stack_info.add_local_var(var)
         return AddressOf(var, type=var.type.reference())
@@ -4084,7 +4088,7 @@ class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
     typemap: TypeMap
-    typepool: TypePool = field(default_factory=TypePool)
+    typepool: TypePool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:

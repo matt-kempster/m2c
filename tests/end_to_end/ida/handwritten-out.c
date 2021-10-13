@@ -1,4 +1,4 @@
-extern ? symbol;
+extern s32 symbol;
 
 s32 test(void) {
     s32 temp_a1;

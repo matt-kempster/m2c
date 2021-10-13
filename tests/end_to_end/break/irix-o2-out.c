@@ -1,4 +1,4 @@
-extern ? D_410150;
+extern s32 D_410150;
 
 void test(s32 arg0) {
     s32 temp_v0;

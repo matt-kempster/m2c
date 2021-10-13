@@ -56,7 +56,9 @@ def get_test_flags(flags_path: Path) -> List[str]:
         try:
             relative_context_path: str = flags_list[i + 1]
         except IndexError:
-            raise Exception(f"{flags_path} contains --context without argument") from None
+            raise Exception(
+                f"{flags_path} contains --context without argument"
+            ) from None
         absolute_context_path: Path = flags_path.parent / relative_context_path
         flags_list[i + 1] = str(absolute_context_path)
 
@@ -152,6 +154,7 @@ def create_e2e_tests(
     cases.sort()
     return cases
 
+
 def find_tests_oot(asm_dir: Path) -> Iterator[List[Path]]:
     rodata_suffixes = [".rodata.s", ".rodata2.s"]
     for asm_file in asm_dir.rglob("*.s"):
@@ -169,16 +172,20 @@ def find_tests_oot(asm_dir: Path) -> Iterator[List[Path]]:
 
         yield path_list
 
+
 def find_tests_mm(asm_dir: Path) -> Iterator[List[Path]]:
     for asm_file in asm_dir.rglob("*.text.s"):
         path_list = [asm_file]
 
         # Find .data/.rodata/.bss files in their data directory
-        data_path = Path(str(asm_file).replace("/asm/overlays/", "/data/").replace("/asm/", "/data/")).parent
+        data_path = Path(
+            str(asm_file).replace("/asm/overlays/", "/data/").replace("/asm/", "/data/")
+        ).parent
         for f in data_path.glob("*.s"):
             path_list.append(f)
 
         yield path_list
+
 
 def find_tests_splat(asm_dir: Path) -> Iterator[List[Path]]:
     # This has only been tested with Paper Mario, but should work with other splat projects
@@ -186,11 +193,14 @@ def find_tests_splat(asm_dir: Path) -> Iterator[List[Path]]:
         path_list = [asm_file]
 
         # Find .data/.rodata/.bss files in their data directory
-        data_path = Path(str(asm_file).replace("/nonmatchings/", "/data/")).parent.parent
+        data_path = Path(
+            str(asm_file).replace("/nonmatchings/", "/data/")
+        ).parent.parent
         for f in data_path.glob("*.s"):
             path_list.append(f)
 
         yield path_list
+
 
 def create_project_tests(
     base_dir: Path,
