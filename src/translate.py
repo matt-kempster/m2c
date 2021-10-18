@@ -4197,7 +4197,7 @@ class GlobalInfo:
                 # or was a variable-length array there ("VLA", e.g. `int []`)
                 # (Otherwise, if the dim is provided by the typemap, we trust it.)
                 element_type, array_dim = sym.type.get_array()
-                is_vla = sym.type.is_array() and array_dim is None
+                is_vla = element_type is not None and array_dim is None
                 if data_entry and (not sym.type_in_typemap or is_vla):
                     # The size of the data entry is uncertain, because of padding
                     # between sections. Generally `(max_data_size - data_size) < 16`.
