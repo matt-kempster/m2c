@@ -46,6 +46,10 @@ if "source" in form:
             cmd.extend(["--globals", value])
     if "visualize" in form:
         cmd.append("--visualize")
+    if "compiler" in form:
+        value = form.getfirst("compiler")
+        if value in ("ido", "gcc"):
+            cmd.extend(["--compiler", value])
 
     comment_style = form.getfirst("comment_style", "multiline")
     if "oneline" in comment_style:
@@ -203,27 +207,34 @@ label {
     <input type="submit" value="Decompile">
     <input type="submit" name="visualize" value="Visualize">
     <label>Function: <select name="functionselect"></select></label>
-    <label>Use single var for:
-    <select name="regvarsselect">
-    <option value="none">none</option>
-    <option value="saved">saved regs</option>
-    <option value="all">all regs</option>
-    <option value="custom">custom</option>
-    </select>
     </label>
-    <label>Global declarations
+    <label>Global declarations:
     <select name="globals">
     <option value="used">used</option>
     <option value="all">all</option>
     <option value="none">none</option>
     </select>
     </label>
-    <label>Comment style
+    <label>Original Compiler:
+    <select name="compiler">
+    <option value="ido">ido</option>
+    <option value="gcc">gcc</option>
+    </select>
+    </label>
+    <label>Comment style:
     <select name="comment_style">
     <option value="multiline">/* ... */, aligned</option>
     <option value="multiline_unaligned">/* ... */, unaligned</option>
     <option value="oneline">// ..., aligned</option>
     <option value="oneline_unaligned">// ..., unaligned</option>
+    </select>
+    </label>
+    <label>Use single var for:
+    <select name="regvarsselect">
+    <option value="none">none</option>
+    <option value="saved">saved regs</option>
+    <option value="all">all regs</option>
+    <option value="custom">custom</option>
     </select>
     </label>
     <input name="regvars" value="">
@@ -315,7 +326,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars", "comment_style"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "noifs", "dark", "regvarsselect", "regvars", "comment_style", "compiler"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];

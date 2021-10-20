@@ -988,7 +988,12 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     any_decl = False
 
     with fmt.indented():
-        for local_var in function_info.stack_info.local_vars[::-1]:
+        local_vars = function_info.stack_info.local_vars
+        # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
+        # IDO's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
+        if options.compiler == Options.CompilerEnum.IDO:
+            local_vars.reverse()
+        for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)
             if type_decl is not None:
                 function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))

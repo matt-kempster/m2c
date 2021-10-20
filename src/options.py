@@ -19,6 +19,13 @@ class CodingStyle:
 
 @dataclass
 class Options:
+    class CompilerEnum(enum.Enum):
+        IDO = "ido"
+        GCC = "gcc"
+
+        def __str__(self) -> str:
+            return self.value
+
     class GlobalDeclsEnum(enum.Enum):
         ALL = "all"
         USED = "used"
@@ -48,6 +55,7 @@ class Options:
     sanitize_tracebacks: bool
     valid_syntax: bool
     global_decls: GlobalDeclsEnum
+    compiler: CompilerEnum
 
     def formatter(self) -> "Formatter":
         return Formatter(

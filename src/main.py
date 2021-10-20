@@ -293,6 +293,15 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
+        "--compiler",
+        dest="compiler",
+        type=Options.CompilerEnum,
+        choices=list(Options.CompilerEnum),
+        default="ido",
+        help="Original compiler family that produced the input files. "
+        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering.",
+    )
+    group.add_argument(
         "--stop-on-error",
         dest="stop_on_error",
         action="store_true",
@@ -413,6 +422,7 @@ def parse_flags(flags: List[str]) -> Options:
         sanitize_tracebacks=args.sanitize_tracebacks,
         valid_syntax=args.valid_syntax,
         global_decls=args.global_decls,
+        compiler=args.compiler,
     )
 
 
