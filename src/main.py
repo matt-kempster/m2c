@@ -86,7 +86,9 @@ def run(options: Options) -> int:
 
     fmt = options.formatter()
     function_names = set(all_functions.keys())
-    typepool = TypePool(unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk")
+    typepool = TypePool(
+        unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk"
+    )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:

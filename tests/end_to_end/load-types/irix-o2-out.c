@@ -4,7 +4,7 @@ extern s16 D_410112;
 extern u16 D_410114;
 extern s32 D_410118;
 extern s32 D_41011C;
-extern s32 D_410120;
+extern ? D_410120;
 
 void test(void) {
     D_410120.unk0 = (s32) D_410110;

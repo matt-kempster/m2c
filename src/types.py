@@ -449,7 +449,7 @@ class Type:
             elif possible_results:
                 return possible_results[0]
 
-        if (target_size is None or target_size == self.get_size_bytes() or self.get_size_bytes() is None) and (
+        if (target_size is None or target_size == self.get_size_bytes()) and (
             offset == 0
         ):
             # The whole type itself is a match
@@ -761,10 +761,6 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=64))
 
     @staticmethod
-    def reg_of_size(size_bits: Optional[int]) -> "Type":
-        return Type(TypeData(kind=TypeData.K_ANYREG, size_bits=size_bits))
-
-    @staticmethod
     def int_of_size(size_bits: int) -> "Type":
         return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits))
 
@@ -1004,7 +1000,7 @@ class StructDeclaration:
 
     @staticmethod
     def unknown_of_size(
-            typepool: TypePool, size: int, tag_name: str, align: int = 1
+        typepool: TypePool, size: int, tag_name: str, align: int = 1
     ) -> "StructDeclaration":
         """
         Return an StructDeclaration of a given size, but without any known fields

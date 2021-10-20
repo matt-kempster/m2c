@@ -322,9 +322,7 @@ class StackInfo:
             return True
         return False
 
-    def get_stack_var(
-        self, location: int, *, store: bool
-    ) -> "Expression":
+    def get_stack_var(self, location: int, *, store: bool) -> "Expression":
         # See `get_stack_info` for explanation
         if self.location_above_stack(location):
             ret, arg = self.get_argument(location - self.allocated_stack_size)
@@ -525,7 +523,8 @@ def get_stack_info(
     else:
         stack_struct = StructDeclaration.unknown_of_size(
             global_info.typepool,
-            size=info.allocated_stack_size, tag_name=stack_struct_name
+            size=info.allocated_stack_size,
+            tag_name=stack_struct_name,
         )
     # Mark the struct as "hidden" so we never try to use a reference to the struct itself
     stack_struct.is_hidden = True
@@ -996,25 +995,19 @@ class LocalVar(Expression):
     value: int
     type: Type = field(compare=False)
     path: Optional[AccessPath] = field(compare=False)
-    original_type: Optional[Type] = field(default=None, compare=False)
 
     def dependencies(self) -> List[Expression]:
         return []
 
     def format(self, fmt: Formatter) -> str:
-        unk_prefix = "unksp" + ("_" if fmt.coding_style.unknown_underscore else "")
-        fallback_name = f"{unk_prefix}{format_hex(self.value)}"
+        fallback_name = f"unksp{format_hex(self.value)}"
         if self.path is None:
             return fallback_name
 
         name = StructAccess.access_path_to_field_name(self.path)
-        if not name.startswith("->"):
-            return fallback_name
-
-        name = name[2:]
-        if False and self.original_type:
-            return f"({self.type.format(fmt)}) {name}"
-        return name
+        if name.startswith("->"):
+            return name[2:]
+        return fallback_name
 
     def toplevel_decl(self, fmt: Formatter) -> Optional[str]:
         """Return a declaration for this LocalVar, if required."""
