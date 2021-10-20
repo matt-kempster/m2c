@@ -1,5 +1,5 @@
-s32 func_00400090(s32); // static
-s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3); // static
+s32 func_00400090(s32);                             /* static */
+s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3);   /* static */
 
 s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 sp2C;

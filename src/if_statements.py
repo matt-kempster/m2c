@@ -107,10 +107,9 @@ class SwitchStatement:
         elif body_is_empty:
             comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
         suffix = ";" if body_is_empty else " {"
-        comment = f" // {'; '.join(comments)}" if comments else ""
         lines.append(
-            fmt.indent(
-                f"switch ({format_expr(self.jump.control_expr, fmt)}){suffix}{comment}",
+            fmt.with_comments(
+                f"switch ({format_expr(self.jump.control_expr, fmt)}){suffix}", comments
             )
         )
         if not body_is_empty:
@@ -123,21 +122,30 @@ class SwitchStatement:
 @dataclass
 class SimpleStatement:
     contents: Optional[Union[str, TrStatement]]
+    comment: Optional[str] = None
     is_jump: bool = False
 
     def should_write(self) -> bool:
-        return self.contents is not None
+        return self.contents is not None or self.comment is not None
 
     def format(self, fmt: Formatter) -> str:
         if self.contents is None:
-            return ""
+            content = ""
         elif isinstance(self.contents, str):
-            return fmt.indent(self.contents)
+            content = self.contents
         else:
-            return fmt.indent(self.contents.format(fmt))
+            content = self.contents.format(fmt)
+
+        if self.comment is not None:
+            comments = [self.comment]
+        else:
+            comments = []
+
+        return fmt.with_comments(content, comments)
 
     def clear(self) -> None:
         self.contents = None
+        self.comment = None
 
 
 @dataclass
@@ -159,8 +167,8 @@ class LabelStatement:
                     case_str = f"case {case_num}"
                 else:
                     case_str = "default"
-                switch_str = f" // switch {switch}" if switch != 0 else ""
-                lines.append(fmt.indent(f"{case_str}:{switch_str}", -1))
+                comments = [f"switch {switch}"] if switch != 0 else []
+                lines.append(fmt.with_comments(f"{case_str}:", comments, indent=-1))
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
         return "\n".join(lines)
@@ -222,7 +230,7 @@ class Body:
         self.statements.append(statement)
 
     def add_comment(self, contents: str) -> None:
-        self.add_statement(SimpleStatement(f"// {contents}"))
+        self.add_statement(SimpleStatement(None, comment=contents))
 
     def add_if_else(self, if_else: IfElseStatement) -> None:
         if if_else.if_body.ends_in_jump():

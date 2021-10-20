@@ -1,5 +1,5 @@
-? func_00400114(?, s32); // static
-void test(s32 arg0); // static
+? func_00400114(?, s32);                            /* static */
+void test(s32 arg0);                                /* static */
 
 void test(s32 arg0) {
     s32 temp_a1;

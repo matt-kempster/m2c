@@ -1,5 +1,5 @@
-MIPS2C_UNK extern_fn(struct A *); // extern
-MIPS2C_UNK static_fn(struct A *); // static
+MIPS2C_UNK extern_fn(struct A *);                   /* extern */
+MIPS2C_UNK static_fn(struct A *);                   /* static */
 extern f32 extern_float;
 struct A static_A = {
     1,
@@ -16,7 +16,7 @@ s32 static_array[3] = {2, 4, 6};
 struct A static_bss_A;
 s32 static_bss_array[3];
 s32 static_int;
-s32 static_ro_array[3] = {7, 8, 9}; // const
+s32 static_ro_array[3] = {7, 8, 9};                 /* const */
 
 s32 test(void) {
     static_int *= 0x1C8;

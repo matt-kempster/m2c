@@ -1,4 +1,4 @@
-void *foo(); // extern
+void *foo();                                        /* extern */
 
 void test(void) {
     void *sp10C;

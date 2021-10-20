@@ -45,6 +45,14 @@ if "source" in form:
     if "visualize" in form:
         cmd.append("--visualize")
 
+    comment_style = form.getfirst("comment_style", "multiline")
+    if "oneline" in comment_style:
+        cmd.append("--comment-style=oneline")
+    else:
+        cmd.append("--comment-style=multiline")
+    if "unaligned" in comment_style:
+        cmd.append("--comment-column=0")
+
     function = form["functionselect"].value if "functionselect" in form else "all"
     FUNCTION_ALPHABET = string.ascii_letters + string.digits + "_"
     function = "".join(c for c in function if c in FUNCTION_ALPHABET)
@@ -201,6 +209,14 @@ label {
     <option value="custom">custom</option>
     </select>
     </label>
+    <label>Comment style
+    <select name="comment_style">
+    <option value="multiline">/* ... */, aligned</option>
+    <option value="multiline_unaligned">/* ... */, unaligned</option>
+    <option value="oneline">// ..., aligned</option>
+    <option value="oneline_unaligned">// ..., unaligned</option>
+    </select>
+    </label>
     <input name="regvars" value="">
     <label><input type="checkbox" name="void">Force void return type</label>
     <label><input type="checkbox" name="debug">Debug info</label>
@@ -291,7 +307,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "dark", "regvarsselect", "regvars", "comment_style"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];

@@ -1,4 +1,4 @@
-? func_00400090(s8 *); // static
+? func_00400090(s8 *);                              /* static */
 
 s32 test(struct Vec *v) {
     s8 a;

@@ -253,6 +253,20 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
     )
     group.add_argument(
+        "--comment-style",
+        dest="comment_style",
+        help='Comment formatting. "multiline" for C-style `/* ... */`, "oneline" for C++-style `// ...`',
+        choices=["multiline", "oneline"],
+        default="multiline",
+    )
+    group.add_argument(
+        "--comment-column",
+        dest="comment_column",
+        help="Column number to justify comments to. Set to 0 to disable justification.",
+        type=int,
+        default=52,
+    )
+    group.add_argument(
         "--dump-typemap",
         dest="dump_typemap",
         action="store_true",
@@ -346,6 +360,8 @@ def parse_flags(flags: List[str]) -> Options:
         pointer_style_left=args.pointer_style == "left",
         unknown_underscore=args.unknown_underscore,
         hex_case=args.hex_case,
+        oneline_comments=args.comment_style == "oneline",
+        comment_column=args.comment_column,
     )
     filenames = args.filename
 

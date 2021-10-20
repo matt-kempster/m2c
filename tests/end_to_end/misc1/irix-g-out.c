@@ -1,6 +1,6 @@
-s32 func_00400174(?, ?, s32, s32, s32); // static
-? func_0040019C(s32, s32, s32); // static
-s32 test(s32 arg0, s32 arg1); // static
+s32 func_00400174(?, ?, s32, s32, s32);             /* static */
+? func_0040019C(s32, s32, s32);                     /* static */
+s32 test(s32 arg0, s32 arg1);                       /* static */
 extern s32 D_4101C0;
 extern ? D_4101C8;
 

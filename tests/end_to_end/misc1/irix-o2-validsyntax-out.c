@@ -1,6 +1,6 @@
-s32 func_00400140(MIPS2C_UNK, MIPS2C_UNK, s32, MIPS2C_UNK, s32); // static
-MIPS2C_UNK func_00400158(s32, s32, s32); // static
-s32 test(s32 arg0, MIPS2C_UNK arg1); // static
+s32 func_00400140(MIPS2C_UNK, MIPS2C_UNK, s32, MIPS2C_UNK, s32); /* static */
+MIPS2C_UNK func_00400158(s32, s32, s32);            /* static */
+s32 test(s32 arg0, MIPS2C_UNK arg1);                /* static */
 extern s32 D_410170;
 extern MIPS2C_UNK D_410178;
 

@@ -1,6 +1,6 @@
-s32 func_004000F0(); // static
-? func_00400108(s32); // static
-void test(); // static
+s32 func_004000F0();                                /* static */
+? func_00400108(s32);                               /* static */
+void test();                                        /* static */
 extern s32 D_410120;
 
 void test(void) {

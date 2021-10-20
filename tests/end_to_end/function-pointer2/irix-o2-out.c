@@ -1,4 +1,4 @@
-s32 bar(f32 x); // extern
+s32 bar(f32 x);                                     /* extern */
 extern s32 (*glob2)(f32);
 
 void test(void) {

@@ -4301,11 +4301,14 @@ class GlobalInfo:
 
                 qualifier = f"{qualifier} " if qualifier else ""
                 value = f" = {value}" if value else ""
-                comment = f" // {'; '.join(comments)}" if comments else ""
                 lines.append(
                     (
                         sort_order,
-                        f"{qualifier}{sym.type.to_decl(name, fmt)}{value};{comment}\n",
+                        fmt.with_comments(
+                            f"{qualifier}{sym.type.to_decl(name, fmt)}{value};",
+                            comments,
+                        )
+                        + "\n",
                     )
                 )
         lines.sort()

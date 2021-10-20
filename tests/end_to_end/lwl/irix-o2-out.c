@@ -1,5 +1,5 @@
-? func_004000B0(? *); // static
-void test(); // static
+? func_004000B0(? *);                               /* static */
+void test();                                        /* static */
 extern ? D_400150;
 extern ? D_400158;
 extern ? D_410160;

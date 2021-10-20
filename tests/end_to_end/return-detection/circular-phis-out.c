@@ -1,4 +1,4 @@
-? bar(); // extern
+? bar();                                            /* extern */
 
 void test(void) {
     s32 phi_v0;

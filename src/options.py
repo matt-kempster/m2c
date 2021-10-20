@@ -12,6 +12,8 @@ class CodingStyle:
     pointer_style_left: bool
     unknown_underscore: bool
     hex_case: bool
+    oneline_comments: bool
+    comment_column: int
 
 
 @dataclass
@@ -53,6 +55,8 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     pointer_style_left=False,
     unknown_underscore=False,
     hex_case=False,
+    oneline_comments=False,
+    comment_column=52,
 )
 
 
@@ -95,3 +99,19 @@ class Formatter:
         output += "}"
 
         return output
+
+    def with_comments(self, line: str, comments: List[str], *, indent: int = 0) -> str:
+        """Indent `line` and append a list of `comments` joined with ';'"""
+        base = self.indent(line, indent=indent)
+        # If `comments` is empty; fall back to `Formatter.indent()` behavior
+        if not comments:
+            return base
+        # Add padding to the style's `comment_column`, only if `line` is non-empty
+        padding = ""
+        if line:
+            padding = max(1, self.coding_style.comment_column - len(base)) * " "
+        if self.coding_style.oneline_comments:
+            comment = f"// {'; '.join(comments)}"
+        else:
+            comment = f"/* {'; '.join(comments)} */"
+        return f"{base}{padding}{comment}"

@@ -1,5 +1,5 @@
-? func_004000FC(?); // static
-void test(s32 arg0); // static
+? func_004000FC(?);                                 /* static */
+void test(s32 arg0);                                /* static */
 
 void test(s32 arg0) {
     if (arg0 == 7) {

@@ -1,5 +1,5 @@
-? func_004000DC(s32); // static
-s32 test(s32 arg0); // static
+? func_004000DC(s32);                               /* static */
+s32 test(s32 arg0);                                 /* static */
 
 s32 test(s32 arg0) {
     s32 temp_t6;
