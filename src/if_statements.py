@@ -981,9 +981,10 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
     with fmt.indented():
         for local_var in function_info.stack_info.local_vars[::-1]:
-            type_decl = local_var.type.to_decl(local_var.format(fmt), fmt)
-            function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
-            any_decl = True
+            type_decl = local_var.toplevel_decl(fmt)
+            if type_decl is not None:
+                function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
+                any_decl = True
 
         # With reused temps (no longer used), we can get duplicate declarations,
         # hence the use of a set here.

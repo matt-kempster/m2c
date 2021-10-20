@@ -236,6 +236,7 @@ class StackInfo:
     temp_name_counter: Dict[str, int] = field(default_factory=dict)
     nonzero_accesses: Set["Expression"] = field(default_factory=set)
     param_names: Dict[int, str] = field(default_factory=dict)
+    stack_pointer_type: Optional[Type] = None
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -333,12 +334,14 @@ class StackInfo:
         elif self.in_callee_save_reg_region(location):
             # Some annoying bookkeeping instruction. To avoid
             # further special-casing, just return whatever - it won't matter.
-            return LocalVar(location, type=Type.any_reg())
+            return LocalVar(location, type=Type.any_reg(), path=None)
         else:
             # Local variable
-            return LocalVar(
-                location, type=self.unique_type_for("stack", location, Type.any_reg())
+            assert self.stack_pointer_type is not None
+            field_path, field_type, _ = self.stack_pointer_type.get_deref_field(
+                location, target_size=None
             )
+            return LocalVar(location, type=field_type, path=field_path)
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
         return self.reg_vars.get(reg)
@@ -375,7 +378,7 @@ class StackInfo:
                 f"Stack info for function {self.function.name}:",
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
-                f"Bounds of callee-saved vars region: {self.callee_save_reg_locations}",
+                f"Bounds of callee-saved vars region: {self.callee_save_reg_region}",
                 f"Location of return addr: {self.return_addr_location}",
                 f"Locations of callee save registers: {self.callee_save_reg_locations}",
             ]
@@ -503,6 +506,32 @@ def get_stack_info(
         # Subroutine arguments must be at the very bottom of the stack, so they
         # must come after the callee-saved region
         info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
+
+    # Use a struct to represent the stack layout. If the struct is provided in the context,
+    # its fields will be used for variable types & names.
+    stack_struct_name = f"_mips2c_stack_{function.name}"
+    stack_struct = global_info.typepool.get_struct_by_tag_name(
+        stack_struct_name, global_info.typemap
+    )
+    if stack_struct is not None:
+        if stack_struct.size != info.allocated_stack_size:
+            raise DecompFailure(
+                f"Function {function.name} has a provided stack type {stack_struct_name} "
+                f"with size {stack_struct.size}, but the detected stack size was "
+                f"{info.allocated_stack_size}."
+            )
+    else:
+        stack_struct = StructDeclaration.unknown_of_size(
+            global_info.typepool,
+            size=info.allocated_stack_size,
+            tag_name=stack_struct_name,
+        )
+    # Mark the struct as "hidden" so we never try to use a reference to the struct itself
+    stack_struct.is_hidden = True
+    stack_struct.new_field_prefix = "sp"
+
+    # This acts as the type of the $sp register
+    info.stack_pointer_type = Type.ptr(Type.struct(stack_struct))
 
     return info
 
@@ -965,12 +994,32 @@ class FuncCall(Expression):
 class LocalVar(Expression):
     value: int
     type: Type = field(compare=False)
+    path: Optional[AccessPath] = field(compare=False)
 
     def dependencies(self) -> List[Expression]:
         return []
 
     def format(self, fmt: Formatter) -> str:
-        return f"sp{format_hex(self.value)}"
+        fallback_name = f"unksp{format_hex(self.value)}"
+        if self.path is None:
+            return fallback_name
+
+        name = StructAccess.access_path_to_field_name(self.path)
+        if name.startswith("->"):
+            return name[2:]
+        return fallback_name
+
+    def toplevel_decl(self, fmt: Formatter) -> Optional[str]:
+        """Return a declaration for this LocalVar, if required."""
+        # If len(self.path) > 2, then this local is an inner field of another
+        # local, so it doesn't need to be declared.
+        if (
+            self.path is None
+            or len(self.path) != 2
+            or not isinstance(self.path[1], str)
+        ):
+            return None
+        return self.type.to_decl(self.path[1], fmt)
 
 
 @dataclass(frozen=True, eq=False)
@@ -1079,10 +1128,10 @@ class StructAccess(Expression):
 
         if self.field_path is None and not self.checked_late_field_path:
             var = late_unwrap(self.struct_var)
-            field_path, field_type, remaining_offset = var.type.get_deref_field(
+            field_path, field_type, _ = var.type.get_deref_field(
                 self.offset, target_size=self.target_size
             )
-            if field_path is not None and remaining_offset == 0:
+            if field_path is not None:
                 self.assert_valid_field_path(field_path)
                 self.field_path = field_path
                 self.type.unify(field_type)
@@ -1888,10 +1937,8 @@ def deref(
     )
     if array_expr is not None:
         return array_expr
-    field_path, field_type, remaining_offset = var.type.get_deref_field(
-        offset, target_size=size
-    )
-    if field_path is not None and remaining_offset == 0:
+    field_path, field_type, _ = var.type.get_deref_field(offset, target_size=size)
+    if field_path is not None:
         field_type.unify(type)
         type = field_type
     else:
@@ -2281,10 +2328,10 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
             if array_access is not None:
                 return array_access
 
-            field_path, field_type, remaining_offset = source.type.get_deref_field(
+            field_path, field_type, _ = source.type.get_deref_field(
                 imm.value, target_size=None
             )
-            if field_path is not None and remaining_offset == 0:
+            if field_path is not None:
                 return AddressOf(
                     StructAccess(
                         struct_var=source,
@@ -2626,7 +2673,7 @@ def array_access_from_add(
     else:
         # base->subarray[index]
         sub_path, sub_type, remaining_offset = base.type.get_deref_field(
-            offset, target_size=scale
+            offset, target_size=scale, exact=False
         )
         # Check if the last item in the path is `0`, which indicates the start of an array
         # If it is, remove it: it will be replaced by `[index]`
@@ -2648,11 +2695,9 @@ def array_access_from_add(
 
     # Add .field if necessary by wrapping ret in StructAccess(AddressOf(...))
     ret_ref = AddressOf(ret, type=ret.type.reference())
-    field_path, field_type, remaining_offset = ret_ref.type.get_deref_field(
+    field_path, field_type, _ = ret_ref.type.get_deref_field(
         offset, target_size=target_size
     )
-    if remaining_offset != 0:
-        field_path = None
 
     if offset != 0 or (target_size is not None and target_size != scale):
         ret = StructAccess(
@@ -4027,7 +4072,7 @@ class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
     typemap: TypeMap
-    typepool: TypePool = field(default_factory=TypePool)
+    typepool: TypePool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:

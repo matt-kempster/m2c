@@ -17,6 +17,7 @@ from .translate import (
     InstrProcessingFailure,
     translate_to_ast,
 )
+from .types import TypePool
 
 
 def print_exception(sanitize: bool) -> None:
@@ -83,8 +84,12 @@ def run(options: Options) -> int:
                     return 1
                 functions.append(all_functions[index_or_name])
 
+    fmt = options.formatter()
     function_names = set(all_functions.keys())
-    global_info = GlobalInfo(asm_data, function_names, typemap)
+    typepool = TypePool(
+        unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk"
+    )
+    global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
@@ -101,7 +106,6 @@ def run(options: Options) -> int:
         print(visualize_flowgraph(fn_info.flow_graph))
         return 0
 
-    fmt = options.formatter()
     global_decls = global_info.global_decls(fmt)
     if options.emit_globals and global_decls:
         print(global_decls)
