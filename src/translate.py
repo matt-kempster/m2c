@@ -8,6 +8,7 @@ import sys
 import traceback
 import typing
 from typing import (
+    AbstractSet,
     Callable,
     DefaultDict,
     Dict,
@@ -4178,19 +4179,23 @@ class GlobalInfo:
 
         return for_type(sym.type)
 
-    def global_decls(self, fmt: Formatter) -> str:
+    def global_decls(self, fmt: Formatter, decls: Options.GlobalDeclsEnum) -> str:
         # Format labels from symbol_type_map into global declarations.
         # As the initializers are formatted, this may cause more symbols
         # to be added to the global_symbol_map.
         lines = []
         processed_names: Set[str] = set()
         while True:
-            names = self.global_symbol_map.keys() - processed_names
+            names: AbstractSet[str] = self.global_symbol_map.keys()
+            if decls == Options.GlobalDeclsEnum.ALL:
+                names |= self.typemap.var_types.keys()
+            names -= processed_names
             if not names:
                 break
             for name in sorted(names):
                 processed_names.add(name)
-                sym = self.global_symbol_map[name]
+                sym = self.address_of_gsym(name).expr
+                assert isinstance(sym, GlobalSymbol)
                 data_entry = sym.asm_data_entry
 
                 # Is the label defined in this unit (in the active AsmData file(s))
@@ -4298,6 +4303,9 @@ class GlobalInfo:
                         continue
                     if array_dim is None and sym.type.is_likely_float():
                         continue
+
+                if decls == Options.GlobalDeclsEnum.NONE:
+                    continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
                 value = f" = {value}" if value else ""

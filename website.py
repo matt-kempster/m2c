@@ -40,8 +40,10 @@ if "source" in form:
         cmd.append("--allman")
     if "leftptr" in form:
         cmd.extend(["--pointer-style", "left"])
-    if "globals" not in form:
-        cmd.append("--no-emit-globals")
+    if "globals" in form:
+        value = form.getfirst("globals")
+        if value in ("all", "used", "none"):
+            cmd.extend(["--globals", value])
     if "visualize" in form:
         cmd.append("--visualize")
 
@@ -209,6 +211,13 @@ label {
     <option value="custom">custom</option>
     </select>
     </label>
+    <label>Global declarations
+    <select name="globals">
+    <option value="used">used</option>
+    <option value="all">all</option>
+    <option value="none">none</option>
+    </select>
+    </label>
     <label>Comment style
     <select name="comment_style">
     <option value="multiline">/* ... */, aligned</option>
@@ -224,7 +233,6 @@ label {
     <label><input type="checkbox" name="nocasts">Hide type casts</label>
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
-    <label><input type="checkbox" name="globals" checked>Global declarations</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>

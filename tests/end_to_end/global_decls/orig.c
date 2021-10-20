@@ -28,7 +28,9 @@ static struct A static_A = {
 };
 
 static int static_array[3] = {2, 4, 6};
+static int unused_static_array[3] = {8, 10, 12};
 static const int static_ro_array[] = {7, 8, 9};
+static const int unused_static_ro_array[] = {10, 11, 12};
 static int static_bss_array[3];
 
 int test(void) {

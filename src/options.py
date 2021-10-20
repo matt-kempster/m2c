@@ -1,5 +1,6 @@
 import contextlib
 from dataclasses import dataclass
+import enum
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
 
@@ -18,6 +19,14 @@ class CodingStyle:
 
 @dataclass
 class Options:
+    class GlobalDeclsEnum(enum.Enum):
+        ALL = "all"
+        USED = "used"
+        NONE = "none"
+
+        def __str__(self) -> str:
+            return self.value
+
     filenames: List[str]
     function_indexes_or_names: List[Union[int, str]]
     debug: bool
@@ -38,7 +47,7 @@ class Options:
     coding_style: CodingStyle
     sanitize_tracebacks: bool
     valid_syntax: bool
-    emit_globals: bool
+    global_decls: GlobalDeclsEnum
 
     def formatter(self) -> "Formatter":
         return Formatter(

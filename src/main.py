@@ -106,8 +106,8 @@ def run(options: Options) -> int:
         print(visualize_flowgraph(fn_info.flow_graph))
         return 0
 
-    global_decls = global_info.global_decls(fmt)
-    if options.emit_globals and global_decls:
+    global_decls = global_info.global_decls(fmt, options.global_decls)
+    if global_decls:
         print(global_decls)
 
     return_code = 0
@@ -209,10 +209,15 @@ def parse_flags(flags: List[str]) -> Options:
         "unusual statements. Macro definitions are in `mips2c_macros.h`.",
     )
     group.add_argument(
-        "--no-emit-globals",
-        dest="emit_globals",
-        action="store_false",
-        help="do not emit global declarations with inferred types.",
+        "--globals",
+        dest="global_decls",
+        type=Options.GlobalDeclsEnum,
+        choices=list(Options.GlobalDeclsEnum),
+        default="used",
+        help="Control which global declarations & initializers are emitted. "
+        '"all" includes all globals with entries in .data/.rodata/.bss, as well as inferred symbols. '
+        '"used" only includes symbols used by the decompiled functions (default). '
+        '"none" does not emit any global declarations. ',
     )
     group.add_argument(
         "--debug",
@@ -407,7 +412,7 @@ def parse_flags(flags: List[str]) -> Options:
         coding_style=coding_style,
         sanitize_tracebacks=args.sanitize_tracebacks,
         valid_syntax=args.valid_syntax,
-        emit_globals=args.emit_globals,
+        global_decls=args.global_decls,
     )
 
 

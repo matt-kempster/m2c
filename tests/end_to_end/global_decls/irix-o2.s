@@ -48,6 +48,9 @@ glabel test
 glabel static_ro_array
 .word 0x07, 0x08, 0x09
 
+glabel unused_static_ro_array
+.word 10, 11, 12
+
 .data
 glabel static_A
 .byte 1
@@ -67,6 +70,9 @@ glabel static_A_ptr
 
 glabel static_array
 .word 2, 4, 6
+
+glabel unused_static_array
+.word 8, 10, 12
 
 .bss
 glabel static_int
