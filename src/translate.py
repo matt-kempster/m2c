@@ -1218,15 +1218,6 @@ class GlobalSymbol(Expression):
     type: Type
     asm_data_entry: Optional[AsmDataEntry] = None
     type_in_typemap: bool = False
-    # `array_dim=None` indicates that the symbol is not an array
-    # `array_dim=0` indicates that it *is* an array, but the dimension is unknown
-    # Otherwise, it is the dimension of the array.
-    #
-    # If the symbol is in the typemap, this value is populated from there.
-    # Otherwise, this defaults to `None` and is set using heuristics in
-    # `GlobalInfo.global_decls()` after the AST has been built.
-    # So, this value should not be relied on during translate.
-    array_dim: Optional[int] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -4154,7 +4145,7 @@ class GlobalInfo:
             data.pop(0)
             return self.address_of_gsym(label)
 
-        def for_element_type(type: Type) -> Optional[str]:
+        def for_type(type: Type) -> Optional[str]:
             """Return the initializer for a single element of type `type`"""
             if type.is_struct() or type.is_array():
                 struct_fields = type.get_initializer_fields()
@@ -4168,7 +4159,7 @@ class GlobalInfo:
                         if padding != 0:
                             return None
                     else:
-                        m = for_element_type(field)
+                        m = for_type(field)
                         if m is None:
                             return None
                         members.append(m)
@@ -4192,22 +4183,7 @@ class GlobalInfo:
             # Type kinds K_FN and K_VOID do not have initializers
             return None
 
-        def for_type(type: Type, array_dim: Optional[int]) -> Optional[str]:
-            """Return the initializer for an array/variable of type `type`.
-            `array_dim` has the same meaning as `GlobalSymbol.array_dim`."""
-            if array_dim is None:
-                # Not an array
-                return for_element_type(type)
-            else:
-                elements: List[str] = []
-                for _ in range(array_dim):
-                    el = for_element_type(type)
-                    if el is None:
-                        return None
-                    elements.append(el)
-                return fmt.format_array(elements)
-
-        return for_type(sym.type, sym.array_dim)
+        return for_type(sym.type)
 
     def global_decls(self, fmt: Formatter) -> str:
         # Format labels from symbol_type_map into global declarations.
@@ -4268,16 +4244,20 @@ class GlobalInfo:
                     comments.append(qualifier)
                     qualifier = ""
 
-                # Try to guess the symbol's `array_dim` if we have a data entry for it,
-                # and it does not exist in the typemap or dim is unknown.
+                # Try to guess if the symbol is an array (and if it is, its dimension) if
+                # we have a data entry for it, and the symbol is either not in the typemap
+                # or was a variable-length array there ("VLA", e.g. `int []`)
                 # (Otherwise, if the dim is provided by the typemap, we trust it.)
-                if data_entry and (not sym.type_in_typemap or sym.array_dim == 0):
-                    assert sym.array_dim is None or sym.array_dim == 0
+                element_type, array_dim = sym.type.get_array()
+                is_vla = element_type is not None and array_dim is None
+                if data_entry and (not sym.type_in_typemap or is_vla):
                     # The size of the data entry is uncertain, because of padding
                     # between sections. Generally `(max_data_size - data_size) < 16`.
                     min_data_size, max_data_size = data_entry.size_range_bytes()
                     # The size of the element type (not the size of the array type)
-                    type_size = sym.type.get_size_bytes()
+                    if element_type is None:
+                        element_type = sym.type
+                    type_size = element_type.get_size_bytes()
                     if not type_size:
                         # If we don't know the type, we can't guess the array_dim
                         pass
@@ -4301,9 +4281,13 @@ class GlobalInfo:
                                 data_size += extra_bytes
                             else:
                                 comments.append(f"extra bytes: {data_size % type_size}")
-                        if data_size // type_size > 1 or sym.array_dim == 0:
+                        if data_size // type_size > 1 or is_vla:
                             # We know it's an array
-                            sym.array_dim = max_data_size // type_size
+                            array_dim = max_data_size // type_size
+                            # NB: In general, replacing the types of Expressions can be sketchy.
+                            # However, the GlobalSymbol here came from address_of_gsym(), which
+                            # always returns a reference to the element_type.
+                            sym.type = Type.array(element_type, array_dim)
 
                 # Try to convert the data from .data/.rodata into an initializer
                 if data_entry and not data_entry.is_bss:
@@ -4319,7 +4303,7 @@ class GlobalInfo:
                     # Float & string constants are almost always inlined and can be omitted
                     if sym.is_string_constant():
                         continue
-                    if sym.array_dim is None and sym.type.is_likely_float():
+                    if array_dim is None and sym.type.is_likely_float():
                         continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
