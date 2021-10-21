@@ -123,7 +123,7 @@ body {
 </head>
 """
             )
-        print("<body><pre><plaintext>", end="")
+        print("<body><pre><plaintext>", end="") # assuming this is the result page, any chance of adding rough syntax highlighting?
         print(res.stdout.decode("utf-8", "replace"))
 elif "?go" in os.environ.get("REQUEST_URI", ""):
     print_headers(content_type="text/html")
@@ -133,129 +133,170 @@ else:
         """
 <!DOCTYPE html><html>
 <head>
-<style>
-* {
-    box-sizing: border-box;
-}
-html, body, form, .main, .sidebar {
-    margin: 0;
-    height: 100%;
-}
-textarea, .sidebar iframe {
-    width: 100%;
-    height: 100%;
-    border: 1px solid #bbb;
-    margin: 1px 0;
-}
-label {
-    white-space: nowrap;
-}
-[data-regvars]:not([data-regvars=custom]) [name=regvars] {
-    display: none;
-}
-[name=regvars] {
-    width: 150px;
-}
-.main, .sidebar {
-    display: flex;
-    flex-direction: column;
-    padding: 10px;
-}
-.sidebar {
-    display: none;
-}
-.has-sidebar form {
-    display: flex;
-    flex-direction: row;
-}
-.has-sidebar .main, .has-sidebar .sidebar {
-    flex: 1;
-}
-.has-sidebar .sidebar {
-    display: flex;
-}
-.dark-theme {
-    background-color: #2d2d2d;
-    color: #c0c0c0;
-}
-.dark-theme div,
-.dark-theme body,
-.dark-theme form,
-.dark-theme textarea {
-    background-color: rgba(255, 255, 255, 0.0225);
-    color: #c0c0c0;
-    box-shadow: 1px 1px 10px 0px black;
-}
-</style>
+
+	<style>
+	* {
+			box-sizing: border-box;
+	}
+	div{
+			padding:16px
+	}
+	html, body, form, .main, .sidebar {
+			margin: 0;
+			height: 100%;
+	}
+	textarea, .sidebar iframe {
+			width: 100%;/*calc(100% - 16px);*/
+			height: calc(100% - (1em + 16px));
+			border: 1px solid #888;
+			m//argin: 8px ;
+	}
+
+	label {
+			white-space: nowrap;
+	}
+	[data-regvars]:not([data-regvars=custom]) [name=regvars] {
+			display: none;
+	}
+	[name=regvars] {
+			width: 150px;
+	}
+	.main, .sidebar {
+			display: flex;
+			flex-direction: column;
+			padding: 10px;
+			margin:0px 4px;
+	}
+	.sidebar {
+			display: none;
+	}
+	.has-sidebar form {
+			display: flex;
+			flex-direction: row;
+	}
+	.has-sidebar .main, .has-sidebar .sidebar {
+			flex: 1;
+	}
+	.has-sidebar .sidebar {
+			display: flex;
+	}
+	.dark-theme {
+			background-color: #000;
+			color: #ccc;
+	}
+	.dark-theme div,
+	.dark-theme body,
+	.dark-theme form,
+	.dark-theme textarea {
+			background-color: rgba(255, 255, 255, 0.06225);
+			color: #c0c0c0;
+	}
+	.dark-theme div
+	{
+			box-shadow: 1px 1px 10px 0px black;
+	}
+	#options
+	{
+			overflow:scroll;box-shadow:none;background-color:inherit;display:flex;flex-wrap: wrap; flex:1; flex-basis: 300px;
+	}
+	input[type=submit]
+	{
+			color:white;
+			Background-color:#282;
+			border:2px #282 outset;
+			font-weight:bold;
+			float:right;
+	}
+	input[type=submit]:focus {
+		border:2px #4f4 outset;
+	}
+	select
+	{
+
+	}
+	label
+	{
+		flex:1;flex-basis: 250px;
+	}
+	.keyword{color:blue;}
+	.opperator{color:grey}
+	</style>
 </head>
 <body>
 <form action="?go" method="post">
 <div class="main">
-  <div>
+  <div style="flex: 15;">
     MIPS assembly:
-  </div>
-  <div style="flex: 20;">
+		<br>
     <textarea name="source" spellcheck="false"></textarea>
   </div>
-  <div style="margin-top: 10px;">
+  <br>
+  <div style="flex: 11;">  
     Existing C source, preprocessed (optional):
-  </div>
-  <div style="flex: 11;">
+    <br>
     <textarea name="context" spellcheck="false"></textarea>
   </div>
-  <div style="margin-top: 10px;" id="options">
+  <br>
+  <div>
     <input type="submit" value="Decompile">
     <input type="submit" name="visualize" value="Visualize">
-    <label>Function: <select name="functionselect"></select></label>
-    </label>
-    <label>Global declarations:
-    <select name="globals">
-    <option value="used">used</option>
-    <option value="all">all</option>
-    <option value="none">none</option>
-    </select>
-    </label>
-    <label>Original Compiler:
-    <select name="compiler">
-    <option value="ido">ido</option>
-    <option value="gcc">gcc</option>
-    </select>
-    </label>
-    <label>Comment style:
-    <select name="comment_style">
-    <option value="multiline">/* ... */, aligned</option>
-    <option value="multiline_unaligned">/* ... */, unaligned</option>
-    <option value="oneline">// ..., aligned</option>
-    <option value="oneline_unaligned">// ..., unaligned</option>
-    </select>
-    </label>
-    <label>Use single var for:
-    <select name="regvarsselect">
-    <option value="none">none</option>
-    <option value="saved">saved regs</option>
-    <option value="all">all regs</option>
-    <option value="custom">custom</option>
-    </select>
-    </label>
-    <input name="regvars" value="">
-    <label><input type="checkbox" name="void">Force void return type</label>
-    <label><input type="checkbox" name="debug">Debug info</label>
-    <label><input type="checkbox" name="noandor">Disable &amp;&amp;/||</label>
-    <label><input type="checkbox" name="nocasts">Hide type casts</label>
-    <label><input type="checkbox" name="allman">Allman braces</label>
-    <label><input type="checkbox" name="leftptr">* to the left</label>
-    <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
-    <label><input type="checkbox" name="usesidebar">Output sidebar</label>
-    <label><input type="checkbox" name="dark">Dark mode</label>
+    <details open="">
+    <summary>Options</summary>
+			<div id="options">
+				<label>Function: 
+					<select name="functionselect">
+					</select>
+				</label>
+				
+				<label>Global declarations:
+					<select name="globals">
+						<option value="used">used</option>
+						<option value="all">all</option>
+						<option value="none">none</option>
+					</select>
+				</label>
+				<label>Original Compiler:
+					<select name="compiler">
+						<option value="ido">ido</option>
+						<option value="gcc">gcc</option>
+					</select>
+				</label>
+				<label>Comment style:
+					<select name="comment_style">
+						<option value="multiline">/* ... */, aligned</option>
+						<option value="multiline_unaligned">/* ... */, unaligned</option>
+						<option value="oneline">// ..., aligned</option>
+						<option value="oneline_unaligned">// ..., unaligned</option>
+					</select>
+				</label>
+				<label>Use single var for:
+					<select name="regvarsselect">
+						<option value="none">none</option>
+						<option value="saved">saved regs</option>
+						<option value="all">all regs</option>
+						<option value="custom">custom</option>
+					</select>
+				</label>
+				<input name="regvars" value="">
+				<br>				
+				<label><input type="checkbox" name="void">Force void return type</label>
+				<label><input type="checkbox" name="debug">Debug info</label>
+				<label><input type="checkbox" name="noandor">Disable &amp;&amp;/||</label>
+				<label><input type="checkbox" name="nocasts">Hide type casts</label>
+				<label><input type="checkbox" name="allman">Allman braces</label>
+				<label><input type="checkbox" name="leftptr">* to the left</label>
+				<label><input type="checkbox" name="noifs">Use gotos for everything</label>
+				<label><input type="checkbox" name="usesidebar">Output sidebar</label>
+				<label><input type="checkbox" name="dark">Dark mode</label>
+				<p>Notes:<br> to use a goto for a single branch, add "# GOTO" to the asm</p>				
+			</div>
+		</details>
   </div>
 </div>
 <div class="sidebar">
-  <div>
     Output:
-  </div>
-  <div style="flex: 1;">
+    <br>
     <iframe src="about:blank" name="outputframe"></iframe>
-  </div>
 </div>
 <script>
 var formEl = document.getElementsByTagName("form")[0]
