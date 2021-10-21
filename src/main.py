@@ -106,6 +106,11 @@ def run(options: Options) -> int:
         print(visualize_flowgraph(fn_info.flow_graph))
         return 0
 
+    if options.structs:
+        type_decls = typepool.format_type_declarations(fmt)
+        if type_decls:
+            print(type_decls)
+
     global_decls = global_info.global_decls(fmt, options.global_decls)
     if global_decls:
         print(global_decls)
@@ -218,6 +223,13 @@ def parse_flags(flags: List[str]) -> Options:
         '"all" includes all globals with entries in .data/.rodata/.bss, as well as inferred symbols. '
         '"used" only includes symbols used by the decompiled functions (default). '
         '"none" does not emit any global declarations. ',
+    )
+    group.add_argument(
+        "--structs",
+        dest="structs",
+        action="store_true",
+        help="Include struct declarations representing each function's stack. "
+        "These can be modified and passed back to mips_to_c via --context to improve the output.",
     )
     group.add_argument(
         "--debug",
@@ -423,6 +435,7 @@ def parse_flags(flags: List[str]) -> Options:
         valid_syntax=args.valid_syntax,
         global_decls=args.global_decls,
         compiler=args.compiler,
+        structs=args.structs,
     )
 
 

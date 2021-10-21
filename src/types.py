@@ -91,6 +91,15 @@ class TypePool:
             ), f"Duplicate tag: {tag_name}"
             self.structs_by_tag_name[tag_name] = struct
 
+    def format_type_declarations(self, fmt: Formatter) -> str:
+        decls = []
+        for struct in sorted(
+            self.structs, key=lambda s: s.tag_name or s.typedef_name or ""
+        ):
+            if struct.is_stack:
+                decls.append(struct.format(fmt) + "\n")
+        return "\n".join(decls)
+
 
 @dataclass(eq=False)
 class TypeData:
@@ -402,10 +411,10 @@ class Type:
                 return NO_MATCHING_FIELD
 
             # One option is to return the whole struct itself. Do not do this if the struct
-            # is marked hidden, or if `target_size` is specified and does not match.
+            # is marked as a stack struct, or if `target_size` is specified and does not match.
             possible_results: List[Type.GetFieldResult] = []
             can_return_self = False
-            if not data.struct.is_hidden and (
+            if not data.struct.is_stack and (
                 target_size is None or target_size == self.get_size_bytes()
             ):
                 possible_results.append(([], self, offset))
@@ -945,7 +954,7 @@ class StructDeclaration:
     fields: List[StructField] = field(default_factory=list)  # sorted by `.offset`
     has_bitfields: bool = False
     is_union: bool = False
-    is_hidden: bool = False
+    is_stack: bool = False
 
     def unify(
         self,
@@ -997,6 +1006,60 @@ class StructDeclaration:
         self.fields.append(field)
         self.fields.sort(key=lambda f: f.offset)
         return field
+
+    def format(self, fmt: Formatter) -> str:
+        """
+        Return the C representation of the struct/union.
+        NB: We don't use ca.Struct here so that we can add comments for each field.
+
+        TODO: This does not correctly handle nested anonymous structs/unions, though it
+        is possible for the user to reconstruct these by hand from the "offset" comments.
+        """
+        keyword = "union" if self.is_union else "struct"
+        decl = f"{keyword} {self.tag_name}" if self.tag_name else "{keyword}"
+        head = f"typedef {decl} {{" if self.typedef_name else f"{decl} {{"
+        tail = f"}} {self.typedef_name};" if self.typedef_name else f"}};"
+
+        # If there are no fields or padding, return everything on one line
+        if self.size == 0 and not self.fields:
+            return fmt.with_comments(head + tail, [f"size 0x0"])
+
+        lines = []
+        lines.append(fmt.indent(head))
+        with fmt.indented():
+            position = 0
+
+            def pad_to(offset: int) -> None:
+                nonlocal position
+                if position < offset:
+                    # Fill the gap with a char array, e.g. `char pad12[0x34];`
+                    underscore = "_" if fmt.coding_style.unknown_underscore else ""
+                    name = f"pad{underscore}{fmt.format_hex(position)}"
+                    lines.append(
+                        fmt.indent(
+                            f"char {name}[0x{fmt.format_hex(offset - position)}];"
+                        )
+                    )
+
+            for field in self.fields:
+                pad_to(field.offset)
+                field_decl = f"{field.type.to_decl(field.name, fmt)};"
+                # Add a comment with the offset of the field, in hex
+                comments = [f"+0x{fmt.format_hex(field.offset)}"]
+                # Detect if adjacent fields incorrectly overlap (the C decl will not be accurate)
+                if not self.is_union and position > field.offset:
+                    comments.append("overlap")
+                # Detect if a union field doesn't start at 0 (the C decl will not be accurate)
+                if self.is_union and field.offset != 0:
+                    comments.append("offset")
+                # Mark fields that weren't in the input TypeMap (i.e. weren't in the context)
+                if not field.known:
+                    comments.append("inferred")
+                lines.append(fmt.with_comments(field_decl, comments))
+                position = field.offset + (field.type.get_size_bytes() or 1)
+            pad_to(self.size)
+        lines.append(fmt.with_comments(tail, [f"size 0x{fmt.format_hex(self.size)}"]))
+        return "\n".join(lines)
 
     @staticmethod
     def unknown_of_size(

@@ -50,6 +50,8 @@ if "source" in form:
         value = form.getfirst("compiler")
         if value in ("ido", "gcc"):
             cmd.extend(["--compiler", value])
+    if "structs" in form:
+        cmd.append("--structs")
 
     comment_style = form.getfirst("comment_style", "multiline")
     if "oneline" in comment_style:
@@ -215,7 +217,7 @@ label {
     <option value="none">none</option>
     </select>
     </label>
-    <label>Original Compiler:
+    <label>Original compiler:
     <select name="compiler">
     <option value="ido">ido</option>
     <option value="gcc">gcc</option>
@@ -245,6 +247,7 @@ label {
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
+    <label><input type="checkbox" name="structs">Struct declarations</label>
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
   </div>
@@ -326,7 +329,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "noifs", "dark", "regvarsselect", "regvars", "comment_style", "compiler"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "noifs", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "structs"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];
