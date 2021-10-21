@@ -172,9 +172,10 @@ def parse_flags(flags: List[str]) -> Options:
         "--no-cache",
         action="store_false",
         dest="use_cache",
-        help="Enable caching of variable types/function signatures/structs from the parsed C context. "
+        help="Disable caching of variable types/function signatures/structs from the parsed C context. "
         "This option should be used for untrusted environments. "
-        'The cache for "foo/ctx_bar.c" is stored in "foo/ctx_bar.c.m2c"',
+        'The cache for "foo/ctx_bar.c" is stored in "foo/ctx_bar.c.m2c". '
+        "The *.m2c files automatically regenerate when the source file change, and can be ignored.",
     )
     group.add_argument(
         "-D",
@@ -262,7 +263,7 @@ def parse_flags(flags: List[str]) -> Options:
         "--pointer-style",
         dest="pointer_style",
         help="Control whether to output pointer asterisks next to the type name (left) "
-        "or next to the variable name (right)",
+        "or next to the variable name (right). Default: right",
         choices=["left", "right"],
         default="right",
     )
@@ -283,7 +284,8 @@ def parse_flags(flags: List[str]) -> Options:
         dest="comment_style",
         choices=["multiline", "oneline"],
         default="multiline",
-        help='Comment formatting. "multiline" for C-style `/* ... */`, "oneline" for C++-style `// ...`',
+        help='Comment formatting. "multiline" for C-style `/* ... */`, "oneline" for C++-style `// ...`. '
+        "Default: multiline",
     )
     group.add_argument(
         "--comment-column",
@@ -291,7 +293,7 @@ def parse_flags(flags: List[str]) -> Options:
         metavar="N",
         type=int,
         default=52,
-        help="Column number to justify comments to. Set to 0 to disable justification.",
+        help="Column number to justify comments to. Set to 0 to disable justification. Default: 52",
     )
     group.add_argument(
         "--no-casts",
@@ -308,7 +310,8 @@ def parse_flags(flags: List[str]) -> Options:
         choices=list(Options.CompilerEnum),
         default="ido",
         help="Original compiler family that produced the input files. "
-        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering.",
+        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
+        "Default: ido",
     )
     group.add_argument(
         "--stop-on-error",
