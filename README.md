@@ -31,7 +31,7 @@ python3 mips_to_c.py [options] [--context <context file>] [-f <function name>] <
 
 Run with `--help` to see which options are available.
 
-Context files provided with `--context` are parsed and cached, so subsequent runs with the same file are faster. The cache for `foo/bar.c` is stored in `foo/bar.m2c`. Caching can be disabled with the `--no-cache` argument.
+Context files provided with `--context` are parsed and cached, so subsequent runs with the same file are faster. The cache for `foo/bar.c` is stored in `foo/bar.m2c`. These files can be ignored (added to `.gitignore`), and are automatically regenerated if context files change. Caching can be disabled with the `--no-cache` argument.
 
 ### Multiple functions
 
