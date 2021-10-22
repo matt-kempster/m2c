@@ -56,6 +56,134 @@ This feature is controlled with the `--globals` option (or "Global declarations"
 - `--globals=none` disables globals entirely; only function definitions are emitted.
 - `--globals=all` includes all of the output in `used`, but also includes initializers for unreferenced symbols. This can be used to convert data/rodata files without decompiling any functions.
 
+### Specifying stack variables
+
+By default, `mips_to_c` infers the types of stack (local) variables, and names them with the `sp` prefix based on their offset.
+
+Internally, the stack is represented as a struct, so it is possible to manually specify the names & types of stack variables by providing a struct declaration in the context. `mips_to_c` looks in the context for a struct with the tag name `_mips2c_stack_<function name>` (e.g. `struct _mips2c_stack_test` for a function `test()`).
+
+The size of the stack must exactly match the detected frame size, or `mips_to_c` will return an error.
+If you run `mips_to_c` with the `--structs` option, the output will include the inferred stack declaration, which can then be edited and provided as context by re-running `mips_to_c`.
+
+#### Example
+
+Here is an example for specifying the stack for the `custom_stack` end-to-end test.
+
+First, run `mips_to_c` with the `--struct` option to get the inferred struct for the `test()` function:
+
+<details>
+    <summary><code>python3 mips_to_c.py tests/end_to_end/custom_stack/irix-o2.s -f test --struct</code></summary>
+
+```c
+struct _mips2c_stack_test {
+    char pad0[0x20];
+    s8 sp20;                                        /* +0x20; inferred */
+    char pad21[0x3];
+    s32 sp24;                                       /* +0x24; inferred */
+    s32 sp28;                                       /* +0x28; inferred */
+    s8 sp2C;                                        /* +0x2C; inferred */
+    char pad2D[0x3];
+    s8 sp30;                                        /* +0x30; inferred */
+    char pad31[0x3];
+    s8 sp34;                                        /* +0x34; inferred */
+    char pad35[0x2];
+    s8 sp37;                                        /* +0x37; inferred */
+};                                                  /* size 0x38 */
+
+? func_00400090(s8 *);                              /* static */
+s32 test(void *arg0);                               /* static */
+
+s32 test(void *arg0) {
+    s8 sp37;
+    s8 sp34;
+    s8 sp30;
+    s8 sp2C;
+    s32 sp28;
+    s32 sp24;
+    s8 sp20;
+    s32 temp_t4;
+
+    func_00400090(&sp37);
+    func_00400090(&sp34);
+    func_00400090(&sp30);
+    func_00400090(&sp2C);
+    func_00400090(&sp20);
+    sp37 = arg0->unk0 + arg0->unk4;
+    sp34 = arg0->unk0 + arg0->unk8;
+    temp_t4 = arg0->unk4 + arg0->unk8;
+    sp30 = temp_t4;
+    sp20 = arg0->unk0 * sp37;
+    sp24 = arg0->unk4 * (s16) sp34;
+    sp28 = arg0->unk8 * temp_t4;
+    if (sp37 != 0) {
+        sp2C = arg0;
+    } else {
+        sp2C = &sp20;
+    }
+    return sp37 + (s16) sp34 + (s32) sp30 + *(s32 *) sp2C + sp24;
+}
+```
+</details>
+
+Now, based on the body of the `test()` function, we can make some guesses about the types of these variables, and give them more descriptive names:
+
+```c
+// Save this file as `test_context.c`
+struct Vec {
+    s32 x, y, z;
+};
+
+struct _mips2c_stack_test {
+    char pad0[0x20];
+    struct Vec vec;
+    struct Vec *vec_ptr;
+    s32 scale_z;
+    s16 scale_y;
+    char pad36[1];
+    s8 scale_x;
+}; /* size 0x38 */
+
+int test(struct Vec *vec_arg);
+```
+
+Finally, re-run `mips_to_c` with our custom stack as part of the `--context`. The `--context` option can be specified multiple times to combine files.
+
+<details>
+    <summary><code>python3 mips_to_c.py tests/end_to_end/custom_stack/irix-o2.s -f test --context test_context.c</code></summary>
+
+```c
+? func_00400090(s8 *);                              /* static */
+
+s32 test(struct Vec *vec_arg) {
+    s8 scale_x;
+    s16 scale_y;
+    s32 scale_z;
+    struct Vec *vec_ptr;
+    struct Vec vec;
+    s32 temp_t4;
+
+    func_00400090(&scale_x);
+    func_00400090((s8 *) &scale_y);
+    func_00400090((s8 *) &scale_z);
+    func_00400090((s8 *) &vec_ptr);
+    func_00400090((s8 *) &vec);
+    scale_x = vec_arg->x + vec_arg->y;
+    scale_y = vec_arg->x + vec_arg->z;
+    temp_t4 = vec_arg->y + vec_arg->z;
+    scale_z = temp_t4;
+    vec = vec_arg->x * scale_x;
+    vec.y = vec_arg->y * scale_y;
+    vec.z = vec_arg->z * temp_t4;
+    if (scale_x != 0) {
+        vec_ptr = vec_arg;
+    } else {
+        vec_ptr = &vec;
+    }
+    return scale_x + scale_y + scale_z + vec_ptr->x + vec.y;
+}
+```
+</details>
+
 ### Formatting
 
 The following options control the formatting details of the output, such as braces style or numeric format. See `./mips_to_c.py --help` for more details. 
