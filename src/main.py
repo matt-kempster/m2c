@@ -150,7 +150,7 @@ def parse_flags(flags: List[str]) -> Options:
     group.add_argument(
         "filename",
         nargs="+",
-        help="input asm filename(s)",
+        help="Input asm filename(s)",
     )
     group.add_argument(
         "--rodata",
@@ -165,33 +165,34 @@ def parse_flags(flags: List[str]) -> Options:
         action="append",
         type=Path,
         default=[],
-        help="read variable types/function signatures/structs from an existing C file. "
+        help="Read variable types/function signatures/structs from an existing C file. "
         "The file must already have been processed by the C preprocessor.",
     )
     group.add_argument(
         "--no-cache",
         action="store_false",
         dest="use_cache",
-        help="Enable caching of variable types/function signatures/structs from the parsed C context. "
+        help="Disable caching of variable types/function signatures/structs from the parsed C context. "
         "This option should be used for untrusted environments. "
-        'The cache for "foo/ctx_bar.c" is stored in "foo/ctx_bar.c.m2c"',
+        'The cache for "foo/ctx_bar.c" is stored in "foo/ctx_bar.c.m2c". '
+        "The *.m2c files automatically regenerate when the source file change, and can be ignored.",
     )
     group.add_argument(
         "-D",
         dest="defined",
         action="append",
         default=[],
-        help="mark preprocessor constant as defined",
+        help="Mark preprocessor constant as defined",
     )
     group.add_argument(
         "-U",
         dest="undefined",
         action="append",
         default=[],
-        help="mark preprocessor constant as undefined",
+        help="Mark preprocessor constant as undefined",
     )
 
-    group = parser.add_argument_group("Output & Formatting Options")
+    group = parser.add_argument_group("Output Options")
     group.add_argument(
         "-f",
         "--function",
@@ -199,14 +200,7 @@ def parse_flags(flags: List[str]) -> Options:
         dest="functions",
         action="append",
         default=[],
-        help="function index or name to decompile",
-    )
-    group.add_argument(
-        "--valid-syntax",
-        dest="valid_syntax",
-        action="store_true",
-        help="emit valid C syntax, using macros to indicate unknown types or other "
-        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
+        help="Function index or name to decompile",
     )
     group.add_argument(
         "--globals",
@@ -223,32 +217,60 @@ def parse_flags(flags: List[str]) -> Options:
         "--debug",
         dest="debug",
         action="store_true",
-        help="print debug info inline",
+        help="Print debug info inline",
     )
     group.add_argument(
         "--print-assembly",
         dest="print_assembly",
         action="store_true",
-        help="print assembly of function to decompile",
+        help="Print assembly of function to decompile",
+    )
+    group.add_argument(
+        "--dump-typemap",
+        dest="dump_typemap",
+        action="store_true",
+        help="Dump information about all functions and structs from the provided C "
+        "context. Mainly useful for debugging.",
+    )
+    group.add_argument(
+        "--visualize",
+        dest="visualize",
+        action="store_true",
+        help="Print an SVG visualization of the control flow graph using graphviz",
+    )
+    group.add_argument(
+        "--sanitize-tracebacks",
+        dest="sanitize_tracebacks",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+
+    group = parser.add_argument_group("Formatting Options")
+    group.add_argument(
+        "--valid-syntax",
+        dest="valid_syntax",
+        action="store_true",
+        help="Emit valid C syntax, using macros to indicate unknown types or other "
+        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
     )
     group.add_argument(
         "--allman",
         dest="allman",
         action="store_true",
-        help="put braces on separate lines",
+        help="Put braces on separate lines",
     )
     group.add_argument(
         "--pointer-style",
         dest="pointer_style",
-        help="control whether to output pointer asterisks next to the type name (left) "
-        "or next to the variable name (right)",
+        help="Control whether to output pointer asterisks next to the type name (left) "
+        "or next to the variable name (right). Default: right",
         choices=["left", "right"],
         default="right",
     )
     group.add_argument(
         "--unk-underscore",
         dest="unknown_underscore",
-        help="emit unk_X instead of unkX for unknown struct accesses",
+        help="Emit unk_X instead of unkX for unknown struct accesses",
         action="store_true",
     )
     group.add_argument(
@@ -260,35 +282,24 @@ def parse_flags(flags: List[str]) -> Options:
     group.add_argument(
         "--comment-style",
         dest="comment_style",
-        help='Comment formatting. "multiline" for C-style `/* ... */`, "oneline" for C++-style `// ...`',
         choices=["multiline", "oneline"],
         default="multiline",
+        help='Comment formatting. "multiline" for C-style `/* ... */`, "oneline" for C++-style `// ...`. '
+        "Default: multiline",
     )
     group.add_argument(
         "--comment-column",
         dest="comment_column",
-        help="Column number to justify comments to. Set to 0 to disable justification.",
+        metavar="N",
         type=int,
         default=52,
+        help="Column number to justify comments to. Set to 0 to disable justification. Default: 52",
     )
     group.add_argument(
-        "--dump-typemap",
-        dest="dump_typemap",
+        "--no-casts",
+        dest="skip_casts",
         action="store_true",
-        help="dump information about all functions and structs from the provided C "
-        "context. Mainly useful for debugging.",
-    )
-    group.add_argument(
-        "--visualize",
-        dest="visualize",
-        action="store_true",
-        help="print an SVG visualization of the control flow graph using graphviz",
-    )
-    group.add_argument(
-        "--sanitize-tracebacks",
-        dest="sanitize_tracebacks",
-        action="store_true",
-        help=argparse.SUPPRESS,
+        help="Don't emit any type casts",
     )
 
     group = parser.add_argument_group("Analysis Options")
@@ -299,25 +310,26 @@ def parse_flags(flags: List[str]) -> Options:
         choices=list(Options.CompilerEnum),
         default="ido",
         help="Original compiler family that produced the input files. "
-        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering.",
+        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
+        "Default: ido",
     )
     group.add_argument(
         "--stop-on-error",
         dest="stop_on_error",
         action="store_true",
-        help="stop when encountering any error",
+        help="Stop when encountering any error",
     )
     group.add_argument(
         "--void",
         dest="void",
         action="store_true",
-        help="assume the decompiled function returns void",
+        help="Assume the decompiled function returns void",
     )
     group.add_argument(
         "--gotos-only",
         dest="ifs",
         action="store_false",
-        help="disable control flow generation; emit gotos for everything",
+        help="Disable control flow generation; emit gotos for everything",
     )
     group.add_argument(
         "--no-ifs",
@@ -329,19 +341,13 @@ def parse_flags(flags: List[str]) -> Options:
         "--no-andor",
         dest="andor_detection",
         action="store_false",
-        help="disable detection of &&/||",
-    )
-    group.add_argument(
-        "--no-casts",
-        dest="skip_casts",
-        action="store_true",
-        help="don't emit any type casts",
+        help="Disable detection of &&/||",
     )
     group.add_argument(
         "--reg-vars",
         metavar="REGISTERS",
         dest="reg_vars",
-        help="use single variables instead of temps/phis for the given "
+        help="Use single variables instead of temps/phis for the given "
         "registers (comma separated)",
     )
     group.add_argument(
@@ -350,7 +356,7 @@ def parse_flags(flags: List[str]) -> Options:
         dest="goto_patterns",
         action="append",
         default=["GOTO"],
-        help="emit gotos for branches on lines containing this substring "
+        help="Emit gotos for branches on lines containing this substring "
         '(possibly within a comment). Default: "GOTO". Multiple '
         "patterns are allowed.",
     )
