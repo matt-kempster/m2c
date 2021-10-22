@@ -9,7 +9,13 @@ An online version is available at https://simonsoftware.se/other/mips_to_c.py.
 
 ## Install
 
-Make sure you have Python 3.6 or later installed, then do `python3 -m pip install --upgrade pycparser` (also `dataclasses` if not on 3.7+).
+This project requires Python 3.6 or later. To install the Python dependencies:
+```bash
+python3 -m pip install --upgrade pycparser
+
+# Optional: If you are on python3.6, you will also need to install "dataclasses"
+python3.6 -m pip install --upgrade dataclasses
+```
 
 You might need to install `pip` first; on Ubuntu this can be done with:
 ```bash
@@ -24,6 +30,70 @@ python3 mips_to_c.py [options] [--context <context file>] [-f <function name>] <
 ```
 
 Run with `--help` to see which options are available.
+
+Context files provided with `--context` are parsed and cached, so subsequent runs with the same file are faster. The cache for `foo/bar.c` is stored in `foo/bar.m2c`. These files can be ignored (added to `.gitignore`), and are automatically regenerated if context files change. Caching can be disabled with the `--no-cache` argument.
+
+### Multiple functions
+
+By default, `mips_to_c` decompiles all functions in the text sections from the input assembly files.
+`mips_to_c` is able to perform a small amount of cross-function type inference, if the functions call each other.
+
+You can limit the function(s) that decompiled by providing the `-f <function name>` flags (or the "Function" dropdown on the website).
+
+### Global Declarations & Initializers
+
+When provided input files with `data`, `rodata`, and/or `bss` sections, `mips_to_c` can generate the initializers for variables it knows the types of.
+
+Qualifier hints such as `const`, `static`, and `extern` are based on which sections the symbols appear in, or if they aren't provided at all.
+The output also includes prototypes for functions not declared in the context.
+
+`mips_to_c` cannot generate initializers for structs with bitfields (e.g. `unsigned foo: 3;`) or for symbols that it cannot infer the type of.
+For the latter, you can provide a type for the symbol the context.
+
+This feature is controlled with the `--globals` option (or "Global declarations" on the website):
+
+- `--globals=used` is the default behavior, global declarations are emitted for referenced symbols. Initializers are generated when the data/rodata sections are provided.
+- `--globals=none` disables globals entirely; only function definitions are emitted.
+- `--globals=all` includes all of the output in `used`, but also includes initializers for unreferenced symbols. This can be used to convert data/rodata files without decompiling any functions.
+
+### Formatting
+
+The following options control the formatting details of the output, such as braces style or numeric format. See `./mips_to_c.py --help` for more details. 
+
+(The option name on the website, if available, is in parentheses.)
+
+- `--valid-syntax`
+- `--allman` ("Allman braces")
+- `--pointer-style` ("`*` to the left")
+- `--unk-underscore`
+- `--hex-case`
+- `--comment-style {multiline,oneline}` ("Comment style")
+- `--comment-column N` ("Comment style")
+- `--no-casts`
+
+Note: `--valid-syntax` is used to produce output that is less human-readable, but is likely to directly compile without edits. This can be used to go directly from assembly to the permuter without human intervention.
+
+### Debugging poor results (Advanced)
+
+There are several options to `mips_to_c` which can be used to troubleshoot poor results. Many of these options produce more "primitive" output or debugging information.
+
+- `--no-andor` ("Disable &&/||"): Disable complex conditional detection, such as `if (a && b)`. Instead, emit each part of the conditional as a separate `if` statement. Ands, ors, nots, etc. are usually represented with `goto`s.
+- `--gotos-only` ("Use gotos for everything"): Do not detect loops or complex conditionals. This format is close to a 1-1 translation of the assembly.
+    - Note: to use a goto for a single branch, don't use this flag, but add `# GOTO` to the assembly input.
+- `--debug` ("Debug info"): include debug information inline with the code, such as basic block boundaries & labels.
+- `--void` ("Force void return type"): assume that the decompiled function has return type `void`. Alternatively: provide the function prototype in the context.
+
+#### Visualization
+
+`mips_to_c` can generate an SVG representation of the control flow of a function, which can sometimes be helpful to untangle complex loops or early returns.
+
+Pass `--visualize` on the command line, or use the "Visualize" button on the website. The output will be an SVG file.
+
+Example to produce `my_fn.svg` of `my_fn()`:
+
+```sh
+python3 ./mips_to_c.py --visualize --context ctx.c -f my_fn my_asm.s > my_fn.svg
+```
 
 ## Contributing
 
