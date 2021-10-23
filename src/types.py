@@ -1027,6 +1027,13 @@ class StructDeclaration:
         lines = []
         lines.append(fmt.indent(head))
         with fmt.indented():
+            offset_str_digits = len(fmt.format_hex(self.size))
+
+            def offset_comment(offset: int) -> str:
+                # Indicate the offset of the field (in hex), written to the *left* of the field
+                nonlocal offset_str_digits
+                return f"/* 0x{fmt.format_hex(offset).zfill(offset_str_digits)} */"
+
             position = 0
 
             def pad_to(offset: int) -> None:
@@ -1037,15 +1044,15 @@ class StructDeclaration:
                     name = f"pad{underscore}{fmt.format_hex(position)}"
                     lines.append(
                         fmt.indent(
-                            f"char {name}[0x{fmt.format_hex(offset - position)}];"
+                            f"{offset_comment(position)} char {name}[0x{fmt.format_hex(offset - position)}];"
                         )
                     )
 
             for field in self.fields:
                 pad_to(field.offset)
-                field_decl = f"{field.type.to_decl(field.name, fmt)};"
-                # Add a comment with the offset of the field, in hex
-                comments = [f"+0x{fmt.format_hex(field.offset)}"]
+                field_decl = f"{offset_comment(field.offset)} {field.type.to_decl(field.name, fmt)};"
+
+                comments = []
                 # Detect if adjacent fields incorrectly overlap (the C decl will not be accurate)
                 if not self.is_union and position > field.offset:
                     comments.append("overlap")
@@ -1058,7 +1065,7 @@ class StructDeclaration:
                 lines.append(fmt.with_comments(field_decl, comments))
                 position = field.offset + (field.type.get_size_bytes() or 1)
             pad_to(self.size)
-        lines.append(fmt.with_comments(tail, [f"size 0x{fmt.format_hex(self.size)}"]))
+        lines.append(fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"]))
         return "\n".join(lines)
 
     @staticmethod
