@@ -160,8 +160,9 @@ def parse_flags(flags: List[str]) -> Options:
     )
     group.add_argument(
         "--rodata",
-        dest="filename",
+        dest="rodata_filenames",
         action="append",
+        default=[],
         help=argparse.SUPPRESS,  # For backwards compatibility
     )
     group.add_argument(
@@ -403,7 +404,7 @@ def parse_flags(flags: List[str]) -> Options:
         oneline_comments=args.comment_style == "oneline",
         comment_column=args.comment_column,
     )
-    filenames = args.filename
+    filenames = args.filename + args.rodata_filenames
 
     # Backwards compatibility: giving a function index/name as a final argument, or "all"
     assert filenames, "checked by argparse, nargs='+'"
