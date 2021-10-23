@@ -527,8 +527,8 @@ def get_stack_info(
             size=info.allocated_stack_size,
             tag_name=stack_struct_name,
         )
-    # Mark the struct as "hidden" so we never try to use a reference to the struct itself
-    stack_struct.is_hidden = True
+    # Mark the struct as a stack struct so we never try to use a reference to the struct itself
+    stack_struct.is_stack = True
     stack_struct.new_field_prefix = "sp"
 
     # This acts as the type of the $sp register
@@ -4149,9 +4149,10 @@ class GlobalInfo:
                 for field in struct_fields:
                     if isinstance(field, int):
                         # Check that all padding bytes are 0
-                        padding = read_uint(field)
-                        if padding != 0:
-                            return None
+                        for i in range(field):
+                            padding = read_uint(1)
+                            if padding != 0:
+                                return None
                     else:
                         m = for_type(field)
                         if m is None:

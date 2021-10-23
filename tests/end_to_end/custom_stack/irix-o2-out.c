@@ -1,3 +1,13 @@
+struct _mips2c_stack_test {
+    /* 0x00 */ s8 pad0[32];
+    /* 0x20 */ struct Vec e;
+    /* 0x2C */ struct Vec *d;
+    /* 0x30 */ s32 c;
+    /* 0x34 */ s16 b;
+    /* 0x36 */ s8 pad1[1];
+    /* 0x37 */ s8 a;
+};                                                  /* size = 0x38 */
+
 ? func_00400090(s8 *);                              /* static */
 
 s32 test(struct Vec *v) {

@@ -1,1 +1,1 @@
---context orig.c --valid-syntax
+--context orig.c --valid-syntax --structs

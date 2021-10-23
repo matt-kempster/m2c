@@ -1,3 +1,7 @@
+struct _mips2c_stack_test {
+    /* 0x00 */ char pad0[0x18];
+};                                                  /* size = 0x18 */
+
 MIPS2C_UNK extern_fn(struct A *);                   /* extern */
 MIPS2C_UNK static_fn(struct A *);                   /* static */
 extern f32 extern_float;

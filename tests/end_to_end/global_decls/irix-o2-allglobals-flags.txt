@@ -1,1 +1,1 @@
---context orig.c --valid-syntax --globals=all
+--context orig.c --valid-syntax --globals=all --structs
