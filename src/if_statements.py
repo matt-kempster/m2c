@@ -1023,6 +1023,16 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
             function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
             any_decl = True
 
+        # Create a variable to cast the original first argument to the assumed type
+        if function_info.stack_info.replace_first_arg is not None:
+            assert len(function_info.stack_info.arguments) >= 1
+            replaced_arg = function_info.stack_info.arguments[0]
+            original_name, original_type = function_info.stack_info.replace_first_arg
+
+            lhs = replaced_arg.type.to_decl(replaced_arg.format(fmt), fmt)
+            rhs = f"({replaced_arg.type.format(fmt)}) {original_name}"
+            function_lines.append(SimpleStatement(f"{lhs} = {rhs};").format(fmt))
+
         if any_decl:
             function_lines.append("")
 

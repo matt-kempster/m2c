@@ -238,6 +238,7 @@ class StackInfo:
     nonzero_accesses: Set["Expression"] = field(default_factory=set)
     param_names: Dict[int, str] = field(default_factory=dict)
     stack_pointer_type: Optional[Type] = None
+    replace_first_arg: Optional[Tuple[str, Type]] = None
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -258,6 +259,39 @@ class StackInfo:
         return location >= self.allocated_stack_size
 
     def add_known_param(self, offset: int, name: Optional[str], type: Type) -> None:
+        # A common pattern in C for OOP-style polymorphism involves casting a general "base" struct
+        # to a specific "class" struct, where the first member of the class struct is the base struct.
+        #
+        # For the first argument of the function, if it is a pointer to a base struct, and there
+        # exists a class struct named after the first part of the function name, assume that
+        # this pattern is being used. Internally, treat the argument as a pointer to the *class*
+        # struct, even though it is only a pointer to the *base* struct in the provided context.
+        if offset == 0 and type.is_pointer() and self.replace_first_arg is None:
+            namespace = self.function.name.partition("_")[0]
+            base_struct_type = type.get_pointer_target()
+            self_struct = self.global_info.typepool.get_struct_by_tag_name(
+                namespace, self.global_info.typemap
+            )
+            if (
+                self_struct is not None
+                and base_struct_type is not None
+                and base_struct_type.is_struct()
+            ):
+                # Check if `self_struct_type` contains a `base_struct_type` at offset 0
+                self_struct_type = Type.struct(self_struct)
+                field_path, field_type, _ = self_struct_type.get_field(
+                    offset=0, target_size=base_struct_type.get_size_bytes()
+                )
+                if (
+                    field_path is not None
+                    and field_type.unify(base_struct_type)
+                    and not self_struct_type.unify(base_struct_type)
+                ):
+                    # Success, it looks like `self_struct_type` extends `base_struct_type`.
+                    # By default, name the local var `self`, unless the argument name is `thisx` then use `this`
+                    self.replace_first_arg = (name or "_self", type)
+                    name = "this" if name == "thisx" else "self"
+                    type = Type.ptr(Type.struct(self_struct))
         if name:
             self.param_names[offset] = name
         _, arg = self.get_argument(offset)
