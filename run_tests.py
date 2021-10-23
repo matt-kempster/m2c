@@ -224,7 +224,7 @@ def create_project_tests(
         if not file_list:
             continue
 
-        flags = ["--compiler", compiler]
+        flags = ["--compiler", compiler, "--structs"]
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 

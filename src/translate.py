@@ -4149,9 +4149,10 @@ class GlobalInfo:
                 for field in struct_fields:
                     if isinstance(field, int):
                         # Check that all padding bytes are 0
-                        padding = read_uint(field)
-                        if padding != 0:
-                            return None
+                        for i in range(field):
+                            padding = read_uint(1)
+                            if padding != 0:
+                                return None
                     else:
                         m = for_type(field)
                         if m is None:

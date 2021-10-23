@@ -536,7 +536,10 @@ class Type:
 
                 add_padding(field.offset)
                 field_size = field.type.get_size_bytes()
-                assert field_size is not None
+                # If any field has unknown size, we can't make an initializer
+                if field_size is None:
+                    return None
+
                 output.append(field.type)
                 position = field.offset + field_size
 
@@ -1016,7 +1019,7 @@ class StructDeclaration:
         is possible for the user to reconstruct these by hand from the "offset" comments.
         """
         keyword = "union" if self.is_union else "struct"
-        decl = f"{keyword} {self.tag_name}" if self.tag_name else "{keyword}"
+        decl = f"{keyword} {self.tag_name}" if self.tag_name else f"{keyword}"
         head = f"typedef {decl} {{" if self.typedef_name else f"{decl} {{"
         tail = f"}} {self.typedef_name};" if self.typedef_name else f"}};"
 
@@ -1035,21 +1038,34 @@ class StructDeclaration:
                 return f"/* 0x{fmt.format_hex(offset).zfill(offset_str_digits)} */"
 
             position = 0
+            prev_field: Optional[StructDeclaration.StructField] = None
 
-            def pad_to(offset: int) -> None:
+            def pad_to(offset: int, is_final: bool) -> None:
                 nonlocal position
                 if position < offset:
                     # Fill the gap with a char array, e.g. `char pad12[0x34];`
                     underscore = "_" if fmt.coding_style.unknown_underscore else ""
                     name = f"pad{underscore}{fmt.format_hex(position)}"
+                    padding_size = offset - position
+
+                    comments = []
+                    # Hint if the previous field may be an array, unless this is the final field in a stack struct
+                    if prev_field is not None and not (is_final and self.is_stack):
+                        last_size = prev_field.type.get_size_bytes()
+                        if last_size is not None and padding_size > last_size:
+                            comments.append(
+                                f"maybe part of {prev_field.name}[{(padding_size // last_size) + 1}]?"
+                            )
+
                     lines.append(
-                        fmt.indent(
-                            f"{offset_comment(position)} char {name}[0x{fmt.format_hex(offset - position)}];"
+                        fmt.with_comments(
+                            f"{offset_comment(position)} char {name}[0x{fmt.format_hex(padding_size)}];",
+                            comments,
                         )
                     )
 
             for field in self.fields:
-                pad_to(field.offset)
+                pad_to(field.offset, is_final=False)
                 field_decl = f"{offset_comment(field.offset)} {field.type.to_decl(field.name, fmt)};"
 
                 comments = []
@@ -1063,8 +1079,9 @@ class StructDeclaration:
                 if not field.known:
                     comments.append("inferred")
                 lines.append(fmt.with_comments(field_decl, comments))
-                position = field.offset + (field.type.get_size_bytes() or 1)
-            pad_to(self.size)
+                position = field.offset + (field.type.get_size_bytes() or 0)
+                prev_field = field
+            pad_to(self.size, is_final=True)
         lines.append(fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"]))
         return "\n".join(lines)
 
