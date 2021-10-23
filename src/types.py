@@ -9,6 +9,7 @@ from .c_types import (
     Struct,
     StructUnion as CStructUnion,
     TypeMap,
+    is_unk_type,
     parse_constant_int,
     parse_function,
     parse_struct,
@@ -32,6 +33,7 @@ class TypePool:
     """
 
     unknown_field_prefix: str
+    struct_field_inference: bool
     structs: Set["StructDeclaration"] = field(default_factory=set)
     structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
     structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
@@ -96,7 +98,8 @@ class TypePool:
         for struct in sorted(
             self.structs, key=lambda s: s.tag_name or s.typedef_name or ""
         ):
-            if struct.is_stack:
+            # Include stack structs & any struct with added fields
+            if struct.is_stack or any(not f.known for f in struct.fields):
                 decls.append(struct.format(fmt) + "\n")
         return "\n".join(decls)
 
@@ -449,8 +452,11 @@ class Type:
                 return zero_offset_results[0]
             elif exact:
                 # Try to insert a new field into the struct at the given offset
-                # TODO Loosen this to Type.any()
-                field_type = Type.any_reg()
+                # TODO Loosen this to Type.any_field(), even for stack structs
+                if data.struct.is_stack:
+                    field_type = Type.any_reg()
+                else:
+                    field_type = Type.any_field()
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
                 new_field = data.struct.try_add_field(field_type, offset, field_name)
                 if new_field is not None:
@@ -705,6 +711,10 @@ class Type:
     @staticmethod
     def any_reg() -> "Type":
         return Type(TypeData(kind=TypeData.K_ANYREG))
+
+    @staticmethod
+    def any_field() -> "Type":
+        return Type(TypeData(kind=TypeData.K_ANY & ~TypeData.K_VOID))
 
     @staticmethod
     def intish() -> "Type":
@@ -1145,6 +1155,8 @@ class StructDeclaration:
 
         for offset, fields in sorted(struct.fields.items()):
             for field in fields:
+                if typepool.struct_field_inference and is_unk_type(field.type, typemap):
+                    continue
                 field_type = Type.ctype(field.type, typemap, typepool)
                 assert field.size == field_type.get_size_bytes(), (
                     field.size,

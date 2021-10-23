@@ -192,6 +192,37 @@ def is_struct_type(type: CType, typemap: TypeMap) -> bool:
     return isinstance(type.type, (ca.Struct, ca.Union))
 
 
+def is_unk_type(type: CType, typemap: TypeMap) -> bool:
+    """Return True if `type` represents an unknown type, or undetermined struct padding."""
+    # Check for types matching "char unk_N[...];"
+    if (
+        isinstance(type, ArrayDecl)
+        and isinstance(type.type, TypeDecl)
+        and isinstance(type.type.type, IdentifierType)
+        and type.type.declname is not None
+        and type.type.declname.startswith("unk_")
+        and type.type.type.names == ["char"]
+    ):
+        return True
+
+    # Check for types which are typedefs starting with "UNK_",
+    # or are arrays/pointers to one of these types.
+    while True:
+        if (
+            isinstance(type, TypeDecl)
+            and isinstance(type.type, IdentifierType)
+            and len(type.type.names) == 1
+            and type.type.names[0] in typemap.typedefs
+        ):
+            if type.type.names[0].startswith("UNK_"):
+                return True
+            type = typemap.typedefs[type.type.names[0]]
+        elif isinstance(type, (PtrDecl, ArrayDecl)):
+            type = type.type
+        else:
+            return False
+
+
 def get_primitive_list(type: CType, typemap: TypeMap) -> Optional[List[str]]:
     type = resolve_typedefs(type, typemap)
     if not isinstance(type, TypeDecl):

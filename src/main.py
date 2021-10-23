@@ -87,7 +87,8 @@ def run(options: Options) -> int:
     fmt = options.formatter()
     function_names = set(all_functions.keys())
     typepool = TypePool(
-        unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk"
+        unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
+        struct_field_inference=options.struct_field_inference,
     )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
     function_infos: List[Union[FunctionInfo, Exception]] = []
@@ -222,8 +223,9 @@ def parse_flags(flags: List[str]) -> Options:
         "--structs",
         dest="structs",
         action="store_true",
-        help="Include struct declarations representing each function's stack. "
-        "These can be modified and passed back to mips_to_c via --context to improve the output.",
+        help="Perform type inference on unknown struct fields, and include struct declarations "
+        "representing each function's stack in the output. These can be modified and passed back "
+        "to mips_to_c via --context to improve the output.",
     )
     group.add_argument(
         "--debug",
@@ -356,6 +358,12 @@ def parse_flags(flags: List[str]) -> Options:
         help="Disable detection of &&/||",
     )
     group.add_argument(
+        "--no-struct-inference",
+        dest="no_struct_inference",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    group.add_argument(
         "--reg-vars",
         metavar="REGISTERS",
         dest="reg_vars",
@@ -442,6 +450,7 @@ def parse_flags(flags: List[str]) -> Options:
         global_decls=args.global_decls,
         compiler=args.compiler,
         structs=args.structs,
+        struct_field_inference=args.structs and not args.no_struct_inference,
     )
 
 

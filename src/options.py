@@ -57,6 +57,7 @@ class Options:
     global_decls: GlobalDeclsEnum
     compiler: CompilerEnum
     structs: bool
+    struct_field_inference: bool
 
     def formatter(self) -> "Formatter":
         return Formatter(
