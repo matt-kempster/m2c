@@ -1052,7 +1052,7 @@ class StructDeclaration:
                     # Hint if the previous field may be an array, unless this is the final field in a stack struct
                     if prev_field is not None and not (is_final and self.is_stack):
                         last_size = prev_field.type.get_size_bytes()
-                        if last_size is not None and padding_size > last_size:
+                        if last_size and padding_size > last_size:
                             comments.append(
                                 f"maybe part of {prev_field.name}[{(padding_size // last_size) + 1}]?"
                             )
