@@ -76,19 +76,19 @@ First, run `mips_to_c` with the `--struct` option to get the inferred struct for
 
 ```c
 struct _mips2c_stack_test {
-    char pad0[0x20];
-    s8 sp20;                                        /* +0x20; inferred */
-    char pad21[0x3];
-    s32 sp24;                                       /* +0x24; inferred */
-    s32 sp28;                                       /* +0x28; inferred */
-    s8 sp2C;                                        /* +0x2C; inferred */
-    char pad2D[0x3];
-    s8 sp30;                                        /* +0x30; inferred */
-    char pad31[0x3];
-    s8 sp34;                                        /* +0x34; inferred */
-    char pad35[0x2];
-    s8 sp37;                                        /* +0x37; inferred */
-};                                                  /* size 0x38 */
+    /* 0x00 */ char pad0[0x20];
+    /* 0x20 */ s8 sp20;                             /* inferred */
+    /* 0x21 */ char pad21[0x3];
+    /* 0x24 */ s32 sp24;                            /* inferred */
+    /* 0x28 */ s32 sp28;                            /* inferred */
+    /* 0x2C */ s8 sp2C;                             /* inferred */
+    /* 0x2D */ char pad2D[0x3];
+    /* 0x30 */ s8 sp30;                             /* inferred */
+    /* 0x31 */ char pad31[0x3];
+    /* 0x34 */ s8 sp34;                             /* inferred */
+    /* 0x35 */ char pad35[0x2];
+    /* 0x37 */ s8 sp37;                             /* inferred */
+};                                                  /* size = 0x38 */
 
 ? func_00400090(s8 *);                              /* static */
 s32 test(void *arg0);                               /* static */

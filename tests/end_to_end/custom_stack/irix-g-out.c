@@ -1,17 +1,17 @@
 struct _mips2c_stack_test {
-    char pad0[0x18];
-    s8 sp18;                                        /* +0x18; inferred */
-    char pad19[0x3];
-    s32 sp1C;                                       /* +0x1C; inferred */
-    s32 sp20;                                       /* +0x20; inferred */
-    s8 sp24;                                        /* +0x24; inferred */
-    char pad25[0x3];
-    s8 sp28;                                        /* +0x28; inferred */
-    char pad29[0x3];
-    s8 sp2C;                                        /* +0x2C; inferred */
-    char pad2D[0x2];
-    s8 sp2F;                                        /* +0x2F; inferred */
-};                                                  /* size 0x30 */
+    /* 0x00 */ char pad0[0x18];
+    /* 0x18 */ s8 sp18;                             /* inferred */
+    /* 0x19 */ char pad19[0x3];
+    /* 0x1C */ s32 sp1C;                            /* inferred */
+    /* 0x20 */ s32 sp20;                            /* inferred */
+    /* 0x24 */ s8 sp24;                             /* inferred */
+    /* 0x25 */ char pad25[0x3];
+    /* 0x28 */ s8 sp28;                             /* inferred */
+    /* 0x29 */ char pad29[0x3];
+    /* 0x2C */ s8 sp2C;                             /* inferred */
+    /* 0x2D */ char pad2D[0x2];
+    /* 0x2F */ s8 sp2F;                             /* inferred */
+};                                                  /* size = 0x30 */
 
 ? func_00400090(s8 *);                              /* static */
 s32 test(void *arg0);                               /* static */
