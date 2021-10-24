@@ -81,14 +81,14 @@ class Function:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 1
-    _empty: ClassVar["TypeMap"]
+    VERSION: ClassVar[int] = 2
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
 
     typedefs: Dict[str, CType] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
+    vars_with_initializers: Set[str] = field(default_factory=set)
     functions: Dict[str, Function] = field(default_factory=dict)
     structs: Dict[Union[str, StructUnion], Struct] = field(default_factory=dict)
     struct_typedefs: Dict[Union[str, StructUnion], TypeDecl] = field(
@@ -700,6 +700,8 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
             def visit_Decl(self, decl: ca.Decl) -> None:
                 if decl.name is not None:
                     typemap.var_types[decl.name] = type_from_global_decl(decl)
+                    if decl.init is not None:
+                        typemap.vars_with_initializers.add(decl.name)
                 if not isinstance(decl.type, FuncDecl):
                     self.visit(decl.type)
 

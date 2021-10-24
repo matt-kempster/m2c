@@ -217,7 +217,7 @@ def parse_flags(flags: List[str]) -> Options:
         default="used",
         help="Control which global declarations & initializers are emitted. "
         '"all" includes all globals with entries in .data/.rodata/.bss, as well as inferred symbols. '
-        '"used" only includes symbols used by the decompiled functions (default). '
+        '"used" only includes symbols used by the decompiled functions that are not in the context (default). '
         '"none" does not emit any global declarations. ',
     )
     group.add_argument(
