@@ -970,8 +970,12 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
     fn_name = function_info.stack_info.function.name
     arg_strs = []
-    for arg in function_info.stack_info.arguments:
-        arg_strs.append(arg.type.to_decl(arg.format(fmt), fmt))
+    for i, arg in enumerate(function_info.stack_info.arguments):
+        if i == 0 and function_info.stack_info.replace_first_arg is not None:
+            original_name, original_type = function_info.stack_info.replace_first_arg
+            arg_strs.append(original_type.to_decl(original_name, fmt))
+        else:
+            arg_strs.append(arg.type.to_decl(arg.format(fmt), fmt))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
     arg_str = ", ".join(arg_strs) or "void"
@@ -992,7 +996,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
         # IDO's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
         if options.compiler == Options.CompilerEnum.IDO:
-            local_vars.reverse()
+            local_vars = local_vars[::-1]
         for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)
             if type_decl is not None:

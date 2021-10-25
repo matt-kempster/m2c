@@ -212,19 +212,24 @@ def create_project_tests(
     asm_dir = base_dir / "asm"
     if "oot" in base_dir.parts:
         file_iter = find_tests_oot(asm_dir)
-        compiler = "ido"
+        base_flags = ["--compiler=ido", "--structs", "--unk-underscore"]
     elif "mm" in base_dir.parts:
         file_iter = find_tests_mm(asm_dir)
-        compiler = "ido"
+        base_flags = ["--compiler=ido", "--structs", "--unk-underscore"]
     elif "papermario" in base_dir.parts:
         file_iter = find_tests_splat(asm_dir)
-        compiler = "gcc"
+        base_flags = [
+            "--compiler=gcc",
+            "--structs",
+            "--unk-underscore",
+            "--pointer-style=left",
+        ]
 
     for file_list in file_iter:
         if not file_list:
             continue
 
-        flags = ["--compiler", compiler, "--structs"]
+        flags = base_flags[:]
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 

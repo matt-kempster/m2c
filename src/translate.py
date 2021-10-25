@@ -4136,6 +4136,8 @@ class GlobalInfo:
                     sym_name in self.typemap.vars_with_initializers
                 )
                 sym.type.unify(Type.ctype(ctype, self.typemap, self.typepool))
+            elif sym_name in self.local_functions:
+                sym.type.unify(Type.function())
 
         return AddressOf(sym, type=sym.type.reference())
 

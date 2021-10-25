@@ -1089,7 +1089,9 @@ class StructDeclaration:
                 if not field.known:
                     comments.append("inferred")
                 lines.append(fmt.with_comments(field_decl, comments))
-                position = field.offset + (field.type.get_size_bytes() or 0)
+                position = max(
+                    position, field.offset + (field.type.get_size_bytes() or 0)
+                )
                 prev_field = field
             pad_to(self.size, is_final=True)
         lines.append(fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"]))
