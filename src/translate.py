@@ -1197,9 +1197,7 @@ class StructAccess(Expression):
         if field_path is not None and field_path != [0]:
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
-            offset_str = (
-                f"0x{format_hex(self.offset)}" if self.offset > 0 else f"{self.offset}"
-            )
+            offset_str = fmt.format_int(self.offset)
             return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
