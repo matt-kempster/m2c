@@ -1,5 +1,5 @@
 struct _mips2c_stack_test {
-    /* 0x00 */ s8 pad0[32];
+    /* 0x00 */ s8 pad0[0x20];
     /* 0x20 */ struct Vec e;
     /* 0x2C */ struct Vec *d;
     /* 0x30 */ s32 c;

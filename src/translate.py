@@ -1039,7 +1039,7 @@ class LocalVar(Expression):
         if self.path is None:
             return fallback_name
 
-        name = StructAccess.access_path_to_field_name(self.path)
+        name = StructAccess.access_path_to_field_name(self.path, fmt)
         if name.startswith("->"):
             return name[2:]
         return fallback_name
@@ -1122,7 +1122,7 @@ class StructAccess(Expression):
         ), "The first element of the field path, if present, must be an int"
 
     @classmethod
-    def access_path_to_field_name(cls, path: AccessPath) -> str:
+    def access_path_to_field_name(cls, path: AccessPath, fmt: Formatter) -> str:
         """
         Convert an access path into a dereferencing field name, like the following examples:
             - `[0, "foo", 3, "bar"]` into `"->foo[3].bar"`
@@ -1143,7 +1143,7 @@ class StructAccess(Expression):
             if isinstance(p, str):
                 output += f".{p}"
             elif isinstance(p, int):
-                output += f"[{p}]"
+                output += f"[{fmt.format_int(p)}]"
             else:
                 static_assert_unreachable(p)
         return output
@@ -1204,7 +1204,7 @@ class StructAccess(Expression):
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [0, prefix + format_hex(self.offset)]
-        field_name = self.access_path_to_field_name(field_path)
+        field_name = self.access_path_to_field_name(field_path, fmt)
 
         # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
         deref = True
@@ -1302,12 +1302,7 @@ class Literal(Expression):
                 prefix = f"({self.type.format(fmt)})"
             if self.type.is_unsigned():
                 suffix = "U"
-        mid = (
-            str(self.value)
-            if abs(self.value) < 10
-            else hex(self.value).upper().replace("X", "x")
-        )
-        return prefix + mid + suffix
+        return prefix + fmt.format_int(self.value) + suffix
 
     def likely_partial_offset(self) -> bool:
         return self.value % 2 ** 15 in (0, 2 ** 15 - 1) and self.value < 0x1000000

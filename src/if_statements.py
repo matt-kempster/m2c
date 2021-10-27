@@ -163,7 +163,11 @@ class LabelStatement:
         if self.node in self.context.case_nodes:
             for (switch, case) in self.context.case_nodes[self.node]:
                 if case is not None:
-                    case_num = f"0x{case:X}" if fmt.coding_style.hex_case else f"{case}"
+                    case_num = (
+                        f"0x{case:X}"
+                        if fmt.coding_style.hex_case
+                        else fmt.format_int(case)
+                    )
                     case_str = f"case {case_num}"
                 else:
                     case_str = "default"

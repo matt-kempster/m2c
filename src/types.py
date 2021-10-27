@@ -661,7 +661,7 @@ class Type:
             assert data.ptr_to is not None
             dim: Optional[ca.Constant] = None
             if data.array_dim is not None:
-                dim = ca.Constant(value=str(data.array_dim), type="")
+                dim = ca.Constant(value=fmt.format_int(data.array_dim), type="")
             return ca.ArrayDecl(
                 type=data.ptr_to._to_ctype(seen.copy(), fmt),
                 dim=dim,
