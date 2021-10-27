@@ -9,6 +9,7 @@ from .c_types import (
     Struct,
     StructUnion as CStructUnion,
     TypeMap,
+    UndefinedStructError,
     is_unk_type,
     parse_constant_int,
     parse_function,
@@ -1125,8 +1126,6 @@ class StructDeclaration:
         if existing_struct:
             return existing_struct
 
-        struct = parse_struct(ctype, typemap)
-
         typedef_name: Optional[str] = None
         if ctype in typemap.struct_typedefs:
             typedef = typemap.struct_typedefs[ctype]
@@ -1136,6 +1135,24 @@ class StructDeclaration:
             typedef = typemap.struct_typedefs[ctype.name]
             assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
+
+        try:
+            struct = parse_struct(ctype, typemap)
+        except UndefinedStructError:
+            decl = StructDeclaration(
+                size=0,
+                align=1,
+                tag_name=ctype.name,
+                typedef_name=typedef_name,
+                fields=[],
+                has_bitfields=False,
+                is_union=isinstance(ctype, ca.Union),
+                new_field_prefix=typepool.unknown_field_prefix,
+            )
+            print(
+                f"/* Warning: struct {typedef_name or ctype.name} is not defined (only forward-declared) */"
+            )
+            return decl
 
         assert (
             struct.size % struct.align == 0

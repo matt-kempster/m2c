@@ -377,12 +377,18 @@ def get_struct(
         return typemap.structs.get(struct)
 
 
+class UndefinedStructError(DecompFailure):
+    pass
+
+
 def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
     existing = get_struct(struct, typemap)
     if existing:
         return existing
     if struct.decls is None:
-        raise DecompFailure(f"Tried to use struct {struct.name} before it is defined.")
+        raise UndefinedStructError(
+            f"Tried to use struct {struct.name} before it is defined (does it have a definition?)."
+        )
     ret = do_parse_struct(struct, typemap)
     if struct.name:
         typemap.structs[struct.name] = ret
