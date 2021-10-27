@@ -36,7 +36,7 @@ class Context:
     options: Options
     is_void: bool = True
     switch_nodes: Dict[SwitchNode, int] = field(default_factory=dict)
-    case_nodes: Dict[Node, List[Tuple[int, Optional[int]]]] = field(
+    case_nodes: Dict[Node, List[Tuple[int, str]]] = field(
         default_factory=lambda: defaultdict(list)
     )
     goto_nodes: Set[Node] = field(default_factory=set)
@@ -161,18 +161,9 @@ class LabelStatement:
     def format(self, fmt: Formatter) -> str:
         lines = []
         if self.node in self.context.case_nodes:
-            for (switch, case) in self.context.case_nodes[self.node]:
-                if case is not None:
-                    case_num = (
-                        f"0x{case:X}"
-                        if fmt.coding_style.hex_case
-                        else fmt.format_int(case)
-                    )
-                    case_str = f"case {case_num}"
-                else:
-                    case_str = "default"
+            for (switch, case_label) in self.context.case_nodes[self.node]:
                 comments = [f"switch {switch}"] if switch != 0 else []
-                lines.append(fmt.with_comments(f"{case_str}:", comments, indent=-1))
+                lines.append(fmt.with_comments(f"{case_label}:", comments, indent=-1))
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
         return "\n".join(lines)
@@ -369,10 +360,15 @@ def add_labels_for_switch(
     if isinstance(switch_control, SwitchControl):
         offset = switch_control.offset
 
+    # Force hex for case labels if the highest label is above 50, and there are no negative labels
+    use_hex = context.fmt.coding_style.hex_case or (
+        offset >= 0 and (len(node.cases) + offset) > 50
+    )
+
     # Mark which labels we need to emit
     if default_node is not None:
         # `None` is a sentinel value to mark the `default:` block
-        context.case_nodes[default_node].append((switch_index, None))
+        context.case_nodes[default_node].append((switch_index, "default"))
     for index, target in enumerate(node.cases):
         # Do not emit extra `case N:` labels for the `default:` block
         if target == default_node:
@@ -380,7 +376,9 @@ def add_labels_for_switch(
         # Do not emit labels that skip the switch block entirely
         if target == node.immediate_postdominator:
             continue
-        context.case_nodes[target].append((switch_index, index + offset))
+        case_num = index + offset
+        case_label = f"case 0x{case_num:X}" if use_hex else f"case {case_num}"
+        context.case_nodes[target].append((switch_index, case_label))
 
     return switch_index
 
