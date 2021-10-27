@@ -1,1 +1,1 @@
---context orig.c
+--context orig.c --globals=all

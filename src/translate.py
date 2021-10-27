@@ -1246,6 +1246,7 @@ class GlobalSymbol(Expression):
     type: Type
     asm_data_entry: Optional[AsmDataEntry] = None
     type_in_typemap: bool = False
+    initializer_in_typemap: bool = False
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -4131,6 +4132,9 @@ class GlobalInfo:
                 ctype = self.typemap.var_types.get(sym_name)
             if ctype is not None:
                 sym.type_in_typemap = True
+                sym.initializer_in_typemap = (
+                    sym_name in self.typemap.vars_with_initializers
+                )
                 sym.type.unify(Type.ctype(ctype, self.typemap, self.typepool))
 
         return AddressOf(sym, type=sym.type.reference())
@@ -4339,7 +4343,11 @@ class GlobalInfo:
                     if array_dim is None and sym.type.is_likely_float():
                         continue
 
+                # In "none" mode, do not emit any decls
                 if decls == Options.GlobalDeclsEnum.NONE:
+                    continue
+                # In modes except "all", skip the decl if the context file already had an initializer
+                if decls != Options.GlobalDeclsEnum.ALL and sym.initializer_in_typemap:
                     continue
 
                 qualifier = f"{qualifier} " if qualifier else ""
