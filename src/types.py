@@ -321,6 +321,13 @@ class Type:
             return Type.ptr(data.ptr_to)
         return self
 
+    def weaken_void_ptr(self) -> "Type":
+        """If self is an explicit `void *`, return `Type.ptr()` without an target type."""
+        target = self.get_pointer_target()
+        if target is not None and target.is_void():
+            return Type.ptr()
+        return self
+
     def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
         """If self is an array, return a tuple of the inner Type & the array dimension"""
         if not self.is_array():
