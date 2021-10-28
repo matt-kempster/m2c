@@ -165,6 +165,7 @@ def current_instr(instr: Instruction) -> Iterator[None]:
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
+    type = type.weaken_void_ptr()
     if expr.type.unify(type):
         if silent or isinstance(expr, Literal):
             return expr
@@ -3880,7 +3881,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
-            call: Expression = FuncCall(fn_target, func_args, fn_sig.return_type)
+            call: Expression = FuncCall(fn_target, func_args, fn_sig.return_type.weaken_void_ptr())
             call = eval_once(call, emit_exactly_once=True, trivial=False, prefix="ret")
 
             # Clear out caller-save registers, for clarity and to ensure that
