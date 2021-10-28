@@ -135,6 +135,10 @@ class Formatter:
             comment = f"/* {'; '.join(comments)} */"
         return f"{base}{padding}{comment}"
 
-    @staticmethod
-    def format_hex(val: int) -> str:
+    def format_hex(self, val: int) -> str:
         return format(val, "x").upper()
+
+    def format_int(self, val: int) -> str:
+        if abs(val) < 10:
+            return str(val)
+        return hex(val).upper().replace("X", "x")
