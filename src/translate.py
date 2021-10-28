@@ -4229,7 +4229,7 @@ class GlobalInfo:
         while True:
             names: AbstractSet[str] = self.global_symbol_map.keys()
             if decls == Options.GlobalDeclsEnum.ALL:
-                names |= self.typemap.var_types.keys()
+                names |= self.asm_data.values.keys()
             names -= processed_names
             if not names:
                 break

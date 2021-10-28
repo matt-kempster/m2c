@@ -40,6 +40,7 @@ class TypePool:
     structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
         default_factory=dict
     )
+    warnings: List[str] = field(default_factory=list)
 
     def get_struct_for_ctype(
         self,
@@ -1147,8 +1148,8 @@ class StructDeclaration:
             struct_has_bitfields = False
             struct_size = 0
             struct_align = 1
-            print(
-                f"/* Warning: struct {typedef_name or ctype.name} is not defined (only forward-declared) */"
+            typepool.warnings.append(
+                f"Warning: struct {typedef_name or ctype.name} is not defined (only forward-declared)"
             )
 
         assert (

@@ -100,23 +100,36 @@ def run(options: Options) -> int:
             # Store the exception for later, to preserve the order in the output
             function_infos.append(e)
 
-    if options.visualize_flowgraph:
-        fn_info = function_infos[0]
-        if isinstance(fn_info, Exception):
-            raise fn_info
-        print(visualize_flowgraph(fn_info.flow_graph))
-        return 0
-
-    if options.structs:
-        type_decls = typepool.format_type_declarations(fmt)
-        if type_decls:
-            print(type_decls)
-
-    global_decls = global_info.global_decls(fmt, options.global_decls)
-    if global_decls:
-        print(global_decls)
-
     return_code = 0
+    try:
+        if options.visualize_flowgraph:
+            fn_info = function_infos[0]
+            if isinstance(fn_info, Exception):
+                raise fn_info
+            print(visualize_flowgraph(fn_info.flow_graph))
+            return 0
+
+        if options.structs:
+            type_decls = typepool.format_type_declarations(fmt)
+            if type_decls:
+                print(type_decls)
+
+        global_decls = global_info.global_decls(fmt, options.global_decls)
+        if global_decls:
+            print(global_decls)
+    except DecompFailure as e:
+        print("/*")
+        print(f"Failed to decompile:\n")
+        print(e)
+        print("*/")
+        return_code = 1
+    except Exception:
+        print("/*")
+        print(f"Internal error:\n")
+        print_exception(sanitize=options.sanitize_tracebacks)
+        print("*/")
+        return_code = 1
+
     for index, (function, function_info) in enumerate(zip(functions, function_infos)):
         if index != 0:
             print()
@@ -142,6 +155,9 @@ def run(options: Options) -> int:
             print_exception(sanitize=options.sanitize_tracebacks)
             print("*/")
             return_code = 1
+
+    for warning in typepool.warnings:
+        print(fmt.with_comments("", comments=[warning]))
 
     return return_code
 
