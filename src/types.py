@@ -273,11 +273,7 @@ class Type:
         struct_decl = target_type.get_struct_declaration()
         if struct_decl is not None:
             return not struct_decl.extended_by_other_structs
-        # If the pointer target could be one of the following kinds, assume it is not array-like
-        target_kind = target_type.data().kind
-        if target_kind & (TypeData.K_VOID | TypeData.K_ARRAY | TypeData.K_STRUCT):
-            return False
-        return True
+        return False
 
     def is_int(self) -> bool:
         return self.data().kind == TypeData.K_INT
@@ -517,6 +513,8 @@ class Type:
         if target is None:
             return NO_MATCHING_FIELD
 
+        # Check if the offset is outside of the bounds of the pointer target's size, [0, element_size)
+        # If the type is an "array-like pointer", automatically turn this into an array access.
         array_index = 0
         element_size = target.get_size_bytes()
         if (
