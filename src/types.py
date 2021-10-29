@@ -9,6 +9,7 @@ from .c_types import (
     Struct,
     StructUnion as CStructUnion,
     TypeMap,
+    UndefinedStructError,
     is_unk_type,
     parse_constant_int,
     parse_function,
@@ -39,6 +40,7 @@ class TypePool:
     structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
         default_factory=dict
     )
+    warnings: List[str] = field(default_factory=list)
 
     def get_struct_for_ctype(
         self,
@@ -1135,8 +1137,6 @@ class StructDeclaration:
         if existing_struct:
             return existing_struct
 
-        struct = parse_struct(ctype, typemap)
-
         typedef_name: Optional[str] = None
         if ctype in typemap.struct_typedefs:
             typedef = typemap.struct_typedefs[ctype]
@@ -1147,17 +1147,32 @@ class StructDeclaration:
             assert isinstance(typedef.type, ca.IdentifierType)
             typedef_name = typedef.type.names[0]
 
+        try:
+            struct = parse_struct(ctype, typemap)
+            struct_fields = struct.fields
+            struct_has_bitfields = struct.has_bitfields
+            struct_size = struct.size
+            struct_align = struct.align
+        except UndefinedStructError:
+            struct_fields = {}
+            struct_has_bitfields = False
+            struct_size = 0
+            struct_align = 1
+            typepool.warnings.append(
+                f"Warning: struct {typedef_name or ctype.name} is not defined (only forward-declared)"
+            )
+
         assert (
-            struct.size % struct.align == 0
+            struct_size % struct_align == 0
         ), "struct size must be a multiple of its alignment"
 
         decl = StructDeclaration(
-            size=struct.size,
-            align=struct.align,
+            size=struct_size,
+            align=struct_align,
             tag_name=ctype.name,
             typedef_name=typedef_name,
             fields=[],
-            has_bitfields=struct.has_bitfields,
+            has_bitfields=struct_has_bitfields,
             is_union=isinstance(ctype, ca.Union),
             new_field_prefix=typepool.unknown_field_prefix,
         )
@@ -1165,7 +1180,7 @@ class StructDeclaration:
         # in case there are any self-referential fields in this struct.
         typepool.add_struct(decl, ctype)
 
-        for offset, fields in sorted(struct.fields.items()):
+        for offset, fields in sorted(struct_fields.items()):
             for field in fields:
                 if typepool.struct_field_inference and is_unk_type(field.type, typemap):
                     continue

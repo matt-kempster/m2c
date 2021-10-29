@@ -20,7 +20,7 @@ from .translate import (
 from .types import TypePool
 
 
-def print_exception(sanitize: bool) -> None:
+def print_current_exception(sanitize: bool) -> None:
     """Print a traceback for the current exception to stdout.
 
     If `sanitize` is true, the filename's full path is stripped,
@@ -39,6 +39,25 @@ def print_exception(sanitize: bool) -> None:
         traceback.print_exc(file=sys.stdout)
 
 
+def print_exception_as_comment(
+    exc: Exception, context: Optional[str], sanitize: bool
+) -> None:
+    context_phrase = f" in {context}" if context is not None else ""
+    if isinstance(exc, OSError):
+        print(f"/* OSError{context_phrase}: {exc} */")
+        return
+    elif isinstance(exc, DecompFailure):
+        print("/*")
+        print(f"Decompilation failure{context_phrase}:\n")
+        print(exc)
+        print("*/")
+    else:
+        print("/*")
+        print(f"Internal error{context_phrase}:\n")
+        print_current_exception(sanitize=sanitize)
+        print("*/")
+
+
 def run(options: Options) -> int:
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
@@ -53,11 +72,10 @@ def run(options: Options) -> int:
             mips_file.asm_data.merge_into(asm_data)
 
         typemap = build_typemap(options.c_contexts, use_cache=options.use_cache)
-    except (OSError, DecompFailure) as e:
-        print(e)
-        return 1
     except Exception as e:
-        print_exception(sanitize=options.sanitize_tracebacks)
+        print_exception_as_comment(
+            e, context=None, sanitize=options.sanitize_tracebacks
+        )
         return 1
 
     if options.dump_typemap:
@@ -100,23 +118,29 @@ def run(options: Options) -> int:
             # Store the exception for later, to preserve the order in the output
             function_infos.append(e)
 
-    if options.visualize_flowgraph:
-        fn_info = function_infos[0]
-        if isinstance(fn_info, Exception):
-            raise fn_info
-        print(visualize_flowgraph(fn_info.flow_graph))
-        return 0
-
-    if options.structs:
-        type_decls = typepool.format_type_declarations(fmt)
-        if type_decls:
-            print(type_decls)
-
-    global_decls = global_info.global_decls(fmt, options.global_decls)
-    if global_decls:
-        print(global_decls)
-
     return_code = 0
+    try:
+        if options.visualize_flowgraph:
+            fn_info = function_infos[0]
+            if isinstance(fn_info, Exception):
+                raise fn_info
+            print(visualize_flowgraph(fn_info.flow_graph))
+            return 0
+
+        if options.structs:
+            type_decls = typepool.format_type_declarations(fmt)
+            if type_decls:
+                print(type_decls)
+
+        global_decls = global_info.global_decls(fmt, options.global_decls)
+        if global_decls:
+            print(global_decls)
+    except Exception as e:
+        print_exception_as_comment(
+            e, context=None, sanitize=options.sanitize_tracebacks
+        )
+        return_code = 1
+
     for index, (function, function_info) in enumerate(zip(functions, function_infos)):
         if index != 0:
             print()
@@ -130,18 +154,16 @@ def run(options: Options) -> int:
 
             function_text = get_function_text(function_info, options)
             print(function_text)
-        except DecompFailure as e:
-            print("/*")
-            print(f"Failed to decompile function {function.name}:\n")
-            print(e)
-            print("*/")
+        except Exception as e:
+            print_exception_as_comment(
+                e,
+                context=f"function {function.name}",
+                sanitize=options.sanitize_tracebacks,
+            )
             return_code = 1
-        except Exception:
-            print("/*")
-            print(f"Internal error while decompiling function {function.name}:\n")
-            print_exception(sanitize=options.sanitize_tracebacks)
-            print("*/")
-            return_code = 1
+
+    for warning in typepool.warnings:
+        print(fmt.with_comments("", comments=[warning]))
 
     return return_code
 
