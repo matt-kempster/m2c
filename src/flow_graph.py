@@ -407,13 +407,14 @@ def simplify_standard_patterns(function: Function) -> Function:
     swc1_twice_pattern = make_pattern("swc1", "swc1")
 
     gcc_sqrt_pattern = make_pattern(
-        "sqrt.s",
+        "sqrt.s $x, $y",
         "c.eq.s",
         "nop",
         "bc1t",
         "?",
         "jal sqrtf",
         "nop",
+        "mov.s $x, $f0*",
     )
 
     def matches_pattern(actual: List[BodyPart], pattern: Pattern) -> int:
@@ -615,6 +616,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             return None
         sqrt = actual[0]
         assert isinstance(sqrt, Instruction)
+
         new_instr = Instruction.derived("sqrt.s", sqrt.args, sqrt)
         return ([new_instr], i + consumed)
 

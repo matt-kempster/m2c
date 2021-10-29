@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional
 
 
 class CParser:
-    clex: Any # CLexer
-    cparser: Any # LRParser
+    clex: Any  # CLexer
+    cparser: Any  # LRParser
     _scope_stack: List[Dict[str, bool]]
     _last_yielded_token: Optional[Any]
 
