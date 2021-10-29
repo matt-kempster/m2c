@@ -51,6 +51,7 @@ class Struct:
     has_bitfields: bool
     size: int
     align: int
+    extended_by_other_structs: Optional[bool]
 
 
 @dataclass
@@ -81,7 +82,7 @@ class Function:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 2
+    VERSION: ClassVar[int] = 3
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
@@ -493,6 +494,11 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                     name=decl.name,
                 )
             )
+            if isinstance(substr, Struct):
+                if offset == 0 and substr.extended_by_other_structs != False:
+                    substr.extended_by_other_structs = True
+                else:
+                    substr.extended_by_other_structs = False
             if is_union:
                 union_size = max(union_size, ssize)
             else:
@@ -533,7 +539,12 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     size = union_size if is_union else offset
     size = (size + align - 1) & -align
     return Struct(
-        type=ctype, fields=fields, has_bitfields=has_bitfields, size=size, align=align
+        type=ctype,
+        fields=fields,
+        has_bitfields=has_bitfields,
+        size=size,
+        align=align,
+        extended_by_other_structs=None,
     )
 
 

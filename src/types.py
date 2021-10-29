@@ -263,6 +263,22 @@ class Type:
     def is_pointer_or_array(self) -> bool:
         return self.data().kind in (TypeData.K_PTR, TypeData.K_ARRAY)
 
+    def is_arraylike_pointer(self) -> bool:
+        target_type = self.get_pointer_target()
+        if target_type is None:
+            return False
+        # If the pointer target is a struct with `extended_by_other_structs`, that means that
+        # accesses outside of the struct bounds are likely not array-like: the struct is
+        # probably embedded in a larger struct.
+        struct_decl = target_type.get_struct_declaration()
+        if struct_decl is not None:
+            return not struct_decl.extended_by_other_structs
+        # If the pointer target could be one of the following kinds, assume it is not array-like
+        target_kind = target_type.data().kind
+        if target_kind & (TypeData.K_VOID | TypeData.K_ARRAY | TypeData.K_STRUCT):
+            return False
+        return True
+
     def is_int(self) -> bool:
         return self.data().kind == TypeData.K_INT
 
@@ -501,12 +517,21 @@ class Type:
         if target is None:
             return NO_MATCHING_FIELD
 
-        # Assume the pointer is to a single object, and not an array.
+        array_index = 0
+        element_size = target.get_size_bytes()
+        if (
+            element_size
+            and not (0 <= offset < element_size)
+            and self.is_arraylike_pointer()
+        ):
+            array_index = offset // element_size
+            offset = offset % element_size
+
         field_path, field_type, remaining_offset = target.get_field(
             offset, target_size=target_size, exact=exact
         )
         if field_path is not None:
-            field_path.insert(0, 0)
+            field_path.insert(0, array_index)
         return field_path, field_type, remaining_offset
 
     def get_initializer_fields(
@@ -540,7 +565,6 @@ class Type:
             def add_padding(upto: int) -> None:
                 nonlocal position
                 nonlocal output
-                assert upto >= position
                 if upto > position:
                     output.append(upto - position)
 
@@ -977,6 +1001,7 @@ class StructDeclaration:
     has_bitfields: bool = False
     is_union: bool = False
     is_stack: bool = False
+    extended_by_other_structs: bool = False
 
     def unify(
         self,
@@ -1153,11 +1178,13 @@ class StructDeclaration:
             struct_has_bitfields = struct.has_bitfields
             struct_size = struct.size
             struct_align = struct.align
+            struct_extended = bool(struct.extended_by_other_structs)
         except UndefinedStructError:
             struct_fields = {}
             struct_has_bitfields = False
             struct_size = 0
             struct_align = 1
+            struct_extended = False
             typepool.warnings.append(
                 f"Warning: struct {typedef_name or ctype.name} is not defined (only forward-declared)"
             )
@@ -1175,6 +1202,7 @@ class StructDeclaration:
             has_bitfields=struct_has_bitfields,
             is_union=isinstance(ctype, ca.Union),
             new_field_prefix=typepool.unknown_field_prefix,
+            extended_by_other_structs=struct_extended,
         )
         # Register the struct in the typepool now, before parsing the fields,
         # in case there are any self-referential fields in this struct.
