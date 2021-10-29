@@ -323,6 +323,13 @@ class Type:
             return Type.ptr(data.ptr_to)
         return self
 
+    def weaken_void_ptr(self) -> "Type":
+        """If self is an explicit `void *`, return `Type.ptr()` without an target type."""
+        target = self.get_pointer_target()
+        if target is not None and target.is_void():
+            return Type.ptr()
+        return self
+
     def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
         """If self is an array, return a tuple of the inner Type & the array dimension"""
         if not self.is_array():
@@ -663,7 +670,7 @@ class Type:
             assert data.ptr_to is not None
             dim: Optional[ca.Constant] = None
             if data.array_dim is not None:
-                dim = ca.Constant(value=str(data.array_dim), type="")
+                dim = ca.Constant(value=fmt.format_int(data.array_dim), type="")
             return ca.ArrayDecl(
                 type=data.ptr_to._to_ctype(seen.copy(), fmt),
                 dim=dim,
@@ -1065,13 +1072,16 @@ class StructDeclaration:
                     if prev_field is not None and not (is_final and self.is_stack):
                         last_size = prev_field.type.get_size_bytes()
                         if last_size and padding_size > last_size:
+                            array_dim_str = fmt.format_int(
+                                padding_size // last_size + 1
+                            )
                             comments.append(
-                                f"maybe part of {prev_field.name}[{(padding_size // last_size) + 1}]?"
+                                f"maybe part of {prev_field.name}[{array_dim_str}]?"
                             )
 
                     lines.append(
                         fmt.with_comments(
-                            f"{offset_comment(position)} char {name}[0x{fmt.format_hex(padding_size)}];",
+                            f"{offset_comment(position)} char {name}[{fmt.format_int(padding_size)}];",
                             comments,
                         )
                     )

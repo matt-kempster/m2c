@@ -165,6 +165,7 @@ def current_instr(instr: Instruction) -> Iterator[None]:
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
+    type = type.weaken_void_ptr()
     if expr.type.unify(type):
         if silent or isinstance(expr, Literal):
             return expr
@@ -1039,7 +1040,7 @@ class LocalVar(Expression):
         if self.path is None:
             return fallback_name
 
-        name = StructAccess.access_path_to_field_name(self.path)
+        name = StructAccess.access_path_to_field_name(self.path, fmt)
         if name.startswith("->"):
             return name[2:]
         return fallback_name
@@ -1122,7 +1123,7 @@ class StructAccess(Expression):
         ), "The first element of the field path, if present, must be an int"
 
     @classmethod
-    def access_path_to_field_name(cls, path: AccessPath) -> str:
+    def access_path_to_field_name(cls, path: AccessPath, fmt: Formatter) -> str:
         """
         Convert an access path into a dereferencing field name, like the following examples:
             - `[0, "foo", 3, "bar"]` into `"->foo[3].bar"`
@@ -1143,7 +1144,7 @@ class StructAccess(Expression):
             if isinstance(p, str):
                 output += f".{p}"
             elif isinstance(p, int):
-                output += f"[{p}]"
+                output += f"[{fmt.format_int(p)}]"
             else:
                 static_assert_unreachable(p)
         return output
@@ -1197,14 +1198,12 @@ class StructAccess(Expression):
         if field_path is not None and field_path != [0]:
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
-            offset_str = (
-                f"0x{format_hex(self.offset)}" if self.offset > 0 else f"{self.offset}"
-            )
+            offset_str = fmt.format_int(self.offset)
             return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [0, prefix + format_hex(self.offset)]
-        field_name = self.access_path_to_field_name(field_path)
+        field_name = self.access_path_to_field_name(field_path, fmt)
 
         # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
         deref = True
@@ -1302,12 +1301,7 @@ class Literal(Expression):
                 prefix = f"({self.type.format(fmt)})"
             if self.type.is_unsigned():
                 suffix = "U"
-        mid = (
-            str(self.value)
-            if abs(self.value) < 10
-            else hex(self.value).upper().replace("X", "x")
-        )
-        return prefix + mid + suffix
+        return prefix + fmt.format_int(self.value) + suffix
 
     def likely_partial_offset(self) -> bool:
         return self.value % 2 ** 15 in (0, 2 ** 15 - 1) and self.value < 0x1000000
@@ -3880,7 +3874,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
 
-            call: Expression = FuncCall(fn_target, func_args, fn_sig.return_type)
+            call: Expression = FuncCall(fn_target, func_args, fn_sig.return_type.weaken_void_ptr())
             call = eval_once(call, emit_exactly_once=True, trivial=False, prefix="ret")
 
             # Clear out caller-save registers, for clarity and to ensure that
