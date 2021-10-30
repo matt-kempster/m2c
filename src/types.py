@@ -273,6 +273,8 @@ class Type:
         struct_decl = target_type.get_struct_declaration()
         if struct_decl is not None:
             return not struct_decl.extended_by_other_structs
+        # TODO: Known primitive types (like K_INT) could also be considered array-like.
+        # However, there are too many incorrect type deductions, which cause poor output
         return False
 
     def is_int(self) -> bool:
