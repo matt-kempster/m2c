@@ -831,6 +831,7 @@ class BinaryOp(Condition):
         return [self.left, self.right]
 
     def simplify_gcc_divmod(self) -> Optional["BinaryOp"]:
+        # See: https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
         if self.is_floating():
             return None
 
@@ -840,6 +841,7 @@ class BinaryOp(Condition):
         right_expr = uw(expr.right)
         shift = 0
 
+        # Detect %: (x - (x / N) * N) --> x % N
         if expr.op == "-" and isinstance(right_expr, BinaryOp) and right_expr.op == "*":
             var = left_expr
             mult_left_expr = uw(right_expr.left)
@@ -861,6 +863,7 @@ class BinaryOp(Condition):
                 right=mod_base,
             )
 
+        # Remove error term: ((x / N) - (x >> 31)) --> x / N
         if (
             expr.op == "-"
             and isinstance(left_expr, BinaryOp)
@@ -875,6 +878,7 @@ class BinaryOp(Condition):
                 return None
             return div_expr
 
+        # Shift on the result of the mul
         if (
             expr.op == ">>"
             and isinstance(left_expr, BinaryOp)
@@ -885,6 +889,7 @@ class BinaryOp(Condition):
             left_expr = uw(expr.left)
             right_expr = uw(expr.right)
 
+        # Shift on the LHS of the mul
         if (
             isinstance(left_expr, BinaryOp)
             and left_expr.op == ">>"
@@ -893,8 +898,20 @@ class BinaryOp(Condition):
             shift += left_expr.right.value
             left_expr = uw(left_expr.left)
 
+        # Instead of checking for the error term precisely, just check that
+        # the quotient is "close enough" to the integer value
+        def round_div(x: int, y: int) -> Optional[int]:
+            if y <= 1:
+                return None
+            result = round(x / y)
+            if x / (y + 1) < result < x / (y - 1):
+                return result
+            return None
+
         if expr.op in ("MULT_HI", "MULTU_HI") and isinstance(right_expr, Literal):
-            denom = round((1 << (32 + shift)) / right_expr.value)
+            denom = round_div(1 << (32 + shift), right_expr.value)
+            if denom is None:
+                return None
             return BinaryOp.int(
                 left=left_expr,
                 op="/",
