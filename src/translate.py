@@ -863,7 +863,7 @@ class BinaryOp(Condition):
                 right=mod_base,
             )
 
-        # Remove error term: ((x / N) - (x >> 31)) --> x / N
+        # Remove outer error term: ((x / N) - (x >> 31)) --> x / N
         if (
             expr.op == "-"
             and isinstance(left_expr, BinaryOp)
@@ -885,6 +885,18 @@ class BinaryOp(Condition):
             and isinstance(right_expr, Literal)
         ):
             shift += right_expr.value
+            expr = left_expr
+            left_expr = uw(expr.left)
+            right_expr = uw(expr.right)
+
+        # Remove inner error term: ((x / N) + x) --> x / N
+        if (
+            shift != 0
+            and expr.op == "+"
+            and isinstance(left_expr, BinaryOp)
+            and left_expr.op in ("MULT_HI", "MULTU_HI")
+            and uw(left_expr.left) == right_expr
+        ):
             expr = left_expr
             left_expr = uw(expr.left)
             right_expr = uw(expr.right)
