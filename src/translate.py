@@ -869,12 +869,7 @@ class BinaryOp(Condition):
             and self.op in ASSOCIATIVE_OPS
         ):
             lhs = lhs[1:-1]
-
-        # For certain operators, use base-10 (decimal) for the RHS
-        if self.op in ("/", "%") and isinstance(right_expr, Literal):
-            rhs = right_expr.format(fmt, force_dec=True)
-        else:
-            rhs = right_expr.format(fmt)
+        rhs = right_expr.format(fmt)
 
         # These aren't real operators (or functions); format them as a fn call
         if self.op in PSEUDO_FUNCTION_OPS:
@@ -1296,7 +1291,7 @@ class Literal(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def format(self, fmt: Formatter, force_dec: bool = False) -> str:
+    def format(self, fmt: Formatter) -> str:
         if self.type.is_likely_float():
             if self.type.get_size_bits() == 64:
                 return format_f64_imm(self.value)
@@ -1312,12 +1307,7 @@ class Literal(Expression):
                 prefix = f"({self.type.format(fmt)})"
             if self.type.is_unsigned():
                 suffix = "U"
-        if force_dec:
-            value = str(self.value)
-        else:
-            value = fmt.format_int(self.value)
-
-        return prefix + value + suffix
+        return prefix + fmt.format_int(self.value) + suffix
 
     def likely_partial_offset(self) -> bool:
         return self.value % 2 ** 15 in (0, 2 ** 15 - 1) and self.value < 0x1000000
