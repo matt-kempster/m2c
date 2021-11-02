@@ -2551,7 +2551,7 @@ def handle_sra(args: InstrArgs) -> Expression:
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
-    return fold_mul_chains(
+    return fold_gcc_divmod(
         BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
     )
 
@@ -2627,13 +2627,17 @@ def format_f64_imm(num: int) -> str:
     return str(value)
 
 
-def fold_gcc_divmod(original_expr: Expression) -> Expression:
+def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
     """
     Return a new BinaryOp instance if this one can be simplified to a single / or % op.
+    This involves simplifying expressions using MULT_HI, MULTU_HI, +, -, <<, >>, and /.
     See: https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
     """
-    # Only operate on integer BinaryOp expressions
-    if not isinstance(original_expr, BinaryOp) or original_expr.is_floating():
+    mult_high_ops = ("MULT_HI", "MULTU_HI")
+    possible_match_ops = mult_high_ops + ("-", ">>")
+
+    # Only operate on integer expressions of certain operations
+    if original_expr.is_floating() or original_expr.op not in possible_match_ops:
         return original_expr
 
     # Use `early_unwrap_ints` instead of `early_unwrap` to ignore Casts to integer types
@@ -2643,8 +2647,6 @@ def fold_gcc_divmod(original_expr: Expression) -> Expression:
     expr = original_expr
     left_expr = early_unwrap_ints(expr.left)
     right_expr = early_unwrap_ints(expr.right)
-
-    mult_high_ops = ("MULT_HI", "MULTU_HI")
     divisor_shift = 0
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
@@ -2665,7 +2667,7 @@ def fold_gcc_divmod(original_expr: Expression) -> Expression:
 
     # Detect `%`: (x - ((x / N) * N)) --> x % N
     if expr.op == "-" and isinstance(right_expr, BinaryOp) and right_expr.op == "*":
-        div_expr = fold_gcc_divmod(early_unwrap_ints(right_expr.left))
+        div_expr = early_unwrap_ints(right_expr.left)
         mod_base = early_unwrap_ints(right_expr.right)
         if (
             isinstance(div_expr, BinaryOp)
@@ -2684,7 +2686,7 @@ def fold_gcc_divmod(original_expr: Expression) -> Expression:
         and right_expr.op == ">>"
         and early_unwrap_ints(right_expr.right) == Literal(31)
     ):
-        div_expr = fold_gcc_divmod(left_expr)
+        div_expr = left_expr
         shift_var_expr = early_unwrap_ints(right_expr.left)
         if isinstance(div_expr, BinaryOp) and div_expr.op == "/":
             div_var_expr = early_unwrap_ints(div_expr.left)
@@ -2800,7 +2802,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
 
     base, num = fold(expr, True, True)
     if num == 1:
-        return fold_gcc_divmod(expr)
+        return expr
     return BinaryOp.int(left=base, op="*", right=Literal(num))
 
 
@@ -3218,11 +3220,11 @@ CASES_HI_LO: PairInstrMap = {
         BinaryOp.u64(a.reg(0), "/", a.reg(1)),
     ),
     "mult": lambda a: (
-        fold_mul_chains(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
+        fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
         BinaryOp.int(a.reg(0), "*", a.reg(1)),
     ),
     "multu": lambda a: (
-        fold_mul_chains(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
+        fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
         BinaryOp.int(a.reg(0), "*", a.reg(1)),
     ),
     "dmult": lambda a: (
@@ -3248,7 +3250,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "addi": lambda a: handle_addi(a),
     "addiu": lambda a: handle_addi(a),
     "addu": lambda a: handle_add(a),
-    "subu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
+    "subu": lambda a: (
+        fold_mul_chains(fold_gcc_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
+    ),
     "negu": lambda a: fold_mul_chains(
         UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
     ),
@@ -3314,18 +3318,24 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "sll": lambda a: fold_mul_chains(
         BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
     ),
-    "sllv": lambda a: BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2))),
-    "srl": lambda a: fold_mul_chains(
+    "sllv": lambda a: fold_mul_chains(
+        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
+    ),
+    "srl": lambda a: fold_gcc_divmod(
         BinaryOp(
             left=as_u32(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u32()
         )
     ),
-    "srlv": lambda a: BinaryOp(
-        left=as_u32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u32()
+    "srlv": lambda a: fold_gcc_divmod(
+        BinaryOp(
+            left=as_u32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u32()
+        )
     ),
     "sra": lambda a: handle_sra(a),
-    "srav": lambda a: BinaryOp(
-        left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
+    "srav": lambda a: fold_gcc_divmod(
+        BinaryOp(
+            left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
+        )
     ),
     # 64-bit shifts
     "dsll": lambda a: fold_mul_chains(
