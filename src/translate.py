@@ -1525,6 +1525,12 @@ class EvalOnceExpr(Expression):
         if self.trivial or (self.num_usages == 1 and not self.emit_exactly_once):
             self.wrapped_expr.use()
 
+    def force(self) -> None:
+        self.trivial = False
+        self.forced_emit = True
+        self.use()
+        self.use()
+
     def need_decl(self) -> bool:
         return self.num_usages > 1 and not self.trivial
 
@@ -1825,6 +1831,9 @@ class RegMeta:
     # function_return = True
     uninteresting: bool = False
 
+    # True if the regdata must be replaced by variable if it is ever read
+    force: bool = False
+
 
 @dataclass
 class RegData:
@@ -1856,6 +1865,9 @@ class RegInfo:
             self.stack_info.add_argument(arg)
             val.type.unify(ret.type)
             return val
+        if data.meta.force:
+            assert isinstance(ret, EvalOnceExpr)
+            ret.force()
         if isinstance(ret, ForceVarExpr):
             # Some of the logic in this file is unprepared to deal with
             # ForceVarExpr transparent wrappers... so for simplicity, we mark
@@ -3702,8 +3714,10 @@ def pick_phi_assignment_nodes(
 
     # Check the dominators for a node with the correct final state for `reg`
     for node in dominators:
-        raw = get_block_info(node).final_register_states.get_raw(reg)
-        if raw is None:
+        regs = get_block_info(node).final_register_states
+        raw = regs.get_raw(reg)
+        meta = regs.get_meta(reg)
+        if raw is None or meta is None or meta.force:
             continue
         if raw == expr:
             return [node]
@@ -3915,7 +3929,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             data = regs.contents.get(r)
             assert data is not None
             expr = data.value
-            if not isinstance(expr, ForceVarExpr) and expr_filter(expr):
+            if (
+                not isinstance(expr, ForceVarExpr)
+                and not data.meta.force
+                and expr_filter(expr)
+            ):
                 # Mark the register as "if used, emit the expression's once
                 # var". I think we should always have a once var at this point,
                 # but if we don't, create one.
@@ -3926,7 +3944,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs.set_with_meta(r, ForceVarExpr(expr, type=expr.type), data.meta)
+                regs.set_with_meta(r, expr, replace(data.meta, force=True))
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -4046,6 +4064,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
+        expr: Expression
 
         # Figure out what code to generate!
         if mnemonic in CASES_IGNORE:
@@ -4160,8 +4179,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
-                expr = regs.get_raw(register)
-                if expr is None:
+                raw_expr = regs.get_raw(register)
+                if raw_expr is None:
                     continue
 
                 # Don't pass this register if lower numbered ones are undefined.
@@ -4204,10 +4223,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # varargs functions. Decompiling multiple functions at once
                 # would help. TODO: don't do this in the middle of the argument
                 # list, except for f12 if a0 is passed and such.
-                if isinstance(expr, PassedInArg) and not expr.copied:
+                if isinstance(raw_expr, PassedInArg) and not raw_expr.copied:
                     continue
 
-                func_args.append(expr)
+                func_args.append(regs[register])
 
             # Add the arguments after a3.
             # TODO: limit this and unify types based on abi.arg_slots
@@ -4413,7 +4432,9 @@ def translate_graph_from_block(
             continue
         new_regs = RegInfo(stack_info=stack_info)
         for reg, data in regs.contents.items():
-            new_regs.set_with_meta(reg, data.value, RegMeta(inherited=True))
+            new_regs.set_with_meta(
+                reg, data.value, RegMeta(inherited=True, force=data.meta.force)
+            )
 
         phi_regs = regs_clobbered_until_dominator(child, stack_info.global_info)
         for reg in phi_regs:
@@ -4843,8 +4864,8 @@ def translate_to_ast(
 
     if return_reg is not None:
         for b in return_blocks:
-            ret_val = b.final_register_states.get_raw(return_reg)
-            if ret_val is not None:
+            if return_reg in b.final_register_states:
+                ret_val = b.final_register_states[return_reg]
                 ret_val = as_type(ret_val, return_type, True)
                 ret_val.use()
                 b.return_value = ret_val
