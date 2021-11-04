@@ -1313,6 +1313,9 @@ class AddressOf(Expression):
     type: Type = field(compare=False, default_factory=Type.ptr)
 
     def dependencies(self) -> List[Expression]:
+        # Referencing a dereference doesn't perform any memory access; it's just arithmetic
+        if isinstance(self.expr, (StructAccess, ArrayAccess)):
+            return self.expr.dependencies()
         return [self.expr]
 
     def format(self, fmt: Formatter) -> str:
@@ -2002,7 +2005,7 @@ def is_trivial_expression(expr: Expression) -> bool:
     ):
         return True
     if isinstance(expr, AddressOf):
-        return is_trivial_expression(expr.expr)
+        return all(is_trivial_expression(e) for e in expr.dependencies())
     if isinstance(expr, Cast):
         return expr.is_trivial()
     return False
@@ -2108,9 +2111,12 @@ def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> s
 def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     # Nested dereferences may need to be parenthesized. All other
     # expressions will already have adequate parentheses added to them.
-    # (Except Cast's, TODO...)
     s = expr.format(fmt)
-    if s.startswith("*") or s.startswith("&"):
+    if (
+        s.startswith("*")
+        or s.startswith("&")
+        or (isinstance(expr, Cast) and expr.needed_for_store())
+    ):
         return f"({s})"
     return s
 
