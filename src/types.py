@@ -467,7 +467,9 @@ class Type:
                 else:
                     field_type = Type.any_field()
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
-                new_field = data.struct.try_add_field(field_type, offset, field_name)
+                new_field = data.struct.try_add_field(
+                    field_type, offset, field_name, size=target_size
+                )
                 if new_field is not None:
                     return [field_name], field_type, 0
             elif possible_results:
@@ -1004,7 +1006,7 @@ class StructDeclaration:
         return fields
 
     def try_add_field(
-        self, type: Type, offset: int, name: str
+        self, type: Type, offset: int, name: str, size: Optional[int]
     ) -> Optional[StructField]:
         """
         Try to add a field into the struct, and return it if successful.
@@ -1019,10 +1021,17 @@ class StructDeclaration:
         if not (0 <= offset < self.size):
             return None
 
-        # For now, assume that the type is only one byte wide, and do not allow
-        # the new field to overlap with any other field.
-        if self.fields_containing_offset(offset):
-            return None
+        # Do not allow the new field to overlap with any other field
+        # If there is a size we don't know, assume it is only 1 byte wide
+        size = size or 1
+        for field in self.fields:
+            field_size = field.type.get_size_bytes() or 1
+
+            # Two intervals overlap if one contains the start of the other
+            if offset <= field.offset < offset + size:
+                return None
+            if field.offset <= offset < field.offset + field_size:
+                return None
 
         field = self.StructField(type=type, offset=offset, name=name, known=False)
         self.fields.append(field)
