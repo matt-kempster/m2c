@@ -4,8 +4,6 @@ void func_00400404(u32 arg0);                       /* static */
 void func_004009F4(u32 arg0);                       /* static */
 void func_00400FFC(u32 arg0);                       /* static */
 void func_00401498(u32 arg0);                       /* static */
-extern ? D_5F4E100;
-extern ? D_979680;
 
 void test(u32 a) {
     func_004000A4(a);
@@ -97,8 +95,8 @@ void func_00400404(u32 arg0) {
     func_00400090((u32) ((s32) arg0 / 0x2710));
     func_00400090((u32) ((s32) arg0 / 0x186A0));
     func_00400090((u32) ((s32) arg0 / 0xF4240));
-    func_00400090((u32) ((s32) arg0 / (s32) ((s32) &D_979680 | 0)));
-    func_00400090((u32) ((s32) arg0 / (s32) ((s32) &D_5F4E100 | 0)));
+    func_00400090((u32) ((s32) arg0 / 0x979680));
+    func_00400090((u32) ((s32) arg0 / 0x54FE100));
     func_00400090((u32) ((s32) arg0 / 0x3FFFFFFE));
     func_00400090((u32) ((s32) arg0 / 0x3FFFFFFF));
     phi_at = (s32) arg0;
@@ -166,8 +164,8 @@ void func_004009F4(s32 arg0) {
     func_00400090((u32) (arg0 % 0x2710));
     func_00400090((u32) (arg0 % 0x186A0));
     func_00400090((u32) (arg0 % 0xF4240));
-    func_00400090((u32) (arg0 % (s32) ((s32) &D_979680 | 0)));
-    func_00400090((u32) (arg0 % (s32) ((s32) &D_5F4E100 | 0)));
+    func_00400090((u32) (arg0 % 0x979680));
+    func_00400090((u32) (arg0 % 0x54FE100));
     func_00400090((u32) (arg0 % 0x3FFFFFFE));
     func_00400090((u32) (arg0 % 0x3FFFFFFF));
     temp_a0 = arg0 & 0x3FFFFFFF;
@@ -233,8 +231,8 @@ void func_00400FFC(u32 arg0) {
     func_00400090(arg0 / 0x2710U);
     func_00400090(arg0 / 0x186A0U);
     func_00400090(arg0 / 0xF4240U);
-    func_00400090(arg0 / (u32) ((s32) &D_979680 | 0));
-    func_00400090(arg0 / (u32) ((s32) &D_5F4E100 | 0));
+    func_00400090(arg0 / 0x979680U);
+    func_00400090(arg0 / 0x54FE100U);
     func_00400090(arg0 >> 0x1E);
     func_00400090(arg0 / 0x40000001U);
     func_00400090(arg0 / 0x7FFFFFFEU);
@@ -286,8 +284,8 @@ void func_00401498(u32 arg0) {
     func_00400090(arg0 / 0x2710U);
     func_00400090(arg0 / 0x186A0U);
     func_00400090(arg0 / 0xF4240U);
-    func_00400090(arg0 / (u32) ((s32) &D_979680 | 0));
-    func_00400090(arg0 / (u32) ((s32) &D_5F4E100 | 0));
+    func_00400090(arg0 / 0x979680U);
+    func_00400090(arg0 / 0x54FE100U);
     func_00400090(arg0 >> 0x1E);
     func_00400090(arg0 / 0x40000001U);
     func_00400090(arg0 / 0x7FFFFFFEU);

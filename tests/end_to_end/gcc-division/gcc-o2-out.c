@@ -4,8 +4,6 @@ void func_004007C0(u32 arg0);                       /* static */
 void func_00400F48(u32 arg0);                       /* static */
 void func_00401AA0(u32 arg0);                       /* static */
 void func_00401FC4(u32 arg0);                       /* static */
-extern ? D_8421085;
-extern ? D_A7C5AC5;
 
 void test(u32 a) {
     func_00400098((s8) a);
@@ -282,7 +280,7 @@ void func_00401AA0(u32 arg0) {
     func_00400090(arg0 / 0x1C);
     func_00400090(arg0 / 0x1D);
     func_00400090(arg0 / 0x1E);
-    temp_hi_5 = MULTU_HI(arg0, ((s32) &D_8421085 | 0));
+    temp_hi_5 = arg0 / 0x1F;
     func_00400090((u32) (temp_hi_5 + ((u32) (arg0 - temp_hi_5) >> 1)) >> 4);
     func_00400090(arg0 >> 5);
     func_00400090(arg0 / 0x21);
@@ -291,7 +289,7 @@ void func_00401AA0(u32 arg0) {
     func_00400090(arg0 / 0x168);
     func_00400090(arg0 / 0x3E8);
     func_00400090(arg0 / 0x2710);
-    func_00400090((u32) MULTU_HI((arg0 >> 5), ((s32) &D_A7C5AC5 | 0)) >> 7);
+    func_00400090(arg0 / 0x186A0);
     func_00400090(arg0 / 0xF4240);
     func_00400090(arg0 / 0x989680);
     func_00400090(arg0 / 0x5F5E100);
@@ -348,7 +346,7 @@ void func_00401FC4(u32 arg0) {
     func_00400090(arg0 / 0x1C);
     func_00400090(arg0 / 0x1D);
     func_00400090(arg0 / 0x1E);
-    temp_hi_5 = MULTU_HI(arg0, ((s32) &D_8421085 | 0));
+    temp_hi_5 = arg0 / 0x1F;
     func_00400090((u32) (temp_hi_5 + ((u32) (arg0 - temp_hi_5) >> 1)) >> 4);
     func_00400090(arg0 >> 5);
     func_00400090(arg0 / 0x21);
@@ -357,7 +355,7 @@ void func_00401FC4(u32 arg0) {
     func_00400090(arg0 / 0x168);
     func_00400090(arg0 / 0x3E8);
     func_00400090(arg0 / 0x2710);
-    func_00400090((u32) MULTU_HI((arg0 >> 5), ((s32) &D_A7C5AC5 | 0)) >> 7);
+    func_00400090(arg0 / 0x186A0);
     func_00400090(arg0 / 0xF4240);
     func_00400090(arg0 / 0x989680);
     func_00400090(arg0 / 0x5F5E100);
