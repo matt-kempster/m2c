@@ -344,6 +344,7 @@ class Continue(Node):
 class Decl(Node):
     name: Optional[str]
     quals: List[str]  # e.g. const
+    align: List[Type]
     storage: List[str]  # e.g. register
     funcspec: List[str]  # e.g. inline
     type: Type
@@ -354,6 +355,7 @@ class Decl(Node):
         self,
         name: Optional[str],
         quals: List[str],
+        align: List[Type],
         storage: List[str],
         funcspec: List[str],
         type: Type,
@@ -640,11 +642,13 @@ class TypeDecl(Node):
     declname: Optional[str]
     quals: List[str]
     type: InnerType
+    align: List[Type]
 
     def __init__(
         self,
         declname: Optional[str],
         quals: List[str],
+        align: List[Type],
         type: InnerType,
         coord: Optional[Coord] = None,
     ):
@@ -671,10 +675,16 @@ class Typedef(Node):
 class Typename(Node):
     name: None
     quals: List[str]
+    align: List[Type]
     type: Type
 
     def __init__(
-        self, name: None, quals: List[str], type: Type, coord: Optional[Coord] = None
+        self,
+        name: None,
+        quals: List[str],
+        align: List[Type],
+        type: Type,
+        coord: Optional[Coord] = None,
     ):
         ...
 

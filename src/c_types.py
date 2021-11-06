@@ -81,7 +81,7 @@ class Function:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 2
+    VERSION: ClassVar[int] = 3
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
@@ -103,7 +103,7 @@ def to_c(node: ca.Node) -> str:
 
 def basic_type(names: List[str]) -> TypeDecl:
     idtype = IdentifierType(names=names)
-    return TypeDecl(declname=None, quals=[], type=idtype)
+    return TypeDecl(declname=None, quals=[], type=idtype, align=[])
 
 
 def pointer(type: CType) -> CType:
@@ -131,7 +131,7 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
         param = copy.deepcopy(param)
         param.name = None
         set_decl_name(param)
-        return ca.Typename(name=None, quals=param.quals, type=param.type)
+        return ca.Typename(name=None, quals=param.quals, type=param.type, align=[])
 
     new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
         anonymize_param(param) if isinstance(param, ca.Decl) else param
@@ -528,7 +528,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     elif struct.name and struct.name in typemap.struct_typedefs:
         ctype = typemap.struct_typedefs[struct.name]
     else:
-        ctype = TypeDecl(declname=None, quals=[], type=struct)
+        ctype = TypeDecl(declname=None, quals=[], type=struct, align=[])
 
     size = union_size if is_union else offset
     size = (size + align - 1) & -align
@@ -753,7 +753,7 @@ def type_to_string(type: CType, name: str = "") -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    decl = ca.Decl(name, [], [], [], copy.deepcopy(type), None, None)
+    decl = ca.Decl(name, [], [], [], [], copy.deepcopy(type), None, None)
     set_decl_name(decl)
     return to_c(decl)
 

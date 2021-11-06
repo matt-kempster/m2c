@@ -574,6 +574,7 @@ class Type:
             name=name,
             type=self._to_ctype(set(), fmt),
             quals=[],
+            align=[],
             storage=[],
             funcspec=[],
             init=None,
@@ -597,7 +598,10 @@ class Type:
     def _to_ctype(self, seen: Set["TypeData"], fmt: Formatter) -> CType:
         def simple_ctype(typename: str) -> ca.TypeDecl:
             return ca.TypeDecl(
-                type=ca.IdentifierType(names=[typename]), declname=None, quals=[]
+                type=ca.IdentifierType(names=[typename]),
+                declname=None,
+                quals=[],
+                align=[],
             )
 
         unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
@@ -649,6 +653,7 @@ class Type:
                     name=param.name,
                     type=param.type._to_ctype(seen.copy(), fmt),
                     quals=[],
+                    align=[],
                     storage=[],
                     funcspec=[],
                     init=None,
@@ -687,7 +692,10 @@ class Type:
             name = data.struct.tag_name or "_anonymous"
             Class = ca.Union if data.struct.is_union else ca.Struct
             return ca.TypeDecl(
-                declname=name, type=ca.Struct(name=name, decls=None), quals=[]
+                declname=name,
+                type=ca.Struct(name=name, decls=None),
+                quals=[],
+                align=[],
             )
 
         return simple_ctype(f"{sign}{size_bits}")
