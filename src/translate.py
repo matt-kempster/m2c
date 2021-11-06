@@ -2637,7 +2637,11 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
     """
     Return a new BinaryOp instance if this one can be simplified to a single / or % op.
     This involves simplifying expressions using MULT_HI, MULTU_HI, +, -, <<, >>, and /.
-    See: https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
+
+    In GCC 2.7.2, the code that generates these instructions is in expmed.c.
+
+    See also https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
+    for a modern writeup of a similar algorithm.
     """
     mult_high_ops = ("MULT_HI", "MULTU_HI")
     possible_match_ops = mult_high_ops + ("-", ">>")
@@ -2656,6 +2660,7 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
     divisor_shift = 0
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
+    # NB: If x is signed, this is only correct if there is a sign-correcting subtraction term
     if (
         isinstance(left_expr, BinaryOp)
         and left_expr.op == "/"
@@ -2684,32 +2689,57 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         ):
             return BinaryOp.int(left=left_expr, op="%", right=right_expr.right)
 
+    # Detect dividing by a negative: ((x >> 31) - (x / N)) --> x / -N
+    if (
+        expr.op == "-"
+        and isinstance(left_expr, BinaryOp)
+        and left_expr.op == ">>"
+        and early_unwrap_ints(left_expr.right) == Literal(31)
+        and isinstance(right_expr, BinaryOp)
+        and right_expr.op == "/"
+        and isinstance(right_expr.right, Literal)
+    ):
+        # Swap left_expr & right_expr, but replace the N in right_expr with -N
+        left_expr, right_expr = (
+            replace(right_expr, right=Literal(-right_expr.right.value)),
+            left_expr,
+        )
+
     # Remove outer error term: ((x / N) - (x >> 31)) --> x / N
     if (
         expr.op == "-"
         and isinstance(left_expr, BinaryOp)
+        and left_expr.op == "/"
+        and isinstance(left_expr.right, Literal)
         and isinstance(right_expr, BinaryOp)
         and right_expr.op == ">>"
         and early_unwrap_ints(right_expr.right) == Literal(31)
     ):
         div_expr = left_expr
         shift_var_expr = early_unwrap_ints(right_expr.left)
-        if isinstance(div_expr, BinaryOp) and div_expr.op == "/":
-            div_var_expr = early_unwrap_ints(div_expr.left)
-            # Check if the LHS of the shift is the same var that we're dividing by
-            if div_var_expr == shift_var_expr:
-                return div_expr
-            # If the var is under 32 bits, the error term may look like `(x << K) >> 31` instead
-            if (
-                isinstance(shift_var_expr, BinaryOp)
-                and early_unwrap_ints(div_expr.left)
-                == early_unwrap_ints(shift_var_expr.left)
-                and shift_var_expr.op == "<<"
-                and isinstance(shift_var_expr.right, Literal)
+        div_var_expr = early_unwrap_ints(div_expr.left)
+        # Check if the LHS of the shift is the same var that we're dividing by
+        if div_var_expr == shift_var_expr:
+            if isinstance(div_expr.right, Literal) and div_expr.right.value >= (
+                1 << 30
             ):
-                return div_expr
+                return BinaryOp.int(
+                    left=div_expr.left,
+                    op=div_expr.op,
+                    right=div_expr.right,
+                )
+            return div_expr
+        # If the var is under 32 bits, the error term may look like `(x << K) >> 31` instead
+        if (
+            isinstance(shift_var_expr, BinaryOp)
+            and early_unwrap_ints(div_expr.left)
+            == early_unwrap_ints(shift_var_expr.left)
+            and shift_var_expr.op == "<<"
+            and isinstance(shift_var_expr.right, Literal)
+        ):
+            return div_expr
 
-    # Shift on the result of the mul: (x >> M) / N --> x / (N << M)
+    # Shift on the result of the mul: MULT_HI(x, N) >> M, shift the divisor by M
     if (
         isinstance(left_expr, BinaryOp)
         and expr.op == ">>"
@@ -2720,17 +2750,19 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         left_expr = early_unwrap_ints(expr.left)
         right_expr = early_unwrap_ints(expr.right)
 
-    # Remove inner error term: MULT_HI(x, N) + x --> MULT_HI(x, N)
-    if (
-        divisor_shift != 0
-        and isinstance(left_expr, BinaryOp)
-        and left_expr.op in mult_high_ops
-        and expr.op == "+"
-        and early_unwrap_ints(left_expr.left) == right_expr
-    ):
-        expr = left_expr
-        left_expr = early_unwrap_ints(expr.left)
-        right_expr = early_unwrap_ints(expr.right)
+        # Remove inner addition: (MULT_HI(x, N) + x) >> M --> MULT_HI(x, N) >> M
+        # MULT_HI performs signed multiplication, so the `+ x` acts as setting the 32nd bit
+        # while having a result with the same sign as x.
+        # We can ignore it because `round_div` can work with arbitrarily large constants
+        if (
+            isinstance(left_expr, BinaryOp)
+            and left_expr.op == "MULT_HI"
+            and expr.op == "+"
+            and early_unwrap_ints(left_expr.left) == right_expr
+        ):
+            expr = left_expr
+            left_expr = early_unwrap_ints(expr.left)
+            right_expr = early_unwrap_ints(expr.right)
 
     # Shift on the LHS of the mul: MULT_HI(x >> M, N) --> MULT_HI(x, N) >> M
     if (
@@ -2748,7 +2780,7 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         if y <= 1:
             return None
         result = round(x / y)
-        if x / (y + 1) < result < x / (y - 1):
+        if x / (y + 1) <= result <= x / (y - 1):
             return result
         return None
 
