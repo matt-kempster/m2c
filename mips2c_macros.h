@@ -10,11 +10,11 @@
 #define MIPS2C_MACROS_H
 
 /* Unknown types */
-#define MIPS2C_UNK   s32
-#define MIPS2C_UNK8  s8
-#define MIPS2C_UNK16 s16
-#define MIPS2C_UNK32 s32
-#define MIPS2C_UNK64 s64
+typedef MIPS2C_UNK s32;
+typedef MIPS2C_UNK8 s8;
+typedef MIPS2C_UNK16 s16;
+typedef MIPS2C_UNK32 s32;
+typedef MIPS2C_UNK64 s64;
 
 /* Unknown field access, like `*(type_ptr) &expr->unk_offset` */
 #define MIPS2C_FIELD(expr, type_ptr, offset) (*(type_ptr)((s8 *)(expr) + (offset)))
