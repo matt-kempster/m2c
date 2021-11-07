@@ -167,9 +167,29 @@ def current_instr(instr: Instruction) -> Iterator[None]:
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     type = type.weaken_void_ptr()
+    ptr_target_type = type.get_pointer_target()
     if expr.type.unify(type):
         if silent or isinstance(expr, Literal):
             return expr
+    elif ptr_target_type is not None:
+        ptr_target_type_size = ptr_target_type.get_size_bytes()
+        field_path, field_type, _ = expr.type.get_deref_field(
+            0, target_size=ptr_target_type_size
+        )
+        if field_path is not None and field_type.unify(ptr_target_type):
+            expr = AddressOf(
+                StructAccess(
+                    struct_var=expr,
+                    offset=0,
+                    target_size=ptr_target_type_size,
+                    field_path=field_path,
+                    stack_info=None,
+                    type=field_type,
+                ),
+                type=type,
+            )
+            if silent:
+                return expr
     return Cast(expr=expr, reinterpret=True, silent=False, type=type)
 
 
@@ -1120,11 +1140,15 @@ class StructAccess(Expression):
     offset: int
     target_size: Optional[int]
     field_path: Optional[AccessPath] = field(compare=False)
-    stack_info: StackInfo = field(compare=False, repr=False)
+    stack_info: Optional[StackInfo] = field(compare=False, repr=False)
     type: Type = field(compare=False)
     checked_late_field_path: bool = field(default=False, compare=False)
 
     def __post_init__(self) -> None:
+        # stack_info is used to resolve field_path late
+        assert (
+            self.stack_info is not None or self.field_path is not None
+        ), "Must provide at least one of (stack_info, field_path)"
         self.assert_valid_field_path(self.field_path)
 
     @staticmethod
@@ -1189,6 +1213,9 @@ class StructAccess(Expression):
     def late_has_known_type(self) -> bool:
         if self.late_field_path() is not None:
             return True
+        assert (
+            self.stack_info is not None
+        ), "StructAccess must have stack_info if field_path isn't set"
         if self.offset == 0:
             var = late_unwrap(self.struct_var)
             if (
@@ -1202,7 +1229,9 @@ class StructAccess(Expression):
 
     def format(self, fmt: Formatter) -> str:
         var = late_unwrap(self.struct_var)
-        has_nonzero_access = self.stack_info.has_nonzero_access(var)
+        has_nonzero_access = False
+        if self.stack_info is not None:
+            has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
         field_path = self.late_field_path()
 
