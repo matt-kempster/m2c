@@ -29,7 +29,6 @@ from .flow_graph import (
     ReturnNode,
     SwitchNode,
     TerminalNode,
-    build_flowgraph,
 )
 from .options import Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
@@ -4608,6 +4607,7 @@ class FunctionInfo:
 
 def translate_to_ast(
     function: Function,
+    flow_graph: FlowGraph,
     options: Options,
     global_info: GlobalInfo,
 ) -> FunctionInfo:
@@ -4617,7 +4617,6 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
 

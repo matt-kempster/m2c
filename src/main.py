@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Union
 
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
-from .flow_graph import visualize_flowgraph
+from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options
 from .parse_file import AsmData, Function, parse_file
@@ -109,10 +109,44 @@ def run(options: Options) -> int:
         struct_field_inference=options.struct_field_inference,
     )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
-    function_infos: List[Union[FunctionInfo, Exception]] = []
+
+    flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
         try:
-            info = translate_to_ast(function, options, global_info)
+            flow_graphs.append(build_flowgraph(function, global_info.asm_data))
+        except Exception as e:
+            # Store the exception for later, to preserve the order in the output
+            flow_graphs.append(e)
+
+    # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
+    for i in range(options.passes - 1):
+        preliminary_infos = []
+        for function, flow_graph in zip(functions, flow_graphs):
+            try:
+                if isinstance(flow_graph, Exception):
+                    raise flow_graph
+                flow_graph.reset_block_info()
+                info = translate_to_ast(function, flow_graph, options, global_info)
+                preliminary_infos.append(info)
+            except:
+                pass
+        try:
+            global_info.global_decls(fmt, options.global_decls)
+        except:
+            pass
+        for info in preliminary_infos:
+            try:
+                get_function_text(info, options)
+            except:
+                pass
+
+    function_infos: List[Union[FunctionInfo, Exception]] = []
+    for function, flow_graph in zip(functions, flow_graphs):
+        try:
+            if isinstance(flow_graph, Exception):
+                raise flow_graph
+            flow_graph.reset_block_info()
+            info = translate_to_ast(function, flow_graph, options, global_info)
             function_infos.append(info)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
@@ -341,6 +375,16 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
+        "--passes",
+        "-P",
+        dest="passes",
+        metavar="N",
+        type=int,
+        default=2,
+        help="Number of translation passes to perform. Each pass may improve type resolution and produce better "
+        "output, particularly when decompiling multiple functions. Default: 2",
+    )
+    group.add_argument(
         "--compiler",
         dest="compiler",
         type=Options.CompilerEnum,
@@ -474,6 +518,7 @@ def parse_flags(flags: List[str]) -> Options:
         compiler=args.compiler,
         structs=args.structs,
         struct_field_inference=args.structs and not args.no_struct_inference,
+        passes=args.passes,
     )
 
 

@@ -58,6 +58,7 @@ class Options:
     compiler: CompilerEnum
     structs: bool
     struct_field_inference: bool
+    passes: int
 
     def formatter(self) -> "Formatter":
         return Formatter(

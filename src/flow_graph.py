@@ -1398,6 +1398,10 @@ class FlowGraph:
             return False
         return True
 
+    def reset_block_info(self) -> None:
+        for node in self.nodes:
+            node.block.block_info = None
+
 
 def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
     blocks = build_blocks(function, asm_data)
