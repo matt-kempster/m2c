@@ -110,66 +110,78 @@ def run(options: Options) -> int:
     )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
 
-    for pass_number in range(options.passes):
-        is_final_pass = pass_number == options.passes - 1
-
-        function_infos: List[Union[FunctionInfo, Exception]] = []
+    # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
+    for i in range(options.passes - 1):
+        preliminary_infos = []
         for function in functions:
             try:
-                info = translate_to_ast(function, options, global_info)
-                function_infos.append(info)
-            except Exception as e:
-                # Store the exception for later, to preserve the order in the output
-                function_infos.append(e)
-
-        return_code = 0
-        try:
-            if options.visualize_flowgraph:
-                fn_info = function_infos[0]
-                if isinstance(fn_info, Exception):
-                    raise fn_info
-                print(visualize_flowgraph(fn_info.flow_graph))
-                return 0
-
-            if options.structs:
-                type_decls = typepool.format_type_declarations(fmt)
-                if type_decls and is_final_pass:
-                    print(type_decls)
-
-            global_decls = global_info.global_decls(fmt, options.global_decls)
-            if global_decls and is_final_pass:
-                print(global_decls)
-        except Exception as e:
-            if is_final_pass:
-                print_exception_as_comment(
-                    e, context=None, sanitize=options.sanitize_tracebacks
+                preliminary_infos.append(
+                    translate_to_ast(function, options, global_info)
                 )
-            return_code = 1
-
-        for index, (function, function_info) in enumerate(
-            zip(functions, function_infos)
-        ):
-            if is_final_pass:
-                if index != 0:
-                    print()
-                if options.print_assembly:
-                    print(function)
-                    print()
+            except:
+                pass
+        try:
+            global_info.global_decls(fmt, options.global_decls)
+        except:
+            pass
+        for info in preliminary_infos:
             try:
-                if isinstance(function_info, Exception):
-                    raise function_info
+                get_function_text(info, options)
+            except:
+                pass
 
-                function_text = get_function_text(function_info, options)
-                if is_final_pass:
-                    print(function_text)
-            except Exception as e:
-                if is_final_pass:
-                    print_exception_as_comment(
-                        e,
-                        context=f"function {function.name}",
-                        sanitize=options.sanitize_tracebacks,
-                    )
-                return_code = 1
+    function_infos: List[Union[FunctionInfo, Exception]] = []
+    for function in functions:
+        try:
+            info = translate_to_ast(function, options, global_info)
+            function_infos.append(info)
+        except Exception as e:
+            # Store the exception for later, to preserve the order in the output
+            function_infos.append(e)
+
+    return_code = 0
+    try:
+        if options.visualize_flowgraph:
+            fn_info = function_infos[0]
+            if isinstance(fn_info, Exception):
+                raise fn_info
+            print(visualize_flowgraph(fn_info.flow_graph))
+            return 0
+
+        if options.structs:
+            type_decls = typepool.format_type_declarations(fmt)
+            if type_decls:
+                print(type_decls)
+
+        global_decls = global_info.global_decls(fmt, options.global_decls)
+        if global_decls:
+            print(global_decls)
+    except Exception as e:
+        print_exception_as_comment(
+            e, context=None, sanitize=options.sanitize_tracebacks
+        )
+        return_code = 1
+
+    for index, (function, function_info) in enumerate(zip(functions, function_infos)):
+        if index != 0:
+            print()
+        try:
+            if options.print_assembly:
+                print(function)
+                print()
+
+            if isinstance(function_info, Exception):
+                raise function_info
+
+            function_text = get_function_text(function_info, options)
+            print(function_text)
+        except Exception as e:
+            print_exception_as_comment(
+                e,
+                context=f"function {function.name}",
+                sanitize=options.sanitize_tracebacks,
+            )
+            return_code = 1
 
     for warning in typepool.warnings:
         print(fmt.with_comments("", comments=[warning]))
