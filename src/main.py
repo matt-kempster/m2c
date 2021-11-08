@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Union
 
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
-from .flow_graph import visualize_flowgraph
+from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options
 from .parse_file import AsmData, Function, parse_file
@@ -110,14 +110,24 @@ def run(options: Options) -> int:
     )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
 
+    flow_graphs: List[Union[FlowGraph, Exception]] = []
+    for function in functions:
+        try:
+            flow_graphs.append(build_flowgraph(function, global_info.asm_data))
+        except Exception as e:
+            # Store the exception for later, to preserve the order in the output
+            flow_graphs.append(e)
+
     # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
     for i in range(options.passes - 1):
         preliminary_infos = []
-        for function in functions:
+        for function, flow_graph in zip(functions, flow_graphs):
             try:
-                preliminary_infos.append(
-                    translate_to_ast(function, options, global_info)
-                )
+                if isinstance(flow_graph, Exception):
+                    raise flow_graph
+                flow_graph.reset_block_info()
+                info = translate_to_ast(function, flow_graph, options, global_info)
+                preliminary_infos.append(info)
             except:
                 pass
         try:
@@ -131,9 +141,12 @@ def run(options: Options) -> int:
                 pass
 
     function_infos: List[Union[FunctionInfo, Exception]] = []
-    for function in functions:
+    for function, flow_graph in zip(functions, flow_graphs):
         try:
-            info = translate_to_ast(function, options, global_info)
+            if isinstance(flow_graph, Exception):
+                raise flow_graph
+            flow_graph.reset_block_info()
+            info = translate_to_ast(function, flow_graph, options, global_info)
             function_infos.append(info)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output

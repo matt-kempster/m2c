@@ -29,7 +29,6 @@ from .flow_graph import (
     ReturnNode,
     SwitchNode,
     TerminalNode,
-    build_flowgraph,
 )
 from .options import Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
@@ -4341,7 +4340,6 @@ class GlobalInfo:
     typemap: TypeMap
     typepool: TypePool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
-    flow_graph_map: Dict[str, FlowGraph] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -4372,16 +4370,6 @@ class GlobalInfo:
                 sym.type.unify(Type.function())
 
         return AddressOf(sym, type=sym.type.reference())
-
-    def flow_graph(self, function: Function) -> FlowGraph:
-        flow_graph = self.flow_graph_map.get(function.name)
-        if flow_graph is not None:
-            flow_graph.reset_block_info()
-        else:
-            flow_graph = self.flow_graph_map[function.name] = build_flowgraph(
-                function, self.asm_data
-            )
-        return flow_graph
 
     def is_function_known_void(self, sym_name: str) -> bool:
         """Return True if the function exists in the context, and has no return value"""
@@ -4619,6 +4607,7 @@ class FunctionInfo:
 
 def translate_to_ast(
     function: Function,
+    flow_graph: FlowGraph,
     options: Options,
     global_info: GlobalInfo,
 ) -> FunctionInfo:
@@ -4628,7 +4617,6 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph = global_info.flow_graph(function)
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
 
