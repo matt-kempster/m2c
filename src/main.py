@@ -112,16 +112,23 @@ def run(options: Options) -> int:
 
     # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
     for i in range(options.passes - 1):
+        preliminary_infos = []
         for function in functions:
             try:
-                info = translate_to_ast(function, options, global_info)
-                function_format_pass(info)
+                preliminary_infos.append(
+                    translate_to_ast(function, options, global_info)
+                )
             except Exception as e:
                 pass
         try:
             global_info.global_decls(fmt, options.global_decls)
         except Exception as e:
             pass
+        for info in preliminary_infos:
+            try:
+                function_format_pass(info)
+            except Exception as e:
+                pass
 
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
@@ -362,7 +369,7 @@ def parse_flags(flags: List[str]) -> Options:
         type=int,
         default=2,
         help="Number of translation passes to perform. Each pass may improve type resolution and produce better "
-        "output, particularly when decompiling multiple funcitons. Default: 2",
+        "output, particularly when decompiling multiple functions. Default: 2",
     )
     group.add_argument(
         "--compiler",
