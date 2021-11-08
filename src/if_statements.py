@@ -963,6 +963,28 @@ def build_body(context: Context, options: Options) -> Body:
     return body
 
 
+def function_format_pass(function_info: "FunctionInfo") -> None:
+    """
+    Format every expression in the given function, but discard the output.
+    This is significantly faster than `get_function_text`, but does not
+    visit the Nodes in the same order.
+    """
+    # Use an arbitrary Formatter; the output will be discarded
+    fmt = Formatter()
+    for node in function_info.flow_graph.nodes:
+        if not node.block.block_info:
+            continue
+        block_info = get_block_info(node)
+        for statement in block_info.statements_to_write():
+            statement.format(fmt)
+        if block_info.return_value:
+            block_info.return_value.format(fmt)
+        if block_info.switch_control:
+            block_info.switch_control.control_expr.format(fmt)
+        if block_info.branch_condition:
+            block_info.branch_condition.format(fmt)
+
+
 def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     fmt = options.formatter()
     context = Context(flow_graph=function_info.flow_graph, options=options, fmt=fmt)

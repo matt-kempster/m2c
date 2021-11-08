@@ -4319,7 +4319,7 @@ def translate_graph_from_block(
         )
 
 
-def resolve_types_late(stack_info: StackInfo, flow_graph: FlowGraph) -> None:
+def resolve_types_late(stack_info: StackInfo) -> None:
     """
     After translating a function, perform a final type-resolution pass.
     """
@@ -4333,22 +4333,6 @@ def resolve_types_late(stack_info: StackInfo, flow_graph: FlowGraph) -> None:
             type = offset_type_map[0]
             var.type.unify(Type.ptr(type))
 
-    # Format every block but discard the results. This triggers some late type
-    # resolution in StructAccess and other Expressions.
-    fmt = Formatter()
-    for node in flow_graph.nodes:
-        if not node.block.block_info:
-            continue
-        block_info = get_block_info(node)
-        for statement in block_info.statements_to_write():
-            statement.format(fmt)
-        if block_info.return_value:
-            block_info.return_value.format(fmt)
-        if block_info.switch_control:
-            block_info.switch_control.control_expr.format(fmt)
-        if block_info.branch_condition:
-            block_info.branch_condition.format(fmt)
-
 
 @dataclass
 class GlobalInfo:
@@ -4357,6 +4341,7 @@ class GlobalInfo:
     typemap: TypeMap
     typepool: TypePool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
+    flow_graph_map: Dict[str, FlowGraph] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -4387,6 +4372,16 @@ class GlobalInfo:
                 sym.type.unify(Type.function())
 
         return AddressOf(sym, type=sym.type.reference())
+
+    def flow_graph(self, function: Function) -> FlowGraph:
+        flow_graph = self.flow_graph_map.get(function.name)
+        if flow_graph is not None:
+            flow_graph.reset_block_info()
+        else:
+            flow_graph = self.flow_graph_map[function.name] = build_flowgraph(
+                function, self.asm_data
+            )
+        return flow_graph
 
     def is_function_known_void(self, sym_name: str) -> bool:
         """Return True if the function exists in the context, and has no return value"""
@@ -4633,7 +4628,7 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    flow_graph: FlowGraph = build_flowgraph(function, global_info.asm_data)
+    flow_graph = global_info.flow_graph(function)
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
 
@@ -4725,7 +4720,7 @@ def translate_to_ast(
                 param.name = arg.format(Formatter())
 
     assign_phis(used_phis, stack_info)
-    resolve_types_late(stack_info, flow_graph)
+    resolve_types_late(stack_info)
 
     if options.pdb_translate:
         import pdb

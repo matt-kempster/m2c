@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Union
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import visualize_flowgraph
-from .if_statements import get_function_text
+from .if_statements import get_function_text, function_format_pass
 from .options import CodingStyle, Options
 from .parse_file import AsmData, Function, parse_file
 from .translate import (
@@ -109,6 +109,20 @@ def run(options: Options) -> int:
         struct_field_inference=options.struct_field_inference,
     )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
+
+    # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
+    for i in range(options.passes - 1):
+        for function in functions:
+            try:
+                info = translate_to_ast(function, options, global_info)
+                function_format_pass(info)
+            except Exception as e:
+                pass
+        try:
+            global_info.global_decls(fmt, options.global_decls)
+        except Exception as e:
+            pass
+
     function_infos: List[Union[FunctionInfo, Exception]] = []
     for function in functions:
         try:
@@ -341,6 +355,16 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
+        "--passes",
+        "-P",
+        dest="passes",
+        metavar="N",
+        type=int,
+        default=2,
+        help="Number of translation passes to perform. Each pass may improve type resolution and produce better "
+        "output, particularly when decompiling multiple funcitons. Default: 2",
+    )
+    group.add_argument(
         "--compiler",
         dest="compiler",
         type=Options.CompilerEnum,
@@ -474,6 +498,7 @@ def parse_flags(flags: List[str]) -> Options:
         compiler=args.compiler,
         structs=args.structs,
         struct_field_inference=args.structs and not args.no_struct_inference,
+        passes=args.passes,
     )
 
 
