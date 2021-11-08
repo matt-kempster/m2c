@@ -260,6 +260,8 @@ class StackInfo:
     param_names: Dict[int, str] = field(default_factory=dict)
     stack_pointer_type: Optional[Type] = None
     replace_first_arg: Optional[Tuple[str, Type]] = None
+    weak_stack_var_types: Dict[int, Type] = field(default_factory=dict)
+    weak_stack_var_locations: Set[int] = field(default_factory=set)
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -397,6 +399,19 @@ class StackInfo:
             field_path, field_type, _ = self.stack_pointer_type.get_deref_field(
                 location, target_size=None
             )
+            # Some variables on the stack are compiler-managed, and aren't declared
+            # in the original source. These variables can have different types inside
+            # different blocks, so we track their types but assume that they may change
+            # on each store.
+            # TODO: Maybe only do this for certain configurable regions?
+            if store:
+                if location in self.weak_stack_var_types:
+                    field_type = Type.any_field()
+                self.weak_stack_var_types[location] = field_type
+            elif location in self.weak_stack_var_types:
+                if not self.weak_stack_var_types[location].unify(field_type):
+                    self.weak_stack_var_locations.add(location)
+                    field_type = self.weak_stack_var_types[location]
             return LocalVar(location, type=field_type, path=field_path)
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
