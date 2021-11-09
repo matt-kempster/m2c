@@ -86,6 +86,22 @@ class Arch(abc.ABC):
     instrs_source_first: InstrMap
     instrs_destination_first: InstrMap
 
+    @abc.abstractmethod
+    def function_abi(
+        self,
+        fn_sig: FunctionSignature,
+        likely_regs: Dict[Register, bool],
+        *,
+        for_call: bool,
+    ) -> "Abi":
+        ...
+
+    @abc.abstractmethod
+    def function_return(
+        self, expr: "Expression"
+    ) -> List[Tuple[Register, "Expression"]]:
+        ...
+
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
@@ -3124,87 +3140,14 @@ def strip_macros(arg: Argument) -> Argument:
 class AbiArgSlot:
     offset: int
     reg: Optional[Register]
-    name: Optional[str]
     type: Type
+    name: Optional[str] = None
 
 
 @dataclass
 class Abi:
     arg_slots: List[AbiArgSlot]
-    possible_regs: List[Register]
-
-
-def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
-    """Compute stack positions/registers used by a function according to the o32 ABI,
-    based on C type information. Additionally computes a list of registers that might
-    contain arguments, if the function is a varargs function. (Additional varargs
-    arguments may be passed on the stack; we could compute the offset at which that
-    would start but right now don't care -- we just slurp up everything.)"""
-    if not fn_sig.params_known:
-        return Abi(
-            arg_slots=[],
-            possible_regs=[
-                Register(r) for r in ["f12", "f13", "f14", "a0", "a1", "a2", "a3"]
-            ],
-        )
-
-    offset = 0
-    only_floats = True
-    slots: List[AbiArgSlot] = []
-    possible: List[Register] = []
-    if fn_sig.return_type.is_struct():
-        # The ABI for struct returns is to pass a pointer to where it should be written
-        # as the first argument.
-        slots.append(
-            AbiArgSlot(
-                offset=0,
-                reg=Register("a0"),
-                name="__return__",
-                type=Type.ptr(fn_sig.return_type),
-            )
-        )
-        offset = 4
-        only_floats = False
-
-    for ind, param in enumerate(fn_sig.params):
-        # Array parameters decay into pointers
-        param_type = param.type.decay()
-        size, align = param_type.get_parameter_size_align_bytes()
-        size = (size + 3) & ~3
-        only_floats = only_floats and param_type.is_float()
-        offset = (offset + align - 1) & -align
-        name = param.name
-        reg2: Optional[Register]
-        if ind < 2 and only_floats:
-            reg = Register("f12" if ind == 0 else "f14")
-            is_double = param_type.is_float() and param_type.get_size_bits() == 64
-            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param_type))
-            if is_double and not for_call:
-                name2 = f"{name}_lo" if name else None
-                reg2 = Register("f13" if ind == 0 else "f15")
-                slots.append(
-                    AbiArgSlot(
-                        offset=offset + 4, reg=reg2, name=name2, type=Type.any_reg()
-                    )
-                )
-        else:
-            for i in range(offset // 4, (offset + size) // 4):
-                unk_offset = 4 * i - offset
-                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
-                reg2 = Register(f"a{i}") if i < 4 else None
-                slots.append(
-                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param_type)
-                )
-        offset += size
-
-    if fn_sig.is_variadic:
-        for i in range(offset // 4, 4):
-            possible.append(Register(f"a{i}"))
-
-    return Abi(
-        arg_slots=slots,
-        possible_regs=possible,
-    )
+    possible_slots: List[AbiArgSlot]
 
 
 def output_regs_for_instr(
@@ -3736,63 +3679,23 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
             assert fn_sig is not None, "known function pointers must have a signature"
-            abi = function_abi(fn_sig, for_call=True)
+
+            likely_regs: Dict[Register, bool] = {}
+            for reg, data in regs.contents.items():
+                likely_regs[reg] = (
+                    not isinstance(data.value, PassedInArg) or data.value.copied
+                )
+
+            abi = arch.function_abi(fn_sig, likely_regs, for_call=True)
 
             func_args: List[Expression] = []
             for slot in abi.arg_slots:
                 if slot.reg:
                     func_args.append(as_type(regs[slot.reg], slot.type, True))
 
-            valid_extra_regs: Set[str] = set()
-            for register in abi.possible_regs:
-                raw_expr = regs.get_raw(register)
-                if raw_expr is None:
-                    continue
-
-                # Don't pass this register if lower numbered ones are undefined.
-                # Following the o32 ABI, register order can be a prefix of either:
-                # a0, a1, a2, a3
-                # f12, a1, a2, a3
-                # f12, f14, a2, a3
-                # f12, f13, a2, a3
-                # f12, f13, f14, f15
-                require: Optional[List[str]] = None
-                if register == abi.possible_regs[0]:
-                    # For varargs, a subset of a0 .. a3 may be used. Don't check
-                    # earlier registers for the first member of that subset.
-                    pass
-                elif register == Register("f13") or register == Register("f14"):
-                    require = ["f12"]
-                elif register == Register("a1"):
-                    require = ["a0", "f12"]
-                elif register == Register("a2"):
-                    require = ["a1", "f13", "f14"]
-                elif register == Register("a3"):
-                    require = ["a2"]
-                if require and not any(r in valid_extra_regs for r in require):
-                    continue
-
-                valid_extra_regs.add(register.register_name)
-
-                if register == Register("f13"):
-                    # We don't pass in f13 or f15 because they will often only
-                    # contain SecondF64Half(), and otherwise would need to be
-                    # merged with f12/f14 which we don't have logic for right
-                    # now. However, f13 can still matter for whether a2 should
-                    # be passed, and so is kept in possible_regs.
-                    continue
-
-                # Skip registers that are untouched from our initial parameter
-                # list. This is sometimes wrong (can give both false positives
-                # and negatives), but having a heuristic here is unavoidable
-                # without access to function signatures, or when dealing with
-                # varargs functions. Decompiling multiple functions at once
-                # would help. TODO: don't do this in the middle of the argument
-                # list, except for f12 if a0 is passed and such.
-                if isinstance(raw_expr, PassedInArg) and not raw_expr.copied:
-                    continue
-
-                func_args.append(regs[register])
+            for slot in abi.possible_slots:
+                assert slot.reg is not None
+                func_args.append(regs[slot.reg])
 
             # Add the arguments after a3.
             # TODO: limit this and unify types based on abi.arg_slots
@@ -3836,33 +3739,16 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # needs to match exactly, which is why we can't look at
             # fn_sig.return_type even though it may be more accurate.
             if not is_known_void:
-
-                def set_return_reg(reg: Register, val: Expression) -> None:
-                    val = eval_once(
-                        val,
-                        emit_exactly_once=False,
-                        trivial=False,
-                        prefix=reg.register_name,
-                    )
+                for reg, val in arch.function_return(call):
+                    assert reg in arch.all_return_regs
+                    if not isinstance(val, SecondF64Half):
+                        val = eval_once(
+                            val,
+                            emit_exactly_once=False,
+                            trivial=False,
+                            prefix=reg.register_name,
+                        )
                     regs.set_with_meta(reg, val, RegMeta(function_return=True))
-
-                set_return_reg(
-                    Register("f0"),
-                    Cast(
-                        expr=call, reinterpret=True, silent=True, type=Type.floatish()
-                    ),
-                )
-                set_return_reg(
-                    Register("v0"),
-                    Cast(expr=call, reinterpret=True, silent=True, type=Type.intptr()),
-                )
-                set_return_reg(
-                    Register("v1"),
-                    as_u32(
-                        Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
-                    ),
-                )
-                regs[Register("f1")] = SecondF64Half()
 
             has_function_call = True
 
@@ -4362,10 +4248,6 @@ def translate_to_ast(
     for reg in arch.saved_regs:
         start_regs[reg] = stack_info.saved_reg_symbol(reg.register_name)
 
-    def make_arg(offset: int, type: Type) -> PassedInArg:
-        assert offset % 4 == 0
-        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
-
     fn_sym = global_info.address_of_gsym(function.name).expr
     assert isinstance(fn_sym, GlobalSymbol)
 
@@ -4376,22 +4258,22 @@ def translate_to_ast(
     return_type = fn_sig.return_type
     stack_info.is_variadic = fn_sig.is_variadic
 
-    if fn_sig.params_known:
-        abi = function_abi(fn_sig, for_call=False)
-        for slot in abi.arg_slots:
-            stack_info.add_known_param(slot.offset, slot.name, slot.type)
-            if slot.reg is not None:
-                start_regs[slot.reg] = make_arg(slot.offset, slot.type)
-        for reg in abi.possible_regs:
-            offset = 4 * int(reg.register_name[1])
-            start_regs[reg] = make_arg(offset, Type.any_reg())
-    else:
-        start_regs[Register("a0")] = make_arg(0, Type.intptr())
-        start_regs[Register("a1")] = make_arg(4, Type.any_reg())
-        start_regs[Register("a2")] = make_arg(8, Type.any_reg())
-        start_regs[Register("a3")] = make_arg(12, Type.any_reg())
-        start_regs[Register("f12")] = make_arg(0, Type.floatish())
-        start_regs[Register("f14")] = make_arg(4, Type.floatish())
+    def make_arg(offset: int, type: Type) -> PassedInArg:
+        assert offset % 4 == 0
+        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
+
+    abi = arch.function_abi(
+        fn_sig,
+        likely_regs={reg: True for reg in arch.argument_regs},
+        for_call=False,
+    )
+    for slot in abi.arg_slots:
+        stack_info.add_known_param(slot.offset, slot.name, slot.type)
+        if slot.reg is not None:
+            start_regs[slot.reg] = make_arg(slot.offset, slot.type)
+    for slot in abi.possible_slots:
+        if slot.reg is not None:
+            start_regs[slot.reg] = make_arg(slot.offset, slot.type)
 
     if options.reg_vars == ["saved"]:
         reg_vars = arch.saved_regs
