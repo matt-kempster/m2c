@@ -1320,6 +1320,7 @@ class GlobalSymbol(Expression):
 class Literal(Expression):
     value: int
     type: Type = field(compare=False, default_factory=Type.any)
+    elide_cast: bool = field(compare=False, default=False)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1335,15 +1336,26 @@ class Literal(Expression):
 
         prefix = ""
         suffix = ""
-        if not fmt.skip_casts:
+        if not fmt.skip_casts and not self.elide_cast:
             if self.type.is_pointer():
                 prefix = f"({self.type.format(fmt)})"
             if self.type.is_unsigned():
                 suffix = "U"
+
         if force_dec:
             value = str(self.value)
         else:
-            value = fmt.format_int(self.value)
+            size_bits = self.type.get_size_bits()
+            v = self.value
+            if (
+                self.type.is_signed()
+                and size_bits
+                and v > 0
+                and v < 2 ** size_bits
+                and v & (1 << (size_bits - 1))
+            ):
+                v -= 1 << size_bits
+            value = fmt.format_int(v)
 
         return prefix + value + suffix
 
@@ -2171,7 +2183,7 @@ def elide_casts_for_store(expr: Expression) -> Expression:
         return elide_casts_for_store(uw_expr.expr)
     if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
         # Avoid suffixes for unsigned ints
-        return Literal(uw_expr.value, type=Type.intish())
+        return replace(uw_expr, elide_cast=True)
     return uw_expr
 
 

@@ -46,10 +46,10 @@ glabel test
 
 .rodata
 glabel static_ro_array
-.word 0x07, 0x08, 0x09
+.word 0x07, 0x08, -0x9
 
 glabel unused_static_ro_array
-.word 10, 11, 12
+.word 10, -11, 12
 
 .data
 glabel static_A
@@ -72,7 +72,7 @@ glabel static_array
 .word 2, 4, 6
 
 glabel unused_static_array
-.word 8, 10, 12
+.half -8, 10, 12
 
 .bss
 glabel static_int

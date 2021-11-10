@@ -281,6 +281,9 @@ class Type:
     def is_struct(self) -> bool:
         return self.data().kind == TypeData.K_STRUCT
 
+    def is_signed(self) -> bool:
+        return self.data().sign == TypeData.SIGNED
+
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
 
