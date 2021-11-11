@@ -131,7 +131,7 @@ def run(options: Options) -> int:
             except:
                 pass
         try:
-            global_info.global_decls(fmt, options.global_decls)
+            global_info.global_decls(fmt, options.global_decls, [])
         except:
             pass
         for info in preliminary_infos:
@@ -166,7 +166,11 @@ def run(options: Options) -> int:
             if type_decls:
                 print(type_decls)
 
-        global_decls = global_info.global_decls(fmt, options.global_decls)
+        global_decls = global_info.global_decls(
+            fmt,
+            options.global_decls,
+            [fn for fn in function_infos if isinstance(fn, FunctionInfo)],
+        )
         if global_decls:
             print(global_decls)
     except Exception as e:
