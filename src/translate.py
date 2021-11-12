@@ -1349,7 +1349,7 @@ class Literal(Expression):
             v = self.value
 
             # The top 2 bits are tested rather than just the sign bit
-            # to help prevent VRAM pointers (0x80000000+) turning negative
+            # to help prevent N64 VRAM pointers (0x80000000+) turning negative
             if (
                 self.type.is_signed()
                 and size_bits
