@@ -1350,9 +1350,9 @@ class Literal(Expression):
             if (
                 self.type.is_signed()
                 and size_bits
-                and v > 0
-                and v < 2 ** size_bits
                 and v & (1 << (size_bits - 1))
+                and v > (3 << (size_bits - 2))
+                and v < 2 ** size_bits
             ):
                 v -= 1 << size_bits
             value = fmt.format_int(v)
