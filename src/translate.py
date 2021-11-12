@@ -4346,6 +4346,13 @@ def resolve_types_late(stack_info: StackInfo) -> None:
 
 
 @dataclass
+class FunctionInfo:
+    stack_info: StackInfo
+    flow_graph: FlowGraph
+    return_type: Type
+
+
+@dataclass
 class GlobalInfo:
     asm_data: AsmData
     local_functions: Set[str]
@@ -4462,10 +4469,44 @@ class GlobalInfo:
 
         return for_type(sym.type)
 
-    def global_decls(self, fmt: Formatter, decls: Options.GlobalDeclsEnum) -> str:
+    def find_forward_declares_needed(self, functions: List[FunctionInfo]) -> Set[str]:
+        funcs_seen = set()
+        forward_declares_needed = self.asm_data.mentioned_labels
+
+        for func in functions:
+            funcs_seen.add(func.stack_info.function.name)
+
+            for instr in func.stack_info.function.body:
+                if not isinstance(instr, Instruction):
+                    continue
+
+                for arg in instr.args:
+                    if isinstance(arg, AsmGlobalSymbol):
+                        func_name = arg.symbol_name
+                    elif isinstance(arg, Macro) and isinstance(
+                        arg.argument, AsmGlobalSymbol
+                    ):
+                        func_name = arg.argument.symbol_name
+                    else:
+                        continue
+
+                    if func_name in self.local_functions:
+                        if func_name not in funcs_seen:
+                            forward_declares_needed.add(func_name)
+
+        return forward_declares_needed
+
+    def global_decls(
+        self,
+        fmt: Formatter,
+        decls: Options.GlobalDeclsEnum,
+        functions: List[FunctionInfo],
+    ) -> str:
         # Format labels from symbol_type_map into global declarations.
         # As the initializers are formatted, this may cause more symbols
         # to be added to the global_symbol_map.
+        forward_declares_needed = self.find_forward_declares_needed(functions)
+
         lines = []
         processed_names: Set[str] = set()
         while True:
@@ -4594,6 +4635,14 @@ class GlobalInfo:
                 if decls != Options.GlobalDeclsEnum.ALL and sym.initializer_in_typemap:
                     continue
 
+                if (
+                    sym.type.is_function()
+                    and decls != Options.GlobalDeclsEnum.ALL
+                    and name in self.local_functions
+                    and name not in forward_declares_needed
+                ):
+                    continue
+
                 qualifier = f"{qualifier} " if qualifier else ""
                 value = f" = {value}" if value else ""
                 lines.append(
@@ -4608,13 +4657,6 @@ class GlobalInfo:
                 )
         lines.sort()
         return "".join(line for _, line in lines)
-
-
-@dataclass
-class FunctionInfo:
-    stack_info: StackInfo
-    flow_graph: FlowGraph
-    return_type: Type
 
 
 def translate_to_ast(
