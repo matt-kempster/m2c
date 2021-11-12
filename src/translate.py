@@ -1347,6 +1347,9 @@ class Literal(Expression):
         else:
             size_bits = self.type.get_size_bits()
             v = self.value
+
+            # The top 2 bits are tested rather than just the sign bit
+            # to help prevent VRAM pointers (0x80000000+) turning negative
             if (
                 self.type.is_signed()
                 and size_bits
