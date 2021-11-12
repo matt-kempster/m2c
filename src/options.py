@@ -106,7 +106,7 @@ class Formatter:
         # Here, "line length" is just used as a rough guideline: we aren't accounting
         # for the LHS of the assignment or any indentation.
         if not any("\n" in el or len(el) > self.line_length for el in elements):
-            output = f"{{{', '.join(elements)}}}"
+            output = f"{{ {', '.join(elements)} }}"
             if len(output) < self.line_length:
                 return output
 
@@ -142,4 +142,5 @@ class Formatter:
     def format_int(self, val: int) -> str:
         if abs(val) < 10:
             return str(val)
+
         return hex(val).upper().replace("X", "x")

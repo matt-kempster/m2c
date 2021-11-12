@@ -333,7 +333,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     if line.startswith(".word"):
                         for w in line[5:].split(","):
                             w = w.strip()
-                            if not w or w[0].isdigit():
+                            if not w or w[0].isdigit() or w[0] == "-":
                                 ival = (
                                     try_parse(lambda: int(w, 0), ".word") & 0xFFFFFFFF
                                 )
