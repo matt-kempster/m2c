@@ -403,13 +403,28 @@ class StackInfo:
             # in the original source. These variables can have different types inside
             # different blocks, so we track their types but assume that they may change
             # on each store.
+            # TODO: Because the types are tracked in StackInfo instead of RegInfo, it is
+            # possible that a load could incorrectly use a weak type from a sibling node
+            # instead of a parent node. A more correct implementation would use similar
+            # logic to the PhiNode system. In practice however, storing types in StackInfo
+            # works well enough because nodes are traversed approximately depth-first.
             # TODO: Maybe only do this for certain configurable regions?
             if store:
+                # If there's already been a store to `location`, then return a fresh type
                 if location in self.weak_stack_var_types:
-                    field_type = Type.any_field()
+                    # Try to unify the previous type with the primary type, to cover
+                    # situations where the previous store was not paired with a load.
+                    if not self.weak_stack_var_types[location].unify(field_type):
+                        self.weak_stack_var_locations.add(location)
+                    field_type = Type.any_reg()
+                # Keep track of the type used at `location`
                 self.weak_stack_var_types[location] = field_type
             elif location in self.weak_stack_var_types:
+                # This is a load from `location` we previously stored to
+                # Check if the `field_type` is compatible with the last stored type
                 if not self.weak_stack_var_types[location].unify(field_type):
+                    # The types weren't compatible. Mark this `location` as "weak" and use
+                    # the previous stored type instead of the one from `get_deref_field()`
                     self.weak_stack_var_locations.add(location)
                     field_type = self.weak_stack_var_types[location]
             return LocalVar(location, type=field_type, path=field_path)

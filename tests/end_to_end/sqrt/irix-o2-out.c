@@ -1,6 +1,6 @@
 void test(f32 arg0) {
     f32 spC;                                        /* compiler-managed */
-    f32 sp4;
+    f32 sp4;                                        /* compiler-managed */
 
     sp4 = arg0;
     spC = sp4;
