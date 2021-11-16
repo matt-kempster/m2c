@@ -105,6 +105,11 @@ class TypePool:
                 decls.append(struct.format(fmt) + "\n")
         return "\n".join(decls)
 
+    def prune_structs(self) -> None:
+        """Remove overlapping fields from all known structs"""
+        for struct in self.structs:
+            struct.prune_overlapping_fields()
+
 
 @dataclass(eq=False)
 class TypeData:
@@ -1048,6 +1053,61 @@ class StructDeclaration:
         self.fields.append(field)
         self.fields.sort(key=lambda f: f.offset)
         return field
+
+    def prune_overlapping_fields(self) -> None:
+        """Remove overlapping fields with `known=False` from the struct"""
+
+        # TODO: Support unions
+        if self.is_union:
+            return None
+
+        # Sort by offset, with bigger fields at the same offset first
+        self.fields.sort(key=lambda f: (f.offset, -(f.type.get_size_bytes() or 0)))
+
+        fields_to_remove: Set[StructDeclaration.StructField] = set()
+        for i, field in enumerate(self.fields):
+            # Skip fields provided by the context or marked for removal
+            if field.known or field in fields_to_remove:
+                continue
+
+            # If the size of a field (still) isn't known, assume it is 1 byte
+            field_size = field.type.get_size_bytes() or 1
+
+            conflicting_fields: Set[StructDeclaration.StructField] = set()
+            for f2 in self.fields[i + 1 :]:
+                assert f2.offset >= field.offset
+                # If `f2` is after the end of `field`, we're done
+                if f2.offset >= field.offset + field_size:
+                    break
+                if f2 in fields_to_remove:
+                    continue
+
+                # Now, we know `field` and `f2` overlap. Check if `f2` is a subfield of `field`.
+                offset = f2.offset - field.offset
+                sub_path, sub_type, _ = field.type.get_field(
+                    offset, target_size=f2.type.get_size_bytes()
+                )
+                if sub_path is not None and sub_type.unify(f2.type):
+                    # Remove `f2` so that accesses to `f2.offset` go through `field` instead.
+                    # Defer adding `f2` to `fields_to_remove` until we're done processing `field`.
+                    conflicting_fields.add(f2)
+                elif not f2.known and f2.type.is_int() and field.type.is_int():
+                    # Ignore overlapping inferred ints.
+                    # Usually the code is easier to manually fix if we leave the overlap
+                    pass
+                else:
+                    # `field` is too big: this usually means that we incorrectly inferred
+                    # it to be a (large) struct. Reset its type to something smaller.
+                    # Although this is unlikely to produce the correct type for this field,
+                    # it helps minimize the damage done to the rest of the struct.
+                    if offset >= 4:
+                        field.type = Type.any_reg()
+                    else:
+                        field.type = Type.int_of_size(offset * 8)
+                    conflicting_fields = set()
+                    break
+            fields_to_remove |= conflicting_fields
+        self.fields = [f for f in self.fields if f not in fields_to_remove]
 
     def format(self, fmt: Formatter) -> str:
         """
