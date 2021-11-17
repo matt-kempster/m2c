@@ -14,7 +14,6 @@ struct _mips2c_stack_test {
 };                                                  /* size = 0x30 */
 
 ? func_00400090(s8 *);                              /* static */
-s32 test(void *arg0);                               /* static */
 
 s32 test(void *arg0) {
     s8 sp2F;
