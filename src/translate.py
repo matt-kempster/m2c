@@ -3002,6 +3002,8 @@ def array_access_from_add(
             inner_type = Type.reg32(likely_float=False)
         elif typepool.struct_field_inference and isinstance(uw_base.expr, GlobalSymbol):
             # Make up a struct with a tag name based on the symbol & struct size.
+            # Although `scale = 8` could indicate an array of longs/doubles, it seems more
+            # common to be an array of structs.
             struct_name = f"_struct_{uw_base.expr.symbol_name}_0x{scale:X}"
             struct = typepool.get_struct_by_tag_name(
                 struct_name, stack_info.global_info.typemap
