@@ -1315,6 +1315,39 @@ class GlobalSymbol(Expression):
     def format(self, fmt: Formatter) -> str:
         return self.symbol_name
 
+    def potential_array_dim(self, element_size: int) -> Tuple[int, int]:
+        """
+        Using the size of the symbol's `asm_data_entry` and a potential array element
+        size, return the corresponding array dimension and number of "extra" bytes left
+        at the end of the symbol's data.
+        If the extra bytes is nonzero, it's likely that `element_size` is incorrect.
+        """
+        # If we don't have the .data/.rodata entry for this symbol, we can't guess
+        # its array dimension. Jump tables are ignored and not treated as arrays.
+        if self.asm_data_entry is None or self.asm_data_entry.is_jtbl:
+            return 0, element_size
+
+        min_data_size, max_data_size = self.asm_data_entry.size_range_bytes()
+        if element_size > max_data_size:
+            # The type is too big for the data (not an array)
+            return 0, max_data_size
+
+        # Check if it's possible that this symbol is not an array, and is just 1 element
+        if min_data_size <= element_size <= max_data_size and not self.type.is_array():
+            return 1, 0
+
+        array_dim, extra_bytes = divmod(min_data_size, element_size)
+        if extra_bytes != 0:
+            # If it's not possible to make an exact multiple of element_size by incorporating
+            # bytes from the padding, then indicate that in the return value.
+            padding_bytes = element_size - extra_bytes
+            if min_data_size + padding_bytes > max_data_size:
+                return array_dim, extra_bytes
+
+        # Include potential padding in the array. Although this is unlikely to match the original C,
+        # it's much easier to manually remove all or some of these elements than to add them back in.
+        return max_data_size // element_size, 0
+
 
 @dataclass(frozen=True, eq=True)
 class Literal(Expression):
@@ -2934,9 +2967,59 @@ def array_access_from_add(
         index = addend
         scale = 1
 
+    if scale < 0:
+        scale = -scale
+        index = UnaryOp("-", index, type=index.type)
+
     target_type = base.type.get_pointer_target()
     if target_type is None:
         return None
+
+    uw_base = early_unwrap(base)
+    typepool = stack_info.global_info.typepool
+
+    # In `&x + index * scale`, if the type of `x` is not known, try to mark it as an array.
+    # Skip the `scale = 1` case because this often indicates a complex `index` expression,
+    # and is not actually a 1-byte array lookup.
+    if (
+        scale > 1
+        and offset == 0
+        and isinstance(uw_base, AddressOf)
+        and target_type.get_size_bytes() is None
+    ):
+        inner_type: Optional[Type] = None
+        if (
+            isinstance(uw_base.expr, GlobalSymbol)
+            and uw_base.expr.potential_array_dim(scale)[1] != 0
+        ):
+            # For GlobalSymbols, use the size of the asm data to check the feasibility of being
+            # an array with `scale`. This helps be more conservative around fake symbols.
+            pass
+        elif scale == 2:
+            # This *could* be a struct, but is much more likely to be an int
+            inner_type = Type.int_of_size(16)
+        elif scale == 4:
+            inner_type = Type.reg32(likely_float=False)
+        elif typepool.struct_field_inference and isinstance(uw_base.expr, GlobalSymbol):
+            # Make up a struct with a tag name based on the symbol & struct size.
+            struct_name = f"_struct_{uw_base.expr.symbol_name}_0x{scale:X}"
+            struct = typepool.get_struct_by_tag_name(
+                struct_name, stack_info.global_info.typemap
+            )
+            if struct is None:
+                struct = StructDeclaration.unknown_of_size(
+                    typepool, size=scale, tag_name=struct_name
+                )
+            elif struct.size != scale:
+                # This should only happen if there was already a struct with this name in the context
+                raise DecompFailure("sizeof(struct {struct_name}) != {scale:#x}")
+            inner_type = Type.struct(struct)
+
+        if inner_type is not None:
+            # This might fail, if `uw_base.expr.type` can't be changed to an array
+            uw_base.expr.type.unify(Type.array(inner_type, dim=None))
+            # This acts as a backup, and will usually succeed
+            target_type.unify(inner_type)
 
     if target_type.get_size_bytes() == scale:
         # base[index]
@@ -4582,37 +4665,27 @@ class GlobalInfo:
                     # The size of the element type (not the size of the array type)
                     if element_type is None:
                         element_type = sym.type
+
+                    # If we don't know the type, we can't guess the array_dim
                     type_size = element_type.get_size_bytes()
-                    if not type_size:
-                        # If we don't know the type, we can't guess the array_dim
-                        pass
-                    elif type_size > max_data_size:
-                        # Uh-oh! The type is too big for our data. (not an array)
-                        comments.append(
-                            f"type too large by {type_size - max_data_size}"
-                        )
-                    else:
-                        assert type_size <= max_data_size
-                        # We might have an array here. Now look at the lower bound,
-                        # which we know must be included in the initializer.
-                        data_size = min_data_size
-                        if data_size % type_size != 0:
-                            # How many extra bytes do we need to add to `data_size`
-                            # to make it an exact multiple of `type_size`?
-                            extra_bytes = type_size - (data_size % type_size)
-                            if data_size + extra_bytes <= max_data_size:
-                                # We can make an exact multiple by taking some of the bytes
-                                # we thought were padding
-                                data_size += extra_bytes
-                            else:
-                                comments.append(f"extra bytes: {data_size % type_size}")
-                        if data_size // type_size > 1 or is_vla:
-                            # We know it's an array
-                            array_dim = max_data_size // type_size
+                    if type_size:
+                        potential_dim, extra_bytes = sym.potential_array_dim(type_size)
+                        if potential_dim == 0 and extra_bytes > 0:
+                            # The type is too big for our data. (not an array)
+                            comments.append(
+                                f"type too large by {fmt.format_int(type_size - extra_bytes)}"
+                            )
+                        elif potential_dim > 1 or is_vla:
                             # NB: In general, replacing the types of Expressions can be sketchy.
                             # However, the GlobalSymbol here came from address_of_gsym(), which
                             # always returns a reference to the element_type.
+                            array_dim = potential_dim
                             sym.type = Type.array(element_type, array_dim)
+
+                        if potential_dim != 0 and extra_bytes > 0:
+                            comments.append(
+                                f"extra bytes: {fmt.format_int(extra_bytes)}"
+                            )
 
                 # Try to convert the data from .data/.rodata into an initializer
                 if data_entry and not data_entry.is_bss:
