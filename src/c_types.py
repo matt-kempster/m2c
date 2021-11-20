@@ -82,7 +82,7 @@ class Function:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 3
+    VERSION: ClassVar[int] = 4
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None

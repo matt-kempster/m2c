@@ -2482,15 +2482,6 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
                     ),
                     type=field_type.reference(),
                 )
-        if isinstance(imm, Literal):
-            target = source.type.get_pointer_target()
-            if target:
-                target_size = target.get_size_bytes()
-                if target_size and imm.value % target_size == 0:
-                    # Pointer addition.
-                    return BinaryOp(
-                        left=source, op="+", right=as_intish(imm), type=source.type
-                    )
         return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
     elif isinstance(source, Literal) and isinstance(imm, Literal):
         return Literal(source.value + imm.value)
