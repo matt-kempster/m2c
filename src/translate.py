@@ -1320,7 +1320,7 @@ class GlobalSymbol(Expression):
         Using the size of the symbol's `asm_data_entry` and a potential array element
         size, return the corresponding array dimension and number of "extra" bytes left
         at the end of the symbol's data.
-        If the extra bytes is nonzero, it's likely that `element_size` is incorrect.
+        If the extra bytes are nonzero, then it's likely that `element_size` is incorrect.
         """
         # If we don't have the .data/.rodata entry for this symbol, we can't guess
         # its array dimension. Jump tables are ignored and not treated as arrays.
@@ -2969,7 +2969,7 @@ def array_access_from_add(
 
     if scale < 0:
         scale = -scale
-        index = UnaryOp("-", index, type=index.type)
+        index = UnaryOp("-", as_s32(index), type=Type.s32())
 
     target_type = base.type.get_pointer_target()
     if target_type is None:
@@ -3014,7 +3014,7 @@ def array_access_from_add(
                 )
             elif struct.size != scale:
                 # This should only happen if there was already a struct with this name in the context
-                raise DecompFailure("sizeof(struct {struct_name}) != {scale:#x}")
+                raise DecompFailure(f"sizeof(struct {struct_name}) != {scale:#x}")
             inner_type = Type.struct(struct)
 
         if inner_type is not None:
