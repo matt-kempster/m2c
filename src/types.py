@@ -567,6 +567,10 @@ class Type:
                 if data.struct.is_union:
                     break
 
+            # This struct has a field that goes outside of the bounds of the struct
+            if position > data.struct.size:
+                return None
+
             add_padding(data.struct.size)
             return output
 
