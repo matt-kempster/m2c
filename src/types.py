@@ -295,6 +295,9 @@ class Type:
     def is_struct(self) -> bool:
         return self.data().kind == TypeData.K_STRUCT
 
+    def is_signed(self) -> bool:
+        return self.data().sign == TypeData.SIGNED
+
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
 
@@ -481,7 +484,9 @@ class Type:
                 else:
                     field_type = Type.any_field()
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
-                new_field = data.struct.try_add_field(field_type, offset, field_name)
+                new_field = data.struct.try_add_field(
+                    field_type, offset, field_name, size=target_size
+                )
                 if new_field is not None:
                     return [field_name], field_type, 0
             elif possible_results:
@@ -586,6 +591,10 @@ class Type:
                 if data.struct.is_union:
                     break
 
+            # This struct has a field that goes outside of the bounds of the struct
+            if position > data.struct.size:
+                return None
+
             add_padding(data.struct.size)
             return output
 
@@ -596,6 +605,7 @@ class Type:
             name=name,
             type=self._to_ctype(set(), fmt),
             quals=[],
+            align=[],
             storage=[],
             funcspec=[],
             init=None,
@@ -619,7 +629,10 @@ class Type:
     def _to_ctype(self, seen: Set["TypeData"], fmt: Formatter) -> CType:
         def simple_ctype(typename: str) -> ca.TypeDecl:
             return ca.TypeDecl(
-                type=ca.IdentifierType(names=[typename]), declname=None, quals=[]
+                type=ca.IdentifierType(names=[typename]),
+                declname=None,
+                quals=[],
+                align=[],
             )
 
         unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
@@ -671,6 +684,7 @@ class Type:
                     name=param.name,
                     type=param.type._to_ctype(seen.copy(), fmt),
                     quals=[],
+                    align=[],
                     storage=[],
                     funcspec=[],
                     init=None,
@@ -709,7 +723,10 @@ class Type:
             name = data.struct.tag_name or "_anonymous"
             Class = ca.Union if data.struct.is_union else ca.Struct
             return ca.TypeDecl(
-                declname=name, type=ca.Struct(name=name, decls=None), quals=[]
+                declname=name,
+                type=ca.Struct(name=name, decls=None),
+                quals=[],
+                align=[],
             )
 
         return simple_ctype(f"{sign}{size_bits}")
@@ -1029,7 +1046,7 @@ class StructDeclaration:
         return fields
 
     def try_add_field(
-        self, type: Type, offset: int, name: str
+        self, type: Type, offset: int, name: str, size: Optional[int]
     ) -> Optional[StructField]:
         """
         Try to add a field into the struct, and return it if successful.
@@ -1044,10 +1061,17 @@ class StructDeclaration:
         if not (0 <= offset < self.size):
             return None
 
-        # For now, assume that the type is only one byte wide, and do not allow
-        # the new field to overlap with any other field.
-        if self.fields_containing_offset(offset):
-            return None
+        # Do not allow the new field to overlap with any other field
+        # If there is a size we don't know, assume it is only 1 byte wide
+        size = size or 1
+        for field in self.fields:
+            field_size = field.type.get_size_bytes() or 1
+
+            # Two intervals overlap if one contains the start of the other
+            if offset <= field.offset < offset + size:
+                return None
+            if field.offset <= offset < field.offset + field_size:
+                return None
 
         field = self.StructField(type=type, offset=offset, name=name, known=False)
         self.fields.append(field)

@@ -333,7 +333,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     if line.startswith(".word"):
                         for w in line[5:].split(","):
                             w = w.strip()
-                            if not w or w[0].isdigit():
+                            if not w or w[0].isdigit() or w[0] == "-":
                                 ival = (
                                     try_parse(lambda: int(w, 0), ".word") & 0xFFFFFFFF
                                 )
@@ -385,7 +385,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         size = try_parse(lambda: int(args[0].strip(), 0), ".space")
                         mips_file.new_data_bytes(bytes([fill] * size))
         elif ifdef_level == 0:
-            if line.startswith("glabel"):
+            if line.startswith("glabel") or line.startswith("dlabel"):
                 process_label(line.split()[1], glabel=True)
 
             elif curr_section == ".text":

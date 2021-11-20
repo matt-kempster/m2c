@@ -104,7 +104,7 @@ def to_c(node: ca.Node) -> str:
 
 def basic_type(names: List[str]) -> TypeDecl:
     idtype = IdentifierType(names=names)
-    return TypeDecl(declname=None, quals=[], type=idtype)
+    return TypeDecl(declname=None, quals=[], type=idtype, align=[])
 
 
 def pointer(type: CType) -> CType:
@@ -132,7 +132,7 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
         param = copy.deepcopy(param)
         param.name = None
         set_decl_name(param)
-        return ca.Typename(name=None, quals=param.quals, type=param.type)
+        return ca.Typename(name=None, quals=param.quals, type=param.type, align=[])
 
     new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
         anonymize_param(param) if isinstance(param, ca.Decl) else param
@@ -195,18 +195,19 @@ def is_struct_type(type: CType, typemap: TypeMap) -> bool:
 
 def is_unk_type(type: CType, typemap: TypeMap) -> bool:
     """Return True if `type` represents an unknown type, or undetermined struct padding."""
-    # Check for types matching "char unk_N[...];"
+    # Check for types matching "char unk_N[...];" or "char padN[...];"
     if (
         isinstance(type, ArrayDecl)
         and isinstance(type.type, TypeDecl)
         and isinstance(type.type.type, IdentifierType)
         and type.type.declname is not None
-        and type.type.declname.startswith("unk_")
         and type.type.type.names == ["char"]
     ):
-        return True
+        declname = type.type.declname
+        if declname.startswith("unk_") or declname.startswith("pad"):
+            return True
 
-    # Check for types which are typedefs starting with "UNK_",
+    # Check for types which are typedefs starting with "UNK_" or "MIPS2C_UNK",
     # or are arrays/pointers to one of these types.
     while True:
         if (
@@ -215,9 +216,10 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
             and len(type.type.names) == 1
             and type.type.names[0] in typemap.typedefs
         ):
-            if type.type.names[0].startswith("UNK_"):
+            type_name = type.type.names[0]
+            if type_name.startswith("UNK_") or type_name.startswith("MIPS2C_UNK"):
                 return True
-            type = typemap.typedefs[type.type.names[0]]
+            type = typemap.typedefs[type_name]
         elif isinstance(type, (PtrDecl, ArrayDecl)):
             type = type.type
         else:
@@ -534,7 +536,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     elif struct.name and struct.name in typemap.struct_typedefs:
         ctype = typemap.struct_typedefs[struct.name]
     else:
-        ctype = TypeDecl(declname=None, quals=[], type=struct)
+        ctype = TypeDecl(declname=None, quals=[], type=struct, align=[])
 
     size = union_size if is_union else offset
     size = (size + align - 1) & -align
@@ -764,7 +766,7 @@ def type_to_string(type: CType, name: str = "") -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    decl = ca.Decl(name, [], [], [], copy.deepcopy(type), None, None)
+    decl = ca.Decl(name, [], [], [], [], copy.deepcopy(type), None, None)
     set_decl_name(decl)
     return to_c(decl)
 

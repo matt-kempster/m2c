@@ -287,9 +287,9 @@ def simplify_standard_patterns(function: Function) -> Function:
     def make_pattern(*parts: str) -> Pattern:
         ret: Pattern = []
         for part in parts:
-            optional = part.endswith("*")
-            part = part.rstrip("*")
-            if part == "?":
+            optional = part.endswith("?")
+            part = part.rstrip("?")
+            if part == "*":
                 ret.append((None, optional))
             elif part.endswith(":"):
                 ret.append((Label(""), optional))
@@ -300,7 +300,7 @@ def simplify_standard_patterns(function: Function) -> Function:
 
     div_pattern = make_pattern(
         "bnez $x, .A",
-        "?",  # nop or div
+        "*",  # nop or div
         "break",
         ".A:",
         "li $at, -1",
@@ -372,21 +372,21 @@ def simplify_standard_patterns(function: Function) -> Function:
         "cfc1 $y, $31",
         "nop",
         "andi",
-        "andi*",  # (skippable)
-        "?",  # bnez or bneql
-        "?",
-        "li*",
+        "andi?",  # (skippable)
+        "*",  # bnez or bneql
+        "*",
+        "li?",
         "mtc1",
-        "mtc1*",
+        "mtc1?",
         "li",
-        "?",  # sub.fmt ?, X, ?
+        "*",  # sub.fmt *, X, *
         "ctc1",
         "nop",
-        "?",  # cvt.w.fmt ?, ?
+        "*",  # cvt.w.fmt *, *
         "cfc1",
         "nop",
         "andi",
-        "andi*",
+        "andi?",
         "bnez",
         "nop",
         "mfc1",
@@ -396,8 +396,8 @@ def simplify_standard_patterns(function: Function) -> Function:
         ".A:",
         "b",
         "li",
-        "?",  # label: (moved one step down if bneql)
-        "?",  # mfc1
+        "*",  # label: (moved one step down if bneql)
+        "*",  # mfc1
         "nop",
         "bltz",
         "nop",
@@ -407,13 +407,14 @@ def simplify_standard_patterns(function: Function) -> Function:
     swc1_twice_pattern = make_pattern("swc1", "swc1")
 
     gcc_sqrt_pattern = make_pattern(
-        "sqrt.s",
+        "sqrt.s $x, $y",
         "c.eq.s",
         "nop",
         "bc1t",
-        "?",
+        "*",
         "jal sqrtf",
         "nop",
+        "mov.s $x, $f0?",
     )
 
     def matches_pattern(actual: List[BodyPart], pattern: Pattern) -> int:
@@ -615,6 +616,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             return None
         sqrt = actual[0]
         assert isinstance(sqrt, Instruction)
+
         new_instr = Instruction.derived("sqrt.s", sqrt.args, sqrt)
         return ([new_instr], i + consumed)
 
@@ -1395,6 +1397,10 @@ class FlowGraph:
             # Not all nodes can reach the terminal node
             return False
         return True
+
+    def reset_block_info(self) -> None:
+        for node in self.nodes:
+            node.block.block_info = None
 
 
 def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
