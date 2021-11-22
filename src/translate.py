@@ -4371,6 +4371,11 @@ def resolve_types_late(stack_info: StackInfo) -> None:
     """
     After translating a function, perform a final type-resolution pass.
     """
+    # Final check over stack var types. Because of delayed type unification, some
+    # locations should now be marked as "weak".
+    for location in stack_info.weak_stack_var_types.keys():
+        stack_info.get_stack_var(location, store=False)
+
     # Use dereferences to determine pointer types
     struct_type_map = stack_info.get_struct_type_map()
     for var, offset_type_map in struct_type_map.items():
