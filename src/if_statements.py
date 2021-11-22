@@ -1002,7 +1002,12 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)
             if type_decl is not None:
-                function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
+                comment = None
+                if local_var.value in function_info.stack_info.weak_stack_var_locations:
+                    comment = "compiler-managed"
+                function_lines.append(
+                    SimpleStatement(f"{type_decl};", comment=comment).format(fmt)
+                )
                 any_decl = True
 
         # With reused temps (no longer used), we can get duplicate declarations,
