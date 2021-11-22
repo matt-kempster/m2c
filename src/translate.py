@@ -260,6 +260,8 @@ class StackInfo:
     param_names: Dict[int, str] = field(default_factory=dict)
     stack_pointer_type: Optional[Type] = None
     replace_first_arg: Optional[Tuple[str, Type]] = None
+    weak_stack_var_types: Dict[int, Type] = field(default_factory=dict)
+    weak_stack_var_locations: Set[int] = field(default_factory=set)
 
     def temp_var(self, prefix: str) -> str:
         counter = self.temp_name_counter.get(prefix, 0) + 1
@@ -397,6 +399,38 @@ class StackInfo:
             field_path, field_type, _ = self.stack_pointer_type.get_deref_field(
                 location, target_size=None
             )
+
+            # Some variables on the stack are compiler-managed, and aren't declared
+            # in the original source. These variables can have different types inside
+            # different blocks, so we track their types but assume that they may change
+            # on each store.
+            # TODO: Because the types are tracked in StackInfo instead of RegInfo, it is
+            # possible that a load could incorrectly use a weak type from a sibling node
+            # instead of a parent node. A more correct implementation would use similar
+            # logic to the PhiNode system. In practice however, storing types in StackInfo
+            # works well enough because nodes are traversed approximately depth-first.
+            # TODO: Maybe only do this for certain configurable regions?
+
+            # Get the previous type stored in `location`
+            previous_stored_type = self.weak_stack_var_types.get(location)
+            if previous_stored_type is not None:
+                # Check if the `field_type` is compatible with the type of the last store
+                if not previous_stored_type.unify(field_type):
+                    # The types weren't compatible: mark this `location` as "weak"
+                    # This marker is only used to annotate the output
+                    self.weak_stack_var_locations.add(location)
+
+                if store:
+                    # If there's already been a store to `location`, then return a fresh type
+                    field_type = Type.any_reg()
+                else:
+                    # Use the type of the last store instead of the one from `get_deref_field()`
+                    field_type = previous_stored_type
+
+            # Track the type last stored at `location`
+            if store:
+                self.weak_stack_var_types[location] = field_type
+
             return LocalVar(location, type=field_type, path=field_path)
 
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
@@ -4413,6 +4447,11 @@ def resolve_types_late(stack_info: StackInfo) -> None:
     """
     After translating a function, perform a final type-resolution pass.
     """
+    # Final check over stack var types. Because of delayed type unification, some
+    # locations should now be marked as "weak".
+    for location in stack_info.weak_stack_var_types.keys():
+        stack_info.get_stack_var(location, store=False)
+
     # Use dereferences to determine pointer types
     struct_type_map = stack_info.get_struct_type_map()
     for var, offset_type_map in struct_type_map.items():
