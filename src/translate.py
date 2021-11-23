@@ -2495,31 +2495,20 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         # unfortunately that's hard to do anything about with mips_to_c's single-pass
         # architecture).
         if isinstance(imm, Literal) and not imm.likely_partial_offset():
-            var = source
-            offset = imm.value
-            uw_source = early_unwrap(source)
-
-            # If `source` is an `AddressOf(StructAccess(...))`, the combine its offset with `imm`
-            if isinstance(uw_source, AddressOf) and isinstance(
-                uw_source.expr, StructAccess
-            ):
-                var = uw_source.expr.struct_var
-                offset += uw_source.expr.offset
-
             array_access = array_access_from_add(
-                var, offset, stack_info, target_size=None, ptr=True
+                source, imm.value, stack_info, target_size=None, ptr=True
             )
             if array_access is not None:
                 return array_access
 
-            field_path, field_type, _ = var.type.get_deref_field(
-                offset, target_size=None
+            field_path, field_type, _ = source.type.get_deref_field(
+                imm.value, target_size=None
             )
             if field_path is not None:
                 return AddressOf(
                     StructAccess(
-                        struct_var=var,
-                        offset=offset,
+                        struct_var=source,
+                        offset=imm.value,
                         target_size=None,
                         field_path=field_path,
                         stack_info=stack_info,
