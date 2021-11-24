@@ -1109,10 +1109,15 @@ class StructDeclaration:
                     if conflicting_fields:
                         offset = conflicting_fields[0].offset - field.offset
                         conflicting_fields = []
+
+                    if offset == 0:
+                        # `field` directly overlaps with another, smaller, field, so remove it
+                        conflicting_fields = [field]
                     if offset >= 4:
                         field.type = Type.any_reg()
                     else:
                         field.type = Type.int_of_size(offset * 8)
+
                     break
             fields_to_remove |= set(conflicting_fields)
         self.fields = [f for f in self.fields if f not in fields_to_remove]
