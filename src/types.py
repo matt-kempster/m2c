@@ -1077,7 +1077,7 @@ class StructDeclaration:
             # If the size of a field (still) isn't known, assume it is 1 byte
             field_size = field.type.get_size_bytes() or 1
 
-            conflicting_fields: Set[StructDeclaration.StructField] = set()
+            conflicting_fields: List[StructDeclaration.StructField] = []
             for f2 in self.fields[i + 1 :]:
                 assert f2.offset >= field.offset
                 # If `f2` is after the end of `field`, we're done
@@ -1094,23 +1094,27 @@ class StructDeclaration:
                 if sub_path is not None and sub_type.unify(f2.type):
                     # Remove `f2` so that accesses to `f2.offset` go through `field` instead.
                     # Defer adding `f2` to `fields_to_remove` until we're done processing `field`.
-                    conflicting_fields.add(f2)
+                    conflicting_fields.append(f2)
                 elif not f2.known and f2.type.is_int() and field.type.is_int():
-                    # Ignore overlapping inferred ints.
-                    # Usually the code is easier to manually fix if we leave the overlap
+                    # Ignore overlapping inferred ints. This can happen when a load & cast is
+                    # implemented with a load of a smaller size. It would be better to detect
+                    # those cases directly; until then, the code is easier to manually fix
+                    # if we leave the overlapping fields.
                     pass
                 else:
                     # `field` is too big: this usually means that we incorrectly inferred
                     # it to be a (large) struct. Reset its type to something smaller.
                     # Although this is unlikely to produce the correct type for this field,
                     # it helps minimize the damage done to the rest of the struct.
+                    if conflicting_fields:
+                        offset = conflicting_fields[0].offset - field.offset
+                        conflicting_fields = []
                     if offset >= 4:
                         field.type = Type.any_reg()
                     else:
                         field.type = Type.int_of_size(offset * 8)
-                    conflicting_fields = set()
                     break
-            fields_to_remove |= conflicting_fields
+            fields_to_remove |= set(conflicting_fields)
         self.fields = [f for f in self.fields if f not in fields_to_remove]
 
     def format(self, fmt: Formatter) -> str:
