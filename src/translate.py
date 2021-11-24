@@ -1439,9 +1439,6 @@ class AddressOf(Expression):
     type: Type = field(compare=False, default_factory=Type.ptr)
 
     def dependencies(self) -> List[Expression]:
-        # Referencing a dereference doesn't perform any memory access; it's just arithmetic
-        if isinstance(self.expr, (StructAccess, ArrayAccess)):
-            return self.expr.dependencies()
         return [self.expr]
 
     def format(self, fmt: Formatter) -> str:
