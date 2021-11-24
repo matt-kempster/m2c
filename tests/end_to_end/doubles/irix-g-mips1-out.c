@@ -2,7 +2,7 @@ extern f64 D_4101B0;
 
 f64 test(f64 arg0, s32 arg2, f64 arg4) {
     f64 sp8;
-    f64 sp0;
+    f64 sp0;                                        /* compiler-managed */
 
     sp8 = ((f64) arg2 * arg0) + (arg0 / arg4);
     sp8 -= 7.0;
@@ -12,6 +12,6 @@ f64 test(f64 arg0, s32 arg2, f64 arg4) {
     } else {
         sp0 = 6.0;
     }
-    D_4101B0 = sp0;
-    return sp0;
+    D_4101B0 = (f64) sp0;
+    return (f64) sp0;
 }
