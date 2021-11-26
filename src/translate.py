@@ -1747,7 +1747,7 @@ class SetPhiStmt(Statement):
             # skip this store.
             assert expr.propagates_to() == self.phi.propagates_to()
             return False
-        if unwrap_deep(expr) == self.phi.propagates_to():
+        if late_unwrap(expr) == self.phi.propagates_to():
             # Elide "phi = phi".
             return False
         return True
