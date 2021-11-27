@@ -871,20 +871,20 @@ class ReturnNode(BaseNode):
 
 @dataclass(eq=False, repr=False)
 class SwitchNode(BaseNode):
-    cases: List["Node"]
+    cases: List[Tuple[int, "Node"]]
 
     def children(self) -> List["Node"]:
         # Deduplicate nodes in `self.cases`
         seen = set()
         children = []
-        for node in self.cases:
+        for _, node in self.cases:
             if node not in seen:
                 seen.add(node)
                 children.append(node)
         return children
 
     def __str__(self) -> str:
-        targets = ", ".join(str(c.block.index) for c in self.cases)
+        targets = ", ".join(str(c.block.index) for _, c in self.cases)
         return f"{self.block}\n# {self.block.index} -> {targets}"
 
 
@@ -1019,7 +1019,7 @@ def build_graph_from_block(
 
             jtbl_value = asm_data.values[jtbl_name]
             jtbl_value.is_jtbl = True
-            for entry in jtbl_value.data:
+            for i, entry in enumerate(jtbl_value.data):
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
                     break
@@ -1028,7 +1028,7 @@ def build_graph_from_block(
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
                 case_node = build_graph_from_block(case_block, blocks, nodes, asm_data)
-                new_node.cases.append(case_node)
+                new_node.cases.append((i, case_node))
             return new_node
 
         assert jump.is_branch_instruction()
@@ -1451,7 +1451,7 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> str:
             assert block_info is not None
             switch_control = block_info.switch_control
             label += f"switch ({switch_control.control_expr.format(fmt)})\l"
-            for i, case in enumerate(node.cases):
+            for i, case in node.cases:
                 dot.edge(
                     node.name(),
                     case.name(),
