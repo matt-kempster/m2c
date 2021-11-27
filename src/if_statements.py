@@ -638,6 +638,7 @@ def try_build_implicit_switch(
     cases: Dict[int, Node] = {}
     # The `default:`-labeled node, if found
     default_node: Optional[Node] = None
+
     while node_queue:
         node = node_queue.pop()
         if node in visited_nodes or node == end or node == default_node:
@@ -677,8 +678,6 @@ def try_build_implicit_switch(
                 # will use `x != N` when it needs to jump backwards to an already-emitted block.
                 # GCC will freely use other types of comparisons
                 # Examples from PM: func_8026E558, pr_load_npc_extra_anims
-                # TODO: We sometimes incorrectly rewrite `(x == A) || (x == B) || (x == C)` into
-                # a switch on GCC, like in PM's func_802422A0_DB4560
                 if cond.op == "==":
                     if cond.right.value in cases:
                         return None
@@ -709,7 +708,7 @@ def try_build_implicit_switch(
                 return None
             if early_unwrap_ints(block_info.switch_control.control_expr) != uw_var_expr:
                 return None
-            # Add this inner switch's cases to our dict
+            # Add the cases from the inner switch to our dict of cases
             for i, case in enumerate(
                 node.cases, start=block_info.switch_control.offset
             ):
