@@ -641,7 +641,6 @@ def try_build_virtual_switch(
         # Skip any nodes with statements
         block_info = get_block_info(node)
         if node != start and block_info.statements_to_write():
-            # print(f"> node with statements: {node!r}; {default_node!r}")
             if default_node is None:
                 default_node = node
                 continue
@@ -669,11 +668,7 @@ def try_build_virtual_switch(
                 if cond.op == "==":
                     cases[cond.right.value] = node.conditional_edge
                     node_queue.append(node.fallthrough_edge)
-                #elif cond.op == "!=":
-                #    cases[cond.right.value] = node.fallthrough_edge
-                #    node_queue.append(node.conditional_edge)
                 elif cond.op == "<":
-                #elif cond.op in ("<=", "<", ">", ">="):
                     node_queue.append(node.fallthrough_edge)
                     node_queue.append(node.conditional_edge)
                 else:
@@ -689,7 +684,7 @@ def try_build_virtual_switch(
             ):
                 return None
             offset = block_info.switch_control.offset
-            for i, case in node.cases:
+            for i, case in enumerate(node.cases):
                 assert i + offset not in cases
                 cases[i + offset] = case
             nodes_to_mark_emitted.add(node)
@@ -711,7 +706,6 @@ def try_build_virtual_switch(
         else:
             return None
     if len(nodes_to_mark_emitted) >= 3 and len(cases) >= 1:
-        #print(f"> SW {(start, end)} {cases}; {default_node!r}")
         # If this new virtual switch uses all of the other switch nodes in the function,
         # then we no longer need to add labelling comments with the switch_index
         if all(n in nodes_to_mark_emitted for n in context.switch_nodes):
@@ -878,7 +872,7 @@ def build_switch_between(
     Output the subgraph between `switch` and `end`, but not including `end`.
     The returned SwitchStatement starts with the jump to the switch's value.
     """
-    switch_cases = [n for _, n in sorted(switch.cases)]
+    switch_cases = switch.cases[:]
     if default is end:
         default = None
     elif default is not None:
@@ -888,7 +882,11 @@ def build_switch_between(
     assert jump is not None
 
     switch_index = add_labels_for_switch(
-        context, switch, offset=jump.offset, cases=switch.cases, default_node=default
+        context,
+        switch,
+        offset=jump.offset,
+        cases=list(enumerate(switch.cases)),
+        default_node=default,
     )
 
     return build_switch_statement(context, jump, switch_cases, switch_index, end)
@@ -1078,7 +1076,11 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             jump = get_block_info(node).switch_control
             assert jump is not None
             index = add_labels_for_switch(
-                context, node, offset=jump.offset, cases=node.cases, default_node=None
+                context,
+                node,
+                offset=jump.offset,
+                cases=list(enumerate(node.cases)),
+                default_node=None,
             )
             emit_node(context, node, body)
             body.add_switch(

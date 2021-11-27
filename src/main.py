@@ -427,6 +427,15 @@ def parse_flags(flags: List[str]) -> Options:
         help=argparse.SUPPRESS,
     )
     group.add_argument(
+        "--no-switches",
+        dest="switch_detection",
+        action="store_false",
+        help=(
+            "Disable detecting switch statements from if trees. "
+            "Jump tables switches are still emitted."
+        ),
+    )
+    group.add_argument(
         "--no-andor",
         dest="andor_detection",
         action="store_false",
@@ -507,6 +516,7 @@ def parse_flags(flags: List[str]) -> Options:
         debug=args.debug,
         void=args.void,
         ifs=args.ifs,
+        switch_detection=args.switch_detection,
         andor_detection=args.andor_detection,
         skip_casts=args.skip_casts,
         reg_vars=reg_vars,

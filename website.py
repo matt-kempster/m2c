@@ -32,6 +32,8 @@ if "source" in form:
         cmd.append("--void")
     if "noifs" in form:
         cmd.append("--no-ifs")
+    if "noswitches" in form:
+        cmd.append("--no-switches")
     if "noandor" in form:
         cmd.append("--no-andor")
     if "nocasts" in form:
@@ -247,6 +249,7 @@ label {
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
+    <label><input type="checkbox" name="noswitches">Disable switch detection</label>
     <label><input type="checkbox" name="structs">Struct declarations</label>
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
@@ -329,7 +332,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "noifs", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "structs"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "structs"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];

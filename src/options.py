@@ -39,6 +39,7 @@ class Options:
     debug: bool
     void: bool
     ifs: bool
+    switch_detection: bool
     andor_detection: bool
     skip_casts: bool
     reg_vars: List[str]
