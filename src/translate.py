@@ -1621,7 +1621,7 @@ class SwitchControl:
     control_expr: Expression
     jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
-    is_virtual: bool = False
+    is_implicit: bool = False
 
     def matches_guard_condition(self, cond: Condition) -> bool:
         """
@@ -1665,17 +1665,17 @@ class SwitchControl:
         return right_expr == Literal(jump_table_len)
 
     @staticmethod
-    def virtual_from_expr(control_expr: Expression) -> "SwitchControl":
+    def implicit_from_expr(control_expr: Expression) -> "SwitchControl":
         """
-        Return a SwitchControl object representing a "virtual" switch statement.
-        The switch does not have a jump table; instead it is a series of other
-        if statements & switches.
+        Return a SwitchControl representing a "implicit" switch statement.
+        The switch does not have a single jump table; instead it is a series of
+        if statements & other switches.
         """
         return SwitchControl(
             control_expr=control_expr,
             jump_table=None,
             offset=0,
-            is_virtual=True,
+            is_implicit=True,
         )
 
     @staticmethod

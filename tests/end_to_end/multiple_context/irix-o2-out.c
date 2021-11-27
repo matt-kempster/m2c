@@ -2,7 +2,7 @@ f32 test(shape_t *s) {
     s32 temp_v0;
 
     temp_v0 = s->type;
-    switch (temp_v0) {
+    switch (temp_v0) {                              /* implicit */
     case 0:
         return s->origin.x + s->unkC;
     case 1:
