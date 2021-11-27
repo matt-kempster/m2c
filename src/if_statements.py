@@ -23,7 +23,7 @@ from .translate import (
     Literal,
     Statement as TrStatement,
     SwitchControl,
-    early_unwrap,
+    early_unwrap_ints,
     format_expr,
     get_block_info,
     simplify_condition,
@@ -614,6 +614,7 @@ def try_build_virtual_switch(
     if var_expr is None:
         return None
 
+    uw_var_expr = early_unwrap_ints(var_expr)
     node_queue: List[Node] = [start]
     checked_nodes: Set[Node] = set()
     nodes_to_mark_emitted: Set[Node] = set()
@@ -651,9 +652,7 @@ def try_build_virtual_switch(
 
         elif isinstance(node, ConditionalNode):
             control_expr = switch_guard_expr(node)
-            if control_expr is not None and early_unwrap(control_expr) == early_unwrap(
-                var_expr
-            ):
+            if control_expr is not None and early_unwrap_ints(control_expr) == uw_var_expr:
                 node_queue.append(node.fallthrough_edge)
                 node_queue.append(node.conditional_edge)
                 nodes_to_mark_emitted.add(node)
@@ -663,7 +662,7 @@ def try_build_virtual_switch(
             if (
                 isinstance(cond, BinaryOp)
                 and isinstance(cond.right, Literal)
-                and early_unwrap(cond.left) == early_unwrap(var_expr)
+                and early_unwrap_ints(cond.left) == uw_var_expr
             ):
                 if cond.op == "==":
                     cases[cond.right.value] = node.conditional_edge
@@ -679,9 +678,7 @@ def try_build_virtual_switch(
         elif isinstance(node, SwitchNode):
             if block_info.switch_control is None:
                 return None
-            if early_unwrap(block_info.switch_control.control_expr) != early_unwrap(
-                var_expr
-            ):
+            if early_unwrap_ints(block_info.switch_control.control_expr) != uw_var_expr:
                 return None
             offset = block_info.switch_control.offset
             for i, case in enumerate(node.cases):
@@ -995,7 +992,11 @@ def build_flowgraph_between(
         assert curr_end is not None
 
         # For nodes with branches, curr_end is not a direct successor of curr_start
-        virtual_switch = try_build_virtual_switch(context, curr_start, curr_end)
+
+        virtual_switch: Optional[SwitchStatement] = None
+        if context.options.switch_detection:
+            virtual_switch = try_build_virtual_switch(context, curr_start, curr_end)
+
         if virtual_switch is not None:
             body.add_switch(virtual_switch)
         elif switch_guard_expr(curr_start) is not None:

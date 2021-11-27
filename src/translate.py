@@ -784,11 +784,8 @@ class BinaryOp(Condition):
 
     @staticmethod
     def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        # Cast `left` to s32, unless it is already a signed int
-        if not (left.type.is_int() and left.type.is_signed()):
-            left = as_s32(left, silent=True)
         return BinaryOp(
-            left=left,
+            left=as_s32(left, silent=True),
             op=op,
             right=as_s32(right, silent=True),
             type=Type.bool(),
