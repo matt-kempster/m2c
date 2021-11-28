@@ -421,6 +421,16 @@ def simplify_standard_patterns(function: Function) -> Function:
         symbolic_registers: Dict[str, Register] = {}
         symbolic_labels: Dict[str, str] = {}
 
+        def match_reg(actual: Register, exp: Register) -> bool:
+            if len(exp.register_name) <= 1:
+                if exp.register_name not in symbolic_registers:
+                    symbolic_registers[exp.register_name] = actual
+                elif symbolic_registers[exp.register_name] != actual:
+                    return False
+            elif exp.register_name != actual.register_name:
+                return False
+            return True
+
         def match_one(actual: BodyPart, exp: PatternPart) -> bool:
             if exp is None:
                 return True
@@ -439,20 +449,20 @@ def simplify_standard_patterns(function: Function) -> Function:
                     return False
                 for (e, a) in zip(exp.args, ins.args):
                     if isinstance(e, AsmLiteral):
-                        if not isinstance(a, AsmLiteral) or e.value != a.value:
+                        if not isinstance(a, AsmLiteral) or a.value != e.value:
                             return False
                     elif isinstance(e, Register):
-                        if not isinstance(a, Register):
-                            return False
-                        if len(e.register_name) <= 1:
-                            if e.register_name not in symbolic_registers:
-                                symbolic_registers[e.register_name] = a
-                            elif symbolic_registers[e.register_name] != a:
-                                return False
-                        elif e.register_name != a.register_name:
+                        if not isinstance(a, Register) or not match_reg(a, e):
                             return False
                     elif isinstance(e, AsmGlobalSymbol):
                         if e.symbol_name == "LIT" and not isinstance(a, AsmLiteral):
+                            return False
+                    elif isinstance(e, AsmAddressMode):
+                        if (
+                            not isinstance(a, AsmAddressMode)
+                            or a.lhs != e.lhs
+                            or not match_reg(a.rhs, e.rhs)
+                        ):
                             return False
                     elif isinstance(e, JumpTarget):
                         if not isinstance(a, JumpTarget):
@@ -462,7 +472,7 @@ def simplify_standard_patterns(function: Function) -> Function:
                         elif symbolic_labels[e.target] != a.target:
                             return False
                     else:
-                        assert False, f"bad pattern part: {exp}"
+                        assert False, f"bad pattern part: {exp} contains {type(e)}"
             return True
 
         actuali = 0
