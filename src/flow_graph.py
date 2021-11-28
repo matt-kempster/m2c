@@ -417,6 +417,18 @@ def simplify_standard_patterns(function: Function) -> Function:
         "mov.s $x, $f0?",
     )
 
+    trapuv_pattern = make_pattern(
+        "lui $x, 0xfffa",
+        "move $y, $sp",
+        "addiu $sp, $sp, LIT",
+        "ori $x, $x, 0x5a5a",
+        ".loop:",
+        "addiu $y, $y, -8",
+        "sw $x, ($y)",
+        "bne $y, $sp, .loop",
+        "sw $x, 4($y)",
+    )
+
     def matches_pattern(actual: List[BodyPart], pattern: Pattern) -> int:
         symbolic_registers: Dict[str, Register] = {}
         symbolic_labels: Dict[str, str] = {}
@@ -637,6 +649,13 @@ def simplify_standard_patterns(function: Function) -> Function:
         new_instr = Instruction.derived("sqrt.s", sqrt.args, sqrt)
         return ([new_instr], i + consumed)
 
+    def try_replace_trapuv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        actual = function.body[i : i + len(trapuv_pattern)]
+        consumed = matches_pattern(actual, trapuv_pattern)
+        if not consumed:
+            return None
+        return ([actual[2]], i + consumed)
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return ([function.body[i]], i + 1)
 
@@ -655,6 +674,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             or try_replace_ftu_conv(i)
             or try_replace_mips1_double_load_store(i)
             or try_replace_gcc_sqrt(i)
+            or try_replace_trapuv(i)
             or no_replacement(i)
         )
         new_function.body.extend(repl)
