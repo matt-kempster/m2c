@@ -2355,8 +2355,10 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
     )
 
 
-def void_fn_op(fn_name: str, args: List[Expression]) -> FuncCall:
-    return fn_op(fn_name, args, Type.any_reg())
+def void_fn_op(fn_name: str, args: List[Expression]) -> ExprStmt:
+    fn_call = fn_op(fn_name, args, Type.any_reg())
+    fn_call.use()
+    return ExprStmt(fn_call)
 
 
 def load_upper(args: InstrArgs) -> Expression:
@@ -3267,6 +3269,7 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
 
 InstrSet = Set[str]
 InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
+StmtInstrMap = Dict[str, Callable[[InstrArgs], Statement]]
 CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
@@ -3318,7 +3321,7 @@ CASES_FN_CALL: InstrSet = {
     "jal",
     "jalr",
 }
-CASES_NO_DEST: InstrMap = {
+CASES_NO_DEST: StmtInstrMap = {
     # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
     # output than MIPS2C_ERROR(...))
     "teq": lambda a: void_fn_op(
@@ -3359,6 +3362,7 @@ CASES_NO_DEST: InstrMap = {
     ),
     "break": lambda a: void_fn_op("MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []),
     "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
+    "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
 }
 CASES_FLOAT_COMP: CmpInstrMap = {
     # Float comparisons that don't raise exception on nan
@@ -4304,9 +4308,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg(Register("lo"), lo)
 
         elif mnemonic in CASES_NO_DEST:
-            expr = CASES_NO_DEST[mnemonic](args)
-            expr.use()
-            to_write.append(ExprStmt(expr))
+            stmt = CASES_NO_DEST[mnemonic](args)
+            to_write.append(stmt)
 
         elif mnemonic in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)

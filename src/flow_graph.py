@@ -639,7 +639,9 @@ def simplify_standard_patterns(function: Function) -> Function:
         match = try_match(i, trapuv_pattern)
         if not match:
             return None
-        return [match[2]], len(match)
+        assert isinstance(match[0], Instruction)
+        new_instr = Instruction.derived("trapuv.fictive", [], match[0])
+        return [match[2], new_instr], len(match)
 
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return [function.body[i]], 1
