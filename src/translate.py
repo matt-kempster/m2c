@@ -2037,8 +2037,6 @@ class InstrArgs:
                 "Expected instruction argument to be of the form offset($register), "
                 f"but found {ret}"
             )
-        if ret.lhs is None:
-            return AddressMode(offset=0, rhs=ret.rhs)
         if not isinstance(ret.lhs, AsmLiteral):
             raise DecompFailure(
                 f"Unable to parse offset for instruction argument {ret}. "
@@ -3175,7 +3173,7 @@ def strip_macros(arg: Argument) -> Argument:
             raise DecompFailure(
                 f"Bad linker macro in instruction argument {arg}, expected %lo"
             )
-        return AsmAddressMode(lhs=None, rhs=arg.rhs)
+        return AsmAddressMode(lhs=AsmLiteral(0), rhs=arg.rhs)
     else:
         return arg
 

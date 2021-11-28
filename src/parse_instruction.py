@@ -137,20 +137,18 @@ class AsmLiteral:
 
 @dataclass(frozen=True)
 class AsmAddressMode:
-    lhs: Union[AsmLiteral, Macro, None]
+    lhs: Union[AsmLiteral, Macro]
     rhs: Register
 
     def lhs_as_literal(self) -> int:
-        if not self.lhs:
-            return 0
         assert isinstance(self.lhs, AsmLiteral)
         return self.lhs.signed_value()
 
     def __str__(self) -> str:
-        if self.lhs is not None:
-            return f"{self.lhs}({self.rhs})"
-        else:
+        if self.lhs == AsmLiteral(0):
             return f"({self.rhs})"
+        else:
+            return f"{self.lhs}({self.rhs})"
 
 
 @dataclass(frozen=True)
@@ -283,7 +281,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             else:
                 # Address mode.
                 assert isinstance(rhs, Register)
-                value = AsmAddressMode(value, rhs)
+                value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok in valid_word:
             # Global symbol.
             assert value is None
