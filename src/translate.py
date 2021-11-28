@@ -245,7 +245,6 @@ class StackInfo:
     is_variadic: bool = False
     uses_framepointer: bool = False
     subroutine_arg_top: int = 0
-    return_addr_location: int = 0
     callee_save_reg_locations: Dict[Register, int] = field(default_factory=dict)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
     unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
@@ -469,7 +468,6 @@ class StackInfo:
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
                 f"Bounds of callee-saved vars region: {self.callee_save_reg_region}",
-                f"Location of return addr: {self.return_addr_location}",
                 f"Locations of callee save registers: {self.callee_save_reg_locations}",
             ]
         )
@@ -510,18 +508,6 @@ def get_stack_info(
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
         elif (
-            inst.mnemonic == "sw"
-            and inst.args[0] == Register("ra")
-            and isinstance(inst.args[1], AsmAddressMode)
-            and inst.args[1].rhs == Register("sp")
-            and info.is_leaf
-        ):
-            # Saving the return address on the stack.
-            info.is_leaf = False
-            stack_offset = inst.args[1].lhs_as_literal()
-            info.return_addr_location = stack_offset
-            callee_saved_offset_and_size.append((stack_offset, 4))
-        elif (
             inst.mnemonic in ["sw", "swc1", "sdc1"]
             and isinstance(inst.args[0], Register)
             and inst.args[0] in SAVED_REGS
@@ -530,6 +516,9 @@ def get_stack_info(
             and inst.args[0] not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
+            if inst.args[0] == Register("ra"):
+                # Saving the return address on the stack.
+                info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
             info.callee_save_reg_locations[inst.args[0]] = stack_offset
             callee_saved_offset_and_size.append(
@@ -3974,13 +3963,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if (
                 isinstance(node, ReturnNode)
                 and stack_info.maybe_get_register_var(reg)
-                and (
-                    stack_info.callee_save_reg_locations.get(reg) == expr.value
-                    or (
-                        reg == Register("ra")
-                        and stack_info.return_addr_location == expr.value
-                    )
-                )
+                and (stack_info.callee_save_reg_locations.get(reg) == expr.value)
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
