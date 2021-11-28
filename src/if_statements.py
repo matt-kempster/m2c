@@ -658,6 +658,8 @@ def try_build_implicit_switch(
     cases: Dict[int, Node] = {}
     # The `default:`-labeled node, if found
     default_node: Optional[Node] = None
+    # Require at least one ConditionalNode that is not a guard for a SwitchNode
+    has_non_guard_conditional = False
 
     while node_queue:
         node = node_queue.pop()
@@ -740,6 +742,7 @@ def try_build_implicit_switch(
                     node_queue.append(node.conditional_edge)
                 else:
                     return None
+                has_non_guard_conditional = True
                 nodes_to_mark_emitted.add(node)
                 continue
 
@@ -768,7 +771,11 @@ def try_build_implicit_switch(
         ):
             default_node = node
 
-    if len(nodes_to_mark_emitted) < 3 or len(set(cases.values())) < 2:
+    if (
+        not has_non_guard_conditional
+        or len(nodes_to_mark_emitted) < 3
+        or len(set(cases.values())) < 2
+    ):
         return None
 
     # If this new implicit switch uses all of the other switch nodes in the function,

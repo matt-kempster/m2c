@@ -20,7 +20,7 @@ void test(s32 arg0) {
         }
         break;
     }
-    switch (arg0) {                                 /* switch 2; implicit */
+    switch (arg0) {                                 /* switch 2 */
     case 1:                                         /* switch 2 */
     case 2:                                         /* switch 2 */
     case 3:                                         /* switch 2 */
@@ -30,6 +30,7 @@ void test(s32 arg0) {
             D_4101D0 = 2;
             return;
         }
+    default:                                        /* switch 2 */
         return;
     case 5:                                         /* switch 2 */
     case 6:                                         /* switch 2 */
