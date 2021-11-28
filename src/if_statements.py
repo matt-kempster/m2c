@@ -414,7 +414,7 @@ def switch_guard_expr(node: Node) -> Optional[Expression]:
 
 
 def is_empty_goto(node: Node, end: Node) -> bool:
-    """Return True if `node` represents a jump to `end` without any other statement.s"""
+    """Return True if `node` represents a jump to `end` without any other statements"""
     seen_nodes = {node}
     while True:
         if node == end:
@@ -651,7 +651,7 @@ def try_build_implicit_switch(
             pass
 
         elif node != start and block_info.statements_to_write():
-            # The node cannot have any statements to write (except the start node)
+            # Unless the node is the start node, it cannot have any statements to write
             pass
 
         elif isinstance(node, ConditionalNode):
