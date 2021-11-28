@@ -20,7 +20,7 @@ void test(s32 arg0) {
         }
         break;
     }
-    switch (arg0) {                                 /* switch 2 */
+    switch (arg0) {                                 /* switch 2; implicit */
     case 1:                                         /* switch 2 */
     case 2:                                         /* switch 2 */
     case 3:                                         /* switch 2 */
@@ -30,7 +30,6 @@ void test(s32 arg0) {
             D_4101D0 = 2;
             return;
         }
-    default:                                        /* switch 2 */
         return;
     case 5:                                         /* switch 2 */
     case 6:                                         /* switch 2 */
@@ -39,7 +38,6 @@ void test(s32 arg0) {
             return;
         }
         D_4101D0 = 2;
-        /* Duplicate return node #14. Try simplifying control flow for better match */
-        return;
+        break;
     }
 }

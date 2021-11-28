@@ -420,10 +420,20 @@ def is_empty_goto(node: Node, end: Node) -> bool:
         if node == end:
             return True
         block_info = get_block_info(node)
-        if not isinstance(node, BasicNode) or block_info.statements_to_write():
+        if block_info.statements_to_write():
             return False
-        node = node.successor
-        if node in seen_nodes:
+        if (
+            isinstance(node, ReturnNode)
+            and isinstance(end, TerminalNode)
+            and block_info.return_value is None
+        ):
+            # An empty return counts as a jump to the TerminalNode
+            return True
+        elif isinstance(node, BasicNode):
+            node = node.successor
+            if node in seen_nodes:
+                return False
+        else:
             return False
     return False
 
@@ -595,7 +605,16 @@ def try_make_if_condition(
 def try_build_implicit_switch(
     context: Context, start: Node, end: Node
 ) -> Optional[SwitchStatement]:
-    """Look for implicit switch-like structures from nested ConditionalNodes & SwitchNodes"""
+    """
+    Look for implicit switch-like structures from nested ConditionalNodes & SwitchNodes.
+    If one is found, return the corresponding SwitchStatement; otherwise, return None.
+
+    Both IDO & GCC can convert switch statements into a tree of comparisons & jump tables.
+    We try to identify the largest contiguous tree of ConditionalNodes & SwitchNodes that
+    all compare the same variable (`var_expr`). SwitchNodes and `(x == N)` ConditionalNodes
+    represent jumps to specific case labels, whereas comparisons like `(x < N)` are
+    primarily used to manage the overall tree depth.
+    """
     # The start node must either be an if or a switch
     if not isinstance(start, (ConditionalNode, SwitchNode)):
         return None
@@ -631,8 +650,9 @@ def try_build_implicit_switch(
     node_queue: List[Node] = [start]
     # Nodes we have already visited, to avoid infinite loops
     visited_nodes: Set[Node] = set()
-    # Nodes that have no statements, and should be marked as emitted if we emit a SwitchStatement
+    # Nodes that have no statements, and should be marked as emitted if we emit a SwitchStatement.
     # A ConditionalNode like `if (x == N)` isn't directly emitted; it's replaced by a `case N:` label
+    # This also includes empty BasicNodes & ReturnNodes that jump directly to the end
     nodes_to_mark_emitted: Set[Node] = set()
     # Map of label -> node. Similar to SwitchNode.cases, but the labels may not be contiguous
     cases: Dict[int, Node] = {}
@@ -646,13 +666,29 @@ def try_build_implicit_switch(
         visited_nodes.add(node)
         block_info = get_block_info(node)
 
-        if start not in node.dominators or end not in node.postdominators:
+        if node != start and block_info.statements_to_write():
+            # Unless the node is the start node, it cannot have any statements to write
+            pass
+
+        elif is_empty_goto(node, end):
+            # Empty returns/gotos are special cases: the compiler may have folded
+            # this node together with one outside the original interval. So, this node
+            # may fail the `start not in node.dominators` check below.
+            # Otherwise, treat these like empty BasicNodes.
+            nodes_to_mark_emitted.add(node)
+            if isinstance(node, BasicNode):
+                node_queue.append(node.successor)
+            continue
+
+        elif start not in node.dominators or end not in node.postdominators:
             # The node must be within the [start, end] interval
             pass
 
-        elif node != start and block_info.statements_to_write():
-            # Unless the node is the start node, it cannot have any statements to write
-            pass
+        elif isinstance(node, BasicNode):
+            # This node has no statements, so it is just a goto
+            nodes_to_mark_emitted.add(node)
+            node_queue.append(node.successor)
+            continue
 
         elif isinstance(node, ConditionalNode):
             # If this is a "switch guard" `if` statement, continue iterating on both branches
@@ -695,6 +731,11 @@ def try_build_implicit_switch(
                     cond.op in (">=", "<=", ">")
                     and context.options.compiler == context.options.CompilerEnum.GCC
                 ):
+                    # TODO: GCC (maybe?) can emit a series of `<`/`>=` comparisons that limit
+                    # to a specific case. Ex: `x < 9 && x >= 8` is only true for `x == 8`.
+                    # Detecting these would require tracking & checking all of the bounds.
+                    # For now, ignore those, and assume the compiler isn't emitting nonsense.
+                    # See PM: func_802403D4_97BA04
                     node_queue.append(node.fallthrough_edge)
                     node_queue.append(node.conditional_edge)
                 else:
@@ -718,12 +759,6 @@ def try_build_implicit_switch(
             nodes_to_mark_emitted.add(node)
             continue
 
-        elif isinstance(node, BasicNode):
-            # This node has no statements, so it is just a goto
-            nodes_to_mark_emitted.add(node)
-            node_queue.append(node.successor)
-            continue
-
         # If we've gotten here, then the node is not a valid jump target for the switch,
         # unless it could be the `default:`-labeled node.
         if default_node is not None:
@@ -733,36 +768,38 @@ def try_build_implicit_switch(
         ):
             default_node = node
 
-    if len(nodes_to_mark_emitted) >= 3 and len(set(cases.values())) >= 2:
-        # If this new implicit switch uses all of the other switch nodes in the function,
-        # then we no longer need to add labelling comments with the switch_index
-        for n in nodes_to_mark_emitted:
-            context.switch_nodes.pop(n, None)
-        if context.switch_nodes:
-            switch_index = max(context.switch_nodes.values()) + 1
-        else:
-            switch_index = 0
+    if len(nodes_to_mark_emitted) < 3 or len(set(cases.values())) < 2:
+        return None
 
-        context.switch_nodes[start] = switch_index
-        add_labels_for_switch(
-            context,
-            start,
-            cases=list(cases.items()),
-            default_node=default_node,
-        )
-        case_nodes = list(cases.values())
-        if default_node is not None:
-            case_nodes.append(default_node)
-        switch = build_switch_statement(
-            context,
-            SwitchControl.implicit_from_expr(var_expr),
-            case_nodes,
-            switch_index,
-            end,
-        )
-        context.emitted_nodes |= nodes_to_mark_emitted
-        return switch
-    return None
+    # If this new implicit switch uses all of the other switch nodes in the function,
+    # then we no longer need to add labelling comments with the switch_index
+    for n in nodes_to_mark_emitted:
+        context.switch_nodes.pop(n, None)
+    if context.switch_nodes:
+        switch_index = max(context.switch_nodes.values()) + 1
+    else:
+        switch_index = 0
+    context.switch_nodes[start] = switch_index
+
+    add_labels_for_switch(
+        context,
+        start,
+        cases=list(cases.items()),
+        default_node=default_node,
+    )
+
+    case_nodes = list(cases.values())
+    if default_node is not None:
+        case_nodes.append(default_node)
+    switch = build_switch_statement(
+        context,
+        SwitchControl.implicit_from_expr(var_expr),
+        case_nodes,
+        switch_index,
+        end,
+    )
+    context.emitted_nodes |= nodes_to_mark_emitted
+    return switch
 
 
 def build_conditional_subgraph(
