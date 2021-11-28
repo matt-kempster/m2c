@@ -273,13 +273,7 @@ def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function
 
 
 def simplify_standard_patterns(function: Function) -> Function:
-    """Detect and simplify various standard patterns emitted by IDO and GCC.
-    Currently handled:
-    - checks for x/0 and INT_MIN/-1 after division (removed)
-    - gcc sqrt nan check (removed)
-    - division or modulo by power of two (converted to made-up instructions)
-    - unsigned to float conversion (converted to a made-up instruction)
-    - float/double to unsigned conversion (converted to a made-up instruction)"""
+    """Detect and simplify various standard patterns emitted by IDO and GCC."""
     BodyPart = Union[Instruction, Label]
     PatternPart = Union[Instruction, Label, None]
     Pattern = List[Tuple[PatternPart, bool]]
@@ -429,7 +423,7 @@ def simplify_standard_patterns(function: Function) -> Function:
         "sw $x, 4($y)",
     )
 
-    def matches_pattern(actual: List[BodyPart], pattern: Pattern) -> int:
+    def try_match(starti: int, pattern: Pattern) -> Optional[List[BodyPart]]:
         symbolic_registers: Dict[str, Register] = {}
         symbolic_labels: Dict[str, str] = {}
 
@@ -494,13 +488,13 @@ def simplify_standard_patterns(function: Function) -> Function:
                         assert False, f"bad pattern part: {exp} contains {type(e)}"
             return True
 
-        actuali = 0
+        actuali = starti
         for (pat, optional) in pattern:
-            if actuali < len(actual) and match_one(actual[actuali], pat):
+            if actuali < len(function.body) and match_one(function.body[actuali], pat):
                 actuali += 1
             elif not optional:
-                return 0
-        return actuali
+                return None
+        return function.body[starti:actuali]
 
     def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
         assert isinstance(sra.args[2], AsmLiteral)
@@ -510,90 +504,89 @@ def simplify_standard_patterns(function: Function) -> Function:
         )
 
     def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(div_pattern)]
-        if not matches_pattern(actual, div_pattern):
+        match = try_match(i, div_pattern)
+        if not match:
             return None
-        return ([actual[1]], i + len(div_pattern) - 1)
+        return [match[1]], len(match) - 1
 
     def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(divu_pattern)]
-        if not matches_pattern(actual, divu_pattern):
+        match = try_match(i, divu_pattern)
+        if not match:
             return None
-        return ([], i + len(divu_pattern) - 1)
+        return [], len(match) - 1
 
     def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         # Division by power of two where input reg != output reg
-        actual = function.body[i : i + len(div_p2_pattern_1)]
-        if not matches_pattern(actual, div_p2_pattern_1):
+        match = try_match(i, div_p2_pattern_1)
+        if not match:
             return None
-        bnez = typing.cast(Instruction, actual[0])
-        div = create_div_p2(bnez, typing.cast(Instruction, actual[3]))
-        return ([div], i + len(div_p2_pattern_1) - 1)
+        bnez = typing.cast(Instruction, match[0])
+        div = create_div_p2(bnez, typing.cast(Instruction, match[3]))
+        return [div], len(match) - 1
 
     def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
         # Division by power of two where input reg = output reg
-        actual = function.body[i : i + len(div_p2_pattern_2)]
-        if not matches_pattern(actual, div_p2_pattern_2):
+        match = try_match(i, div_p2_pattern_2)
+        if not match:
             return None
-        bnez = typing.cast(Instruction, actual[0])
-        div = create_div_p2(bnez, typing.cast(Instruction, actual[4]))
-        return ([div], i + len(div_p2_pattern_2))
+        bnez = typing.cast(Instruction, match[0])
+        div = create_div_p2(bnez, typing.cast(Instruction, match[4]))
+        return [div], len(match)
 
     def try_replace_div_2_s16(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(div_2_s16_pattern)]
-        if not matches_pattern(actual, div_2_s16_pattern):
+        match = try_match(i, div_2_s16_pattern)
+        if not match:
             return None
-        sll1 = typing.cast(Instruction, actual[0])
-        sra1 = typing.cast(Instruction, actual[1])
-        sra = typing.cast(Instruction, actual[4])
+        sll1 = typing.cast(Instruction, match[0])
+        sra1 = typing.cast(Instruction, match[1])
+        sra = typing.cast(Instruction, match[4])
         if sll1.args[2] != sra1.args[2]:
             return None
         div = Instruction.derived(
             "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
         )
-        return ([sll1, sra1, div], i + len(div_2_s16_pattern))
+        return [sll1, sra1, div], len(match)
 
     def try_replace_div_2_s32(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(div_2_s32_pattern)]
-        if not matches_pattern(actual, div_2_s32_pattern):
+        match = try_match(i, div_2_s32_pattern)
+        if not match:
             return None
-        addu = typing.cast(Instruction, actual[1])
-        sra = typing.cast(Instruction, actual[2])
+        addu = typing.cast(Instruction, match[1])
+        sra = typing.cast(Instruction, match[2])
         div = Instruction.derived(
             "div.fictive", [sra.args[0], addu.args[1], AsmLiteral(2)], sra
         )
-        return ([div], i + len(div_2_s32_pattern))
+        return [div], len(match)
 
     def try_replace_mod_p2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(mod_p2_pattern)]
-        if not matches_pattern(actual, mod_p2_pattern):
+        match = try_match(i, mod_p2_pattern)
+        if not match:
             return None
-        andi = typing.cast(Instruction, actual[1])
+        andi = typing.cast(Instruction, match[1])
         val = (typing.cast(AsmLiteral, andi.args[2]).value & 0xFFFF) + 1
         mod = Instruction.derived(
             "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
         )
-        return ([mod], i + len(mod_p2_pattern) - 1)
+        return [mod], len(match) - 1
 
     def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(utf_pattern)]
-        if not matches_pattern(actual, utf_pattern):
+        match = try_match(i, utf_pattern)
+        if not match:
             return None
-        cvt_instr = typing.cast(Instruction, actual[1])
+        cvt_instr = typing.cast(Instruction, match[1])
         new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
-        return ([new_instr], i + len(utf_pattern) - 1)
+        return [new_instr], len(match) - 1
 
     def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(ftu_pattern)]
-        consumed = matches_pattern(actual, ftu_pattern)
-        if not consumed:
+        match = try_match(i, ftu_pattern)
+        if not match:
             return None
         sub = next(
             x
-            for x in actual
+            for x in match
             if isinstance(x, Instruction) and x.mnemonic.startswith("sub")
         )
-        cfc = actual[0]
+        cfc = match[0]
         assert isinstance(cfc, Instruction)
         fmt = sub.mnemonic.split(".")[-1]
         args = [cfc.args[0], sub.args[1]]
@@ -601,18 +594,16 @@ def simplify_standard_patterns(function: Function) -> Function:
             new_instr = Instruction.derived("cvt.u.s.fictive", args, cfc)
         else:
             new_instr = Instruction.derived("cvt.u.d.fictive", args, cfc)
-        return ([new_instr], i + consumed)
+        return [new_instr], len(match)
 
     def try_replace_mips1_double_load_store(
         i: int,
     ) -> Optional[Tuple[List[BodyPart], int]]:
         # TODO: sometimes the instructions aren't consecutive.
-        actual = function.body[i : i + 2]
-        if not matches_pattern(actual, lwc1_twice_pattern) and not matches_pattern(
-            actual, swc1_twice_pattern
-        ):
+        match = try_match(i, lwc1_twice_pattern) or try_match(i, swc1_twice_pattern)
+        if not match:
             return None
-        a, b = actual
+        a, b = match
         assert isinstance(a, Instruction)
         assert isinstance(b, Instruction)
         ra, rb = a.args[0], b.args[0]
@@ -636,33 +627,27 @@ def simplify_standard_patterns(function: Function) -> Function:
         new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
         new_instr = Instruction.derived(new_mn, new_args, a)
-        return ([new_instr], i + 2)
+        return [new_instr], len(match)
 
     def try_replace_gcc_sqrt(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(gcc_sqrt_pattern)]
-        consumed = matches_pattern(actual, gcc_sqrt_pattern)
-        if not consumed:
+        match = try_match(i, gcc_sqrt_pattern)
+        if not match:
             return None
-        sqrt = actual[0]
-        assert isinstance(sqrt, Instruction)
-
-        new_instr = Instruction.derived("sqrt.s", sqrt.args, sqrt)
-        return ([new_instr], i + consumed)
+        return [match[0]], len(match)
 
     def try_replace_trapuv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        actual = function.body[i : i + len(trapuv_pattern)]
-        consumed = matches_pattern(actual, trapuv_pattern)
-        if not consumed:
+        match = try_match(i, trapuv_pattern)
+        if not match:
             return None
-        return ([actual[2]], i + consumed)
+        return [match[2]], len(match)
 
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
-        return ([function.body[i]], i + 1)
+        return [function.body[i]], 1
 
     new_function = function.bodyless_copy()
     i = 0
     while i < len(function.body):
-        repl, i = (
+        repl, consumed = (
             try_replace_div(i)
             or try_replace_divu(i)
             or try_replace_div_p2_1(i)
@@ -678,6 +663,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             or no_replacement(i)
         )
         new_function.body.extend(repl)
+        i += consumed
     return new_function
 
 
