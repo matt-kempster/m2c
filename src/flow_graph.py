@@ -455,8 +455,15 @@ def simplify_standard_patterns(function: Function) -> Function:
                         if not isinstance(a, Register) or not match_reg(a, e):
                             return False
                     elif isinstance(e, AsmGlobalSymbol):
-                        if e.symbol_name == "LIT" and not isinstance(a, AsmLiteral):
-                            return False
+                        if e.symbol_name == "LIT":
+                            if not isinstance(a, AsmLiteral):
+                                return False
+                        else:
+                            if (
+                                not isinstance(a, AsmGlobalSymbol)
+                                or a.symbol_name != e.symbol_name
+                            ):
+                                return False
                     elif isinstance(e, AsmAddressMode):
                         if (
                             not isinstance(a, AsmAddressMode)
