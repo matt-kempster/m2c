@@ -643,7 +643,6 @@ def escape_byte(b: int) -> bytes:
 class Var:
     stack_info: StackInfo = field(repr=False)
     prefix: str
-    num_usages: int = 0
     name: Optional[str] = None
 
     def format(self, fmt: Formatter) -> str:
@@ -696,6 +695,10 @@ class Condition(Expression):
 
 
 class Statement(abc.ABC):
+    @abc.abstractmethod
+    def use(self) -> None:
+        ...
+
     @abc.abstractmethod
     def should_write(self) -> bool:
         ...
@@ -1708,6 +1711,10 @@ class SwitchControl:
 class EvalOnceStmt(Statement):
     expr: EvalOnceExpr
 
+    def use(self) -> None:
+        if self.expr.emit_exactly_once:
+            self.expr.wrapped_expr.use()
+
     def need_decl(self) -> bool:
         return self.expr.need_decl()
 
@@ -1728,6 +1735,9 @@ class EvalOnceStmt(Statement):
 class SetPhiStmt(Statement):
     phi: PhiExpr
     expr: Expression
+
+    def use(self) -> None:
+        pass
 
     def should_write(self) -> bool:
         expr = self.expr
@@ -1750,6 +1760,9 @@ class SetPhiStmt(Statement):
 class ExprStmt(Statement):
     expr: Expression
 
+    def use(self) -> None:
+        self.expr.use()
+
     def should_write(self) -> bool:
         return True
 
@@ -1761,6 +1774,10 @@ class ExprStmt(Statement):
 class StoreStmt(Statement):
     source: Expression
     dest: Expression
+
+    def use(self) -> None:
+        self.source.use()
+        self.dest.use()
 
     def should_write(self) -> bool:
         return True
@@ -1779,6 +1796,9 @@ class StoreStmt(Statement):
 @dataclass
 class CommentStmt(Statement):
     contents: str
+
+    def use(self) -> None:
+        pass
 
     def should_write(self) -> bool:
         return True
@@ -2349,7 +2369,6 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
 
 def void_fn_op(fn_name: str, args: List[Expression]) -> ExprStmt:
     fn_call = fn_op(fn_name, args, Type.any_reg())
-    fn_call.use()
     return ExprStmt(fn_call)
 
 
@@ -3894,9 +3913,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         prefix: str = "",
         reuse_var: Optional[Var] = None,
     ) -> EvalOnceExpr:
-        if emit_exactly_once:
-            # (otherwise this will be marked used once num_usages reaches 1)
-            expr.use()
         assert reuse_var or prefix
         if prefix == "condition_bit":
             prefix = "cond"
@@ -3908,7 +3924,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             emit_exactly_once=emit_exactly_once,
             trivial=trivial,
         )
-        var.num_usages += 1
         stmt = EvalOnceStmt(expr)
         to_write.append(stmt)
         stack_info.temp_vars.append(stmt)
@@ -3991,7 +4006,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         if reg == Register("zero"):
             # Emit the expression as is. It's probably a volatile load.
-            expr.use()
             to_write.append(ExprStmt(expr))
         else:
             dest = stack_info.maybe_get_register_var(reg)
@@ -4000,7 +4014,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
                 if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
                     source = as_type(expr, dest.type, True)
-                    source.use()
                     to_write.append(StoreStmt(source=source, dest=dest))
                 expr = dest
             set_reg_maybe_return(reg, expr)
@@ -4076,12 +4089,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         # might be used to preserve values of different types.
                         raw_value = raw_value.expr
                     local_var_writes[to_store.dest] = (args.reg_ref(0), raw_value)
-                # Emit a write. This includes four steps:
-                # - mark the expression as used (since writes are always emitted)
-                # - mark the dest used (if it's a struct access it needs to be
-                # evaluated, though ideally we would not mark the top-level expression
-                # used; it may cause early emissions that shouldn't happen)
+                # Emit a write. This includes three steps:
                 # - mark other usages of the dest as "emit before this point if used".
+                # - mark function calls from before this point
                 # - emit the actual write.
                 #
                 # Note that the prevent_later_value_uses step happens after use(), since
@@ -4091,8 +4101,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # that probably never occurs -- all relevant register contents should be
                 # EvalOnceExpr's that can be emitted at their point of creation, but
                 # I'm not 100% certain that that's always the case and will remain so.
-                to_store.source.use()
-                to_store.dest.use()
                 prevent_later_value_uses(to_store.dest)
                 prevent_later_function_calls()
                 to_write.append(to_store)
@@ -4335,12 +4343,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         with current_instr(instr):
             process_instr(instr)
 
-    if branch_condition is not None:
-        branch_condition.use()
     switch_control: Optional[SwitchControl] = None
     if switch_expr is not None:
         switch_control = SwitchControl.from_expr(switch_expr)
-        switch_control.control_expr.use()
     return BlockInfo(
         to_write=to_write,
         return_value=None,
@@ -4437,6 +4442,35 @@ def translate_graph_from_block(
         translate_graph_from_block(
             child, new_regs, stack_info, used_phis, return_blocks, options
         )
+
+
+def mark_usages(stack_info: StackInfo, flow_graph: FlowGraph) -> None:
+    # Visit the nodes in the exact same order recursively traversed by translate_graph_from_block
+    visited = set()
+    queue = [flow_graph.entry_node()]
+    while queue:
+        node = queue.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        if isinstance(node, TerminalNode):
+            continue
+        queue = node.immediately_dominates + queue
+
+        # Mark the Statements still in the `to_write` list as used
+        block_info = get_block_info(node)
+        for stmt in block_info.to_write:
+            stmt.use()
+            if isinstance(stmt, EvalOnceStmt):
+                stack_info.temp_vars.append(stmt)
+
+        # Mark the misc. Expressions in the block as used
+        if block_info.branch_condition is not None:
+            block_info.branch_condition.use()
+        if block_info.switch_control is not None:
+            block_info.switch_control.control_expr.use()
+        if block_info.return_value is not None:
+            block_info.return_value.use()
 
 
 def resolve_types_late(stack_info: StackInfo) -> None:
@@ -4854,7 +4888,6 @@ def translate_to_ast(
             if return_reg in b.final_register_states:
                 ret_val = b.final_register_states[return_reg]
                 ret_val = as_type(ret_val, return_type, True)
-                ret_val.use()
                 b.return_value = ret_val
     else:
         return_type.unify(Type.void())
@@ -4867,6 +4900,9 @@ def translate_to_ast(
             if not param.name:
                 param.name = arg.format(Formatter())
 
+    # TODO: Right here is where flow_graph/statement transformations could be added
+
+    mark_usages(stack_info, flow_graph)
     assign_phis(used_phis, stack_info)
     resolve_types_late(stack_info)
 
