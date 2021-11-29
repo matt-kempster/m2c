@@ -1505,9 +1505,7 @@ class EvalOnceExpr(Expression):
     # Initially, it is based on is_trivial_expression.
     trivial: bool
 
-    # True if this EvalOnceExpr is wrapped by a ForceVarExpr which has been triggered.
-    # This state really live in ForceVarExpr, but there's a hack in RegInfo.__getitem__
-    # where we strip off ForceVarExpr's... This is a mess, sorry. :(
+    # True if this EvalOnceExpr must emit a variable (see RegMeta.force)
     forced_emit: bool = False
 
     # The number of expressions that depend on this EvalOnceExpr; we emit a variable
@@ -1526,6 +1524,13 @@ class EvalOnceExpr(Expression):
             self.wrapped_expr.use()
 
     def force(self) -> None:
+        # Transition to non-trivial, and mark as used multiple times to force a var.
+        # TODO: If it was originally trivial, we may previously have marked its
+        # wrappee used multiple times, even though we now know that it should
+        # have been marked just once... We could fix that by moving marking of
+        # trivial EvalOnceExpr's to the very end. At least the consequences of
+        # getting this wrong are pretty mild -- it just causes extraneous var
+        # emission in rare cases.
         self.trivial = False
         self.forced_emit = True
         self.use()
@@ -1539,32 +1544,6 @@ class EvalOnceExpr(Expression):
             return self.wrapped_expr.format(fmt)
         else:
             return self.var.format(fmt)
-
-
-@dataclass(eq=False)
-class ForceVarExpr(Expression):
-    wrapped_expr: EvalOnceExpr
-    type: Type
-
-    def dependencies(self) -> List[Expression]:
-        return [self.wrapped_expr]
-
-    def use(self) -> None:
-        # Transition the EvalOnceExpr to non-trivial, and mark it as used
-        # multiple times to force a var.
-        # TODO: If it was originally trivial, we may previously have marked its
-        # wrappee used multiple times, even though we now know that it should
-        # have been marked just once... We could fix that by moving marking of
-        # trivial EvalOnceExpr's to the very end. At least the consequences of
-        # getting this wrong are pretty mild -- it just causes extraneous var
-        # emission in rare cases.
-        self.wrapped_expr.trivial = False
-        self.wrapped_expr.forced_emit = True
-        self.wrapped_expr.use()
-        self.wrapped_expr.use()
-
-    def format(self, fmt: Formatter) -> str:
-        return self.wrapped_expr.format(fmt)
 
 
 @dataclass(frozen=False, eq=False)
@@ -1868,13 +1847,6 @@ class RegInfo:
         if data.meta.force:
             assert isinstance(ret, EvalOnceExpr)
             ret.force()
-        if isinstance(ret, ForceVarExpr):
-            # Some of the logic in this file is unprepared to deal with
-            # ForceVarExpr transparent wrappers... so for simplicity, we mark
-            # it used and return the wrappee. Not optimal (what if the value
-            # isn't used after all?), but it works decently well.
-            ret.use()
-            ret = ret.wrapped_expr
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -2115,7 +2087,6 @@ def is_trivial_expression(expr: Expression) -> bool:
         expr,
         (
             EvalOnceExpr,
-            ForceVarExpr,
             Literal,
             GlobalSymbol,
             LocalVar,
@@ -2156,8 +2127,6 @@ def is_type_obvious(expr: Expression) -> bool:
         ),
     ):
         return True
-    if isinstance(expr, ForceVarExpr):
-        return is_type_obvious(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr):
         if expr.need_decl():
             return True
@@ -2264,13 +2233,11 @@ def uses_expr(expr: Expression, expr_filter: Callable[[Expression], bool]) -> bo
 
 def late_unwrap(expr: Expression) -> Expression:
     """
-    Unwrap EvalOnceExpr's and ForceVarExpr's, stopping at variable boundaries.
+    Unwrap EvalOnceExpr's, stopping at variable boundaries.
 
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, ForceVarExpr):
-        return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
@@ -2284,9 +2251,6 @@ def early_unwrap(expr: Expression) -> Expression:
 
     This is fine to use even while code is being generated, but disrespects decisions
     to use a temp for a value, so use with care.
-
-    TODO: unwrap ForceVarExpr as well when safe, pushing the forces down into the
-    expression tree.
     """
     if (
         isinstance(expr, EvalOnceExpr)
@@ -2310,7 +2274,7 @@ def early_unwrap_ints(expr: Expression) -> Expression:
 
 def unwrap_deep(expr: Expression) -> Expression:
     """
-    Unwrap EvalOnceExpr's and ForceVarExpr's, even past variable boundaries.
+    Unwrap EvalOnceExpr's, even past variable boundaries.
 
     This is generally a sketchy thing to do, try to avoid it. In particular:
     - the returned expression is not usable for emission, because it may contain
@@ -2318,7 +2282,7 @@ def unwrap_deep(expr: Expression) -> Expression:
     - just because unwrap_deep(a) == unwrap_deep(b) doesn't mean a and b are
       interchangable, because they may be computed in different places.
     """
-    if isinstance(expr, (EvalOnceExpr, ForceVarExpr)):
+    if isinstance(expr, EvalOnceExpr):
         return unwrap_deep(expr.wrapped_expr)
     return expr
 
@@ -3929,13 +3893,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             data = regs.contents.get(r)
             assert data is not None
             expr = data.value
-            if (
-                not isinstance(expr, ForceVarExpr)
-                and not data.meta.force
-                and expr_filter(expr)
-            ):
+            if not data.meta.force and expr_filter(expr):
                 # Mark the register as "if used, emit the expression's once
-                # var". I think we should always have a once var at this point,
+                # var". We usually always have a once var at this point,
                 # but if we don't, create one.
                 if not isinstance(expr, EvalOnceExpr):
                     expr = eval_once(
@@ -4026,8 +3986,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)
         at = regs.get_raw(Register("at"))
-        if isinstance(prev, ForceVarExpr):
-            prev = prev.wrapped_expr
         if (
             not isinstance(prev, EvalOnceExpr)
             or isinstance(expr, Literal)
