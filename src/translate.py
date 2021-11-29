@@ -1505,9 +1505,7 @@ class EvalOnceExpr(Expression):
     # Initially, it is based on is_trivial_expression.
     trivial: bool
 
-    # True if this EvalOnceExpr is wrapped by a ForceVarExpr which has been triggered.
-    # This state really live in ForceVarExpr, but there's a hack in RegInfo.__getitem__
-    # where we strip off ForceVarExpr's... This is a mess, sorry. :(
+    # True if this EvalOnceExpr must emit a variable (see RegMeta.force)
     forced_emit: bool = False
 
     # The number of expressions that depend on this EvalOnceExpr; we emit a variable
@@ -1525,6 +1523,19 @@ class EvalOnceExpr(Expression):
         if self.trivial or (self.num_usages == 1 and not self.emit_exactly_once):
             self.wrapped_expr.use()
 
+    def force(self) -> None:
+        # Transition to non-trivial, and mark as used multiple times to force a var.
+        # TODO: If it was originally trivial, we may previously have marked its
+        # wrappee used multiple times, even though we now know that it should
+        # have been marked just once... We could fix that by moving marking of
+        # trivial EvalOnceExpr's to the very end. At least the consequences of
+        # getting this wrong are pretty mild -- it just causes extraneous var
+        # emission in rare cases.
+        self.trivial = False
+        self.forced_emit = True
+        self.use()
+        self.use()
+
     def need_decl(self) -> bool:
         return self.num_usages > 1 and not self.trivial
 
@@ -1533,32 +1544,6 @@ class EvalOnceExpr(Expression):
             return self.wrapped_expr.format(fmt)
         else:
             return self.var.format(fmt)
-
-
-@dataclass(eq=False)
-class ForceVarExpr(Expression):
-    wrapped_expr: EvalOnceExpr
-    type: Type
-
-    def dependencies(self) -> List[Expression]:
-        return [self.wrapped_expr]
-
-    def use(self) -> None:
-        # Transition the EvalOnceExpr to non-trivial, and mark it as used
-        # multiple times to force a var.
-        # TODO: If it was originally trivial, we may previously have marked its
-        # wrappee used multiple times, even though we now know that it should
-        # have been marked just once... We could fix that by moving marking of
-        # trivial EvalOnceExpr's to the very end. At least the consequences of
-        # getting this wrong are pretty mild -- it just causes extraneous var
-        # emission in rare cases.
-        self.wrapped_expr.trivial = False
-        self.wrapped_expr.forced_emit = True
-        self.wrapped_expr.use()
-        self.wrapped_expr.use()
-
-    def format(self, fmt: Formatter) -> str:
-        return self.wrapped_expr.format(fmt)
 
 
 @dataclass(frozen=False, eq=False)
@@ -1825,6 +1810,9 @@ class RegMeta:
     # function_return = True
     uninteresting: bool = False
 
+    # True if the regdata must be replaced by variable if it is ever read
+    force: bool = False
+
 
 @dataclass
 class RegData:
@@ -1856,13 +1844,9 @@ class RegInfo:
             self.stack_info.add_argument(arg)
             val.type.unify(ret.type)
             return val
-        if isinstance(ret, ForceVarExpr):
-            # Some of the logic in this file is unprepared to deal with
-            # ForceVarExpr transparent wrappers... so for simplicity, we mark
-            # it used and return the wrappee. Not optimal (what if the value
-            # isn't used after all?), but it works decently well.
-            ret.use()
-            ret = ret.wrapped_expr
+        if data.meta.force:
+            assert isinstance(ret, EvalOnceExpr)
+            ret.force()
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -2103,7 +2087,6 @@ def is_trivial_expression(expr: Expression) -> bool:
         expr,
         (
             EvalOnceExpr,
-            ForceVarExpr,
             Literal,
             GlobalSymbol,
             LocalVar,
@@ -2144,8 +2127,6 @@ def is_type_obvious(expr: Expression) -> bool:
         ),
     ):
         return True
-    if isinstance(expr, ForceVarExpr):
-        return is_type_obvious(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr):
         if expr.need_decl():
             return True
@@ -2252,13 +2233,11 @@ def uses_expr(expr: Expression, expr_filter: Callable[[Expression], bool]) -> bo
 
 def late_unwrap(expr: Expression) -> Expression:
     """
-    Unwrap EvalOnceExpr's and ForceVarExpr's, stopping at variable boundaries.
+    Unwrap EvalOnceExpr's, stopping at variable boundaries.
 
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, ForceVarExpr):
-        return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
@@ -2272,9 +2251,6 @@ def early_unwrap(expr: Expression) -> Expression:
 
     This is fine to use even while code is being generated, but disrespects decisions
     to use a temp for a value, so use with care.
-
-    TODO: unwrap ForceVarExpr as well when safe, pushing the forces down into the
-    expression tree.
     """
     if (
         isinstance(expr, EvalOnceExpr)
@@ -2298,7 +2274,7 @@ def early_unwrap_ints(expr: Expression) -> Expression:
 
 def unwrap_deep(expr: Expression) -> Expression:
     """
-    Unwrap EvalOnceExpr's and ForceVarExpr's, even past variable boundaries.
+    Unwrap EvalOnceExpr's, even past variable boundaries.
 
     This is generally a sketchy thing to do, try to avoid it. In particular:
     - the returned expression is not usable for emission, because it may contain
@@ -2306,7 +2282,7 @@ def unwrap_deep(expr: Expression) -> Expression:
     - just because unwrap_deep(a) == unwrap_deep(b) doesn't mean a and b are
       interchangable, because they may be computed in different places.
     """
-    if isinstance(expr, (EvalOnceExpr, ForceVarExpr)):
+    if isinstance(expr, EvalOnceExpr):
         return unwrap_deep(expr.wrapped_expr)
     return expr
 
@@ -3702,8 +3678,10 @@ def pick_phi_assignment_nodes(
 
     # Check the dominators for a node with the correct final state for `reg`
     for node in dominators:
-        raw = get_block_info(node).final_register_states.get_raw(reg)
-        if raw is None:
+        regs = get_block_info(node).final_register_states
+        raw = regs.get_raw(reg)
+        meta = regs.get_meta(reg)
+        if raw is None or meta is None or meta.force:
             continue
         if raw == expr:
             return [node]
@@ -3915,9 +3893,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             data = regs.contents.get(r)
             assert data is not None
             expr = data.value
-            if not isinstance(expr, ForceVarExpr) and expr_filter(expr):
+            if not data.meta.force and expr_filter(expr):
                 # Mark the register as "if used, emit the expression's once
-                # var". I think we should always have a once var at this point,
+                # var". We usually always have a once var at this point,
                 # but if we don't, create one.
                 if not isinstance(expr, EvalOnceExpr):
                     expr = eval_once(
@@ -3926,7 +3904,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs.set_with_meta(r, ForceVarExpr(expr, type=expr.type), data.meta)
+                regs.set_with_meta(r, expr, replace(data.meta, force=True))
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -4008,8 +3986,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def overwrite_reg(reg: Register, expr: Expression) -> None:
         prev = regs.get_raw(reg)
         at = regs.get_raw(Register("at"))
-        if isinstance(prev, ForceVarExpr):
-            prev = prev.wrapped_expr
         if (
             not isinstance(prev, EvalOnceExpr)
             or isinstance(expr, Literal)
@@ -4046,6 +4022,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         mnemonic = instr.mnemonic
         args = InstrArgs(instr.args, regs, stack_info)
+        expr: Expression
 
         # Figure out what code to generate!
         if mnemonic in CASES_IGNORE:
@@ -4160,8 +4137,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
-                expr = regs.get_raw(register)
-                if expr is None:
+                raw_expr = regs.get_raw(register)
+                if raw_expr is None:
                     continue
 
                 # Don't pass this register if lower numbered ones are undefined.
@@ -4204,10 +4181,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # varargs functions. Decompiling multiple functions at once
                 # would help. TODO: don't do this in the middle of the argument
                 # list, except for f12 if a0 is passed and such.
-                if isinstance(expr, PassedInArg) and not expr.copied:
+                if isinstance(raw_expr, PassedInArg) and not raw_expr.copied:
                     continue
 
-                func_args.append(expr)
+                func_args.append(regs[register])
 
             # Add the arguments after a3.
             # TODO: limit this and unify types based on abi.arg_slots
@@ -4413,7 +4390,9 @@ def translate_graph_from_block(
             continue
         new_regs = RegInfo(stack_info=stack_info)
         for reg, data in regs.contents.items():
-            new_regs.set_with_meta(reg, data.value, RegMeta(inherited=True))
+            new_regs.set_with_meta(
+                reg, data.value, RegMeta(inherited=True, force=data.meta.force)
+            )
 
         phi_regs = regs_clobbered_until_dominator(child, stack_info.global_info)
         for reg in phi_regs:
@@ -4843,8 +4822,8 @@ def translate_to_ast(
 
     if return_reg is not None:
         for b in return_blocks:
-            ret_val = b.final_register_states.get_raw(return_reg)
-            if ret_val is not None:
+            if return_reg in b.final_register_states:
+                ret_val = b.final_register_states[return_reg]
                 ret_val = as_type(ret_val, return_type, True)
                 ret_val.use()
                 b.return_value = ret_val
