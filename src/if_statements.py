@@ -616,7 +616,7 @@ def try_build_irregular_switch(
     represent jumps to specific case labels, whereas comparisons like `(x < N)` are
     primarily used to manage the overall tree depth.
     """
-    # The start node must either be an if or a switch
+    # The start node must either be an if
     if not isinstance(start, ConditionalNode):
         return None
 
@@ -629,9 +629,6 @@ def try_build_irregular_switch(
     if control_expr is not None:
         # `if (x >= len(jump_table))`: var_expr is `x`
         var_expr = control_expr
-    elif start_block_info.switch_control is not None:
-        # `switch(x)`: var_expr is `x`
-        var_expr = start_block_info.switch_control.control_expr
     elif start_block_info.branch_condition is not None:
         start_cond = simplify_condition(start_block_info.branch_condition)
         if (
@@ -715,7 +712,7 @@ def try_build_irregular_switch(
             ):
                 # IDO typically uses `x == N` and `x < N` patterns in these if trees, but it
                 # will use `x != N` when it needs to jump backwards to an already-emitted block.
-                # GCC will freely use other types of comparisons
+                # GCC will more freely use either `x == N` or `x != N`.
                 # Examples from PM: func_8026E558, pr_load_npc_extra_anims
                 if cond.op == "==":
                     if cond.right.value in cases:
@@ -730,14 +727,12 @@ def try_build_irregular_switch(
                         return None
                     cases[cond.right.value] = node.fallthrough_edge
                     node_queue.append(node.conditional_edge)
-                elif cond.op == "<" or (
-                    cond.op in (">=", "<=", ">")
-                    and context.options.compiler == context.options.CompilerEnum.GCC
-                ):
+                elif cond.op in ("<", "<=", ">=", ">"):
                     # TODO: GCC (maybe?) can emit a series of `<`/`>=` comparisons that limit
                     # to a specific case. Ex: `x < 9 && x >= 8` is only true for `x == 8`.
                     # Detecting these would require tracking & checking all of the bounds.
-                    # For now, ignore those, and assume the compiler isn't emitting nonsense.
+                    # Without bounds tracking for now, assume that all branches are reachable
+                    # and that every case label will have an exact equality check.
                     # See PM: func_802403D4_97BA04
                     node_queue.append(node.fallthrough_edge)
                     node_queue.append(node.conditional_edge)
