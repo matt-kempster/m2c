@@ -2,7 +2,7 @@
 Given some MIPS assembly, this program will attempt to convert it to C.
 
 The goal of this project is to support decompilation projects, which aim to write C code that yields byte-identical output when compiled with a particular build system.
-It primarily focuses on supporting popular compilers of the late-90's.
+It primarily focuses on supporting popular compilers of the late 1990's.
 However, it may also work with other compilers or hand-written assembly.
 
 The focus of `mips_to_c` is to aid in the process of producing "matching" C source files.
