@@ -431,7 +431,7 @@ def parse_flags(flags: List[str]) -> Options:
         dest="switch_detection",
         action="store_false",
         help=(
-            "Disable detecting implicit switch statements from if trees. "
+            "Disable detecting irregular switch statements from if trees. "
             "Jump tables switches are still emitted."
         ),
     )

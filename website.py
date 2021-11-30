@@ -249,7 +249,7 @@ label {
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
-    <label><input type="checkbox" name="noswitches">Disable switch detection</label>
+    <label><input type="checkbox" name="noswitches">Disable irregular switch detection</label>
     <label><input type="checkbox" name="structs">Struct declarations</label>
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
