@@ -105,7 +105,7 @@ class SwitchStatement:
         if self.index > 0:
             comments.append(f"switch {self.index}")
         if self.jump.is_irregular:
-            comments.append("implicit")
+            comments.append("irregular")
         elif not self.jump.jump_table:
             comments.append("unable to parse jump table")
         elif body_is_empty:
@@ -659,8 +659,8 @@ def try_build_irregular_switch(
     cases: Dict[int, Node] = {}
     # The `default:`-labeled node, if found
     default_node: Optional[Node] = None
-    # Require at least one ConditionalNode that is not a guard for a SwitchNode
-    has_non_guard_conditional = False
+    # Number of "irregular" comparison nodes used (SwitchNodes & ConditionalNodes that aren't guards)
+    irregular_comparison_count = 0
 
     while node_queue:
         node = node_queue.pop()
@@ -743,7 +743,7 @@ def try_build_irregular_switch(
                     node_queue.append(node.conditional_edge)
                 else:
                     return None
-                has_non_guard_conditional = True
+                irregular_comparison_count += 1
                 nodes_to_mark_emitted.add(node)
                 continue
 
@@ -761,6 +761,7 @@ def try_build_irregular_switch(
                     return None
                 cases[i] = case
             nodes_to_mark_emitted.add(node)
+            irregular_comparison_count += 1
             continue
 
         # If we've gotten here, then the node is not a valid jump target for the switch,
@@ -772,8 +773,10 @@ def try_build_irregular_switch(
         ):
             default_node = node
 
+    # Need at least two irregular comparisons (to skip the regular ConditionalNode guard + SwitchNode pairs)
+    # Need to combine at least 3 nodes into 2 distinct cases, otherwise it could be a plain if/else with ||
     if (
-        not has_non_guard_conditional
+        irregular_comparison_count < 2
         or len(nodes_to_mark_emitted) < 3
         or len(set(cases.values())) < 2
     ):
@@ -1046,6 +1049,10 @@ def build_flowgraph_between(
                 curr_start = imm_pdom
                 continue
 
+        # If the current node has already been emitted and is equivalent to
+        # goto'ing the end node, we don't need to emit anything else. This
+        # avoids jumping to an empty node (or another jump) at the end of a
+        # block, like `{ block_N: break; ... goto block_N; }`
         if curr_start in context.emitted_nodes and is_empty_goto(curr_start, end):
             break
 

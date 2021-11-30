@@ -5,7 +5,7 @@ f32 test(shape_t *s) {
     s32 temp_a1;
 
     temp_a1 = s->type;
-    switch (temp_a1) {                              /* implicit */
+    switch (temp_a1) {                              /* irregular */
     case 0:
         spC = s;
         return spC->origin.x + spC->unkC;

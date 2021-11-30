@@ -11,7 +11,7 @@ s32 test(s32 arg0) {
     phi_a0_3 = arg0;
     phi_a0_4 = arg0;
     phi_a0_5 = arg0;
-    switch (arg0) { // implicit
+    switch (arg0) { // irregular
     case 1:
         return arg0 * arg0;
     case 2:
