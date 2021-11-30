@@ -5,17 +5,17 @@ f32 test(shape_t *s) {
     s32 temp_a1;
 
     temp_a1 = s->type;
-    if (temp_a1 != 0) {
-        if (temp_a1 != 1) {
-            if (temp_a1 != 2) {
-                return 0.0f;
-            }
-            sp4 = s;
-            return sp4->origin.x + sp4->unkC;
-        }
+    switch (temp_a1) {                              /* irregular */
+    case 0:
+        spC = s;
+        return spC->origin.x + spC->unkC;
+    case 1:
         sp8 = s;
         return sp8->origin.x + sp8->unkC;
+    case 2:
+        sp4 = s;
+        return sp4->origin.x + sp4->unkC;
+    default:
+        return 0.0f;
     }
-    spC = s;
-    return spC->origin.x + spC->unkC;
 }

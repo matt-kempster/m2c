@@ -1037,9 +1037,6 @@ def build_graph_from_block(
                     "\n"
                     "Please include it in the input .s file(s), or in an additional file.\n"
                     'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
-                    "\n"
-                    "(You might need to pass --goto and --no-andor flags as well, "
-                    "to get correct control flow for non-jtbl switch jumps.)"
                 )
 
             jtbl_value = asm_data.values[jtbl_name]

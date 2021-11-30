@@ -20,8 +20,10 @@ from .translate import (
     Expression,
     Formatter,
     FunctionInfo,
+    Literal,
     Statement as TrStatement,
     SwitchControl,
+    early_unwrap_ints,
     format_expr,
     get_block_info,
     simplify_condition,
@@ -35,7 +37,7 @@ class Context:
     fmt: Formatter
     options: Options
     is_void: bool = True
-    switch_nodes: Dict[SwitchNode, int] = field(default_factory=dict)
+    switch_nodes: Dict[Node, int] = field(default_factory=dict)
     case_nodes: Dict[Node, List[Tuple[int, str]]] = field(
         default_factory=lambda: defaultdict(list)
     )
@@ -102,7 +104,9 @@ class SwitchStatement:
         body_is_empty = self.body.is_empty()
         if self.index > 0:
             comments.append(f"switch {self.index}")
-        if not self.jump.jump_table:
+        if self.jump.is_irregular:
+            comments.append("irregular")
+        elif not self.jump.jump_table:
             comments.append("unable to parse jump table")
         elif body_is_empty:
             comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
@@ -349,61 +353,90 @@ def emit_goto(context: Context, target: Node, body: Body) -> None:
 
 
 def add_labels_for_switch(
-    context: Context, node: SwitchNode, default_node: Optional[Node]
+    context: Context,
+    node: Node,
+    cases: List[Tuple[int, Node]],
+    default_node: Optional[Node],
 ) -> int:
-    assert node.cases, "jtbl list must not be empty"
+    assert cases, "jtbl list must not be empty"
     switch_index = context.switch_nodes[node]
 
-    # Determine offset
-    offset = 0
-    switch_control = get_block_info(node).switch_control
-    if isinstance(switch_control, SwitchControl):
-        offset = switch_control.offset
-
     # Force hex for case labels if the highest label is above 50, and there are no negative labels
+    indexes = sorted([i for i, _ in cases])
     use_hex = context.fmt.coding_style.hex_case or (
-        offset >= 0 and (len(node.cases) + offset) > 50
+        min(indexes) >= 0 and max(indexes) > 50
     )
 
     # Mark which labels we need to emit
-    if default_node is not None:
-        # `None` is a sentinel value to mark the `default:` block
-        context.case_nodes[default_node].append((switch_index, "default"))
-    for index, target in enumerate(node.cases):
+    for index, target in cases:
         # Do not emit extra `case N:` labels for the `default:` block
         if target == default_node:
             continue
         # Do not emit labels that skip the switch block entirely
         if target == node.immediate_postdominator:
             continue
-        case_num = index + offset
-        case_label = f"case 0x{case_num:X}" if use_hex else f"case {case_num}"
+        case_label = f"case 0x{index:X}" if use_hex else f"case {index}"
         context.case_nodes[target].append((switch_index, case_label))
+    if default_node is not None:
+        # `None` is a sentinel value to mark the `default:` block
+        context.case_nodes[default_node].append((switch_index, "default"))
 
     return switch_index
 
 
-def is_switch_guard(node: Node) -> bool:
-    """Return True if `node` is a ConditionalNode for checking the bounds of a
-    SwitchNode's control expression. These can usually be combined in the output."""
+def switch_guard_expr(node: Node) -> Optional[Expression]:
+    """
+    Check if `node` is a ConditionalNode for checking the bounds of a SwitchNode's
+    control expression. If it is, return the control expression, otherwise return None.
+    ConditionalNodes matching this pattern can usually be combined with the successor
+    SwitchNode in the output.
+    """
     if not isinstance(node, ConditionalNode):
-        return False
+        return None
     cond = get_block_info(node).branch_condition
     assert cond is not None
 
     switch_node = node.fallthrough_edge
     if not isinstance(switch_node, SwitchNode):
-        return False
+        return None
     switch_block_info = get_block_info(switch_node)
     assert switch_block_info.switch_control is not None
 
     # The SwitchNode must have no statements, and the conditional
     # from the ConditionalNode must properly check the jump table bounds.
-    return (
+    if (
         switch_node.parents == [node]
         and not switch_block_info.statements_to_write()
         and switch_block_info.switch_control.matches_guard_condition(cond)
-    )
+    ):
+        return switch_block_info.switch_control.control_expr
+    return None
+
+
+def is_empty_goto(node: Node, end: Node) -> bool:
+    """Return True if `node` represents a jump to `end` without any other statements"""
+    seen_nodes = {node}
+    while True:
+        if node == end:
+            return True
+        block_info = get_block_info(node)
+        if block_info.statements_to_write():
+            return False
+        if (
+            isinstance(node, ReturnNode)
+            and isinstance(end, TerminalNode)
+            and block_info.return_value is None
+        ):
+            # An empty return counts as a jump to the TerminalNode
+            return True
+        elif isinstance(node, BasicNode):
+            node = node.successor
+            if node in seen_nodes:
+                return False
+            seen_nodes.add(node)
+        else:
+            return False
+    return False
 
 
 def gather_any_comma_conditions(block_info: BlockInfo) -> Condition:
@@ -570,6 +603,211 @@ def try_make_if_condition(
     return (cond, if_node, else_node)
 
 
+def try_build_irregular_switch(
+    context: Context, start: Node, end: Node
+) -> Optional[SwitchStatement]:
+    """
+    Look for irregular switch-like structures from nested ConditionalNodes & SwitchNodes.
+    If one is found, return the corresponding SwitchStatement; otherwise, return None.
+
+    Both IDO & GCC can convert switch statements into a tree of comparisons & jump tables.
+    We try to identify the largest contiguous tree of ConditionalNodes & SwitchNodes that
+    all compare the same variable (`var_expr`). SwitchNodes and `(x == N)` ConditionalNodes
+    represent jumps to specific case labels, whereas comparisons like `(x < N)` are
+    primarily used to manage the overall tree depth.
+    """
+    # The start node must either be an if
+    if not isinstance(start, ConditionalNode):
+        return None
+
+    assert end in start.postdominators
+    start_block_info = get_block_info(start)
+    control_expr = switch_guard_expr(start)
+    var_expr: Optional[Expression] = None
+
+    # Try to extract the switch's control expression
+    if control_expr is not None:
+        # `if (x >= len(jump_table))`: var_expr is `x`
+        var_expr = control_expr
+    elif start_block_info.branch_condition is not None:
+        start_cond = simplify_condition(start_block_info.branch_condition)
+        if (
+            start_cond is not None
+            and isinstance(start_cond, BinaryOp)
+            and isinstance(start_cond.right, Literal)
+        ):
+            # `if (x == N)`: var_expr is `x`
+            # The `start_cond.op` is checked in the first iter of the while loop below
+            var_expr = start_cond.left
+    if var_expr is None:
+        return None
+
+    # Unwrap EvalOnceExpr's and Cast's; ops like `<=` always include an `(s32)` cast
+    uw_var_expr = early_unwrap_ints(var_expr)
+    # Nodes we need to visit, initially just the `start` node
+    node_queue: List[Node] = [start]
+    # Nodes we have already visited, to avoid infinite loops
+    visited_nodes: Set[Node] = set()
+    # Nodes that have no statements, and should be marked as emitted if we emit a SwitchStatement.
+    # A ConditionalNode like `if (x == N)` isn't directly emitted; it's replaced by a `case N:` label
+    # This also includes empty BasicNodes & ReturnNodes that jump directly to the end
+    nodes_to_mark_emitted: Set[Node] = set()
+    # Map of label -> node. Similar to SwitchNode.cases, but the labels may not be contiguous
+    cases: Dict[int, Node] = {}
+    # The `default:`-labeled node, if found
+    default_node: Optional[Node] = None
+    # Number of "irregular" comparison nodes used (SwitchNodes & ConditionalNodes that aren't guards)
+    irregular_comparison_count = 0
+
+    while node_queue:
+        node = node_queue.pop()
+        if node in visited_nodes or node == end or node == default_node:
+            continue
+        visited_nodes.add(node)
+        block_info = get_block_info(node)
+
+        if node != start and block_info.statements_to_write():
+            # Unless the node is the start node, it cannot have any statements to write
+            pass
+
+        elif is_empty_goto(node, end):
+            # Empty returns/gotos are special cases: the compiler may have folded
+            # this node together with one outside the original interval. So, this node
+            # may fail the `start not in node.dominators` check below.
+            # Otherwise, treat these like empty BasicNodes.
+            nodes_to_mark_emitted.add(node)
+            if isinstance(node, BasicNode):
+                node_queue.append(node.successor)
+            continue
+
+        elif start not in node.dominators or end not in node.postdominators:
+            # The node must be within the [start, end] interval
+            pass
+
+        elif isinstance(node, BasicNode):
+            # This node has no statements, so it is just a goto
+            nodes_to_mark_emitted.add(node)
+            node_queue.append(node.successor)
+            continue
+
+        elif isinstance(node, ConditionalNode):
+            # If this is a "switch guard" `if` statement, continue iterating on both branches
+            control_expr = switch_guard_expr(node)
+            if (
+                control_expr is not None
+                and early_unwrap_ints(control_expr) == uw_var_expr
+            ):
+                node_queue.append(node.fallthrough_edge)
+                node_queue.append(node.conditional_edge)
+                nodes_to_mark_emitted.add(node)
+                continue
+
+            # Check if the branch_condition is a comparison between var_expr and a Literal
+            assert block_info.branch_condition is not None
+            cond = simplify_condition(block_info.branch_condition)
+            if (
+                isinstance(cond, BinaryOp)
+                and isinstance(cond.right, Literal)
+                and early_unwrap_ints(cond.left) == uw_var_expr
+            ):
+                # IDO typically uses `x == N` and `x < N` patterns in these if trees, but it
+                # will use `x != N` when it needs to jump backwards to an already-emitted block.
+                # GCC will more freely use either `x == N` or `x != N`.
+                # Examples from PM: func_8026E558, pr_load_npc_extra_anims
+                if cond.op == "==":
+                    if cond.right.value in cases:
+                        return None
+                    cases[cond.right.value] = node.conditional_edge
+                    node_queue.append(node.fallthrough_edge)
+                elif cond.op == "!=" and (
+                    node.block.index > node.conditional_edge.block.index
+                    or context.options.compiler == context.options.CompilerEnum.GCC
+                ):
+                    if cond.right.value in cases:
+                        return None
+                    cases[cond.right.value] = node.fallthrough_edge
+                    node_queue.append(node.conditional_edge)
+                elif cond.op in ("<", "<=", ">=", ">"):
+                    # TODO: GCC (maybe?) can emit a series of `<`/`>=` comparisons that limit
+                    # to a specific case. Ex: `x < 9 && x >= 8` is only true for `x == 8`.
+                    # Detecting these would require tracking & checking all of the bounds.
+                    # Without bounds tracking for now, assume that all branches are reachable
+                    # and that every case label will have an exact equality check.
+                    # See PM: func_802403D4_97BA04
+                    node_queue.append(node.fallthrough_edge)
+                    node_queue.append(node.conditional_edge)
+                else:
+                    return None
+                irregular_comparison_count += 1
+                nodes_to_mark_emitted.add(node)
+                continue
+
+        elif isinstance(node, SwitchNode):
+            # The switch must use the same control expression
+            if block_info.switch_control is None:
+                return None
+            if early_unwrap_ints(block_info.switch_control.control_expr) != uw_var_expr:
+                return None
+            # Add the cases from the inner switch to our dict of cases
+            for i, case in enumerate(
+                node.cases, start=block_info.switch_control.offset
+            ):
+                if i in cases:
+                    return None
+                cases[i] = case
+            nodes_to_mark_emitted.add(node)
+            irregular_comparison_count += 1
+            continue
+
+        # If we've gotten here, then the node is not a valid jump target for the switch,
+        # unless it could be the `default:`-labeled node.
+        if default_node is not None:
+            return None
+        if isinstance(node, ReturnNode) or (
+            start in node.dominators and end in node.postdominators
+        ):
+            default_node = node
+
+    # Need at least two irregular comparisons (to skip the regular ConditionalNode guard + SwitchNode pairs)
+    # Need to combine at least 3 nodes into 2 distinct cases, otherwise it could be a plain if/else with ||
+    if (
+        irregular_comparison_count < 2
+        or len(nodes_to_mark_emitted) < 3
+        or len(set(cases.values())) < 2
+    ):
+        return None
+
+    # If this new irregular switch uses all of the other switch nodes in the function,
+    # then we no longer need to add labelling comments with the switch_index
+    for n in nodes_to_mark_emitted:
+        context.switch_nodes.pop(n, None)
+    if context.switch_nodes:
+        switch_index = max(context.switch_nodes.values()) + 1
+    else:
+        switch_index = 0
+    context.switch_nodes[start] = switch_index
+
+    add_labels_for_switch(
+        context,
+        start,
+        cases=list(cases.items()),
+        default_node=default_node,
+    )
+
+    case_nodes = list(cases.values())
+    if default_node is not None:
+        case_nodes.append(default_node)
+    switch = build_switch_statement(
+        context,
+        SwitchControl.irregular_from_expr(var_expr),
+        case_nodes,
+        switch_index,
+        end,
+    )
+    context.emitted_nodes |= nodes_to_mark_emitted
+    return switch
+
+
 def build_conditional_subgraph(
     context: Context, start: ConditionalNode, end: Node
 ) -> IfElseStatement:
@@ -593,7 +831,6 @@ def build_conditional_subgraph(
     ConditionNode the `if_node` (unless it is empty). By construction, it will be
     an earlier node than the `else_node`.
     """
-
     # Find the longest fallthrough chain of ConditionalNodes.
     # This is the starting point for finding the complex &&/|| Condition
     # The conditional edges will be checked in later step
@@ -617,7 +854,7 @@ def build_conditional_subgraph(
             # Exclude nodes with incoming edges that are not part of the condition
             and all(p in chained_cond_nodes for p in curr_node.parents)
             # Exclude guards for SwitchNodes (they may be elided)
-            and not is_switch_guard(curr_node)
+            and not switch_guard_expr(curr_node)
         ):
             break
 
@@ -663,33 +900,24 @@ def emit_return(context: Context, node: ReturnNode, body: Body) -> None:
         body.add_statement(SimpleStatement("return;", is_jump=True))
 
 
-def build_switch_between(
+def build_switch_statement(
     context: Context,
-    switch: SwitchNode,
-    default: Optional[Node],
+    jump: SwitchControl,
+    case_nodes: List[Node],
+    switch_index: int,
     end: Node,
 ) -> SwitchStatement:
     """
-    Output the subgraph between `switch` and `end`, but not including `end`.
-    The returned SwitchStatement starts with the jump to the switch's value.
+    This is a helper function for building both regular & irregular switch bodies.
+    It returns a SwitchStatement with the body populated with the given set of nodes.
+    The nodes must already be labeled with `add_labels_for_switch` before calling this.
     """
-    switch_cases = switch.cases[:]
-    if default is end:
-        default = None
-    elif default is not None:
-        switch_cases.append(default)
-
-    switch_index = add_labels_for_switch(context, switch, default)
-
-    jump = get_block_info(switch).switch_control
-    assert jump is not None
-
     switch_body = Body(print_node_comment=context.options.debug)
 
     # Order case blocks by their position in the asm, not by their order in the jump table
     # (but use the order in the jump table to break ties)
     sorted_cases = sorted(
-        set(switch_cases), key=lambda node: (node.block.index, switch_cases.index(node))
+        set(case_nodes), key=lambda node: (node.block.index, case_nodes.index(node))
     )
     next_sorted_cases: List[Optional[Node]] = []
     next_sorted_cases.extend(sorted_cases[1:])
@@ -711,6 +939,36 @@ def build_switch_between(
             if not switch_body.ends_in_jump():
                 switch_body.add_statement(SimpleStatement("break;", is_jump=True))
     return SwitchStatement(jump, switch_body, switch_index)
+
+
+def build_switch_between(
+    context: Context,
+    switch: SwitchNode,
+    default: Optional[Node],
+    end: Node,
+) -> SwitchStatement:
+    """
+    Output the subgraph between `switch` and `end`, but not including `end`.
+    The returned SwitchStatement starts with the jump to the switch's value.
+    This is only used for single jump table switches; not irregular switches.
+    """
+    switch_cases = switch.cases[:]
+    if default is end:
+        default = None
+    elif default is not None:
+        switch_cases.append(default)
+
+    jump = get_block_info(switch).switch_control
+    assert jump is not None
+
+    switch_index = add_labels_for_switch(
+        context,
+        switch,
+        cases=list(enumerate(switch.cases, start=jump.offset)),
+        default_node=default,
+    )
+
+    return build_switch_statement(context, jump, switch_cases, switch_index, end)
 
 
 def detect_loop(context: Context, start: Node, end: Node) -> Optional[DoWhileLoop]:
@@ -786,6 +1044,13 @@ def build_flowgraph_between(
                 curr_start = imm_pdom
                 continue
 
+        # If the current node has already been emitted and is equivalent to
+        # goto'ing the end node, we don't need to emit anything else. This
+        # avoids jumping to an empty node (or another jump) at the end of a
+        # block, like `{ block_N: break; ... goto block_N; }`
+        if curr_start in context.emitted_nodes and is_empty_goto(curr_start, end):
+            break
+
         # Write the current node, or a goto, to the body
         if not emit_node(context, curr_start, body):
             # If the node was already witten, emit_node will use a goto
@@ -812,16 +1077,25 @@ def build_flowgraph_between(
         assert curr_end is not None
 
         # For nodes with branches, curr_end is not a direct successor of curr_start
-        if is_switch_guard(curr_start):
+
+        irregular_switch: Optional[SwitchStatement] = None
+        if context.options.switch_detection:
+            irregular_switch = try_build_irregular_switch(context, curr_start, curr_end)
+
+        if irregular_switch is not None:
+            body.add_switch(irregular_switch)
+        elif switch_guard_expr(curr_start) is not None:
             # curr_start is a ConditionalNode that falls through to a SwitchNode,
             # where the condition checks that the switch's control expression is
             # within the jump table bounds.
             # We can combine the if+switch into just a single switch block.
-            assert isinstance(curr_start, ConditionalNode), "checked by is_switch_guard"
+            assert isinstance(
+                curr_start, ConditionalNode
+            ), "checked by switch_guard_expr"
             switch_node = curr_start.fallthrough_edge
-            assert isinstance(switch_node, SwitchNode), "checked by is_switch_guard"
+            assert isinstance(switch_node, SwitchNode), "checked by switch_guard_expr"
             default_node = curr_start.conditional_edge
-            # is_switch_guard checked that switch_node has no statements to write,
+            # switch_guard_expr checked that switch_node has no statements to write,
             # so it is OK to mark it as emitted
             context.emitted_nodes.add(switch_node)
             if curr_end is switch_node:
@@ -885,10 +1159,15 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             emit_node(context, node, body)
             emit_successor(node.successor, i)
         elif isinstance(node, SwitchNode):
-            index = add_labels_for_switch(context, node, None)
-            emit_node(context, node, body)
             jump = get_block_info(node).switch_control
             assert jump is not None
+            index = add_labels_for_switch(
+                context,
+                node,
+                cases=list(enumerate(node.cases, start=jump.offset)),
+                default_node=None,
+            )
+            emit_node(context, node, body)
             body.add_switch(
                 SwitchStatement(
                     jump=jump,

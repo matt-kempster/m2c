@@ -39,7 +39,6 @@ void test(s32 arg0) {
             return;
         }
         D_4101D0 = 2;
-        /* Duplicate return node #14. Try simplifying control flow for better match */
-        return;
+        break;
     }
 }

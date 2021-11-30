@@ -1595,6 +1595,7 @@ class SwitchControl:
     control_expr: Expression
     jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
+    is_irregular: bool = False
 
     def matches_guard_condition(self, cond: Condition) -> bool:
         """
@@ -1636,6 +1637,20 @@ class SwitchControl:
             isinstance(e, str) for e in self.jump_table.asm_data_entry.data
         )
         return right_expr == Literal(jump_table_len)
+
+    @staticmethod
+    def irregular_from_expr(control_expr: Expression) -> "SwitchControl":
+        """
+        Return a SwitchControl representing a "irregular" switch statement.
+        The switch does not have a single jump table; instead it is a series of
+        if statements & other switches.
+        """
+        return SwitchControl(
+            control_expr=control_expr,
+            jump_table=None,
+            offset=0,
+            is_irregular=True,
+        )
 
     @staticmethod
     def from_expr(expr: Expression) -> "SwitchControl":
@@ -2156,6 +2171,17 @@ def simplify_condition(expr: Expression) -> Expression:
                 return simplify_condition(left.negated())
             if expr.op == "!=":
                 return left
+        if (
+            expr.is_comparison()
+            and isinstance(left, Literal)
+            and not isinstance(right, Literal)
+        ):
+            return BinaryOp(
+                left=right,
+                op=expr.op.translate(str.maketrans("<>", "><")),
+                right=left,
+                type=expr.type,
+            )
         return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
     return expr
 
