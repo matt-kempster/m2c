@@ -1,11 +1,18 @@
-# mips_to_c
+# `mips_to_c`
 Given some MIPS assembly, this program will attempt to convert it to C.
-The goal is that eventually the output will be well-formed C, and eventually after that, byte-equivalent C.
 
-Right now the decompiler is fairly functional, though it sometimes generates suboptimal code
-(especially for loops). See the `tests/` directory for some example input and output.
+The goal of this project is to support decompilation projects, which aim to write C code that yields byte-identical output when compiled with a particular build system.
+It primarily focuses on supporting popular compilers of the late 1990's.
+However, it may also work with other compilers or hand-written assembly.
 
-An online version is available at https://simonsoftware.se/other/mips_to_c.py.
+The focus of `mips_to_c` is to aid in the process of producing "matching" C source files.
+This differentiates it from other decompilation suites, such as IDA or Ghidra.
+Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
+
+The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
+See the `tests/` directory for some example input and output.
+
+[An online version is also available](https://simonsoftware.se/other/mips_to_c.py).
 
 ## Install
 
@@ -206,6 +213,7 @@ Note: `--valid-syntax` is used to produce output that is less human-readable, bu
 There are several options to `mips_to_c` which can be used to troubleshoot poor results. Many of these options produce more "primitive" output or debugging information.
 
 - `--no-andor` ("Disable &&/||"): Disable complex conditional detection, such as `if (a && b)`. Instead, emit each part of the conditional as a separate `if` statement. Ands, ors, nots, etc. are usually represented with `goto`s.
+- `--no-switches` ("Disable irregular switch detection"): Disable "irregular" `switch` statements, where the compiler emits a single `switch` as a series of branches and/or jump tables. By default, these are coalesced into a single `switch` and marked with an `/* irregular */` comment.
 - `--gotos-only` ("Use gotos for everything"): Do not detect loops or complex conditionals. This format is close to a 1-1 translation of the assembly.
     - Note: to use a goto for a single branch, don't use this flag, but add `# GOTO` to the assembly input.
 - `--debug` ("Debug info"): include debug information inline with the code, such as basic block boundaries & labels.
@@ -227,15 +235,15 @@ python3 ./mips_to_c.py --visualize --context ctx.c -f my_fn my_asm.s > my_fn.svg
 
 There is much low-hanging fruit still. Take a look at the issues if you want to help out.
 
-We use `black` to auto-format our code. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
+We use `black` to auto-format our code and `mypy` for type checking. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
 ```bash
-pip install pre-commit black
+pip install pre-commit black mypy
 pre-commit install
 ```
 
 Your commits will then be automatically formatted per commit. You can also manually run `black` on the command-line.
 
-Type annotations are used for all Python code. `mypy mips_to_c.py` should pass without any errors.
+Type annotations are used for all Python code. `mypy` should pass without any errors.
 
 To get pretty graph visualizations, install `graphviz` using `pip` and globally on your system (e.g. `sudo apt install graphviz`), and pass the `--visualize` flag.
 
