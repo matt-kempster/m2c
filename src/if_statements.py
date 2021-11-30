@@ -104,7 +104,7 @@ class SwitchStatement:
         body_is_empty = self.body.is_empty()
         if self.index > 0:
             comments.append(f"switch {self.index}")
-        if self.jump.is_implicit:
+        if self.jump.is_irregular:
             comments.append("implicit")
         elif not self.jump.jump_table:
             comments.append("unable to parse jump table")
@@ -433,6 +433,7 @@ def is_empty_goto(node: Node, end: Node) -> bool:
             node = node.successor
             if node in seen_nodes:
                 return False
+            seen_nodes.add(node)
         else:
             return False
     return False
@@ -602,11 +603,11 @@ def try_make_if_condition(
     return (cond, if_node, else_node)
 
 
-def try_build_implicit_switch(
+def try_build_irregular_switch(
     context: Context, start: Node, end: Node
 ) -> Optional[SwitchStatement]:
     """
-    Look for implicit switch-like structures from nested ConditionalNodes & SwitchNodes.
+    Look for irregular switch-like structures from nested ConditionalNodes & SwitchNodes.
     If one is found, return the corresponding SwitchStatement; otherwise, return None.
 
     Both IDO & GCC can convert switch statements into a tree of comparisons & jump tables.
@@ -616,7 +617,7 @@ def try_build_implicit_switch(
     primarily used to manage the overall tree depth.
     """
     # The start node must either be an if or a switch
-    if not isinstance(start, (ConditionalNode, SwitchNode)):
+    if not isinstance(start, ConditionalNode):
         return None
 
     assert end in start.postdominators
@@ -778,7 +779,7 @@ def try_build_implicit_switch(
     ):
         return None
 
-    # If this new implicit switch uses all of the other switch nodes in the function,
+    # If this new irregular switch uses all of the other switch nodes in the function,
     # then we no longer need to add labelling comments with the switch_index
     for n in nodes_to_mark_emitted:
         context.switch_nodes.pop(n, None)
@@ -800,7 +801,7 @@ def try_build_implicit_switch(
         case_nodes.append(default_node)
     switch = build_switch_statement(
         context,
-        SwitchControl.implicit_from_expr(var_expr),
+        SwitchControl.irregular_from_expr(var_expr),
         case_nodes,
         switch_index,
         end,
@@ -908,6 +909,11 @@ def build_switch_statement(
     switch_index: int,
     end: Node,
 ) -> SwitchStatement:
+    """
+    This is a helper function for building both regular & irregular switch bodies.
+    It returns a SwitchStatement with the body populated with the given set of nodes.
+    The nodes must already be labeled with `add_labels_for_switch` before calling this.
+    """
     switch_body = Body(print_node_comment=context.options.debug)
 
     # Order case blocks by their position in the asm, not by their order in the jump table
@@ -946,6 +952,7 @@ def build_switch_between(
     """
     Output the subgraph between `switch` and `end`, but not including `end`.
     The returned SwitchStatement starts with the jump to the switch's value.
+    This is only used for single jump table switches; not irregular switches.
     """
     switch_cases = switch.cases[:]
     if default is end:
@@ -1040,7 +1047,6 @@ def build_flowgraph_between(
                 continue
 
         if curr_start in context.emitted_nodes and is_empty_goto(curr_start, end):
-            context.emitted_nodes.add(curr_start)
             break
 
         # Write the current node, or a goto, to the body
@@ -1070,12 +1076,12 @@ def build_flowgraph_between(
 
         # For nodes with branches, curr_end is not a direct successor of curr_start
 
-        implicit_switch: Optional[SwitchStatement] = None
+        irregular_switch: Optional[SwitchStatement] = None
         if context.options.switch_detection:
-            implicit_switch = try_build_implicit_switch(context, curr_start, curr_end)
+            irregular_switch = try_build_irregular_switch(context, curr_start, curr_end)
 
-        if implicit_switch is not None:
-            body.add_switch(implicit_switch)
+        if irregular_switch is not None:
+            body.add_switch(irregular_switch)
         elif switch_guard_expr(curr_start) is not None:
             # curr_start is a ConditionalNode that falls through to a SwitchNode,
             # where the condition checks that the switch's control expression is
