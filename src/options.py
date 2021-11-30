@@ -63,7 +63,7 @@ class Options:
     valid_syntax: bool
     global_decls: GlobalDeclsEnum
     compiler: CompilerEnum
-    structs: bool
+    print_stack_structs: bool
     struct_field_inference: bool
     passes: int
 

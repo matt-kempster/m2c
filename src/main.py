@@ -165,10 +165,11 @@ def run(options: Options) -> int:
             print(visualize_flowgraph(fn_info.flow_graph))
             return 0
 
-        if options.structs:
-            type_decls = typepool.format_type_declarations(fmt)
-            if type_decls:
-                print(type_decls)
+        type_decls = typepool.format_type_declarations(
+            fmt, stack_structs=options.print_stack_structs
+        )
+        if type_decls:
+            print(type_decls)
 
         global_decls = global_info.global_decls(
             fmt,
@@ -285,12 +286,13 @@ def parse_flags(flags: List[str]) -> Options:
         '"none" does not emit any global declarations. ',
     )
     group.add_argument(
-        "--structs",
-        dest="structs",
+        "--stack-structs",
+        dest="print_stack_structs",
         action="store_true",
-        help="Perform type inference on unknown struct fields, and include struct declarations "
-        "representing each function's stack in the output. These can be modified and passed back "
-        "to mips_to_c via --context to improve the output.",
+        help=(
+            "Include template structs for each function's stack. These can be modified and passed back "
+            "into mips_to_c with --context to set the types & names of stack vars."
+        ),
     )
     group.add_argument(
         "--debug",
@@ -449,9 +451,12 @@ def parse_flags(flags: List[str]) -> Options:
     )
     group.add_argument(
         "--no-struct-inference",
-        dest="no_struct_inference",
-        action="store_true",
-        help=argparse.SUPPRESS,
+        dest="struct_inference",
+        action="store_false",
+        help=(
+            "Disable type inference on unknown struct fields. "
+            "See the README for more information on struct inference."
+        ),
     )
     group.add_argument(
         "--reg-vars",
@@ -475,6 +480,12 @@ def parse_flags(flags: List[str]) -> Options:
         dest="pdb_translate",
         action="store_true",
         help=argparse.SUPPRESS,
+    )
+    group.add_argument(
+        "--structs",
+        dest="structs_compat",
+        action="store_true",
+        help=argparse.SUPPRESS,  # For backwards compatibility; now enabled by default
     )
 
     args = parser.parse_args(flags)
@@ -540,8 +551,8 @@ def parse_flags(flags: List[str]) -> Options:
         valid_syntax=args.valid_syntax,
         global_decls=args.global_decls,
         compiler=args.compiler,
-        structs=args.structs,
-        struct_field_inference=args.structs and not args.no_struct_inference,
+        print_stack_structs=args.print_stack_structs,
+        struct_field_inference=args.struct_inference,
         passes=args.passes,
     )
 

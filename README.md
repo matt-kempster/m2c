@@ -63,6 +63,20 @@ This feature is controlled with the `--globals` option (or "Global declarations"
 - `--globals=none` disables globals entirely; only function definitions are emitted.
 - `--globals=all` includes all of the output in `used`, but also includes initializers for unreferenced symbols. This can be used to convert data/rodata files without decompiling any functions.
 
+### Struct Field Inference
+
+By default, `mips_to_c` can use type information from decompiled functions to help fill in unknown struct fields.
+This behavior can be disabled with `--no-struct-inference`.
+
+For structs in the context, the following fields treated as "unknown" space that can be inferred:
+
+- `char` arrays with a name starting with `unk_`, e.g. `char unk_10[4];`
+- any field with a type that starts with `UNK_` or `MIPS2C_UNK`, e.g. `UNK_TYPE4 foo;`
+
+Currently, struct field inference only works on structs without bitfields or [unnamed union fields](https://gcc.gnu.org/onlinedocs/gcc/Unnamed-Fields.html).
+
+The output will include declarations for any struct with at least one inferred field.
+
 ### Specifying stack variables
 
 By default, `mips_to_c` infers the types of stack (local) variables, and names them with the `sp` prefix based on their offset.
@@ -70,16 +84,16 @@ By default, `mips_to_c` infers the types of stack (local) variables, and names t
 Internally, the stack is represented as a struct, so it is possible to manually specify the names & types of stack variables by providing a struct declaration in the context. `mips_to_c` looks in the context for a struct with the tag name `_mips2c_stack_<function name>` (e.g. `struct _mips2c_stack_test` for a function `test()`).
 
 The size of the stack must exactly match the detected frame size, or `mips_to_c` will return an error.
-If you run `mips_to_c` with the `--structs` option, the output will include the inferred stack declaration, which can then be edited and provided as context by re-running `mips_to_c`.
+If you run `mips_to_c` with the `--stack-structs` option ("Stack struct templates" on the website), the output will include the inferred stack declaration, which can then be edited and provided as context by re-running `mips_to_c`.
 
 #### Example
 
 Here is an example for specifying the stack for the `custom_stack` end-to-end test.
 
-First, run `mips_to_c` with the `--struct` option to get the inferred struct for the `test()` function:
+First, run `mips_to_c` with the `--stack-structs` option to get the inferred struct for the `test()` function:
 
 <details>
-    <summary><code>python3 mips_to_c.py tests/end_to_end/custom_stack/irix-o2.s -f test --struct</code></summary>
+    <summary><code>python3 mips_to_c.py tests/end_to_end/custom_stack/irix-o2.s -f test --stack-structs</code></summary>
 
 ```c
 struct _mips2c_stack_test {
@@ -214,6 +228,7 @@ There are several options to `mips_to_c` which can be used to troubleshoot poor 
 
 - `--no-andor` ("Disable &&/||"): Disable complex conditional detection, such as `if (a && b)`. Instead, emit each part of the conditional as a separate `if` statement. Ands, ors, nots, etc. are usually represented with `goto`s.
 - `--no-switches` ("Disable irregular switch detection"): Disable "irregular" `switch` statements, where the compiler emits a single `switch` as a series of branches and/or jump tables. By default, these are coalesced into a single `switch` and marked with an `/* irregular */` comment.
+- `--no-struct-inference` ("Disable struct field inference"): Disable attempting to infer struct fields/types in unknown struct sections. See the [_Struct Field Inference_](#struct-field-inference) section above.
 - `--gotos-only` ("Use gotos for everything"): Do not detect loops or complex conditionals. This format is close to a 1-1 translation of the assembly.
     - Note: to use a goto for a single branch, don't use this flag, but add `# GOTO` to the assembly input.
 - `--debug` ("Debug info"): include debug information inline with the code, such as basic block boundaries & labels.

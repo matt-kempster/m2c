@@ -95,13 +95,16 @@ class TypePool:
             ), f"Duplicate tag: {tag_name}"
             self.structs_by_tag_name[tag_name] = struct
 
-    def format_type_declarations(self, fmt: Formatter) -> str:
+    def format_type_declarations(self, fmt: Formatter, stack_structs: bool) -> str:
         decls = []
         for struct in sorted(
             self.structs, key=lambda s: s.tag_name or s.typedef_name or ""
         ):
-            # Include stack structs & any struct with added fields
-            if struct.is_stack or any(not f.known for f in struct.fields):
+            # Only output stack structs if `stack_structs` is enabled
+            if not stack_structs and struct.is_stack:
+                continue
+            # Include any struct with added fields, plus any stack structs
+            if any(not f.known for f in struct.fields) or struct.is_stack:
                 decls.append(struct.format(fmt) + "\n")
         return "\n".join(decls)
 
