@@ -1,1 +1,1 @@
---valid-syntax
+--valid-syntax --comment-style=none

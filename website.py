@@ -56,7 +56,9 @@ if "source" in form:
         cmd.append("--structs")
 
     comment_style = form.getfirst("comment_style", "multiline")
-    if "oneline" in comment_style:
+    if "none" in comment_style:
+        cmd.append("--comment-style=none")
+    elif "oneline" in comment_style:
         cmd.append("--comment-style=oneline")
     else:
         cmd.append("--comment-style=multiline")
@@ -231,6 +233,7 @@ label {
     <option value="multiline_unaligned">/* ... */, unaligned</option>
     <option value="oneline">// ..., aligned</option>
     <option value="oneline_unaligned">// ..., unaligned</option>
+    <option value="none">no comments</option>
     </select>
     </label>
     <label>Use single var for:

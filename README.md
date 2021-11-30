@@ -195,7 +195,7 @@ The following options control the formatting details of the output, such as brac
 - `--pointer-style` ("`*` to the left")
 - `--unk-underscore`
 - `--hex-case`
-- `--comment-style {multiline,oneline}` ("Comment style")
+- `--comment-style {multiline,oneline,none}` ("Comment style")
 - `--comment-column N` ("Comment style")
 - `--no-casts`
 

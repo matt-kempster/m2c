@@ -361,10 +361,16 @@ def parse_flags(flags: List[str]) -> Options:
     group.add_argument(
         "--comment-style",
         dest="comment_style",
-        choices=["multiline", "oneline"],
+        type=CodingStyle.CommentStyle,
+        choices=list(CodingStyle.CommentStyle),
         default="multiline",
-        help='Comment formatting. "multiline" for C-style `/* ... */`, "oneline" for C++-style `// ...`. '
-        "Default: multiline",
+        help=(
+            "Comment formatting. "
+            '"multiline" for C-style `/* ... */`, '
+            '"oneline" for C++-style `// ...`, '
+            '"none" to disable comments. '
+            "Default: multiline"
+        ),
     )
     group.add_argument(
         "--comment-column",
@@ -484,7 +490,7 @@ def parse_flags(flags: List[str]) -> Options:
         pointer_style_left=args.pointer_style == "left",
         unknown_underscore=args.unknown_underscore,
         hex_case=args.hex_case,
-        oneline_comments=args.comment_style == "oneline",
+        comment_style=args.comment_style,
         comment_column=args.comment_column,
     )
     filenames = args.filename + args.rodata_filenames
