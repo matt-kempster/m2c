@@ -367,19 +367,37 @@ def add_labels_for_switch(
         min(indexes) >= 0 and max(indexes) > 50
     )
 
+    # Keep track of which labels we skipped because they weren't required
+    skipped_labels: List[Tuple[Node, Tuple[int, str]]] = []
+    emitted_label_count = 0
+
     # Mark which labels we need to emit
     for index, target in cases:
-        # Do not emit extra `case N:` labels for the `default:` block
-        if target == default_node:
-            continue
-        # Do not emit labels that skip the switch block entirely
-        if target == node.immediate_postdominator:
-            continue
         case_label = f"case 0x{index:X}" if use_hex else f"case {index}"
-        context.case_nodes[target].append((switch_index, case_label))
+
+        # Do not emit extra `case N:` labels for the `default:` block, skip the
+        # switch block entirely, or are just jumps to these kinds of nodes.
+        if is_empty_goto(target, default_node) or is_empty_goto(
+            target, node.immediate_postdominator
+        ):
+            skipped_labels.append((target, (switch_index, case_label)))
+        else:
+            context.case_nodes[target].append((switch_index, case_label))
+            emitted_label_count += 1
+
     if default_node is not None:
         # `None` is a sentinel value to mark the `default:` block
         context.case_nodes[default_node].append((switch_index, "default"))
+        emitted_label_count += 1
+
+    # If a switch statement only has a few labels, the compiler will prefer to emit
+    # a series of branches instead of using a jump table. It's sometimes possible to
+    # force a jump table by including extra labels, even if they're redundant.
+    # The exact threshold depends on the compiler & exact structure.
+    # These labels may look redundant or be outside of the `switch (...) { ... }` block.
+    if emitted_label_count < 5:
+        for target, label in skipped_labels:
+            context.case_nodes[target].append(label)
 
     return switch_index
 
@@ -413,8 +431,10 @@ def switch_guard_expr(node: Node) -> Optional[Expression]:
     return None
 
 
-def is_empty_goto(node: Node, end: Node) -> bool:
+def is_empty_goto(node: Node, end: Optional[Node]) -> bool:
     """Return True if `node` represents a jump to `end` without any other statements"""
+    if end is None:
+        return False
     seen_nodes = {node}
     while True:
         if node == end:
