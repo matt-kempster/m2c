@@ -8,8 +8,16 @@ s32 func_00400090(s32);                             /* static */
     sp24 = arg0 + arg1;
     sp20 = arg1 + arg2;
     sp1C = arg2 + arg3;
-    if ((sp24 != 0) && (sp20 != 0) && (sp1C != 0) && (sp24 = func_00400090(sp24 + arg0), ((sp24 < 0xB) == 0)) && (sp24 = func_00400090(sp24 + arg1), sp20 = func_00400090(sp20 + arg2), sp1C = func_00400090(sp1C + arg3), (sp24 != 0)) && (sp20 != 0) && (sp1C != 0)) {
-        return 1;
+    if ((sp24 != 0) && (sp20 != 0) && (sp1C != 0)) {
+        sp24 = func_00400090(sp24 + arg0);
+        if (sp24 >= 0xB) {
+            sp24 = func_00400090(sp24 + arg1);
+            sp20 = func_00400090(sp20 + arg2);
+            sp1C = func_00400090(sp1C + arg3);
+            if ((sp24 != 0) && ((sp20 != 0) && (sp1C != 0))) {
+                return 1;
+            }
+        }
     }
     return 0;
 }

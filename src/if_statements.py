@@ -231,17 +231,73 @@ class Body:
     def add_comment(self, contents: str) -> None:
         self.add_statement(SimpleStatement(None, comment=contents))
 
-    def add_if_else(self, if_else: IfElseStatement) -> None:
-        if if_else.if_body.ends_in_jump():
-            # Transform `if (A) { B; return C; } else { D; }`
-            # into `if (A) { B; return C; } D;`,
-            # which reduces indentation to make the output more readable
-            self.statements.append(replace(if_else, else_body=None))
-            if if_else.else_body is not None:
-                self.extend(if_else.else_body)
+    def add_if_else(self, if_else: IfElseStatement, else_jump: bool = False) -> None:
+        if if_else.else_body is not None and not if_else.if_body.ends_in_jump():
+            # Simple case; perform no further rewrites
+            self.statements.append(if_else)
             return
 
-        self.statements.append(if_else)
+        # We now know that we have an IfElseStatement like `if (A) { B; goto C; } else { D; }`
+        # where `D` may be empty. We can rewrite this into `if (A) { B; goto C; } D;`
+        # which reduces indentation to make the output more readable.
+
+        # Additionally, if `A` is a complex condition containing `&&` expressions, we could
+        # expand something like `if (A1 && A2 && A3) { B; goto C; } D;`
+        # into nested if's like `if (A1) { if (A2) { if (A3) { B; goto C; } } } D;`
+        # (This can't be done without additional gotos if there is an explicit `else` block)
+        # We perform this expansion if any of the `A1`, `A2`... subconditions are CommaConditionExprs,
+        # to avoid using the comma operator in conditions.
+
+        # Iterate through the outermost `&&` subconditions in `if_else.condition` like a zipper.
+        # We start with the whole condition in `outer_cond`, and iterate by appending the right
+        # side into `inner_cond`. At the start of each iteration, the whole condition would be
+        # represented by `join_conditions(outer_cond, "&&", inner_cond)` -- unless any conditions
+        # are removed.
+        outer_cond: Condition = if_else.condition
+        inner_cond: Optional[Condition] = None
+        while (
+            isinstance(outer_cond, BinaryOp)
+            and isinstance(outer_cond.left, Condition)
+            and outer_cond.op == "&&"
+            and isinstance(outer_cond.right, Condition)
+        ):
+            # Move the iterator forward. If `outer_cond.right` is a CommaConditionExpr, we'll
+            # deconstruct it in the next step, so only take the conditional component.
+            cond = outer_cond.right
+            append_cond = (
+                cond.condition if isinstance(cond, CommaConditionExpr) else cond
+            )
+            if inner_cond is None:
+                inner_cond = append_cond
+            else:
+                inner_cond = join_conditions(append_cond, "&&", inner_cond)
+
+            # Move `outer_cond` forward
+            outer_cond = outer_cond.left
+
+            if isinstance(cond, CommaConditionExpr):
+                # Split this `if` into two nested `if`s, so that the comma statements can be
+                # moved out of the condition.
+                inner_body = Body(print_node_comment=self.print_node_comment)
+                for stmt in cond.statements:
+                    inner_body.add_statement(SimpleStatement(stmt))
+                inner_body.add_if_else(
+                    IfElseStatement(
+                        condition=inner_cond,
+                        if_body=if_else.if_body,
+                        else_body=None,
+                    )
+                )
+
+                # The conditions at `inner_cond` are now in the inner if statement, so drop
+                # them from the outer condition
+                inner_cond = None
+                if_else = replace(if_else, condition=outer_cond, if_body=inner_body)
+
+        # Append the final outermost `if_else`, moving the `else_body` out of a block (if set)
+        self.statements.append(replace(if_else, else_body=None))
+        if if_else.else_body is not None:
+            self.extend(if_else.else_body)
 
     def add_do_while_loop(self, do_while_loop: DoWhileLoop) -> None:
         self.statements.append(do_while_loop)
@@ -490,9 +546,6 @@ def try_make_if_condition(
 
     This function returns `None` if the topology of `chained_cond_nodes` cannot
     be represented by a single `Condition`.
-
-    It also returns `None` if `cond` has an outermost && expression with a
-    `CommaConditionExpr`: these are better represented as nested if statements.
     """
     start_node = chained_cond_nodes[0]
     if_node = chained_cond_nodes[-1].fallthrough_edge
@@ -609,16 +662,6 @@ def try_make_if_condition(
         cond = cond.negated()
         if_node = else_node
         else_node = None
-
-    # If there is no `else`, then check the conditions in the outermost `&&` expression.
-    # Complex `&&` conditions are better represented with nested ifs.
-    if else_node is None:
-        c: Expression = cond
-        while isinstance(c, BinaryOp) and c.op == "&&":
-            if isinstance(c.right, CommaConditionExpr):
-                # Fail, to try building a shorter conditional expression
-                return None
-            c = c.left
 
     return (cond, if_node, else_node)
 
