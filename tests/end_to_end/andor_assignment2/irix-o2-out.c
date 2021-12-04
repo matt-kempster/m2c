@@ -28,7 +28,7 @@ s32 func_00400090(s32, s32, s32, s32);              /* static */
                     sp1C = temp_a3;
                     sp2C = func_00400090(temp_a0, arg1, temp_a2, temp_a3);
                     sp28 = func_00400090(temp_a3 + arg2);
-                    if ((sp2C != 0) && ((sp28 != 0) && (func_00400090(sp18 + arg3) != 0))) {
+                    if ((sp2C != 0) && (sp28 != 0) && (func_00400090(sp18 + arg3) != 0)) {
                         return 1;
                     }
                 }

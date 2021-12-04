@@ -14,7 +14,7 @@ s32 func_00400090(s32);                             /* static */
             sp24 = func_00400090(sp24 + arg1);
             sp20 = func_00400090(sp20 + arg2);
             sp1C = func_00400090(sp1C + arg3);
-            if ((sp24 != 0) && ((sp20 != 0) && (sp1C != 0))) {
+            if ((sp24 != 0) && (sp20 != 0) && (sp1C != 0)) {
                 return 1;
             }
         }
