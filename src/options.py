@@ -64,7 +64,7 @@ class Options:
     global_decls: GlobalDeclsEnum
     compiler: CompilerEnum
     print_stack_structs: bool
-    struct_field_inference: bool
+    unk_inference: bool
     passes: int
 
     def formatter(self) -> "Formatter":

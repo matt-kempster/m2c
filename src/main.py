@@ -106,7 +106,7 @@ def run(options: Options) -> int:
     function_names = set(all_functions.keys())
     typepool = TypePool(
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
-        struct_field_inference=options.struct_field_inference,
+        unk_inference=options.unk_inference,
     )
     global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
 
@@ -450,12 +450,12 @@ def parse_flags(flags: List[str]) -> Options:
         help="Disable detection of &&/||",
     )
     group.add_argument(
-        "--no-struct-inference",
-        dest="struct_inference",
+        "--no-unk-inference",
+        dest="unk_inference",
         action="store_false",
         help=(
-            "Disable type inference on unknown struct fields. "
-            "See the README for more information on struct inference."
+            "Disable type inference on unknown struct fields & unknown global symbol types. "
+            "See the README for more information on unknown inference."
         ),
     )
     group.add_argument(
@@ -552,7 +552,7 @@ def parse_flags(flags: List[str]) -> Options:
         global_decls=args.global_decls,
         compiler=args.compiler,
         print_stack_structs=args.print_stack_structs,
-        struct_field_inference=args.struct_inference,
+        unk_inference=args.unk_inference,
         passes=args.passes,
     )
 

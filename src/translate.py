@@ -1244,7 +1244,7 @@ class StructAccess(Expression):
                 not self.stack_info.has_nonzero_access(var)
                 and isinstance(var, AddressOf)
                 and isinstance(var.expr, GlobalSymbol)
-                and var.expr.type_in_typemap
+                and var.expr.type_provided
             ):
                 return True
         return False
@@ -1306,7 +1306,8 @@ class GlobalSymbol(Expression):
     symbol_name: str
     type: Type
     asm_data_entry: Optional[AsmDataEntry] = None
-    type_in_typemap: bool = False
+    symbol_in_context: bool = False
+    type_provided: bool = False
     initializer_in_typemap: bool = False
 
     def dependencies(self) -> List[Expression]:
@@ -3022,7 +3023,7 @@ def array_access_from_add(
             inner_type = Type.int_of_size(16)
         elif scale == 4:
             inner_type = Type.reg32(likely_float=False)
-        elif typepool.struct_field_inference and isinstance(uw_base.expr, GlobalSymbol):
+        elif typepool.unk_inference and isinstance(uw_base.expr, GlobalSymbol):
             # Make up a struct with a tag name based on the symbol & struct size.
             # Although `scale = 8` could indicate an array of longs/doubles, it seems more
             # common to be an array of structs.
@@ -4493,11 +4494,13 @@ class GlobalInfo:
             else:
                 ctype = self.typemap.var_types.get(sym_name)
             if ctype is not None:
-                sym.type_in_typemap = True
+                sym.symbol_in_context = True
                 sym.initializer_in_typemap = (
                     sym_name in self.typemap.vars_with_initializers
                 )
                 sym.type.unify(Type.ctype(ctype, self.typemap, self.typepool))
+                if sym_name not in self.typepool.unknown_decls:
+                    sym.type_provided = True
             elif sym_name in self.local_functions:
                 sym.type.unify(Type.function())
 
@@ -4638,7 +4641,7 @@ class GlobalInfo:
                 # Is the label defined in this unit (in the active AsmData file(s))
                 is_in_file = data_entry is not None or name in self.local_functions
                 # Is the label externally visible (mentioned in the context file)
-                is_global = sym.type_in_typemap
+                is_global = sym.symbol_in_context
                 # Is the label a symbol in .rodata?
                 is_const = data_entry is not None and data_entry.is_readonly
 
@@ -4651,7 +4654,7 @@ class GlobalInfo:
                 if self.local_functions == {name}:
                     # Skip the function being decompiled if just a single one
                     continue
-                if not is_in_file and is_global:
+                if not is_in_file and sym.type_provided:
                     # Skip externally-declared symbols that are defined in other files
                     continue
 
@@ -4685,7 +4688,7 @@ class GlobalInfo:
                 # (Otherwise, if the dim is provided by the typemap, we trust it.)
                 element_type, array_dim = sym.type.get_array()
                 is_vla = element_type is not None and array_dim is None
-                if data_entry and (not sym.type_in_typemap or is_vla):
+                if data_entry and (not sym.type_provided or is_vla):
                     # The size of the data entry is uncertain, because of padding
                     # between sections. Generally `(max_data_size - data_size) < 16`.
                     min_data_size, max_data_size = data_entry.size_range_bytes()
@@ -4844,7 +4847,7 @@ def translate_to_ast(
     return_reg: Optional[Register] = None
 
     if not options.void and not return_type.is_void():
-        return_reg = determine_return_register(return_blocks, fn_sym.type_in_typemap)
+        return_reg = determine_return_register(return_blocks, fn_sym.type_provided)
 
     if return_reg is not None:
         for b in return_blocks:
