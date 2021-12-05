@@ -1555,7 +1555,7 @@ class PhiExpr(Expression):
     reg: Register
     node: Node
     type: Type
-    used_phis: List["PhiExpr"]
+    used_phis: List["PhiExpr"] = field(repr=False)
     name: Optional[str] = None
     num_usages: int = 0
     replacement_expr: Optional[Expression] = None
@@ -1568,8 +1568,8 @@ class PhiExpr(Expression):
         return self.name or f"unnamed-phi({self.reg.register_name})"
 
     def use(self, from_phi: Optional["PhiExpr"] = None) -> None:
+        self.mark_needed()
         if self.num_usages == 0:
-            self.used_phis.append(self)
             self.used_by = from_phi
         self.num_usages += 1
         if self.used_by != from_phi:
@@ -1577,21 +1577,30 @@ class PhiExpr(Expression):
         if self.replacement_expr is not None:
             self.replacement_expr.use()
 
-    def propagates_to(self) -> "PhiExpr":
+    def propagates_to(self, seen: Optional[Set["PhiExpr"]] = None) -> "PhiExpr":
         """Compute the phi that stores to this phi should propagate to. This is
         usually the phi itself, but if the phi is only once for the purpose of
         computing another phi, we forward the store there directly. This is
         admittedly a bit sketchy, in case the phi is in scope here and used
         later on... but we have that problem with regular phi assignments as
         well."""
+        if seen is None:
+            seen = set()
+        elif self in seen:
+            return min(seen, key=lambda x: x.node.block.index)
         if self.used_by is None or self.replacement_expr is not None:
             return self
-        return self.used_by.propagates_to()
+        seen.add(self)
+        return self.used_by.propagates_to(seen)
 
     def format(self, fmt: Formatter) -> str:
         if self.replacement_expr:
             return self.replacement_expr.format(fmt)
         return self.get_var_name()
+
+    def mark_needed(self) -> None:
+        if self not in self.used_phis:
+            self.used_phis.append(self)
 
 
 @dataclass
@@ -1735,11 +1744,25 @@ class EvalOnceStmt(Statement):
 class SetPhiStmt(Statement):
     phi: PhiExpr
     expr: Expression
+    used: bool = False
 
     def use(self) -> None:
-        pass
+        if self.phi.num_usages == 0 or self.used:
+            return
+        expr = self.expr
+        if isinstance(expr, Cast):
+            expr = expr.expr
+        if isinstance(expr, PhiExpr):
+            # Explicitly mark how the expression is used if it's a phi,
+            # so we can propagate phi sets (to get rid of temporaries).
+            expr.use(from_phi=self.phi)
+        else:
+            self.expr.use()
+        self.used = True
 
     def should_write(self) -> bool:
+        if self.phi.num_usages == 0:
+            return False
         expr = self.expr
         if isinstance(expr, PhiExpr) and expr.propagates_to() != expr:
             # When we have phi1 = phi2, and phi2 is only used in this place,
@@ -1869,6 +1892,8 @@ class RegInfo:
         if data is None:
             return ErrorExpr(f"Read from unset register {key}")
         ret = data.value
+        if isinstance(ret, PhiExpr):
+            ret.mark_needed()
         data.meta.is_read = True
         if data.meta.inherited:
             self.read_inherited.add(key)
@@ -1902,6 +1927,8 @@ class RegInfo:
 
     def get_raw(self, key: Register) -> Optional[Expression]:
         data = self.contents.get(key)
+        if data and isinstance(data.value, PhiExpr):
+            data.value.mark_needed()
         return data.value if data is not None else None
 
     def get_meta(self, key: Register) -> Optional[RegMeta]:
@@ -3743,7 +3770,6 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
     # appear during iteration, hence the while loop.
     while i < len(used_phis):
         phi = used_phis[i]
-        assert phi.num_usages > 0
         assert len(phi.node.parents) >= 2
 
         # Group parent nodes by the value of their phi register
@@ -3766,26 +3792,24 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # (though it's too late for it to be able to participate in the
             # prevent_later_uses machinery).
             phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
-            for _ in range(phi.num_usages):
-                first_uw.use()
         else:
             for expr, nodes in equivalent_nodes.items():
                 for node in pick_phi_assignment_nodes(phi.reg, nodes, expr):
                     block_info = get_block_info(node)
                     expr = block_info.final_register_states[phi.reg]
-                    if isinstance(expr, PhiExpr):
-                        # Explicitly mark how the expression is used if it's a phi,
-                        # so we can propagate phi sets (to get rid of temporaries).
-                        expr.use(from_phi=phi)
-                    else:
-                        expr.use()
                     typed_expr = as_type(expr, phi.type, silent=True)
                     block_info.to_write.append(SetPhiStmt(phi, typed_expr))
         i += 1
 
+
+def set_phi_names(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
     name_counter: Dict[Register, int] = {}
     for phi in used_phis:
-        if not phi.replacement_expr and phi.propagates_to() == phi:
+        if (
+            not phi.replacement_expr
+            and phi.propagates_to() == phi
+            and phi.num_usages >= 1
+        ):
             counter = name_counter.get(phi.reg, 0) + 1
             name_counter[phi.reg] = counter
             prefix = f"phi_{phi.reg.register_name}"
@@ -4472,6 +4496,23 @@ def mark_usages(stack_info: StackInfo, flow_graph: FlowGraph) -> None:
         if block_info.return_value is not None:
             block_info.return_value.use()
 
+    change = True
+    while change:
+        change = False
+        for node in flow_graph.nodes:
+            if isinstance(node, TerminalNode):
+                continue
+            block_info = get_block_info(node)
+            for stmt in block_info.to_write:
+                if (
+                    isinstance(stmt, SetPhiStmt)
+                    and stmt.phi.num_usages != 0
+                    and not stmt.used
+                ):
+                    stmt.use()
+                    change = True
+                    assert stmt.used
+
 
 def resolve_types_late(stack_info: StackInfo) -> None:
     """
@@ -4900,11 +4941,13 @@ def translate_to_ast(
             if not param.name:
                 param.name = arg.format(Formatter())
 
+    assign_phis(used_phis, stack_info)
+
     # TODO: Right here is where flow_graph/statement transformations could be added
 
     mark_usages(stack_info, flow_graph)
-    assign_phis(used_phis, stack_info)
     resolve_types_late(stack_info)
+    set_phi_names(used_phis, stack_info)
 
     if options.pdb_translate:
         import pdb
