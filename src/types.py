@@ -34,12 +34,13 @@ class TypePool:
     """
 
     unknown_field_prefix: str
-    struct_field_inference: bool
+    unk_inference: bool
     structs: Set["StructDeclaration"] = field(default_factory=set)
     structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
     structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
         default_factory=dict
     )
+    unknown_decls: Dict[str, "Type"] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     def get_struct_for_ctype(
@@ -859,6 +860,24 @@ class Type:
     @staticmethod
     def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> "Type":
         real_ctype = resolve_typedefs(ctype, typemap)
+        if typepool.unk_inference and is_unk_type(ctype, typemap):
+            type = Type.any()
+
+            if isinstance(real_ctype, ca.TypeDecl) and isinstance(
+                real_ctype.type, ca.IdentifierType
+            ):
+                size_bits = primitive_size(real_ctype.type) * 8
+                if size_bits < 32:
+                    # This preserves the size of UNK_TYPE1, UNK_TYPE2
+                    type = Type.int_of_size(size_bits)
+
+            if isinstance(ctype, ca.TypeDecl) and ctype.declname:
+                if ctype.declname in typepool.unknown_decls:
+                    return typepool.unknown_decls[ctype.declname]
+                typepool.unknown_decls[ctype.declname] = type
+
+            return type
+
         if isinstance(real_ctype, ca.ArrayDecl):
             dim = None
             try:
@@ -1278,7 +1297,7 @@ class StructDeclaration:
 
         for offset, fields in sorted(struct_fields.items()):
             for field in fields:
-                if typepool.struct_field_inference and is_unk_type(field.type, typemap):
+                if typepool.unk_inference and is_unk_type(field.type, typemap):
                     continue
                 field_type = Type.ctype(field.type, typemap, typepool)
                 assert field.size == field_type.get_size_bytes(), (
