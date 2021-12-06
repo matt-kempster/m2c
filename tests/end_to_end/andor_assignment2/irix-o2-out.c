@@ -8,7 +8,6 @@ s32 func_00400090(s32, s32, s32, s32);              /* static */
     s32 temp_a0;
     s32 temp_a2;
     s32 temp_a3;
-    s32 temp_a3_2;
     s32 temp_v0;
     s32 temp_v0_2;
     s32 temp_v1;
@@ -23,13 +22,12 @@ s32 func_00400090(s32, s32, s32, s32);              /* static */
                 sp1C = temp_a3;
                 temp_v0_2 = func_00400090(temp_v0 + arg0, temp_a3);
                 temp_a2 = arg2;
-                temp_a3_2 = temp_a3;
                 if (temp_v0_2 >= 0xB) {
                     temp_a0 = temp_v0_2 + arg1;
                     arg2 = temp_a2;
-                    sp1C = temp_a3_2;
-                    sp2C = func_00400090(temp_a0, arg1, temp_a2, temp_a3_2);
-                    sp28 = func_00400090(temp_a3_2 + arg2);
+                    sp1C = temp_a3;
+                    sp2C = func_00400090(temp_a0, arg1, temp_a2, temp_a3);
+                    sp28 = func_00400090(temp_a3 + arg2);
                     if ((sp2C != 0) && (sp28 != 0) && (func_00400090(sp18 + arg3) != 0)) {
                         return 1;
                     }

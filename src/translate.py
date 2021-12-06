@@ -1536,6 +1536,13 @@ class EvalOnceExpr(Expression):
         self.forced_emit = True
 
     def need_decl(self) -> bool:
+        # Even if this is marked as force_emit, if we are just wrapping another
+        # EvalOnceExpr that we can elide the `temp_2 = temp_1` and use `temp_1` instead.
+        if (
+            isinstance(self.wrapped_expr, EvalOnceExpr)
+            and self.wrapped_expr.need_decl()
+        ):
+            return False
         return self.num_usages > 1 and not self.trivial
 
     def format(self, fmt: Formatter) -> str:
@@ -2327,8 +2334,6 @@ def early_unwrap(expr: Expression) -> Expression:
         and not expr.emit_exactly_once
     ):
         return early_unwrap(expr.wrapped_expr)
-    if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
-        return early_unwrap_ints(expr.replacement_expr)
     return expr
 
 
