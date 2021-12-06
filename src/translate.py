@@ -1518,7 +1518,7 @@ class EvalOnceExpr(Expression):
 
     def dependencies(self) -> List[Expression]:
         # (this is a bit iffy since state can change over time, but improves uses_expr)
-        if self.need_decl():
+        if self.need_decl() or self.forced_emit:
             return []
         return [self.wrapped_expr]
 
@@ -1526,19 +1526,14 @@ class EvalOnceExpr(Expression):
         self.num_usages += 1
         if self.trivial or (self.num_usages == 1 and not self.emit_exactly_once):
             self.wrapped_expr.use()
+        if self.forced_emit and self.num_usages == 1:
+            # Mark as used multiple times to force a var
+            self.num_usages = 2
 
     def force(self) -> None:
-        # Transition to non-trivial, and mark as used multiple times to force a var.
-        # TODO: If it was originally trivial, we may previously have marked its
-        # wrappee used multiple times, even though we now know that it should
-        # have been marked just once... We could fix that by moving marking of
-        # trivial EvalOnceExpr's to the very end. At least the consequences of
-        # getting this wrong are pretty mild -- it just causes extraneous var
-        # emission in rare cases.
+        # Transition to non-trivial
         self.trivial = False
         self.forced_emit = True
-        self.use()
-        self.use()
 
     def need_decl(self) -> bool:
         return self.num_usages > 1 and not self.trivial
@@ -2332,6 +2327,8 @@ def early_unwrap(expr: Expression) -> Expression:
         and not expr.emit_exactly_once
     ):
         return early_unwrap(expr.wrapped_expr)
+    if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
+        return early_unwrap_ints(expr.replacement_expr)
     return expr
 
 
@@ -4496,6 +4493,7 @@ def mark_usages(stack_info: StackInfo, flow_graph: FlowGraph) -> None:
         if block_info.return_value is not None:
             block_info.return_value.use()
 
+    # Marking some Expressions as used may have made some phis needed
     change = True
     while change:
         change = False
