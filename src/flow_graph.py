@@ -673,7 +673,8 @@ def build_blocks(
     function: Function, asm_data: AsmData, mips: bool = False
 ) -> List[Block]:
     verify_no_trailing_delay_slot(function)
-    function = normalize_likely_branches(function)
+    if mips:
+        function = normalize_likely_branches(function)
     function = prune_unreferenced_labels(function, asm_data)
     if mips:
         function = simplify_standard_patterns(function)
@@ -691,12 +692,15 @@ def build_blocks(
             block_builder.set_label(item)
             return
 
-        if not item.is_delay_slot_instruction():
+        if mips and not item.is_delay_slot_instruction():
             block_builder.add_instruction(item)
             return
 
         process_after: List[Union[Instruction, Label]] = []
-        next_item = next(body_iter)
+        next_item: Optional[Union[Instruction, Label]] = None
+        if mips:
+            next_item = next(body_iter)
+
         if isinstance(next_item, Label):
             # Delay slot is a jump target, so we need the delay slot
             # instruction to be in two blocks at once... In most cases,
@@ -729,12 +733,13 @@ def build_blocks(
                     ]
                 raise DecompFailure("\n".join(msg))
 
-        if next_item.is_delay_slot_instruction():
+        if next_item is not None and next_item.is_delay_slot_instruction():
             raise DecompFailure(
                 f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
             )
 
         if item.is_branch_likely_instruction():
+            assert next_item is not None
             target = item.get_branch_target()
             branch_likely_counts[target.target] += 1
             index = branch_likely_counts[target.target]
@@ -757,17 +762,23 @@ def build_blocks(
         elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
-            if next_item.args and next_item.args[0] == item.args[0]:
+            if (
+                next_item is not None
+                and next_item.args
+                and next_item.args[0] == item.args[0]
+            ):
                 raise DecompFailure(
                     f"Instruction after {item.mnemonic} clobbers its source\n"
                     "register, which is currently not supported.\n\n"
                     "Try rewriting the assembly to avoid that."
                 )
-            block_builder.add_instruction(next_item)
+            if next_item is not None:
+                block_builder.add_instruction(next_item)
             block_builder.add_instruction(item)
         else:
             block_builder.add_instruction(item)
-            block_builder.add_instruction(next_item)
+            if next_item is not None:
+                block_builder.add_instruction(next_item)
 
         if item.is_jump_instruction():
             # Split blocks at jumps, after the next instruction.
