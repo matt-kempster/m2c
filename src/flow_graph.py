@@ -669,11 +669,14 @@ def simplify_standard_patterns(function: Function) -> Function:
     return new_function
 
 
-def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
+def build_blocks(
+    function: Function, asm_data: AsmData, mips: bool = False
+) -> List[Block]:
     verify_no_trailing_delay_slot(function)
     function = normalize_likely_branches(function)
     function = prune_unreferenced_labels(function, asm_data)
-    function = simplify_standard_patterns(function)
+    if mips:
+        function = simplify_standard_patterns(function)
     function = prune_unreferenced_labels(function, asm_data)
 
     block_builder = BlockBuilder()

@@ -173,8 +173,13 @@ Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
 
-valid_word = string.ascii_letters + string.digits + "_"
+# valid_word = string.ascii_letters + string.digits + "_"
+valid_word = string.ascii_letters + string.digits + "_" + "$"
 valid_number = "-xX" + string.hexdigits
+
+ppc_regs = [
+    *(f"r{i}" for i in range(0, 32)),
+]
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
@@ -214,7 +219,7 @@ def constant_fold(arg: Argument) -> Argument:
 
 
 # Main parser.
-def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
+def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argument]:
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
@@ -227,7 +232,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
         if tok.isspace():
             # Ignore whitespace.
             arg_elems.pop(0)
-        elif tok == "$":
+        elif tok == "$" and mips:
             # Register.
             assert value is None
             arg_elems.pop(0)
@@ -280,12 +285,16 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                 value = constant_fold(rhs)
             else:
                 # Address mode.
-                assert isinstance(rhs, Register)
+                assert isinstance(rhs, Register), breakpoint()
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok in valid_word:
             # Global symbol.
             assert value is None
-            value = AsmGlobalSymbol(parse_word(arg_elems))
+            word = parse_word(arg_elems)
+            if mips or word in ppc_regs:
+                value = Register(word)
+            else:
+                value = AsmGlobalSymbol(word)
         elif tok in ">+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol))
@@ -311,6 +320,18 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
                     value.section_name, value.addend + rhs.value
                 )
             return BinOp(op, value, rhs)
+        elif tok == "@":
+            # A reloc (i.e. (...)@ha or (...)@l).
+            arg_elems.pop(0)
+            reloc_name = parse_word(arg_elems)
+            if reloc_name == "sda21":
+                expect("(")
+                rhs = parse_arg_elems(arg_elems)
+                assert rhs in [Register("r2"), Register("r13")]
+                expect(")")
+            else:
+                assert reloc_name in ("ha", "l")
+            value = None  # TODO
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
 
@@ -345,6 +366,7 @@ class Instruction:
     mnemonic: str
     args: List[Argument]
     meta: InstructionMeta
+    mips: bool = False
 
     @staticmethod
     def derived(
@@ -402,11 +424,9 @@ class Instruction:
         return self.is_branch_instruction() or self.mnemonic == "jr"
 
     def is_delay_slot_instruction(self) -> bool:
-        return self.is_branch_instruction() or self.mnemonic in [
-            "jr",
-            "jal",
-            "jalr",
-        ]
+        return self.mips and (
+            self.is_branch_instruction() or self.mnemonic in ["jr", "jal", "jalr"]
+        )
 
     def __str__(self) -> str:
         args = ", ".join(str(arg) for arg in self.args)
@@ -487,4 +507,5 @@ def parse_instruction(line: str, meta: InstructionMeta) -> Instruction:
         instr = Instruction(mnemonic, args, meta)
         return normalize_instruction(instr)
     except Exception as e:
+        raise e
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
