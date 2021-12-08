@@ -285,7 +285,7 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 value = constant_fold(rhs)
             else:
                 # Address mode.
-                assert isinstance(rhs, Register), breakpoint()
+                assert isinstance(rhs, Register)
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok in valid_word:
             # Global symbol.

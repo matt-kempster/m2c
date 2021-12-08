@@ -56,7 +56,8 @@ COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<
 PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI"}
 
 ARGUMENT_REGS: List[Register] = list(
-    map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
+    # map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
+    map(Register, ["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"])
 )
 
 SIMPLE_TEMP_REGS: List[Register] = list(
@@ -3185,6 +3186,14 @@ class Abi:
     possible_regs: List[Register]
 
 
+def ppc_function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
+    # TODO: Parse function signatures
+    return Abi(
+        arg_slots=[],
+        possible_regs=ARGUMENT_REGS[:],
+    )
+
+
 def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
     """Compute stack positions/registers used by a function according to the o32 ABI,
     based on C type information. Additionally computes a list of registers that might
@@ -3625,8 +3634,8 @@ def output_regs_for_instr(
             if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
     if mnemonic in CASES_FN_CALL:
-        # TODO: PPC
-        return list(map(Register, ["f0", "f1", "v0", "v1"]))
+        # return list(map(Register, ["f0", "f1", "v0", "v1"]))
+        return list(map(Register, ["r3", "r4"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
@@ -3858,7 +3867,8 @@ def determine_return_register(
 
     best_reg: Optional[Register] = None
     best_prio = -1
-    for reg in [Register("v0"), Register("f0")]:
+    # for reg in [Register("v0"), Register("f0")]:
+    for reg in [Register("r3")]:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
         if max_prio == 3:
@@ -4183,26 +4193,31 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     # For varargs, a subset of a0 .. a3 may be used. Don't check
                     # earlier registers for the first member of that subset.
                     pass
-                elif register == Register("f13") or register == Register("f14"):
-                    require = ["f12"]
-                elif register == Register("a1"):
-                    require = ["a0", "f12"]
-                elif register == Register("a2"):
-                    require = ["a1", "f13", "f14"]
-                elif register == Register("a3"):
-                    require = ["a2"]
+                # elif register == Register("f13") or register == Register("f14"):
+                #    require = ["f12"]
+                # elif register == Register("a1"):
+                #    require = ["a0", "f12"]
+                # elif register == Register("a2"):
+                #    require = ["a1", "f13", "f14"]
+                # elif register == Register("a3"):
+                #    require = ["a2"]
+                else:
+                    # PPC is simple; only r3-r10 can be used for arguments
+                    for arg_reg, prev_reg in zip(ARGUMENT_REGS[1:], ARGUMENT_REGS):
+                        if register == arg_reg:
+                            require = [prev_reg.register_name]
                 if require and not any(r in valid_extra_regs for r in require):
                     continue
 
                 valid_extra_regs.add(register.register_name)
 
-                if register == Register("f13"):
-                    # We don't pass in f13 or f15 because they will often only
-                    # contain SecondF64Half(), and otherwise would need to be
-                    # merged with f12/f14 which we don't have logic for right
-                    # now. However, f13 can still matter for whether a2 should
-                    # be passed, and so is kept in possible_regs.
-                    continue
+                # if register == Register("f13"):
+                #    # We don't pass in f13 or f15 because they will often only
+                #    # contain SecondF64Half(), and otherwise would need to be
+                #    # merged with f12/f14 which we don't have logic for right
+                #    # now. However, f13 can still matter for whether a2 should
+                #    # be passed, and so is kept in possible_regs.
+                #    continue
 
                 # Skip registers that are untouched from our initial parameter
                 # list. This is sometimes wrong (can give both false positives
@@ -4268,23 +4283,30 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     )
                     regs.set_with_meta(reg, val, RegMeta(function_return=True))
 
+                # set_return_reg(
+                #    Register("f0"),
+                #    Cast(
+                #        expr=call, reinterpret=True, silent=True, type=Type.floatish()
+                #    ),
+                # )
                 set_return_reg(
-                    Register("f0"),
-                    Cast(
-                        expr=call, reinterpret=True, silent=True, type=Type.floatish()
-                    ),
+                    # Register("v0"),
+                    Register("r3"),
+                    Cast(expr=call, reinterpret=True, silent=True, type=Type.any_reg()),
                 )
                 set_return_reg(
-                    Register("v0"),
-                    Cast(expr=call, reinterpret=True, silent=True, type=Type.intptr()),
-                )
-                set_return_reg(
-                    Register("v1"),
+                    # Register("v1"),
+                    Register("r4"),
                     as_u32(
-                        Cast(expr=call, reinterpret=True, silent=False, type=Type.u64())
+                        Cast(
+                            expr=call,
+                            reinterpret=True,
+                            silent=False,
+                            type=Type.reg64(likely_float=False),
+                        )
                     ),
                 )
-                regs[Register("f1")] = SecondF64Half()
+                # regs[Register("f1")] = SecondF64Half()
 
             has_function_call = True
 
@@ -4800,7 +4822,8 @@ def translate_to_ast(
     stack_info.is_variadic = fn_sig.is_variadic
 
     if fn_sig.params_known:
-        abi = function_abi(fn_sig, for_call=False)
+        # abi = function_abi(fn_sig, for_call=False)
+        abi = ppc_function_abi(fn_sig, for_call=False)
         for slot in abi.arg_slots:
             stack_info.add_known_param(slot.offset, slot.name, slot.type)
             if slot.reg is not None:
@@ -4809,12 +4832,14 @@ def translate_to_ast(
             offset = 4 * int(reg.register_name[1])
             start_regs[reg] = make_arg(offset, Type.any_reg())
     else:
-        start_regs[Register("a0")] = make_arg(0, Type.intptr())
-        start_regs[Register("a1")] = make_arg(4, Type.any_reg())
-        start_regs[Register("a2")] = make_arg(8, Type.any_reg())
-        start_regs[Register("a3")] = make_arg(12, Type.any_reg())
-        start_regs[Register("f12")] = make_arg(0, Type.floatish())
-        start_regs[Register("f14")] = make_arg(4, Type.floatish())
+        # start_regs[Register("a0")] = make_arg(0, Type.intptr())
+        # start_regs[Register("a1")] = make_arg(4, Type.any_reg())
+        # start_regs[Register("a2")] = make_arg(8, Type.any_reg())
+        # start_regs[Register("a3")] = make_arg(12, Type.any_reg())
+        # start_regs[Register("f12")] = make_arg(0, Type.floatish())
+        # start_regs[Register("f14")] = make_arg(4, Type.floatish())
+        for i, reg in enumerate(ARGUMENT_REGS):
+            start_regs[reg] = make_arg(i * 4, Type.any_reg())
 
     if options.reg_vars == ["saved"]:
         reg_vars = SAVED_REGS
@@ -4842,7 +4867,8 @@ def translate_to_ast(
         options,
     )
 
-    for reg in [Register("v0"), Register("f0")]:
+    # for reg in [Register("v0"), Register("f0")]:
+    for reg in [Register("r3")]:
         propagate_register_meta(flow_graph.nodes, reg)
 
     return_reg: Optional[Register] = None
