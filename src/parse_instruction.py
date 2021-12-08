@@ -329,9 +329,11 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 rhs = parse_arg_elems(arg_elems)
                 assert rhs in [Register("r2"), Register("r13")]
                 expect(")")
+                value = None  # TODO
             else:
                 assert reloc_name in ("ha", "l")
-            value = None  # TODO
+                assert value
+                value = Macro(reloc_name, value)
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
 
