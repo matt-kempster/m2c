@@ -1988,6 +1988,12 @@ class InstrArgs:
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
+    def cmp_reg(self, key: str) -> Condition:
+        cond = self.regs[Register(key)]
+        if not isinstance(cond, Condition):
+            cond = BinaryOp.icmp(cond, "!=", Literal(0))
+        return cond
+
     def full_imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_arg(index))
         ret = literal_expr(arg, self.stack_info)
@@ -3280,6 +3286,7 @@ CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
 PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]]
+PPCCmpInstrMap = Dict[str, Callable[[InstrArgs, str], Expression]]
 
 CASES_IGNORE: InstrSet = {
     # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
@@ -3314,12 +3321,17 @@ CASES_BRANCHES: CmpInstrMap = {
     # "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
     # "bgez": lambda a: handle_bgez(a),
     # PPC
-    "ble": lambda a: ErrorExpr("cr0_lt || cr0_eq"),
-    "blt": lambda a: ErrorExpr("cr0_lt"),
-    "beq": lambda a: ErrorExpr("cr0_eq"),
-    "bge": lambda a: ErrorExpr("cr0_gt || cr0_eq"),
-    "bgt": lambda a: ErrorExpr("cr0_gt"),
-    "bne": lambda a: ErrorExpr("!cr0_eq"),
+    # TODO: Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
+    # This assumption may not hold if the bits are modified with instructions like
+    # `crand` which modify individual bits in CR.
+    "beq": lambda a: a.cmp_reg("cr0_eq"),
+    "bge": lambda a: a.cmp_reg("cr0_lt").negated(),
+    "bgt": lambda a: a.cmp_reg("cr0_gt"),
+    "ble": lambda a: a.cmp_reg("cr0_gt").negated(),
+    "blt": lambda a: a.cmp_reg("cr0_lt"),
+    "bne": lambda a: a.cmp_reg("cr0_eq").negated(),
+    "bns": lambda a: a.cmp_reg("cr0_so").negated(),
+    "bso": lambda a: a.cmp_reg("cr0_so"),
 }
 CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
@@ -3623,6 +3635,13 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwr": lambda a: handle_lwr(a),
 }
 
+CASES_PPC_COMPARE: PPCCmpInstrMap = {
+    "cmpw": lambda a, op: BinaryOp.scmp(a.reg(0), op, a.reg(1)),
+    "cmpwi": lambda a, op: BinaryOp.scmp(a.reg(0), op, a.imm(1)),
+    "cmplw": lambda a, op: BinaryOp.ucmp(a.reg(0), op, a.reg(1)),
+    "cmplwi": lambda a, op: BinaryOp.ucmp(a.reg(0), op, a.imm(1)),
+}
+
 
 def output_regs_for_instr(
     instr: Instruction, global_info: "GlobalInfo"
@@ -3655,11 +3674,26 @@ def output_regs_for_instr(
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
-        return reg_at(0)
+        reg = reg_at(0)
+        if mnemonic.endswith("."):
+            return [
+                Register("cr0_lt"),
+                Register("cr0_gt"),
+                Register("cr0_eq"),
+                Register("cr0_so"),
+            ] + reg
+        return reg
     if mnemonic in CASES_FLOAT_COMP:
         return [Register("condition_bit")]
     if mnemonic in CASES_HI_LO:
         return [Register("hi"), Register("lo")]
+    if mnemonic in CASES_PPC_COMPARE:
+        return [
+            Register("cr0_lhs"),
+            Register("cr0_rhs"),
+            Register("cr0_eq"),
+            Register("cr0_so"),
+        ]
     if instr.args and isinstance(instr.args[0], Register):
         return reg_at(0)
     return []
@@ -4348,6 +4382,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg(Register("hi"), hi)
             set_reg(Register("lo"), lo)
 
+        elif mnemonic in CASES_PPC_COMPARE:
+            set_reg(Register("cr0_eq"), CASES_PPC_COMPARE[mnemonic](args, "=="))
+            set_reg(Register("cr0_gt"), CASES_PPC_COMPARE[mnemonic](args, ">"))
+            set_reg(Register("cr0_lt"), CASES_PPC_COMPARE[mnemonic](args, "<"))
+            set_reg(Register("cr0_so"), Literal(0))
+
         elif mnemonic in CASES_NO_DEST:
             stmt = CASES_NO_DEST[mnemonic](args)
             to_write.append(stmt)
@@ -4367,11 +4407,26 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             else:
                 set_reg(target, val)
             mn_parts = mnemonic.split(".")
-            if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
+            if mnemonic.endswith("."):
+                # PPC
+                target_reg = args.reg(0)
+                set_reg(Register("cr0_eq"), BinaryOp.scmp(target_reg, "==", Literal(0)))
+                set_reg(Register("cr0_gt"), BinaryOp.scmp(target_reg, ">", Literal(0)))
+                set_reg(Register("cr0_lt"), BinaryOp.scmp(target_reg, "<", Literal(0)))
+                # TODO
+                set_reg(Register("cr0_so"), ErrorExpr(f"overflow of {target}"))
+
+            elif (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
+            if mnemonic.endswith("."):
+                # PPC; unimplemented instructions that modify CR0
+                set_reg(Register("cr0_eq"), expr)
+                set_reg(Register("cr0_gt"), expr)
+                set_reg(Register("cr0_lt"), expr)
+                set_reg(Register("cr0_so"), expr)
             if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
                 reg = args.reg_ref(0)
                 expr = eval_once(
