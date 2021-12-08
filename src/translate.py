@@ -3158,11 +3158,11 @@ def strip_macros(arg: Argument) -> Argument:
     if isinstance(arg, Macro):
         if arg.macro_name == "hi":
             raise DecompFailure("%hi macro outside of lui")
-        if arg.macro_name != "lo":
+        if arg.macro_name not in ["lo", "l"]:
             raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
         return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
-        if arg.lhs.macro_name != "lo":
+        if arg.lhs.macro_name not in ["lo", "l"]:
             raise DecompFailure(
                 f"Bad linker macro in instruction argument {arg}, expected %lo"
             )
