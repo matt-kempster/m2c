@@ -89,6 +89,16 @@ class Register:
         num = int(self.register_name[1:])
         return Register(f"f{num ^ 1}")
 
+    @staticmethod
+    def sp() -> "Register":
+        # return Register("sp")
+        return Register("r1")
+
+    @staticmethod
+    def ra() -> "Register":
+        # return Register("ra")
+        return Register("lr")
+
     def __str__(self) -> str:
         return f"${self.register_name}"
 
@@ -377,27 +387,30 @@ class Instruction:
         return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
 
     def is_branch_instruction(self) -> bool:
-        return (
-            self.mnemonic
-            in [
-                "j",
-                "b",
-                "beq",
-                "bne",
-                "beqz",
-                "bnez",
-                "bgez",
-                "bgtz",
-                "blez",
-                "bltz",
-                "bc1t",
-                "bc1f",
-            ]
-            or self.is_branch_likely_instruction()
-        )
+        if self.mips:
+            return (
+                self.mnemonic
+                in [
+                    "j",
+                    "b",
+                    "beq",
+                    "bne",
+                    "beqz",
+                    "bnez",
+                    "bgez",
+                    "bgtz",
+                    "blez",
+                    "bltz",
+                    "bc1t",
+                    "bc1f",
+                ]
+                or self.is_branch_likely_instruction()
+            )
+        else:
+            return self.mnemonic in ["b", "ble", "blt", "beq", "bge", "bgt", "bne"]
 
     def is_branch_likely_instruction(self) -> bool:
-        return self.mnemonic in [
+        return self.mips and self.mnemonic in [
             "beql",
             "bnel",
             "beqzl",
@@ -423,12 +436,28 @@ class Instruction:
     def is_jump_instruction(self) -> bool:
         # (we don't treat jal/jalr as jumps, since control flow will return
         # after the call)
-        return self.is_branch_instruction() or self.mnemonic == "jr"
+        return self.is_branch_instruction() or self.mnemonic == (
+            "jr" if self.mips else "blr"
+        )
 
     def is_delay_slot_instruction(self) -> bool:
         return self.mips and (
             self.is_branch_instruction() or self.mnemonic in ["jr", "jal", "jalr"]
         )
+
+    def is_return_instruction(self) -> bool:
+        if self.mips:
+            return self.mnemonic == "jr" and self.args[0] == Register("ra")
+        else:
+            return self.mnemonic == "blr"
+
+    def is_jumptable_instruction(self) -> bool:
+        if self.mips:
+            return self.mnemonic == "jr" and not self.is_return_instruction()
+        else:
+            return self.mnemonic == "b" and not isinstance(
+                self.args[0], AsmGlobalSymbol
+            )
 
     def __str__(self) -> str:
         args = ", ".join(str(arg) for arg in self.args)

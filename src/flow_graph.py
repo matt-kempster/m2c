@@ -790,7 +790,7 @@ def build_blocks(
     for item in body_iter:
         process(item)
 
-    if block_builder.curr_label:
+    if mips and block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
         # anonymous ("jr" instructions create new anonymous blocks, so if it's
         # not we must be missing a "jr $ra").
@@ -1013,12 +1013,12 @@ def build_graph_from_block(
         # - a ConditionalNode.
         jump = jumps[0]
 
-        if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
+        if jump.is_return_instruction():
             new_node = ReturnNode(block, False, index=0, terminal=terminal_node)
             nodes.append(new_node)
             return new_node
 
-        if jump.mnemonic == "jr":
+        if jump.is_jumptable_instruction():
             new_node = SwitchNode(block, False, [])
             nodes.append(new_node)
 

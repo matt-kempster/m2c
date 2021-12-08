@@ -57,26 +57,17 @@ PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI"}
 
 ARGUMENT_REGS: List[Register] = list(
     # map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
-    map(Register, ["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"])
-)
-
-SIMPLE_TEMP_REGS: List[Register] = list(
     map(
         Register,
         [
-            "v0",
-            "v1",
-            "t0",
-            "t1",
-            "t2",
-            "t3",
-            "t4",
-            "t5",
-            "t6",
-            "t7",
-            "t8",
-            "t9",
-            "f0",
+            "r3",
+            "r4",
+            "r5",
+            "r6",
+            "r7",
+            "r8",
+            "r9",
+            "r10",
             "f1",
             "f2",
             "f3",
@@ -88,44 +79,41 @@ SIMPLE_TEMP_REGS: List[Register] = list(
             "f9",
             "f10",
             "f11",
+            "f12",
             "f13",
+        ],
+    )
+)
+
+SIMPLE_TEMP_REGS: List[Register] = list(
+    map(
+        Register,
+        # [ "v0", "v1", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f13", "f15", "f16", "f17", "f18", "f19", ],
+        [
+            "r14",
+            "r15",
+            "r16",
+            "r17",
+            "r18",
+            "r19",
+            "r20",
+            "r21",
+            "r22",
+            "r23",
+            "r24",
+            "r25",
+            "r26",
+            "r27",
+            "r28",
+            "r29",
+            "r30",
+            "r31",
+            "f14",
             "f15",
             "f16",
             "f17",
             "f18",
             "f19",
-        ],
-    )
-)
-
-TEMP_REGS: List[Register] = (
-    ARGUMENT_REGS
-    + SIMPLE_TEMP_REGS
-    + list(
-        map(
-            Register,
-            [
-                "at",
-                "hi",
-                "lo",
-                "condition_bit",
-            ],
-        )
-    )
-)
-
-SAVED_REGS: List[Register] = list(
-    map(
-        Register,
-        [
-            "s0",
-            "s1",
-            "s2",
-            "s3",
-            "s4",
-            "s5",
-            "s6",
-            "s7",
             "f20",
             "f21",
             "f22",
@@ -138,11 +126,29 @@ SAVED_REGS: List[Register] = list(
             "f29",
             "f30",
             "f31",
-            "ra",
-            "31",
-            "fp",
-            "gp",
         ],
+    )
+)
+
+TEMP_REGS: List[Register] = (
+    ARGUMENT_REGS
+    + SIMPLE_TEMP_REGS
+    + list(
+        map(
+            Register,
+            [
+                # "at", "hi", "lo", "condition_bit",
+                "f0",
+            ],
+        )
+    )
+)
+
+SAVED_REGS: List[Register] = SIMPLE_TEMP_REGS + list(
+    map(
+        Register,
+        # [ "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31", "ra", "31", "fp", "gp", ],
+        ["r2"],
     )
 )
 
@@ -496,14 +502,14 @@ def get_stack_info(
     for inst in flow_graph.entry_node().block.instructions:
         if inst.mnemonic == "jal":
             break
-        elif inst.mnemonic == "addiu" and inst.args[0] == Register("sp"):
+        elif inst.mnemonic == "addiu" and inst.args[0] == Register.sp():
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
         elif (
             inst.mnemonic == "move"
             and inst.args[0] == Register("fp")
-            and inst.args[1] == Register("sp")
+            and inst.args[1] == Register.sp()
         ):
             # "move fp, sp" very likely means the code is compiled with frame
             # pointers enabled; thus fp should be treated the same as sp.
@@ -513,11 +519,11 @@ def get_stack_info(
             and isinstance(inst.args[0], Register)
             and inst.args[0] in SAVED_REGS
             and isinstance(inst.args[1], AsmAddressMode)
-            and inst.args[1].rhs == Register("sp")
+            and inst.args[1].rhs == Register.sp()
             and inst.args[0] not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
-            if inst.args[0] == Register("ra"):
+            if inst.args[0] == Register.ra():
                 # Saving the return address on the stack.
                 info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
@@ -535,7 +541,7 @@ def get_stack_info(
                 if (
                     inst.mnemonic in ["lw", "lwc1", "ldc1"]
                     and isinstance(inst.args[1], AsmAddressMode)
-                    and inst.args[1].rhs == Register("sp")
+                    and inst.args[1].rhs == Register.sp()
                     and inst.args[1].lhs_as_literal() >= 16
                 ):
                     info.subroutine_arg_top = min(
@@ -543,8 +549,8 @@ def get_stack_info(
                     )
                 elif (
                     inst.mnemonic == "addiu"
-                    and inst.args[0] != Register("sp")
-                    and inst.args[1] == Register("sp")
+                    and inst.args[0] != Register.sp()
+                    and inst.args[1] == Register.sp()
                     and isinstance(inst.args[2], AsmLiteral)
                     and inst.args[2].value < info.allocated_stack_size
                 ):
@@ -3280,7 +3286,8 @@ CASES_IGNORE: InstrSet = {
     # FCSR gets are as well, but it's fine to read MIPS2C_ERROR for those.
     "ctc1",
     "nop",
-    "b",
+    # "b" is ignored in MIPS, but is important for PPC
+    # "b",
     "j",
 }
 CASES_STORE: StoreInstrMap = {
@@ -3298,14 +3305,21 @@ CASES_STORE: StoreInstrMap = {
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
-    "beq": lambda a: BinaryOp.icmp(a.reg(0), "==", a.reg(1)),
-    "bne": lambda a: BinaryOp.icmp(a.reg(0), "!=", a.reg(1)),
-    "beqz": lambda a: BinaryOp.icmp(a.reg(0), "==", Literal(0)),
-    "bnez": lambda a: BinaryOp.icmp(a.reg(0), "!=", Literal(0)),
-    "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
-    "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
-    "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
-    "bgez": lambda a: handle_bgez(a),
+    # "beq": lambda a: BinaryOp.icmp(a.reg(0), "==", a.reg(1)),
+    # "bne": lambda a: BinaryOp.icmp(a.reg(0), "!=", a.reg(1)),
+    # "beqz": lambda a: BinaryOp.icmp(a.reg(0), "==", Literal(0)),
+    # "bnez": lambda a: BinaryOp.icmp(a.reg(0), "!=", Literal(0)),
+    # "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
+    # "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
+    # "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
+    # "bgez": lambda a: handle_bgez(a),
+    # PPC
+    "ble": lambda a: ErrorExpr("cr0_lt || cr0_eq"),
+    "blt": lambda a: ErrorExpr("cr0_lt"),
+    "beq": lambda a: ErrorExpr("cr0_eq"),
+    "bge": lambda a: ErrorExpr("cr0_gt || cr0_eq"),
+    "bgt": lambda a: ErrorExpr("cr0_gt"),
+    "bne": lambda a: ErrorExpr("!cr0_eq"),
 }
 CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
@@ -3314,7 +3328,9 @@ CASES_FLOAT_BRANCHES: InstrSet = {
 }
 CASES_JUMPS: InstrSet = {
     # Unconditional jump
-    "jr"
+    # "jr",
+    # PPC
+    "b",
 }
 CASES_FN_CALL: InstrSet = {
     # Function call
@@ -3635,7 +3651,7 @@ def output_regs_for_instr(
                 return []
     if mnemonic in CASES_FN_CALL:
         # return list(map(Register, ["f0", "f1", "v0", "v1"]))
-        return list(map(Register, ["r3", "r4"]))
+        return list(map(Register, ["f3", "f4", "r3", "r4"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
@@ -3868,7 +3884,7 @@ def determine_return_register(
     best_reg: Optional[Register] = None
     best_prio = -1
     # for reg in [Register("v0"), Register("f0")]:
-    for reg in [Register("r3")]:
+    for reg in [Register("r3"), Register("f3")]:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
         if max_prio == 3:
@@ -4029,7 +4045,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if (
             not isinstance(prev, EvalOnceExpr)
             or isinstance(expr, Literal)
-            or reg == Register("sp")
+            or reg == Register.sp()
             or reg == Register("at")
             or not prev.type.unify(expr.type)
             or (at is not None and uses_expr(at, lambda e2: e2 == prev))
@@ -4129,14 +4145,25 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in CASES_JUMPS:
-            assert mnemonic == "jr"
-            if args.reg_ref(0) == Register("ra"):
-                # Return from the function.
-                assert isinstance(node, ReturnNode)
+            if mnemonic == "b":
+                if isinstance(args.raw_arg(0), AsmGlobalSymbol):
+                    # Unconditional jump
+                    pass
+                else:
+                    # Switch jump
+                    assert isinstance(node, SwitchNode)
+                    switch_expr = args.reg(0)
+            elif mnemonic == "jr":
+                # MIPS:
+                if args.reg_ref(0) == Register.ra():
+                    # Return from the function.
+                    assert isinstance(node, ReturnNode)
+                else:
+                    # Switch jump.
+                    assert isinstance(node, SwitchNode)
+                    switch_expr = args.reg(0)
             else:
-                # Switch jump.
-                assert isinstance(node, SwitchNode)
-                switch_expr = args.reg(0)
+                raise DecompFailure(f"Unhandled jump mnemonic {mnemonic}")
 
         elif mnemonic in CASES_FN_CALL or mnemonic in CASES_FN_CALL_PPC:
             is_known_void = False
@@ -4157,7 +4184,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if args.count() == 1:
                     fn_target = args.reg(0)
                 elif args.count() == 2:
-                    if args.reg_ref(0) != Register("ra"):
+                    if args.reg_ref(0) != Register.ra():
                         raise DecompFailure(
                             "Two-argument form of jalr is not supported."
                         )
@@ -4283,12 +4310,13 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     )
                     regs.set_with_meta(reg, val, RegMeta(function_return=True))
 
-                # set_return_reg(
-                #    Register("f0"),
-                #    Cast(
-                #        expr=call, reinterpret=True, silent=True, type=Type.floatish()
-                #    ),
-                # )
+                set_return_reg(
+                    # Register("f0"),
+                    Register("f3"),
+                    Cast(
+                        expr=call, reinterpret=True, silent=True, type=Type.floatish()
+                    ),
+                )
                 set_return_reg(
                     # Register("v0"),
                     Register("r3"),
@@ -4307,6 +4335,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     ),
                 )
                 # regs[Register("f1")] = SecondF64Half()
+                regs[Register("f4")] = SecondF64Half()
 
             has_function_call = True
 
@@ -4803,7 +4832,7 @@ def translate_to_ast(
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
 
-    start_regs[Register("sp")] = GlobalSymbol("sp", type=Type.ptr())
+    start_regs[Register.sp()] = GlobalSymbol("sp", type=Type.ptr())
     for reg in SAVED_REGS:
         start_regs[reg] = stack_info.saved_reg_symbol(reg.register_name)
 
@@ -4868,7 +4897,7 @@ def translate_to_ast(
     )
 
     # for reg in [Register("v0"), Register("f0")]:
-    for reg in [Register("r3")]:
+    for reg in [Register("r3"), Register("f3")]:
         propagate_register_meta(flow_graph.nodes, reg)
 
     return_reg: Optional[Register] = None
