@@ -3312,6 +3312,9 @@ CASES_FN_CALL: InstrSet = {
     "jal",
     "jalr",
 }
+CASES_FN_CALL_PPC: InstrSet = {
+    "bl",
+}
 CASES_NO_DEST: StmtInstrMap = {
     # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
     # output than MIPS2C_ERROR(...))
@@ -3622,6 +3625,7 @@ def output_regs_for_instr(
             if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
     if mnemonic in CASES_FN_CALL:
+        # TODO: PPC
         return list(map(Register, ["f0", "f1", "v0", "v1"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
@@ -4124,9 +4128,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 assert isinstance(node, SwitchNode)
                 switch_expr = args.reg(0)
 
-        elif mnemonic in CASES_FN_CALL:
+        elif mnemonic in CASES_FN_CALL or mnemonic in CASES_FN_CALL_PPC:
             is_known_void = False
-            if mnemonic == "jal":
+            if mnemonic in ["jal", "bl"]:
                 fn_target = args.imm(0)
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
