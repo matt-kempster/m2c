@@ -1986,23 +1986,25 @@ class InstrArgs:
                 f"Expected instruction argument {reg} to be a float register"
             )
         ret = self.regs[reg]
-        if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
-            return ret
-        reg_num = int(reg.register_name[1:])
-        if reg_num % 2 != 0:
-            raise DecompFailure(
-                "Tried to use a double-precision instruction with odd-numbered float "
-                f"register {reg}"
-            )
-        other = self.regs[Register(f"f{reg_num+1}")]
-        if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
-            raise DecompFailure(
-                f"Unable to determine a value for double-precision register {reg} "
-                "whose second half is non-static. This is a mips_to_c restriction "
-                "which may be lifted in the future."
-            )
-        value = ret.value | (other.value << 32)
-        return Literal(value, type=Type.f64())
+        # PPC: FPR's hold doubles (64 bits), so we don't need to do anything special
+        return ret
+        # if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
+        #    return ret
+        # reg_num = int(reg.register_name[1:])
+        # if reg_num % 2 != 0:
+        #    raise DecompFailure(
+        #        "Tried to use a double-precision instruction with odd-numbered float "
+        #        f"register {reg}"
+        #    )
+        # other = self.regs[Register(f"f{reg_num+1}")]
+        # if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
+        #    raise DecompFailure(
+        #        f"Unable to determine a value for double-precision register {reg} "
+        #        "whose second half is non-static. This is a mips_to_c restriction "
+        #        "which may be lifted in the future."
+        #    )
+        # value = ret.value | (other.value << 32)
+        # return Literal(value, type=Type.f64())
 
     def cmp_reg(self, key: str) -> Condition:
         cond = self.regs[Register(key)]
@@ -3333,6 +3335,8 @@ CASES_STORE: StoreInstrMap = {
     "sdc1": lambda a: make_store(a, type=Type.reg64(likely_float=True)),
     # PPC
     "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+    # TODO: Do we need to model the truncation from f64 to f32 here?
+    "stfs": lambda a: make_store(a, type=Type.f32()),
 }
 CASES_STORE_UPDATE: StoreInstrMap = {
     "stwu": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
@@ -3666,9 +3670,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
-    "lfs": lambda a: handle_convert(
-        handle_load(a, type=Type.reg32(likely_float=True)), Type.f64(), Type.f32()
-    ),
+    # TODO: Do we need to model the promotion from f32 to f64 here?
+    "lfs": lambda a: handle_load(a, type=Type.f32()),
 }
 CASES_LOAD_UPDATE: InstrMap = {
     "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
