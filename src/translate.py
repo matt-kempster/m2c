@@ -515,7 +515,7 @@ def get_stack_info(
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
         elif (
-            inst.mnemonic in ["sw", "swc1", "sdc1"]
+            inst.mnemonic in ["sw", "swc1", "sdc1", "stw"]
             and isinstance(inst.args[0], Register)
             and inst.args[0] in SAVED_REGS
             and isinstance(inst.args[1], AsmAddressMode)
@@ -523,7 +523,7 @@ def get_stack_info(
             and inst.args[0] not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
-            if inst.args[0] == Register.ra():
+            if inst.args[0] == Register.ra() or inst.args[0] == Register("r0"):
                 # Saving the return address on the stack.
                 info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
@@ -539,7 +539,7 @@ def get_stack_info(
         for node in flow_graph.nodes:
             for inst in node.block.instructions:
                 if (
-                    inst.mnemonic in ["lw", "lwc1", "ldc1"]
+                    inst.mnemonic in ["lw", "lwc1", "ldc1", "lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
                     and inst.args[1].rhs == Register.sp()
                     and inst.args[1].lhs_as_literal() >= 16
@@ -3286,6 +3286,7 @@ CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
 StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
 MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
 PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]]
+ImplicitInstrMap = Dict[str, Tuple[Register, Callable[[InstrArgs], Expression]]]
 PPCCmpInstrMap = Dict[str, Callable[[InstrArgs, str], Expression]]
 
 CASES_IGNORE: InstrSet = {
@@ -3309,6 +3310,8 @@ CASES_STORE: StoreInstrMap = {
     # Floating point storage/conversion
     "swc1": lambda a: make_store(a, type=Type.reg32(likely_float=True)),
     "sdc1": lambda a: make_store(a, type=Type.reg64(likely_float=True)),
+    # PPC
+    "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
@@ -3343,6 +3346,7 @@ CASES_JUMPS: InstrSet = {
     # "jr",
     # PPC
     "b",
+    "blr",
 }
 CASES_FN_CALL: InstrSet = {
     # Function call
@@ -3351,6 +3355,7 @@ CASES_FN_CALL: InstrSet = {
 }
 CASES_FN_CALL_PPC: InstrSet = {
     "bl",
+    "blrl",
 }
 CASES_NO_DEST: StmtInstrMap = {
     # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
@@ -3633,6 +3638,16 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # Unaligned loads
     "lwl": lambda a: handle_lwl(a),
     "lwr": lambda a: handle_lwr(a),
+    # PPC
+    "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "mflr": lambda a: a.regs[Register("lr")],
+    "mr": lambda a: a.reg(1),
+}
+
+# TODO: Unclear if there will be many instructions like this, or if
+# there will just be separate dicts for each implicit dest register
+CASES_IMPLICIT_DESTINATION: ImplicitInstrMap = {
+    "mtlr": (Register("lr"), lambda a: a.reg(0)),
 }
 
 CASES_PPC_COMPARE: PPCCmpInstrMap = {
@@ -3687,6 +3702,8 @@ def output_regs_for_instr(
         return [Register("condition_bit")]
     if mnemonic in CASES_HI_LO:
         return [Register("hi"), Register("lo")]
+    if mnemonic in CASES_IMPLICIT_DESTINATION:
+        return [CASES_IMPLICIT_DESTINATION[mnemonic][0]]
     if mnemonic in CASES_PPC_COMPARE:
         return [
             Register("cr0_lhs"),
@@ -4196,6 +4213,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     # Switch jump.
                     assert isinstance(node, SwitchNode)
                     switch_expr = args.reg(0)
+            elif mnemonic == "blr":
+                assert isinstance(node, ReturnNode)
             else:
                 raise DecompFailure(f"Unhandled jump mnemonic {mnemonic}")
 
@@ -4213,6 +4232,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     pass
                 else:
                     raise DecompFailure("The target of jal must be a label, not {arg}")
+            elif mnemonic == "blrl":
+                fn_target = args.regs[Register("lr")]
             else:
                 assert mnemonic == "jalr"
                 if args.count() == 1:
@@ -4229,7 +4250,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
             assert fn_sig is not None, "known function pointers must have a signature"
-            abi = function_abi(fn_sig, for_call=True)
+            # abi = function_abi(fn_sig, for_call=True)
+            abi = ppc_function_abi(fn_sig, for_call=True)
 
             func_args: List[Expression] = []
             for slot in abi.arg_slots:
@@ -4381,6 +4403,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             hi, lo = CASES_HI_LO[mnemonic](args)
             set_reg(Register("hi"), hi)
             set_reg(Register("lo"), lo)
+
+        elif mnemonic in CASES_IMPLICIT_DESTINATION:
+            reg, expr_fn = CASES_IMPLICIT_DESTINATION[mnemonic]
+            set_reg(reg, expr_fn(args))
 
         elif mnemonic in CASES_PPC_COMPARE:
             set_reg(Register("cr0_eq"), CASES_PPC_COMPARE[mnemonic](args, "=="))
