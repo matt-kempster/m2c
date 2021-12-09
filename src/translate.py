@@ -982,15 +982,6 @@ class UnaryOp(Condition):
     def format(self, fmt: Formatter) -> str:
         return f"{self.op}{self.expr.format(fmt)}"
 
-    @staticmethod
-    def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(
-            left=as_f32(left),
-            op=op,
-            right=as_f32(right),
-            type=Type.f32(),
-        )
-
 
 @dataclass(frozen=True, eq=False)
 class ExprCondition(Condition):
