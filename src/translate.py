@@ -3789,7 +3789,7 @@ def output_regs_for_instr(
         return reg_at(1)
     if mnemonic in CASES_STORE_UPDATE:
         return reg_at(0) + reg_at(1)
-    if mnemonic in CASES_DESTINATION_FIRST:
+    if mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
         reg = reg_at(0)
         if mnemonic.endswith("."):
             return [
@@ -4547,9 +4547,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             stmt = CASES_NO_DEST[mnemonic](args)
             to_write.append(stmt)
 
-        elif mnemonic in CASES_DESTINATION_FIRST:
+        elif mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
-            val = CASES_DESTINATION_FIRST[mnemonic](args)
+            val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
             if False and target in args.raw_args[1:]:
                 # IDO tends to keep variables within single registers. Thus,
                 # if source = target, overwrite that variable instead of
