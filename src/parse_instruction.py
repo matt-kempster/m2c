@@ -135,6 +135,16 @@ class Macro:
 
 
 @dataclass(frozen=True)
+class Reloc:
+    reloc_name: str
+    argument: "Argument"
+    register: Register
+
+    def __str__(self) -> str:
+        return f"{self.argument}@{self.reloc_name}({self.register})"
+
+
+@dataclass(frozen=True)
 class AsmLiteral:
     value: int
 
@@ -339,7 +349,8 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 rhs = parse_arg_elems(arg_elems)
                 assert rhs in [Register("r2"), Register("r13")]
                 expect(")")
-                value = None  # TODO
+                assert value
+                value = Reloc(reloc_name, value, rhs)
             else:
                 assert reloc_name in ("ha", "l")
                 assert value

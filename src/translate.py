@@ -35,6 +35,7 @@ from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
     AsmAddressMode,
+    Reloc,
     AsmGlobalSymbol,
     AsmLiteral,
     BinOp,
@@ -2032,6 +2033,11 @@ class InstrArgs:
         ):
             sign = 1 if ret.op == "+" else -1
             return RawSymbolRef(offset=(ret.rhs.value * sign), sym=ret.lhs)
+
+        if isinstance(ret, Reloc):
+            symbol = ret.argument
+            assert isinstance(symbol, AsmGlobalSymbol)
+            return RawSymbolRef(offset=0, sym=symbol)
 
         if not isinstance(ret, AsmAddressMode):
             raise DecompFailure(
