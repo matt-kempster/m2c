@@ -4382,7 +4382,15 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
                 raw_expr = regs.get_raw(register)
-                if raw_expr is None:
+                meta = regs.get_meta(register)
+                if raw_expr is None or meta is None:
+                    continue
+
+                # PPC TODO: This is a much stricter filter than we use for MIPS,
+                # but it seems more accurate because the same registers are used
+                # for arguments & return values. The ABI can also mix & match the
+                # rN & fN registers, which makes the "require" heuristic less powerful.
+                if meta.function_return or meta.inherited:
                     continue
 
                 # Don't pass this register if lower numbered ones are undefined.
@@ -4490,7 +4498,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
                 set_return_reg(
                     # Register("f0"),
-                    Register("f3"),
+                    Register("f1"),
                     Cast(
                         expr=call, reinterpret=True, silent=True, type=Type.floatish()
                     ),
@@ -4513,7 +4521,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     ),
                 )
                 # regs[Register("f1")] = SecondF64Half()
-                regs[Register("f4")] = SecondF64Half()
 
             has_function_call = True
 
