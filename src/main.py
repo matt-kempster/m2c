@@ -263,6 +263,14 @@ def parse_flags(flags: List[str]) -> Options:
         default=[],
         help="Mark preprocessor constant as undefined",
     )
+    group.add_argument(
+        "-I",
+        "--incbin-dir",
+        dest="incbin_dir",
+        default=None,
+        type=Path,
+        help="Search path for loading .incbin directives",
+    )
 
     group = parser.add_argument_group("Output Options")
     group.add_argument(
@@ -554,6 +562,7 @@ def parse_flags(flags: List[str]) -> Options:
         print_stack_structs=args.print_stack_structs,
         struct_field_inference=args.struct_inference,
         passes=args.passes,
+        incbin_dir=args.incbin_dir,
     )
 
 
