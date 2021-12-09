@@ -2031,8 +2031,10 @@ class InstrArgs:
 
     def hi_imm(self, index: int) -> Argument:
         arg = self.raw_arg(index)
-        if not isinstance(arg, Macro) or arg.macro_name != "hi":
-            raise DecompFailure("Got lui instruction with macro other than %hi")
+        if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha"):
+            raise DecompFailure(
+                f"Got lui instruction with macro other than %hi/@ha: {arg}"
+            )
         return arg.argument
 
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
@@ -2394,7 +2396,9 @@ def load_upper(args: InstrArgs) -> Expression:
         assert not isinstance(
             arg, Literal
         ), "normalize_instruction should convert lui <literal> to li"
-        raise DecompFailure(f"lui argument must be a literal or %hi macro, found {arg}")
+        raise DecompFailure(
+            f"lui argument must be a literal or %hi/@ha macro, found {arg}"
+        )
 
     hi_arg = args.hi_imm(1)
     if (
@@ -2409,7 +2413,7 @@ def load_upper(args: InstrArgs) -> Expression:
         sym = hi_arg
         offset = 0
     else:
-        raise DecompFailure(f"Invalid %hi argument {hi_arg}")
+        raise DecompFailure(f"Invalid %hi/@ha argument {hi_arg}")
 
     stack_info = args.stack_info
     source = stack_info.global_info.address_of_gsym(sym.symbol_name)
@@ -3668,6 +3672,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwr": lambda a: handle_lwr(a),
     # PPC
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "lis": lambda a: load_upper(a),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
     # TODO: Do we need to model the promotion from f32 to f64 here?

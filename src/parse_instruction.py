@@ -532,6 +532,14 @@ def normalize_instruction(instr: Instruction) -> Instruction:
         if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
             lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
             return Instruction("li", [args[0], lit], instr.meta)
+        if (
+            instr.mnemonic == "lis"
+            and isinstance(args[1], Macro)
+            and args[1].macro_name == "ha"
+            and isinstance(args[1].argument, AsmLiteral)
+        ):
+            lit = AsmLiteral(args[1].argument.value & 0xFFFF0000)
+            return Instruction("li", [args[0], lit], instr.meta)
         if instr.mnemonic in LENGTH_THREE:
             return normalize_instruction(
                 Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
