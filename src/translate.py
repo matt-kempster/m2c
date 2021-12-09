@@ -982,6 +982,15 @@ class UnaryOp(Condition):
     def format(self, fmt: Formatter) -> str:
         return f"{self.op}{self.expr.format(fmt)}"
 
+    @staticmethod
+    def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_f32(left),
+            op=op,
+            right=as_f32(right),
+            type=Type.f32(),
+        )
+
 
 @dataclass(frozen=True, eq=False)
 class ExprCondition(Condition):
@@ -3685,6 +3694,52 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
     "lfd": lambda a: handle_load(a, type=Type.f64()),
+    # PPC Floating Point
+    "fadd": lambda a: BinaryOp.f64(a.reg(1), "+", a.reg(2)),
+    "fadds": lambda a: BinaryOp.f32(a.reg(1), "+", a.reg(2)),
+    "fdiv": lambda a: BinaryOp.f64(a.reg(1), "/", a.reg(2)),
+    "fdivs": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
+    "fmul": lambda a: BinaryOp.f64(a.reg(1), "*", a.reg(2)),
+    "fmuls": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
+    "fsub": lambda a: BinaryOp.f64(a.reg(1), "-", a.reg(2)),
+    "fsubs": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
+    "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
+    "fmr": lambda a: a.reg(1),
+    # PPC Floating Poing Fused Multiply-{Add,Sub}
+    "fmadd": lambda a: BinaryOp.f64(
+        BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
+    ),
+    "fmadds": lambda a: BinaryOp.f32(
+        BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
+    ),
+    "fnmadd": lambda a: UnaryOp(
+        op="-",
+        expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
+        type=Type.f64(),
+    ),
+    "fnmadds": lambda a: UnaryOp(
+        op="-",
+        expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
+        type=Type.f32(),
+    ),
+    "fmsub": lambda a: BinaryOp.f64(
+        BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)
+    ),
+    "fmsubs": lambda a: BinaryOp.f32(
+        BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)
+    ),
+    "fnmsub": lambda a: UnaryOp(
+        op="-",
+        expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
+        type=Type.f64(),
+    ),
+    "fnmsubs": lambda a: UnaryOp(
+        op="-",
+        expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
+        type=Type.f32(),
+    ),
+    # TODO: Detect if we should use fabs or fabsf
+    "fabs": lambda a: fn_op("fabs", [a.reg(1)], Type.floatish()),
 }
 CASES_LOAD_UPDATE: InstrMap = {
     "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
@@ -3701,6 +3756,10 @@ CASES_PPC_COMPARE: PPCCmpInstrMap = {
     "cmpwi": lambda a, op: BinaryOp.scmp(a.reg(0), op, a.imm(1)),
     "cmplw": lambda a, op: BinaryOp.ucmp(a.reg(0), op, a.reg(1)),
     "cmplwi": lambda a, op: BinaryOp.ucmp(a.reg(0), op, a.imm(1)),
+    # TODO: There is a difference in how these two instructions handle NaN
+    # TODO: Assert that the first arg is cr0
+    "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
+    "fcmpu": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
 }
 
 
