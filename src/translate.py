@@ -450,9 +450,9 @@ class StackInfo:
         self.used_reg_vars.add(var.reg)
 
     def is_stack_reg(self, reg: Register) -> bool:
-        if reg.register_name == "sp":
+        if reg == Register.sp():
             return True
-        if reg.register_name == "fp":
+        if reg == Register("fp"):
             return self.uses_framepointer
         return False
 
@@ -506,6 +506,11 @@ def get_stack_info(
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
+        elif inst.mnemonic == "stwu" and inst.args[0] == Register.sp():
+            # PPC: Moving the stack pointer.
+            assert isinstance(inst.args[1], AsmAddressMode)
+            assert isinstance(inst.args[1].lhs, AsmLiteral)
+            info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
         elif (
             inst.mnemonic == "move"
             and inst.args[0] == Register("fp")
@@ -3313,6 +3318,9 @@ CASES_STORE: StoreInstrMap = {
     # PPC
     "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
 }
+CASES_STORE_UPDATE: StoreInstrMap = {
+    "stwu": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+}
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
     # "beq": lambda a: BinaryOp.icmp(a.reg(0), "==", a.reg(1)),
@@ -3643,6 +3651,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
 }
+CASES_LOAD_UPDATE: InstrMap = {
+    "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+}
 
 # TODO: Unclear if there will be many instructions like this, or if
 # there will just be separate dicts for each implicit dest register
@@ -3663,8 +3674,11 @@ def output_regs_for_instr(
 ) -> List[Register]:
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
+        if isinstance(reg, AsmAddressMode):
+            return [reg.rhs]
         if not isinstance(reg, Register):
             # We'll deal with this error later
+            assert 0
             return []
         return [reg]
 
@@ -3688,6 +3702,8 @@ def output_regs_for_instr(
         return list(map(Register, ["f3", "f4", "r3", "r4"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
+    if mnemonic in CASES_STORE_UPDATE:
+        return reg_at(0) + reg_at(1)
     if mnemonic in CASES_DESTINATION_FIRST:
         reg = reg_at(0)
         if mnemonic.endswith("."):
@@ -3698,6 +3714,8 @@ def output_regs_for_instr(
                 Register("cr0_so"),
             ] + reg
         return reg
+    if mnemonic in CASES_LOAD_UPDATE:
+        return reg_at(0) + reg_at(1)
     if mnemonic in CASES_FLOAT_COMP:
         return [Register("condition_bit")]
     if mnemonic in CASES_HI_LO:
@@ -4135,9 +4153,27 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if mnemonic in CASES_IGNORE:
             pass
 
-        elif mnemonic in CASES_STORE:
+        elif mnemonic in CASES_STORE or mnemonic in CASES_STORE_UPDATE:
             # Store a value in a permanent place.
-            to_store = CASES_STORE[mnemonic](args)
+            if mnemonic in CASES_STORE:
+                to_store = CASES_STORE[mnemonic](args)
+            else:
+                # PPC specific store-and-update instructions
+                # `stwu r3, 8(r4)` is equivalent to `$r3 = *($r4 + 8); $r4 += 8;`
+                to_store = CASES_STORE_UPDATE[mnemonic](args)
+
+                # Update the register in the second argument
+                # TODO: is it OK to do this here, or does it need to happen at the end of the fn?
+                update = args.memory_ref(1)
+                if not isinstance(update, AddressMode):
+                    raise DecompFailure(
+                        "Unhandled store-and-update arg in {instr}: {update!r}"
+                    )
+                set_reg(
+                    update.rhs,
+                    add_imm(args.regs[update.rhs], Literal(update.offset), stack_info),
+                )
+
             if to_store is None:
                 # Elided register preserval.
                 pass
@@ -4444,6 +4480,21 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             elif (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
+
+        elif mnemonic in CASES_LOAD_UPDATE:
+            target = args.reg_ref(0)
+            val = CASES_DESTINATION_FIRST[mnemonic](args)
+            set_reg(target, val)
+
+            update = args.memory_ref(1)
+            if not isinstance(update, AddressMode):
+                raise DecompFailure(
+                    "Unhandled store-and-update arg in {instr}: {update!r}"
+                )
+            set_reg(
+                update.rhs,
+                add_imm(args.regs[update.rhs], Literal(update.offset), stack_info),
+            )
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
