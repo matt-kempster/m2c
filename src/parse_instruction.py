@@ -190,7 +190,14 @@ class JumpTarget:
 
 
 Argument = Union[
-    Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
+    Register,
+    AsmGlobalSymbol,
+    AsmAddressMode,
+    Macro,
+    AsmLiteral,
+    BinOp,
+    JumpTarget,
+    Reloc,
 ]
 
 # valid_word = string.ascii_letters + string.digits + "_"
@@ -349,6 +356,7 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 expect("(")
                 rhs = parse_arg_elems(arg_elems)
                 assert rhs in [Register("r2"), Register("r13")]
+                assert isinstance(rhs, Register)
                 expect(")")
                 assert value
                 value = Reloc(reloc_name, value, rhs)

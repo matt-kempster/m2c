@@ -91,24 +91,8 @@ SIMPLE_TEMP_REGS: List[Register] = list(
         Register,
         # [ "v0", "v1", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f13", "f15", "f16", "f17", "f18", "f19", ],
         [
-            "r14",
-            "r15",
-            "r16",
-            "r17",
-            "r18",
-            "r19",
-            "r20",
-            "r21",
-            "r22",
-            "r23",
-            "r24",
-            "r25",
-            "r26",
-            "r27",
-            "r28",
-            "r29",
-            "r30",
-            "r31",
+            "r11",
+            "r12",
             "f14",
             "f15",
             "f16",
@@ -140,6 +124,10 @@ TEMP_REGS: List[Register] = (
             [
                 # "at", "hi", "lo", "condition_bit",
                 "f0",
+                "cr0_gt",
+                "cr0_lt",
+                "cr0_eq",
+                "cr0_so",
             ],
         )
     )
@@ -149,7 +137,27 @@ SAVED_REGS: List[Register] = SIMPLE_TEMP_REGS + list(
     map(
         Register,
         # [ "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31", "ra", "31", "fp", "gp", ],
-        ["r2"],
+        [
+            "r2",
+            "r14",
+            "r15",
+            "r16",
+            "r17",
+            "r18",
+            "r19",
+            "r20",
+            "r21",
+            "r22",
+            "r23",
+            "r24",
+            "r25",
+            "r26",
+            "r27",
+            "r28",
+            "r29",
+            "r30",
+            "r31",
+        ],
     )
 )
 
@@ -537,6 +545,8 @@ def get_stack_info(
             callee_saved_offset_and_size.append(
                 (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
             )
+        elif inst.mnemonic == "blrl":
+            info.is_leaf = False
 
     if not info.is_leaf:
         # Iterate over the whole function, not just the first basic block,
@@ -4331,9 +4341,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 #    require = ["a2"]
                 else:
                     # PPC is simple; only r3-r10 can be used for arguments
-                    for arg_reg, prev_reg in zip(ARGUMENT_REGS[1:], ARGUMENT_REGS):
-                        if register == arg_reg:
-                            require = [prev_reg.register_name]
+                    regname = register.register_name
+                    prev_reg = f"{regname[0]}{int(regname[1:])-1}"
+                    if Register(prev_reg) in ARGUMENT_REGS:
+                        require = [prev_reg]
                 if require and not any(r in valid_extra_regs for r in require):
                     continue
 
@@ -5009,7 +5020,10 @@ def translate_to_ast(
         # start_regs[Register("f12")] = make_arg(0, Type.floatish())
         # start_regs[Register("f14")] = make_arg(4, Type.floatish())
         for i, reg in enumerate(ARGUMENT_REGS):
-            start_regs[reg] = make_arg(i * 4, Type.any_reg())
+            if reg.register_name[0] == "f":
+                start_regs[reg] = make_arg(i * 4, Type.intptr())
+            else:
+                start_regs[reg] = make_arg(i * 4, Type.floatish())
 
     if options.reg_vars == ["saved"]:
         reg_vars = SAVED_REGS
