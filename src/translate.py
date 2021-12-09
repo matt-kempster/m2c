@@ -5037,9 +5037,9 @@ def translate_to_ast(
         # start_regs[Register("f14")] = make_arg(4, Type.floatish())
         for i, reg in enumerate(ARGUMENT_REGS):
             if reg.register_name[0] == "f":
-                start_regs[reg] = make_arg(i * 4, Type.intptr())
-            else:
                 start_regs[reg] = make_arg(i * 4, Type.floatish())
+            else:
+                start_regs[reg] = make_arg(i * 4, Type.intptr())
 
     if options.reg_vars == ["saved"]:
         reg_vars = SAVED_REGS
