@@ -3190,6 +3190,34 @@ def handle_bgez(args: InstrArgs) -> Condition:
     return BinaryOp.scmp(expr, ">=", Literal(0))
 
 
+def handle_rlwinm(
+    source: Expression, shift: Expression, mask_begin: Expression, mask_end: Expression
+) -> Expression:
+    assert isinstance(shift, Literal)
+    assert isinstance(mask_begin, Literal)
+    assert isinstance(mask_end, Literal)
+    if shift.value != 0:
+        # TODO: Support nonzero shift
+        fn_op("rlwinm", [source, shift, mask_begin, mask_end], source.type)
+
+    mask_range = (mask_begin.value, mask_end.value)
+    if mask_range == (24, 31):
+        return as_type(source, Type.int_of_size(8), silent=False)
+    elif mask_range == (16, 31):
+        return as_type(source, Type.int_of_size(16), silent=False)
+
+    # Bit 0 is the MSB, Bit 31 is the LSB
+    bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
+    if mask_range[0] <= mask_range[1]:
+        # Set bits inside the range, fully inclusive
+        mask = bits_upto(mask_range[0]) - bits_upto(mask_range[1] + 1)
+    else:
+        # Set bits from [31, mask_range[1]] and [mask_range[0], 0]
+        mask = (bits_upto(mask_range[1] + 1) - bits_upto(mask_range[0])) ^ bits_upto(0)
+
+    return BinaryOp.int(left=source, op="&", right=Literal(mask))
+
+
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
     %hi's only ever occur in lui, where we expand them to an entire value, and not
@@ -3682,6 +3710,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lis": lambda a: load_upper(a),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
+    "rlwinm": lambda a: handle_rlwinm(a.reg(1), a.imm(2), a.imm(3), a.imm(4)),
+    "clrlwi": lambda a: handle_rlwinm(a.reg(1), Literal(0), a.imm(2), Literal(31)),
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
     "lfd": lambda a: handle_load(a, type=Type.f64()),
