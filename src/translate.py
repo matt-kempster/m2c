@@ -3656,6 +3656,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
+    "lfs": lambda a: handle_convert(
+        handle_load(a, type=Type.reg32(likely_float=True)), Type.f64(), Type.f32()
+    ),
 }
 CASES_LOAD_UPDATE: InstrMap = {
     "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),

@@ -199,6 +199,7 @@ valid_number = "-xX" + string.hexdigits
 
 ppc_regs = [
     *(f"r{i}" for i in range(0, 32)),
+    *(f"f{i}" for i in range(0, 32)),
 ]
 
 
