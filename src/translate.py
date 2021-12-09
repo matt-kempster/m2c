@@ -2491,6 +2491,16 @@ def handle_addi(args: InstrArgs) -> Expression:
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
 
+def handle_addis(args: InstrArgs) -> Expression:
+    stack_info = args.stack_info
+    source_reg = args.reg_ref(1)
+    source = args.reg(1)
+    raw_imm = args.full_imm(2)
+    assert isinstance(raw_imm, Literal)
+    imm = Literal(raw_imm.value << 16)
+    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
+
+
 def handle_addi_real(
     output_reg: Register,
     source_reg: Optional[Register],
@@ -3702,6 +3712,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwl": lambda a: handle_lwl(a),
     "lwr": lambda a: handle_lwr(a),
     # PPC
+    "addis": lambda a: handle_addis(a),
     "lba": lambda a: handle_load(a, type=Type.s8()),
     "lbz": lambda a: handle_load(a, type=Type.u8()),
     "lha": lambda a: handle_load(a, type=Type.s16()),
@@ -3839,8 +3850,8 @@ def output_regs_for_instr(
         return [CASES_IMPLICIT_DESTINATION[mnemonic][0]]
     if mnemonic in CASES_PPC_COMPARE:
         return [
-            Register("cr0_lhs"),
-            Register("cr0_rhs"),
+            Register("cr0_lt"),
+            Register("cr0_gt"),
             Register("cr0_eq"),
             Register("cr0_so"),
         ]
@@ -4595,9 +4606,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if mnemonic.endswith("."):
                 # PPC
                 target_reg = args.reg(0)
-                set_reg(Register("cr0_eq"), BinaryOp.scmp(target_reg, "==", Literal(0)))
-                set_reg(Register("cr0_gt"), BinaryOp.scmp(target_reg, ">", Literal(0)))
-                set_reg(Register("cr0_lt"), BinaryOp.scmp(target_reg, "<", Literal(0)))
+                set_reg(Register("cr0_eq"), BinaryOp.icmp(target_reg, "==", Literal(0)))
+                set_reg(Register("cr0_gt"), BinaryOp.icmp(target_reg, ">", Literal(0)))
+                set_reg(Register("cr0_lt"), BinaryOp.icmp(target_reg, "<", Literal(0)))
                 # TODO
                 set_reg(Register("cr0_so"), ErrorExpr(f"overflow of {target}"))
 
