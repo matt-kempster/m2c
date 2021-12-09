@@ -3338,9 +3338,12 @@ CASES_STORE: StoreInstrMap = {
     "swc1": lambda a: make_store(a, type=Type.reg32(likely_float=True)),
     "sdc1": lambda a: make_store(a, type=Type.reg64(likely_float=True)),
     # PPC
+    "stb": lambda a: make_store(a, type=Type.int_of_size(8)),
+    "sth": lambda a: make_store(a, type=Type.int_of_size(16)),
     "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
     # TODO: Do we need to model the truncation from f64 to f32 here?
     "stfs": lambda a: make_store(a, type=Type.f32()),
+    "stfd": lambda a: make_store(a, type=Type.f64()),
 }
 CASES_STORE_UPDATE: StoreInstrMap = {
     "stwu": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
@@ -3671,12 +3674,17 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwl": lambda a: handle_lwl(a),
     "lwr": lambda a: handle_lwr(a),
     # PPC
+    "lba": lambda a: handle_load(a, type=Type.s8()),
+    "lbz": lambda a: handle_load(a, type=Type.u8()),
+    "lha": lambda a: handle_load(a, type=Type.s16()),
+    "lhz": lambda a: handle_load(a, type=Type.u16()),
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
     "lis": lambda a: load_upper(a),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
+    "lfd": lambda a: handle_load(a, type=Type.f64()),
 }
 CASES_LOAD_UPDATE: InstrMap = {
     "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
