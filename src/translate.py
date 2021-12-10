@@ -2495,7 +2495,7 @@ def handle_addis(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
     source_reg = args.reg_ref(1)
     source = args.reg(1)
-    raw_imm = args.full_imm(2)
+    raw_imm = args.unsigned_imm(2)
     assert isinstance(raw_imm, Literal)
     imm = Literal(raw_imm.value << 16)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
@@ -3208,7 +3208,7 @@ def handle_rlwinm(
     assert isinstance(mask_end, Literal)
     if shift.value != 0:
         # TODO: Support nonzero shift
-        fn_op("rlwinm", [source, shift, mask_begin, mask_end], source.type)
+        return fn_op("rlwinm", [source, shift, mask_begin, mask_end], source.type)
 
     mask_range = (mask_begin.value, mask_end.value)
     if mask_range == (24, 31):
@@ -4604,12 +4604,43 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 set_reg(target, val)
             mn_parts = mnemonic.split(".")
             if mnemonic.endswith("."):
-                # PPC
+                # PPC: Instructions suffixed with . set condition bits (CR0) based on the result value
                 target_reg = args.reg(0)
-                set_reg(Register("cr0_eq"), BinaryOp.icmp(target_reg, "==", Literal(0)))
-                set_reg(Register("cr0_gt"), BinaryOp.icmp(target_reg, ">", Literal(0)))
-                set_reg(Register("cr0_lt"), BinaryOp.icmp(target_reg, "<", Literal(0)))
-                # TODO
+                set_reg(
+                    Register("cr0_eq"),
+                    BinaryOp.icmp(target_reg, "==", Literal(0, type=target_reg.type)),
+                )
+                # Use manual casts for cr0_gt/cr0_lt so that the type of target_reg is not modified
+                # until the resulting bit is .use()'d.
+                set_reg(
+                    Register("cr0_gt"),
+                    BinaryOp(
+                        left=Cast(
+                            expr=target_reg,
+                            reinterpret=True,
+                            silent=True,
+                            type=Type.s32(),
+                        ),
+                        op=">",
+                        right=Literal(0),
+                        type=Type.s32(),
+                    ),
+                )
+                set_reg(
+                    Register("cr0_lt"),
+                    BinaryOp(
+                        left=Cast(
+                            expr=target_reg,
+                            reinterpret=True,
+                            silent=True,
+                            type=Type.s32(),
+                        ),
+                        op="<",
+                        right=Literal(0),
+                        type=Type.s32(),
+                    ),
+                )
+                # TODO: Implement overflow checking
                 set_reg(Register("cr0_so"), ErrorExpr(f"overflow of {target}"))
 
             elif (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
