@@ -120,7 +120,9 @@ SAVED_REGS: List[Register] = SIMPLE_TEMP_REGS + list(
         Register,
         # [ "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31", "ra", "31", "fp", "gp", ],
         [
+            # PPC: $r2 & $r13 are used for the small-data region, and are like $gp in MIPS
             "r2",
+            "r13",
             "r14",
             "r15",
             "r16",
