@@ -526,10 +526,17 @@ def normalize_instruction(instr: Instruction) -> Instruction:
         ):
             mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
             return Instruction(mn, [args[0], args[2]], instr.meta)
+        if (
+            instr.mnemonic == "addi"
+            and isinstance(args[2], Reloc)
+            and args[2].reloc_name in ("sda2", "sda21")
+            and args[2].register == args[1]
+        ):
+            return Instruction("li", [args[0], args[2].argument], instr.meta)
     if len(args) == 2:
         if instr.mnemonic == "beqz" and args[0] == Register("zero"):
             return Instruction("b", [args[1]], instr.meta)
-        if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
+        if instr.mnemonic in ("lui", "lis") and isinstance(args[1], AsmLiteral):
             lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
             return Instruction("li", [args[0], lit], instr.meta)
         if (

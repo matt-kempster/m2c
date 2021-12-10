@@ -545,7 +545,7 @@ def get_stack_info(
             callee_saved_offset_and_size.append(
                 (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
             )
-        elif inst.mnemonic == "blrl":
+        elif inst.mnemonic == "mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
 
     if not info.is_leaf:
@@ -575,39 +575,40 @@ def get_stack_info(
                     )
 
         # Compute the bounds of the callee-saved register region, including padding
-        callee_saved_offset_and_size.sort()
-        bottom, last_size = callee_saved_offset_and_size[0]
+        if callee_saved_offset_and_size:
+            callee_saved_offset_and_size.sort()
+            bottom, last_size = callee_saved_offset_and_size[0]
 
-        # Both IDO & GCC save registers in two subregions:
-        # (a) One for double-sized registers
-        # (b) One for word-sized registers, padded to a multiple of 8 bytes
-        # IDO has (a) lower than (b); GCC has (b) lower than (a)
-        # Check that there are no gaps in this region, other than a single
-        # 4-byte word between subregions.
-        top = bottom
-        internal_padding_added = False
-        for offset, size in callee_saved_offset_and_size:
-            if offset != top:
-                if (
-                    not internal_padding_added
-                    and size != last_size
-                    and offset == top + 4
-                ):
-                    internal_padding_added = True
-                else:
-                    raise DecompFailure(
-                        f"Gap in callee-saved word stack region. "
-                        f"Saved: {callee_saved_offset_and_size}, "
-                        f"gap at: {offset} != {top}."
-                    )
-            top = offset + size
-            last_size = size
-        # Expand boundaries to multiples of 8 bytes
-        info.callee_save_reg_region = (bottom, top)
+            # Both IDO & GCC save registers in two subregions:
+            # (a) One for double-sized registers
+            # (b) One for word-sized registers, padded to a multiple of 8 bytes
+            # IDO has (a) lower than (b); GCC has (b) lower than (a)
+            # Check that there are no gaps in this region, other than a single
+            # 4-byte word between subregions.
+            top = bottom
+            internal_padding_added = False
+            for offset, size in callee_saved_offset_and_size:
+                if offset != top:
+                    if (
+                        not internal_padding_added
+                        and size != last_size
+                        and offset == top + 4
+                    ):
+                        internal_padding_added = True
+                    else:
+                        raise DecompFailure(
+                            f"Gap in callee-saved word stack region. "
+                            f"Saved: {callee_saved_offset_and_size}, "
+                            f"gap at: {offset} != {top}."
+                        )
+                top = offset + size
+                last_size = size
+            # Expand boundaries to multiples of 8 bytes
+            info.callee_save_reg_region = (bottom, top)
 
-        # Subroutine arguments must be at the very bottom of the stack, so they
-        # must come after the callee-saved region
-        info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
+            # Subroutine arguments must be at the very bottom of the stack, so they
+            # must come after the callee-saved region
+            info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
 
     # Use a struct to represent the stack layout. If the struct is provided in the context,
     # its fields will be used for variable types & names.
@@ -4648,7 +4649,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         elif mnemonic in CASES_LOAD_UPDATE:
             target = args.reg_ref(0)
-            val = CASES_DESTINATION_FIRST[mnemonic](args)
+            val = CASES_LOAD_UPDATE[mnemonic](args)
             set_reg(target, val)
 
             update = args.memory_ref(1)
