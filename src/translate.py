@@ -4451,7 +4451,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 update = args.memory_ref(1)
                 if not isinstance(update, AddressMode):
                     raise DecompFailure(
-                        "Unhandled store-and-update arg in {instr}: {update!r}"
+                        f"Unhandled store-and-update arg in {instr}: {update!r}"
                     )
                 set_reg(
                     update.rhs,
@@ -4551,7 +4551,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 elif isinstance(fn_target, Literal):
                     pass
                 else:
-                    raise DecompFailure("The target of jal must be a label, not {arg}")
+                    raise DecompFailure(
+                        f"The target of jal must be a label, not {fn_target}"
+                    )
             elif mnemonic == "blrl":
                 fn_target = args.regs[Register("lr")]
             else:
@@ -4749,11 +4751,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
 
-            if mnemonic in ["lwzux", "lhzux", "lbzux"]:
-                if args.reg_ref(1) != Register("r0"):
-                    summed = BinaryOp.intptr(args.reg(1), "+", args.reg(2))
-                    set_reg(args.reg_ref(0), summed)
-
             val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
             if False and target in args.raw_args[1:]:
                 # IDO tends to keep variables within single registers. Thus,
@@ -4824,7 +4821,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 update = args.memory_ref(1)
                 if not isinstance(update, AddressMode):
                     raise DecompFailure(
-                        "Unhandled store-and-update arg in {instr}: {update!r}"
+                        f"Unhandled store-and-update arg in {instr}: {update!r}"
                     )
                 update_reg = update.rhs
                 offset = Literal(update.offset)
