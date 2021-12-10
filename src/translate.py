@@ -93,24 +93,6 @@ SIMPLE_TEMP_REGS: List[Register] = list(
         [
             "r11",
             "r12",
-            "f14",
-            "f15",
-            "f16",
-            "f17",
-            "f18",
-            "f19",
-            "f20",
-            "f21",
-            "f22",
-            "f23",
-            "f24",
-            "f25",
-            "f26",
-            "f27",
-            "f28",
-            "f29",
-            "f30",
-            "f31",
         ],
     )
 )
@@ -157,6 +139,24 @@ SAVED_REGS: List[Register] = SIMPLE_TEMP_REGS + list(
             "r29",
             "r30",
             "r31",
+            "f14",
+            "f15",
+            "f16",
+            "f17",
+            "f18",
+            "f19",
+            "f20",
+            "f21",
+            "f22",
+            "f23",
+            "f24",
+            "f25",
+            "f26",
+            "f27",
+            "f28",
+            "f29",
+            "f30",
+            "f31",
         ],
     )
 )
@@ -529,7 +529,7 @@ def get_stack_info(
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
         elif (
-            inst.mnemonic in ["sw", "swc1", "sdc1", "stw"]
+            inst.mnemonic in ["sw", "swc1", "sdc1", "stw", "stmw", "stfd"]
             and isinstance(inst.args[0], Register)
             and inst.args[0] in SAVED_REGS
             and isinstance(inst.args[1], AsmAddressMode)
@@ -541,10 +541,20 @@ def get_stack_info(
                 # Saving the return address on the stack.
                 info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
-            info.callee_save_reg_locations[inst.args[0]] = stack_offset
-            callee_saved_offset_and_size.append(
-                (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
-            )
+            if inst.mnemonic == "stmw":
+                assert inst.args[0].register_name[0] == "r"
+                index = int(inst.args[0].register_name[1:])
+                while index <= 31:
+                    reg = Register(f"{index}")
+                    info.callee_save_reg_locations[reg] = stack_offset
+                    callee_saved_offset_and_size.append((stack_offset, 4))
+                    index += 1
+                    stack_offset += 4
+            else:
+                info.callee_save_reg_locations[inst.args[0]] = stack_offset
+                callee_saved_offset_and_size.append(
+                    (stack_offset, 8 if inst.mnemonic in ("sdc1", "stfd") else 4)
+                )
         elif inst.mnemonic == "mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
 
@@ -3363,6 +3373,9 @@ CASES_IGNORE: InstrSet = {
     # "b" is ignored in MIPS, but is important for PPC
     # "b",
     "j",
+    # PPC: assume stmw/lmw are only used for saving/restoring saved regs
+    "stmw",
+    "lmw",
 }
 CASES_STORE: StoreInstrMap = {
     # Storage instructions
