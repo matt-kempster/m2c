@@ -121,7 +121,8 @@ SAVED_REGS: List[Register] = SIMPLE_TEMP_REGS + list(
         # [ "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31", "ra", "31", "fp", "gp", ],
         [
             # PPC: $r2 & $r13 are used for the small-data region, and are like $gp in MIPS
-            "r2",
+            "lr",
+            # TODO: Some of the bits in CR are required to be saved (but usually the whole reg is?)
             "r13",
             "r14",
             "r15",
@@ -286,6 +287,9 @@ class StackInfo:
         return prefix + (f"_{counter}" if counter > 1 else "")
 
     def in_subroutine_arg_region(self, location: int) -> bool:
+        # PPC TODO: Determine how PPC compilers lay out stack regions
+        # For now, assume all args are passed in regs (there's so many of them to use!)
+        return False
         if self.is_leaf:
             return False
         assert self.subroutine_arg_top is not None
@@ -387,7 +391,10 @@ class StackInfo:
         return GlobalSymbol(symbol_name=sym_name, type=type)
 
     def should_save(self, expr: "Expression", offset: Optional[int]) -> bool:
-        if isinstance(expr, GlobalSymbol) and expr.symbol_name.startswith("saved_reg_"):
+        expr = early_unwrap(expr)
+        if isinstance(expr, GlobalSymbol) and (
+            expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
+        ):
             return True
         if (
             isinstance(expr, PassedInArg)
