@@ -3393,6 +3393,10 @@ CASES_IGNORE: InstrSet = {
     # PPC: assume stmw/lmw are only used for saving/restoring saved regs
     "stmw",
     "lmw",
+    # PPC: `{crclr,crset} 6` are used as part of the ABI for floats & varargs
+    # For now, we can ignore them (and later use them to help in ppc_function_abi)
+    "crclr",
+    "crset",
 }
 CASES_STORE: StoreInstrMap = {
     # Storage instructions
