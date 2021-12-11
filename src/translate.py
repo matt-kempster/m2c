@@ -35,7 +35,6 @@ from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
     AsmAddressMode,
-    Reloc,
     AsmGlobalSymbol,
     AsmLiteral,
     BinOp,
@@ -2078,11 +2077,6 @@ class InstrArgs:
             sign = 1 if ret.op == "+" else -1
             return RawSymbolRef(offset=(ret.rhs.value * sign), sym=ret.lhs)
 
-        if isinstance(ret, Reloc):
-            symbol = ret.argument
-            assert isinstance(symbol, AsmGlobalSymbol)
-            return RawSymbolRef(offset=0, sym=symbol)
-
         if not isinstance(ret, AsmAddressMode):
             raise DecompFailure(
                 "Expected instruction argument to be of the form offset($register), "
@@ -3259,6 +3253,8 @@ def strip_macros(arg: Argument) -> Argument:
     just the upper part. This preserves semantics in most cases (though not when %hi's
     are reused for different %lo's...)"""
     if isinstance(arg, Macro):
+        if arg.macro_name in ["sda2", "sda21"]:
+            return arg.argument
         if arg.macro_name == "hi":
             raise DecompFailure("%hi macro outside of lui")
         if arg.macro_name not in ["lo", "l"]:

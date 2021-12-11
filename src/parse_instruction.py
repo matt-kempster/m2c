@@ -135,16 +135,6 @@ class Macro:
 
 
 @dataclass(frozen=True)
-class Reloc:
-    reloc_name: str
-    argument: "Argument"
-    register: Register
-
-    def __str__(self) -> str:
-        return f"{self.argument}@{self.reloc_name}({self.register})"
-
-
-@dataclass(frozen=True)
 class AsmLiteral:
     value: int
 
@@ -197,7 +187,6 @@ Argument = Union[
     AsmLiteral,
     BinOp,
     JumpTarget,
-    Reloc,
 ]
 
 # valid_word = string.ascii_letters + string.digits + "_"
@@ -252,6 +241,7 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
+        assert arg_elems, f"Expected one of {list(n)}, but reached end of string"
         g = arg_elems.pop(0)
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
@@ -339,7 +329,7 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
             else:
                 op = expect("&+-*")
 
-            # Parse `sym-_SDA_BASE_(r13)` as a Reloc, equivalently to `sym@sda21(r13)`
+            # Parse `sym-_SDA_BASE_(r13)` as a Macro, equivalently to `sym@sda21`
             if tok == "-" and arg_elems[0] == "_":
                 reloc_name = parse_word(arg_elems)
                 if reloc_name not in ("_SDA_BASE_", "_SDA2_BASE_"):
@@ -349,10 +339,9 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 expect("(")
                 rhs = parse_arg_elems(arg_elems)
                 assert rhs in [Register("r2"), Register("r13")]
-                assert isinstance(rhs, Register)
                 expect(")")
                 assert value
-                return Reloc(reloc_name, value, rhs)
+                return Macro(reloc_name, value)
 
             rhs = parse_arg_elems(arg_elems)
             # These operators can only use constants as the right-hand-side.
@@ -372,16 +361,16 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
             # A reloc (i.e. (...)@ha or (...)@l).
             arg_elems.pop(0)
             reloc_name = parse_word(arg_elems)
-            if reloc_name == "sda21":
+            if reloc_name in ("sda2", "sda21") and arg_elems:
+                # The `(r2)` part of `@sda21` is optional
                 expect("(")
                 rhs = parse_arg_elems(arg_elems)
                 assert rhs in [Register("r2"), Register("r13")]
-                assert isinstance(rhs, Register)
                 expect(")")
                 assert value
-                return Reloc(reloc_name, value, rhs)
+                return Macro(reloc_name, value)
             else:
-                assert reloc_name in ("ha", "l")
+                assert reloc_name in ("ha", "l", "sda2", "sda21")
                 assert value
                 value = Macro(reloc_name, value)
         else:
@@ -548,9 +537,8 @@ def normalize_instruction(instr: Instruction) -> Instruction:
             return Instruction(mn, [args[0], args[2]], instr.meta)
         if (
             instr.mnemonic == "addi"
-            and isinstance(args[2], Reloc)
-            and args[2].reloc_name in ("sda2", "sda21")
-            and args[2].register == args[1]
+            and isinstance(args[2], Macro)
+            and args[2].macro_name in ("sda2", "sda21")
         ):
             return Instruction("li", [args[0], args[2].argument], instr.meta)
     if len(args) == 2:
@@ -597,6 +585,5 @@ def parse_instruction(line: str, meta: InstructionMeta) -> Instruction:
         )
         instr = Instruction(mnemonic, args, meta)
         return normalize_instruction(instr)
-    except Exception as e:
-        raise e
+    except:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
