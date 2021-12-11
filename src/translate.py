@@ -2468,13 +2468,16 @@ def handle_la(args: InstrArgs) -> Expression:
     return add_imm(var, Literal(target.offset), stack_info)
 
 
-def handle_ori(args: InstrArgs) -> Expression:
-    imm = args.unsigned_imm(2)
-    r = args.reg(1)
-    if isinstance(r, Literal) and isinstance(imm, Literal) and (r.value & 0xFFFF) == 0:
-        return Literal(value=(r.value | imm.value))
+def handle_or(args: InstrArgs, left: Expression, right: Expression) -> Expression:
+    if (
+        isinstance(left, Literal)
+        and isinstance(right, Literal)
+        and (left.value & 0xFFFF0000) == 0
+        and (right.value & 0xFFFF) == 0
+    ):
+        return Literal(value=(left.value | right.value))
     # Regular bitwise OR.
-    return BinaryOp.int(left=r, op="|", right=imm)
+    return BinaryOp.int(left=left, op="|", right=right)
 
 
 def handle_sltu(args: InstrArgs) -> Expression:
@@ -3650,7 +3653,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
     "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
     # Bit arithmetic
-    "ori": lambda a: handle_ori(a),
+    "ori": lambda a: handle_or(a, a.reg(1), a.unsigned_imm(2)),
+    "oris": lambda a: handle_or(a, a.reg(1), a.shifted_imm(2)),
     "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
     "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
     "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
