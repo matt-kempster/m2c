@@ -569,6 +569,11 @@ def parse_instruction(line: str, meta: InstructionMeta) -> Instruction:
         # First token is instruction name, rest is args.
         line = line.strip()
         mnemonic, _, args_str = line.partition(" ")
+        # Remove +/- suffix, which indicates branch-likely on PPC
+        if mnemonic.startswith("b") and (
+            mnemonic.endswith("+") or mnemonic.endswith("-")
+        ):
+            mnemonic = mnemonic[:-1]
         # Parse arguments.
         args: List[Argument] = list(
             filter(
