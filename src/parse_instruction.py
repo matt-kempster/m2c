@@ -538,6 +538,7 @@ def normalize_instruction(instr: Instruction) -> Instruction:
         if (
             instr.mnemonic == "addi"
             and isinstance(args[2], Macro)
+            and args[1] in (Register("r2"), Register("r13"))
             and args[2].macro_name in ("sda2", "sda21")
         ):
             return Instruction("li", [args[0], args[2].argument], instr.meta)

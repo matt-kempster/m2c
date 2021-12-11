@@ -423,10 +423,6 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
         "sw $x, 4($y)",
     )
 
-    ppc_addi_reloc_pattern = make_pattern(
-        "addi",
-    )
-
     ppc_fcmpo_cror_pattern = make_pattern(
         "fcmpo cr0, $x, $y",
         "cror 2, LIT, 2",
@@ -668,23 +664,6 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
             )
         return None
 
-    def try_replace_addi_reloc(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, ppc_addi_reloc_pattern)
-        if not match:
-            return None
-        assert isinstance(match[0], Instruction)
-        addi_args = match[0].args
-        if addi_args[1] not in (Register("r2"), Register("r13")):
-            return None
-        if not isinstance(addi_args[2], Macro) or addi_args[2].macro_name not in (
-            "sda2",
-            "sda21",
-        ):
-            return None
-        return [
-            Instruction.derived("lwz", [addi_args[0], addi_args[2]], match[0])
-        ], len(match)
-
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return [function.body[i]], 1
 
@@ -708,11 +687,7 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
                 or no_replacement(i)
             )
         else:
-            repl, consumed = (
-                try_replace_ppc_fcmpo_cror(i)
-                or try_replace_addi_reloc(i)
-                or no_replacement(i)
-            )
+            repl, consumed = try_replace_ppc_fcmpo_cror(i) or no_replacement(i)
         new_function.body.extend(repl)
         i += consumed
     return new_function

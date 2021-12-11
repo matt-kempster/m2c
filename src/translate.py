@@ -3747,15 +3747,38 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
     "rlwinm": lambda a: handle_rlwinm(a.reg(1), a.imm(2), a.imm(3), a.imm(4)),
-    "extlwi": lambda a: handle_rlwinm(a.reg(1), a.imm(3), Literal(0), Literal(a.imm_value(2) - 1)),
-    "extrwi": lambda a: handle_rlwinm(a.reg(1), Literal(a.imm_value(3) + a.imm_value(2)), Literal(32 - a.imm_value(2)), Literal(31)),
+    "extlwi": lambda a: handle_rlwinm(
+        a.reg(1), a.imm(3), Literal(0), Literal(a.imm_value(2) - 1)
+    ),
+    "extrwi": lambda a: handle_rlwinm(
+        a.reg(1),
+        Literal(a.imm_value(3) + a.imm_value(2)),
+        Literal(32 - a.imm_value(2)),
+        Literal(31),
+    ),
     "rotlwi": lambda a: handle_rlwinm(a.reg(1), a.imm(2), Literal(0), Literal(31)),
-    "rotrwi": lambda a: handle_rlwinm(a.reg(1), Literal(32 - a.imm_value(2)), Literal(0), Literal(31)),
-    "slwi": lambda a: handle_rlwinm(a.reg(1), a.imm(2), Literal(0), Literal(31 - a.imm_value(2))),
-    "srwi": lambda a: handle_rlwinm(a.reg(1), Literal(32 - a.imm_value(2)), a.imm(2), Literal(31)),
+    "rotrwi": lambda a: handle_rlwinm(
+        a.reg(1), Literal(32 - a.imm_value(2)), Literal(0), Literal(31)
+    ),
+    "slwi": lambda a: handle_rlwinm(
+        a.reg(1), a.imm(2), Literal(0), Literal(31 - a.imm_value(2))
+    ),
+    "srwi": lambda a: handle_rlwinm(
+        a.reg(1), Literal(32 - a.imm_value(2)), a.imm(2), Literal(31)
+    ),
     "clrlwi": lambda a: handle_rlwinm(a.reg(1), Literal(0), a.imm(2), Literal(31)),
-    "clrrwi": lambda a: handle_rlwinm(a.reg(1), Literal(0), Literal(0), 31 - a.imm_value(2)),
-    "clrlslwi": lambda a: handle_rlwinm(a.reg(1), a.imm(3), Literal(a.imm_value(2) - a.imm_value(3)), Literal(31 - a.imm_value(3))),
+    "clrrwi": lambda a: handle_rlwinm(
+        a.reg(1),
+        Literal(0),
+        Literal(0),
+        Literal(31 - a.imm_value(2)),
+    ),
+    "clrlslwi": lambda a: handle_rlwinm(
+        a.reg(1),
+        a.imm(3),
+        Literal(a.imm_value(2) - a.imm_value(3)),
+        Literal(31 - a.imm_value(3)),
+    ),
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
     "lfd": lambda a: handle_load(a, type=Type.f64()),
