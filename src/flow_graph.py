@@ -272,7 +272,7 @@ def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function
     return new_function
 
 
-def simplify_standard_patterns(function: Function) -> Function:
+def simplify_standard_patterns(function: Function, mips: bool = False) -> Function:
     """Detect and simplify various standard patterns emitted by IDO and GCC."""
     BodyPart = Union[Instruction, Label]
     PatternPart = Union[Instruction, Label, None]
@@ -421,6 +421,11 @@ def simplify_standard_patterns(function: Function) -> Function:
         "sw $x, ($y)",
         "bne $y, $sp, .loop",
         "sw $x, 4($y)",
+    )
+
+    ppc_fcmpo_cror_pattern = make_pattern(
+        "fcmpo cr0, $x, $y",
+        "cror 2, LIT, 2",
     )
 
     def try_match(starti: int, pattern: Pattern) -> Optional[List[BodyPart]]:
@@ -643,27 +648,46 @@ def simplify_standard_patterns(function: Function) -> Function:
         new_instr = Instruction.derived("trapuv.fictive", [], match[0])
         return [match[2], new_instr], len(match)
 
+    def try_replace_ppc_fcmpo_cror(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        match = try_match(i, ppc_fcmpo_cror_pattern)
+        if not match:
+            return None
+        assert isinstance(match[0], Instruction)
+        assert isinstance(match[1], Instruction)
+        if match[1].args[1] == AsmLiteral(0):
+            return [Instruction.derived("fcmpo.lte", match[0].args, match[0])], len(
+                match
+            )
+        elif match[1].args[1] == AsmLiteral(1):
+            return [Instruction.derived("fcmpo.gte", match[0].args, match[0])], len(
+                match
+            )
+        return None
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return [function.body[i]], 1
 
     new_function = function.bodyless_copy()
     i = 0
     while i < len(function.body):
-        repl, consumed = (
-            try_replace_div(i)
-            or try_replace_divu(i)
-            or try_replace_div_p2_1(i)
-            or try_replace_div_p2_2(i)
-            or try_replace_div_2_s32(i)
-            or try_replace_div_2_s16(i)
-            or try_replace_mod_p2(i)
-            or try_replace_utf_conv(i)
-            or try_replace_ftu_conv(i)
-            or try_replace_mips1_double_load_store(i)
-            or try_replace_gcc_sqrt(i)
-            or try_replace_trapuv(i)
-            or no_replacement(i)
-        )
+        if mips:
+            repl, consumed = (
+                try_replace_div(i)
+                or try_replace_divu(i)
+                or try_replace_div_p2_1(i)
+                or try_replace_div_p2_2(i)
+                or try_replace_div_2_s32(i)
+                or try_replace_div_2_s16(i)
+                or try_replace_mod_p2(i)
+                or try_replace_utf_conv(i)
+                or try_replace_ftu_conv(i)
+                or try_replace_mips1_double_load_store(i)
+                or try_replace_gcc_sqrt(i)
+                or try_replace_trapuv(i)
+                or no_replacement(i)
+            )
+        else:
+            repl, consumed = try_replace_ppc_fcmpo_cror(i) or no_replacement(i)
         new_function.body.extend(repl)
         i += consumed
     return new_function
@@ -676,8 +700,7 @@ def build_blocks(
     if mips:
         function = normalize_likely_branches(function)
     function = prune_unreferenced_labels(function, asm_data)
-    if mips:
-        function = simplify_standard_patterns(function)
+    function = simplify_standard_patterns(function, mips=mips)
     function = prune_unreferenced_labels(function, asm_data)
 
     block_builder = BlockBuilder()

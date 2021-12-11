@@ -207,6 +207,7 @@ valid_number = "-xX" + string.hexdigits
 ppc_regs = [
     *(f"r{i}" for i in range(0, 32)),
     *(f"f{i}" for i in range(0, 32)),
+    *(f"cr{i}" for i in range(0, 8)),
 ]
 
 
@@ -260,16 +261,20 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
         if tok.isspace():
             # Ignore whitespace.
             arg_elems.pop(0)
-        elif tok == "$" and mips:
+        elif tok == "$":
             # Register.
             assert value is None
-            arg_elems.pop(0)
-            reg = parse_word(arg_elems)
-            if reg == "s8":
-                reg = "fp"
-            if reg == "r0":
-                reg = "zero"
-            value = Register(reg)
+            word = parse_word(arg_elems)
+            reg = word[1:]
+            if "$" in reg:
+                # If there are at least two $'s in the word, it's a symbol
+                value = AsmGlobalSymbol(word)
+            else:
+                if reg == "s8":
+                    reg = "fp"
+                if reg == "r0":
+                    reg = "zero"
+                value = Register(reg)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None

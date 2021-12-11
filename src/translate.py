@@ -3815,6 +3815,12 @@ CASES_PPC_COMPARE: PPCCmpInstrMap = {
     # TODO: Assert that the first arg is cr0
     "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
     "fcmpu": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
+    "fcmpo.lte": lambda a, op: BinaryOp.fcmp(
+        a.reg(1), op if op != "==" else "<=", a.reg(2)
+    ),
+    "fcmpo.gte": lambda a, op: BinaryOp.fcmp(
+        a.reg(1), op if op != "==" else ">=", a.reg(2)
+    ),
 }
 
 
