@@ -3744,6 +3744,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lhz": lambda a: handle_load(a, type=Type.u16()),
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
     "lis": lambda a: load_upper(a),
+    "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
+    "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
     "rlwinm": lambda a: handle_rlwinm(a.reg(1), a.imm(2), a.imm(3), a.imm(4)),
