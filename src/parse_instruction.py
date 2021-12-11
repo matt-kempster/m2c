@@ -339,6 +339,21 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
             else:
                 op = expect("&+-*")
 
+            # Parse `sym-_SDA_BASE_(r13)` as a Reloc, equivalently to `sym@sda21(r13)`
+            if tok == "-" and arg_elems[0] == "_":
+                reloc_name = parse_word(arg_elems)
+                if reloc_name not in ("_SDA_BASE_", "_SDA2_BASE_"):
+                    raise DecompFailure(
+                        f"Unexpected symbol {reloc_name} in subtraction expression"
+                    )
+                expect("(")
+                rhs = parse_arg_elems(arg_elems)
+                assert rhs in [Register("r2"), Register("r13")]
+                assert isinstance(rhs, Register)
+                expect(")")
+                assert value
+                return Reloc(reloc_name, value, rhs)
+
             rhs = parse_arg_elems(arg_elems)
             # These operators can only use constants as the right-hand-side.
             if rhs and isinstance(rhs, BinOp) and rhs.op == "*":
@@ -364,7 +379,7 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 assert isinstance(rhs, Register)
                 expect(")")
                 assert value
-                value = Reloc(reloc_name, value, rhs)
+                return Reloc(reloc_name, value, rhs)
             else:
                 assert reloc_name in ("ha", "l")
                 assert value
