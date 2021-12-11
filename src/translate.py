@@ -3253,6 +3253,21 @@ def handle_rlwinm(
 
     return BinaryOp.int(left=source, op="&", right=Literal(mask))
 
+def handle_loadx(source: Expression, type: Type) -> Expression:
+    size = type.get_size_bytes()
+    assert size is not None
+
+    # rD, rA, rB
+    if source.raw_arg(1) == Register('r0'):
+        # rA is 0, thus load from rB only
+        mem_addr = source.raw_arg(2)
+    else:
+        summed = BinaryOp.u32(source.reg(1), "+", source.reg(2))
+        source.regs[source.raw_arg(0)] = summed
+        mem_addr = source.raw_arg(0)
+
+    expr = deref(AddressMode(rhs=mem_addr, offset=0), source.regs, source.stack_info, size=size)
+    return as_type(expr, type, silent=True)
 
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
@@ -3759,6 +3774,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lha": lambda a: handle_load(a, type=Type.s16()),
     "lhz": lambda a: handle_load(a, type=Type.u16()),
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+    "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
+    "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
     "lis": lambda a: load_upper(a),
     "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
     "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
