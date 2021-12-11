@@ -3752,6 +3752,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # PPC
     "add": lambda a: handle_add(a),
     "addis": lambda a: handle_addis(a),
+    "subf": lambda a: BinaryOp.intptr(left=a.reg(1), op="-", right=a.reg(2)),
     "lba": lambda a: handle_load(a, type=Type.s8()),
     "lbz": lambda a: handle_load(a, type=Type.u8()),
     "lha": lambda a: handle_load(a, type=Type.s16()),
