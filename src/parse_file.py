@@ -338,6 +338,9 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     curr_section = line.split(" ")[1].split(",")[0]
                     if curr_section in (".rdata", ".late_rodata", ".sdata2"):
                         curr_section = ".rodata"
+                    if curr_section.startswith(".text"):
+                        # Support sections named e.g. ".text1"
+                        curr_section = ".text"
                 elif (
                     line.startswith(".rdata")
                     or line.startswith(".rodata")

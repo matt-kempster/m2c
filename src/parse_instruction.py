@@ -336,12 +336,13 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                     raise DecompFailure(
                         f"Unexpected symbol {reloc_name} in subtraction expression"
                     )
-                expect("(")
-                rhs = parse_arg_elems(arg_elems)
-                assert rhs in [Register("r2"), Register("r13")]
-                expect(")")
+                if arg_elems:
+                    expect("(")
+                    rhs = parse_arg_elems(arg_elems)
+                    assert rhs in [Register("r2"), Register("r13")]
+                    expect(")")
                 assert value
-                return Macro(reloc_name, value)
+                return Macro("sda21", value)
 
             rhs = parse_arg_elems(arg_elems)
             # These operators can only use constants as the right-hand-side.
