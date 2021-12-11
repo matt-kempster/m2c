@@ -3262,8 +3262,8 @@ def handle_loadx(source: Expression, type: Type) -> Expression:
         # rA is 0, thus load from rB only
         mem_addr = source.raw_arg(2)
     else:
-        summed = BinaryOp.u32(source.reg(1), "+", source.reg(2))
-        source.regs[source.raw_arg(0)] = summed
+        # (rA + rB) is stored in rD in `translate_node_body` for
+        # indexed loads.
         mem_addr = source.raw_arg(0)
 
     expr = deref(AddressMode(rhs=mem_addr, offset=0), source.regs, source.stack_info, size=size)
@@ -4688,6 +4688,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         elif mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
+
+            if mnemonic in ["lwzx", "lhzx", "lbzx"]:
+                if args.raw_arg(1) != Register('r0'):
+                    summed = BinaryOp.u32(args.reg(1), "+", args.reg(2))
+                    set_reg(args.raw_arg(0), summed)
+
             val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
             if False and target in args.raw_args[1:]:
                 # IDO tends to keep variables within single registers. Thus,
