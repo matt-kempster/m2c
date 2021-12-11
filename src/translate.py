@@ -3735,6 +3735,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lwl": lambda a: handle_lwl(a),
     "lwr": lambda a: handle_lwr(a),
     # PPC
+    "add": lambda a: handle_add(a),
     "addis": lambda a: handle_addis(a),
     "lba": lambda a: handle_load(a, type=Type.s8()),
     "lbz": lambda a: handle_load(a, type=Type.u8()),
