@@ -3753,6 +3753,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "add": lambda a: handle_add(a),
     "addis": lambda a: handle_addis(a),
     "subf": lambda a: BinaryOp.intptr(left=a.reg(1), op="-", right=a.reg(2)),
+    "mulli": lambda a: BinaryOp.s32(a.reg(1), "*", a.imm(2)),
     "lba": lambda a: handle_load(a, type=Type.s8()),
     "lbz": lambda a: handle_load(a, type=Type.u8()),
     "lha": lambda a: handle_load(a, type=Type.s16()),
