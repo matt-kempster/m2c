@@ -2061,6 +2061,12 @@ class InstrArgs:
             )
         return arg.argument
 
+    def shifted_imm(self, index: int) -> Expression:
+        # TODO: Should this be part of hi_imm? Do we need to handle @ha?
+        raw_imm = self.unsigned_imm(index)
+        assert isinstance(raw_imm, Literal)
+        return Literal(raw_imm.value << 16)
+
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))
 
@@ -2514,9 +2520,7 @@ def handle_addis(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
     source_reg = args.reg_ref(1)
     source = args.reg(1)
-    raw_imm = args.unsigned_imm(2)
-    assert isinstance(raw_imm, Literal)
-    imm = Literal(raw_imm.value << 16)
+    imm = args.shifted_imm(2)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
 
@@ -3655,7 +3659,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     ),
     "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
     "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
+    "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
     "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
+    "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
     # Shifts
     "sll": lambda a: fold_mul_chains(
         BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
