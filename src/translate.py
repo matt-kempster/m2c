@@ -3854,7 +3854,7 @@ def output_regs_for_instr(
                 return []
     if mnemonic in CASES_FN_CALL:
         # return list(map(Register, ["f0", "f1", "v0", "v1"]))
-        return list(map(Register, ["f3", "f4", "r3", "r4"]))
+        return list(map(Register, ["f0", "f1", "r3", "r4"]))
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_STORE_UPDATE:
@@ -4108,7 +4108,7 @@ def determine_return_register(
     best_reg: Optional[Register] = None
     best_prio = -1
     # for reg in [Register("v0"), Register("f0")]:
-    for reg in [Register("r3"), Register("f3")]:
+    for reg in [Register("r3"), Register("f0")]:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
         if max_prio == 3:
@@ -5226,7 +5226,7 @@ def translate_to_ast(
     )
 
     # for reg in [Register("v0"), Register("f0")]:
-    for reg in [Register("r3"), Register("f3")]:
+    for reg in [Register("r3"), Register("f0")]:
         propagate_register_meta(flow_graph.nodes, reg)
 
     return_reg: Optional[Register] = None
