@@ -2100,19 +2100,23 @@ class InstrArgs:
 
 
 def deref(
-    arg: Union[AddressMode, RawSymbolRef],
+    arg: Union[AddressMode, RawSymbolRef, Expression],
     regs: RegInfo,
     stack_info: StackInfo,
     *,
     size: int,
     store: bool = False,
 ) -> Expression:
-    offset = arg.offset
-    if isinstance(arg, AddressMode):
+    if isinstance(arg, Expression):
+        offset = 0
+        var = arg
+    elif isinstance(arg, AddressMode):
+        offset = arg.offset
         if stack_info.is_stack_reg(arg.rhs):
             return stack_info.get_stack_var(offset, store=store)
         var = regs[arg.rhs]
     else:
+        offset = arg.offset
         var = stack_info.global_info.address_of_gsym(arg.sym.symbol_name)
 
     # Struct member is being dereferenced.
@@ -3254,22 +3258,20 @@ def handle_rlwinm(
     return BinaryOp.int(left=source, op="&", right=Literal(mask))
 
 
-def handle_loadx(source: Expression, type: Type) -> Expression:
+def handle_loadx(args: InstrArgs, type: Type) -> Expression:
     size = type.get_size_bytes()
     assert size is not None
 
     # rD, rA, rB
-    if source.raw_arg(1) == Register("r0"):
+    if args.reg_ref(1) == Register("r0"):
         # rA is 0, thus load from rB only
-        mem_addr = source.raw_arg(2)
+        ptr = args.reg(2)
     else:
-        # (rA + rB) is stored in rD in `translate_node_body` for
-        # indexed loads.
-        mem_addr = source.raw_arg(0)
+        # (rA + rB)
+        ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
 
-    expr = deref(
-        AddressMode(rhs=mem_addr, offset=0), source.regs, source.stack_info, size=size
-    )
+    expr = deref(ptr, args.regs, args.stack_info, size=size)
+    # TODO: Do we need to check for float constants here, like in `handle_load`?
     return as_type(expr, type, silent=True)
 
 
@@ -3872,6 +3874,11 @@ CASES_DESTINATION_FIRST: InstrMap = {
 }
 CASES_LOAD_UPDATE: InstrMap = {
     "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "lhzu": lambda a: handle_load(a, type=Type.u16()),
+    "lbzu": lambda a: handle_load(a, type=Type.u8()),
+    "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+    "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
+    "lbzux": lambda a: handle_loadx(a, type=Type.u8()),
 }
 
 # TODO: Unclear if there will be many instructions like this, or if
@@ -4694,10 +4701,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
 
-            if mnemonic in ["lwzx", "lhzx", "lbzx"]:
-                if args.raw_arg(1) != Register("r0"):
+            if mnemonic in ["lwzux", "lhzux", "lbzux"]:
+                if args.reg_ref(1) != Register("r0"):
                     summed = BinaryOp.intptr(args.reg(1), "+", args.reg(2))
-                    set_reg(args.raw_arg(0), summed)
+                    set_reg(args.reg_ref(0), summed)
 
             val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
             if False and target in args.raw_args[1:]:
@@ -4760,15 +4767,21 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             val = CASES_LOAD_UPDATE[mnemonic](args)
             set_reg(target, val)
 
-            update = args.memory_ref(1)
-            if not isinstance(update, AddressMode):
-                raise DecompFailure(
-                    "Unhandled store-and-update arg in {instr}: {update!r}"
-                )
-            set_reg(
-                update.rhs,
-                add_imm(args.regs[update.rhs], Literal(update.offset), stack_info),
-            )
+            if mnemonic in ["lwzux", "lhzux", "lbzux"]:
+                # In `rA, rB, rC`, update `rB = rB + rC`
+                update_reg = args.reg_ref(1)
+                offset = args.reg(2)
+            else:
+                # In `rA, rB(N)`, update `rB = rB + N`
+                update = args.memory_ref(1)
+                if not isinstance(update, AddressMode):
+                    raise DecompFailure(
+                        "Unhandled store-and-update arg in {instr}: {update!r}"
+                    )
+                update_reg = update.rhs
+                offset = Literal(update.offset)
+
+            set_reg(update_reg, add_imm(args.regs[update_reg], offset, stack_info))
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
