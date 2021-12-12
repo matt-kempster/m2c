@@ -3971,7 +3971,7 @@ def output_regs_for_instr(
     if mnemonic in CASES_SOURCE_FIRST:
         return reg_at(1)
     if mnemonic in CASES_STORE_UPDATE:
-        return reg_at(0) + reg_at(1)
+        return reg_at(1)
     if mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
         reg = reg_at(0)
         if mnemonic.endswith("."):
