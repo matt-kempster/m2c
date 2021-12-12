@@ -4691,7 +4691,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             if mnemonic in ["lwzx", "lhzx", "lbzx"]:
                 if args.raw_arg(1) != Register('r0'):
-                    summed = BinaryOp.u32(args.reg(1), "+", args.reg(2))
+                    summed = BinaryOp.intptr(args.reg(1), "+", args.reg(2))
                     set_reg(args.raw_arg(0), summed)
 
             val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
