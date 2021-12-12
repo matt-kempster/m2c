@@ -3460,6 +3460,8 @@ CASES_STORE: StoreInstrMap = {
     # TODO: Do we need to model the truncation from f64 to f32 here?
     "stfs": lambda a: make_store(a, type=Type.f32()),
     "stfd": lambda a: make_store(a, type=Type.f64()),
+    "stfsx": lambda a: make_storex(a, type=Type.f32()),
+    "stfdx": lambda a: make_storex(a, type=Type.f64()),
 }
 CASES_STORE_UPDATE: StoreInstrMap = {
     "stbu": lambda a: make_store(a, type=Type.int_of_size(8)),
@@ -3468,6 +3470,10 @@ CASES_STORE_UPDATE: StoreInstrMap = {
     "stbux": lambda a: make_storex(a, type=Type.int_of_size(8)),
     "sthux": lambda a: make_storex(a, type=Type.int_of_size(16)),
     "stwux": lambda a: make_storex(a, type=Type.reg32(likely_float=False)),
+    "stfsu": lambda a: make_store(a, type=Type.f32()),
+    "stfdu": lambda a: make_store(a, type=Type.f64()),
+    "stfsux": lambda a: make_storex(a, type=Type.f32()),
+    "stfdux": lambda a: make_storex(a, type=Type.f64()),
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
@@ -3812,9 +3818,11 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "lha": lambda a: handle_load(a, type=Type.s16()),
     "lhz": lambda a: handle_load(a, type=Type.u16()),
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-    "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
-    "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
+    "lbax": lambda a: handle_loadx(a, type=Type.s8()),
     "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
+    "lhax": lambda a: handle_loadx(a, type=Type.s16()),
+    "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
+    "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
     "lis": lambda a: load_upper(a),
     "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
     "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
@@ -3870,6 +3878,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
     "lfd": lambda a: handle_load(a, type=Type.f64()),
+    "lfsx": lambda a: handle_loadx(a, type=Type.f32()),
+    "lfdx": lambda a: handle_loadx(a, type=Type.f64()),
     # PPC Floating Point
     "fadd": lambda a: BinaryOp.f64(a.reg(1), "+", a.reg(2)),
     "fadds": lambda a: BinaryOp.f32(a.reg(1), "+", a.reg(2)),
@@ -3919,14 +3929,20 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "fabs": lambda a: fn_op("fabs", [a.reg(1)], Type.floatish()),
 }
 CASES_LOAD_UPDATE: InstrMap = {
-    "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-    "lhzu": lambda a: handle_load(a, type=Type.u16()),
+    "lbau": lambda a: handle_load(a, type=Type.s8()),
     "lbzu": lambda a: handle_load(a, type=Type.u8()),
-    "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
-    "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
+    "lhau": lambda a: handle_load(a, type=Type.s16()),
+    "lhzu": lambda a: handle_load(a, type=Type.u16()),
+    "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "lbaux": lambda a: handle_loadx(a, type=Type.s8()),
     "lbzux": lambda a: handle_loadx(a, type=Type.u8()),
+    "lhaux": lambda a: handle_loadx(a, type=Type.s16()),
+    "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
+    "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
     "lfsu": lambda a: handle_load(a, type=Type.f32()),
     "lfdu": lambda a: handle_load(a, type=Type.f64()),
+    "lfsux": lambda a: handle_loadx(a, type=Type.f32()),
+    "lfdux": lambda a: handle_loadx(a, type=Type.f64()),
 }
 
 # TODO: Unclear if there will be many instructions like this, or if
