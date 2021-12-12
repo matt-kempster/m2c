@@ -3801,6 +3801,8 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "add": lambda a: handle_add(a),
     "addis": lambda a: handle_addis(a),
     "subf": lambda a: BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)),
+    "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
+    "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
     "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
     "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
     "mulhw": lambda a: fold_gcc_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
