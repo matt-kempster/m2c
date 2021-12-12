@@ -205,24 +205,36 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
 
 
 def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
-    if options.incbin_dir is None:
+    if not options.incbin_dirs:
         return None
+
     try:
+        # TODO: Reuse ASCII string parser, instead of just stripping quotes
         filename = args[0].strip("'\"")
         offset = int(args[1].strip(), 0)
         size = int(args[2].strip(), 0)
     except ValueError:
         raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
 
-    try:
-        with (options.incbin_dir / filename).open("rb") as f:
-            f.seek(offset)
-            data = f.read(size)
-            if len(data) == size:
-                return data
-    except OSError:
-        pass
+    for incbin_dir in options.incbin_dirs:
+        full_path = incbin_dir / filename
+        try:
+            with full_path.open("rb") as f:
+                f.seek(offset)
+                data = f.read(size)
+        except OSError:
+            continue
 
+        if len(data) != size:
+            print(
+                f"/* Unable to read {size} bytes from {full_path} at {offset:#x} (got {len(data)} bytes) */"
+            )
+            return None
+        return data
+
+    print(
+        f"/* Unable to find {filename} in any of {len(options.incbin_dirs)} search paths */"
+    )
     return None
 
 
@@ -401,7 +413,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                             fill = 0
                         else:
                             raise DecompFailure(
-                                f"Could not parse asm_data .space in {curr_section}: {line}"
+                                f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
                         size = try_parse(lambda: int(args[0].strip(), 0), directive)
                         mips_file.new_data_bytes(bytes([fill] * size))
