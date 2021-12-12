@@ -269,7 +269,7 @@ def parse_flags(flags: List[str]) -> Options:
         action="append",
         default=[],
         type=Path,
-        help="Search paths for loading .incbin directives in the input asm",
+        help="Add search path for loading .incbin directives in the input asm",
     )
 
     group = parser.add_argument_group("Output Options")

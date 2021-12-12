@@ -204,10 +204,16 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
     return b"".join(ret)
 
 
-def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
-    if not options.incbin_dirs:
-        return None
+printed_warnings: Set[str] = set()
 
+
+def print_warning_once(warning: str) -> None:
+    if warning not in printed_warnings:
+        printed_warnings.add(warning)
+        print(warning)
+
+
+def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
     try:
         # TODO: Reuse ASCII string parser, instead of just stripping quotes
         filename = args[0].strip("'\"")
@@ -215,6 +221,12 @@ def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
         size = int(args[2].strip(), 0)
     except ValueError:
         raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
+
+    if not options.incbin_dirs:
+        print_warning_once(
+            f"/* Skipping .incbin directive for {filename}, pass --incbin-dir to set a search directory */"
+        )
+        return None
 
     for incbin_dir in options.incbin_dirs:
         full_path = incbin_dir / filename
@@ -226,13 +238,13 @@ def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
             continue
 
         if len(data) != size:
-            print(
+            print_warning_once(
                 f"/* Unable to read {size} bytes from {full_path} at {offset:#x} (got {len(data)} bytes) */"
             )
             return None
         return data
 
-    print(
+    print_warning_once(
         f"/* Unable to find {filename} in any of {len(options.incbin_dirs)} search paths */"
     )
     return None
