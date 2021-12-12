@@ -417,6 +417,8 @@ class Instruction:
         return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
 
     def is_branch_instruction(self) -> bool:
+        if self.is_conditional_return_instruction():
+            return True
         if self.mips:
             return (
                 self.mnemonic
@@ -480,6 +482,23 @@ class Instruction:
             return self.mnemonic == "jr" and self.args[0] == Register("ra")
         else:
             return self.mnemonic == "blr"
+
+    def is_conditional_return_instruction(self) -> bool:
+        if self.mips:
+            return False
+        else:
+            return self.mnemonic in (
+                "beqlr",
+                "bgelr",
+                "bgtlr",
+                "blelr",
+                "bltlr",
+                "bnelr",
+                "bnglr",
+                "bnllr",
+                "bnslr",
+                "bsolr",
+            )
 
     def is_jumptable_instruction(self) -> bool:
         if self.mips:

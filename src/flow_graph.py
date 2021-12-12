@@ -261,7 +261,11 @@ def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function
         if isinstance(label, Label) and label.name in asm_data.mentioned_labels
     }
     for item in function.body:
-        if isinstance(item, Instruction) and item.is_branch_instruction():
+        if (
+            isinstance(item, Instruction)
+            and item.is_branch_instruction()
+            and not item.is_conditional_return_instruction()
+        ):
             labels_used.add(item.get_branch_target().target)
 
     new_function = function.bodyless_copy()
@@ -707,12 +711,27 @@ def build_blocks(
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
     branch_likely_counts: Counter[str] = Counter()
+    cond_return_target: Optional[JumpTarget] = None
 
     def process(item: Union[Instruction, Label]) -> None:
+        nonlocal cond_return_target
+
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
             block_builder.set_label(item)
+            return
+
+        if item.is_conditional_return_instruction():
+            if cond_return_target is None:
+                cond_return_target = JumpTarget(f"_conditionalreturn_")
+            # Strip the "lr" off of the instruction
+            assert item.mnemonic[-2:] == "lr"
+            branch_instr = Instruction.derived(
+                item.mnemonic[:-2], [cond_return_target], item
+            )
+            block_builder.add_instruction(branch_instr)
+            block_builder.new_block()
             return
 
         if mips and not item.is_delay_slot_instruction():
@@ -822,6 +841,14 @@ def build_blocks(
         meta = InstructionMeta.missing()
         block_builder.add_instruction(Instruction("jr", [Register("ra")], meta))
         block_builder.add_instruction(Instruction("nop", [], meta))
+        block_builder.new_block()
+
+    if cond_return_target is not None:
+        # Add an empty return block at the end of the function
+        meta = InstructionMeta.missing()
+        return_instr = Instruction("blr", [], meta)
+        block_builder.set_label(Label(cond_return_target.target))
+        block_builder.add_instruction(return_instr)
         block_builder.new_block()
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
