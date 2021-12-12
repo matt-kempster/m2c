@@ -2708,6 +2708,25 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 
 
+def make_storex(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
+    size = type.get_size_bytes()
+    assert size is not None
+    source = args.reg(0)
+
+    # rS, rA, rB
+    if args.reg_ref(1) == Register("r0"):
+        # rA is 0, thus load from rB only
+        ptr = args.reg(2)
+    else:
+        # (rA + rB)
+        ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
+
+    # TODO: Can we assume storex's are never used to save registers to the stack?
+    dest = deref(ptr, args.regs, args.stack_info, size=size, store=True)
+    dest.type.unify(type)
+    return StoreStmt(source=as_type(source, type, silent=False), dest=dest)
+
+
 def handle_swl(args: InstrArgs) -> Optional[StoreStmt]:
     # swl in practice only occurs together with swr, so we can treat it as a regular
     # store, with the expression wrapped in UnalignedLoad if needed.
@@ -3435,12 +3454,20 @@ CASES_STORE: StoreInstrMap = {
     "stb": lambda a: make_store(a, type=Type.int_of_size(8)),
     "sth": lambda a: make_store(a, type=Type.int_of_size(16)),
     "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+    "stbx": lambda a: make_storex(a, type=Type.int_of_size(8)),
+    "sthx": lambda a: make_storex(a, type=Type.int_of_size(16)),
+    "stwx": lambda a: make_storex(a, type=Type.reg32(likely_float=False)),
     # TODO: Do we need to model the truncation from f64 to f32 here?
     "stfs": lambda a: make_store(a, type=Type.f32()),
     "stfd": lambda a: make_store(a, type=Type.f64()),
 }
 CASES_STORE_UPDATE: StoreInstrMap = {
+    "stbu": lambda a: make_store(a, type=Type.int_of_size(8)),
+    "sthu": lambda a: make_store(a, type=Type.int_of_size(16)),
     "stwu": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+    "stbux": lambda a: make_storex(a, type=Type.int_of_size(8)),
+    "sthux": lambda a: make_storex(a, type=Type.int_of_size(16)),
+    "stwux": lambda a: make_storex(a, type=Type.reg32(likely_float=False)),
 }
 CASES_BRANCHES: CmpInstrMap = {
     # Branch instructions/pseudoinstructions
