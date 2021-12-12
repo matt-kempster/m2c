@@ -3253,12 +3253,13 @@ def handle_rlwinm(
 
     return BinaryOp.int(left=source, op="&", right=Literal(mask))
 
+
 def handle_loadx(source: Expression, type: Type) -> Expression:
     size = type.get_size_bytes()
     assert size is not None
 
     # rD, rA, rB
-    if source.raw_arg(1) == Register('r0'):
+    if source.raw_arg(1) == Register("r0"):
         # rA is 0, thus load from rB only
         mem_addr = source.raw_arg(2)
     else:
@@ -3266,8 +3267,11 @@ def handle_loadx(source: Expression, type: Type) -> Expression:
         # indexed loads.
         mem_addr = source.raw_arg(0)
 
-    expr = deref(AddressMode(rhs=mem_addr, offset=0), source.regs, source.stack_info, size=size)
+    expr = deref(
+        AddressMode(rhs=mem_addr, offset=0), source.regs, source.stack_info, size=size
+    )
     return as_type(expr, type, silent=True)
+
 
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
@@ -3829,6 +3833,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "fsubs": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
     "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
     "fmr": lambda a: a.reg(1),
+    "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
     # PPC Floating Poing Fused Multiply-{Add,Sub}
     "fmadd": lambda a: BinaryOp.f64(
         BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
@@ -4690,7 +4695,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             target = args.reg_ref(0)
 
             if mnemonic in ["lwzx", "lhzx", "lbzx"]:
-                if args.raw_arg(1) != Register('r0'):
+                if args.raw_arg(1) != Register("r0"):
                     summed = BinaryOp.intptr(args.reg(1), "+", args.reg(2))
                     set_reg(args.raw_arg(0), summed)
 
