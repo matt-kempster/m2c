@@ -2134,6 +2134,7 @@ def deref(
             if isinstance(addend, Literal) and addend.likely_partial_offset():
                 offset += addend.value
                 var = base
+                uw_var = early_unwrap(var)
                 break
 
     var.type.unify(Type.ptr())
