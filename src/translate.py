@@ -3253,6 +3253,21 @@ def handle_rlwinm(
 
     return BinaryOp.int(left=source, op="&", right=Literal(mask))
 
+def handle_loadx(source: Expression, type: Type) -> Expression:
+    size = type.get_size_bytes()
+    assert size is not None
+
+    # rD, rA, rB
+    if source.raw_arg(1) == Register('r0'):
+        # rA is 0, thus load from rB only
+        mem_addr = source.raw_arg(2)
+    else:
+        # (rA + rB) is stored in rD in `translate_node_body` for
+        # indexed loads.
+        mem_addr = source.raw_arg(0)
+
+    expr = deref(AddressMode(rhs=mem_addr, offset=0), source.regs, source.stack_info, size=size)
+    return as_type(expr, type, silent=True)
 
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
@@ -3753,11 +3768,15 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "add": lambda a: handle_add(a),
     "addis": lambda a: handle_addis(a),
     "subf": lambda a: BinaryOp.intptr(left=a.reg(1), op="-", right=a.reg(2)),
+    "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
     "lba": lambda a: handle_load(a, type=Type.s8()),
     "lbz": lambda a: handle_load(a, type=Type.u8()),
     "lha": lambda a: handle_load(a, type=Type.s16()),
     "lhz": lambda a: handle_load(a, type=Type.u16()),
     "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+    "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+    "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
+    "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
     "lis": lambda a: load_upper(a),
     "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
     "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
@@ -4669,6 +4688,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         elif mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
             target = args.reg_ref(0)
+
+            if mnemonic in ["lwzx", "lhzx", "lbzx"]:
+                if args.raw_arg(1) != Register('r0'):
+                    summed = BinaryOp.intptr(args.reg(1), "+", args.reg(2))
+                    set_reg(args.raw_arg(0), summed)
+
             val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
             if False and target in args.raw_args[1:]:
                 # IDO tends to keep variables within single registers. Thus,
