@@ -3853,6 +3853,20 @@ CASES_DESTINATION_FIRST: InstrMap = {
         Literal(a.imm_value(2) - a.imm_value(3)),
         Literal(31 - a.imm_value(3)),
     ),
+    "slw": lambda a: fold_mul_chains(
+        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
+    ),
+    "srw": lambda a: fold_gcc_divmod(
+        BinaryOp(
+            left=as_u32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u32()
+        )
+    ),
+    "sraw": lambda a: fold_gcc_divmod(
+        BinaryOp(
+            left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
+        )
+    ),
+    "srawi": lambda a: handle_sra(a),
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
     "lfd": lambda a: handle_load(a, type=Type.f64()),
@@ -3911,6 +3925,8 @@ CASES_LOAD_UPDATE: InstrMap = {
     "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
     "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
     "lbzux": lambda a: handle_loadx(a, type=Type.u8()),
+    "lfsu": lambda a: handle_load(a, type=Type.f32()),
+    "lfdu": lambda a: handle_load(a, type=Type.f64()),
 }
 
 # TODO: Unclear if there will be many instructions like this, or if
