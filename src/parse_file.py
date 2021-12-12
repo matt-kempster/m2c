@@ -204,24 +204,25 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
     return b"".join(ret)
 
 
-def parse_incbin(line: str, options: Options) -> Optional[bytes]:
+def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
     if options.incbin_dir is None:
         return None
     try:
-        args = line.split(maxsplit=1)[1].split(",")
         filename = args[0].strip("'\"")
         offset = int(args[1].strip(), 0)
         size = int(args[2].strip(), 0)
     except ValueError:
-        raise DecompFailure(f"Could not parse asm_data .incbin directive: {line}")
+        raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
+
     try:
         with (options.incbin_dir / filename).open("rb") as f:
             f.seek(offset)
             data = f.read(size)
             if len(data) == size:
                 return data
-    except:
+    except OSError:
         pass
+
     return None
 
 
@@ -338,6 +339,8 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     curr_section = line.split(" ")[1].split(",")[0]
                     if curr_section in (".rdata", ".late_rodata", ".sdata2"):
                         curr_section = ".rodata"
+                    if curr_section.startswith(".text"):
+                        curr_section = ".text"
                 elif (
                     line.startswith(".rdata")
                     or line.startswith(".rodata")
@@ -350,10 +353,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     curr_section = ".bss"
                 elif line.startswith(".text"):
                     curr_section = ".text"
-                elif curr_section in (".rodata", ".data", ".bss", ".sdata2"):
-                    if line.startswith(".word") or line.startswith(".4byte"):
-                        directive, args_str = line.split(maxsplit=1)
-                        for w in args_str.split(","):
+                elif curr_section in (".rodata", ".data", ".bss"):
+                    directive, _, args_str = line.partition(" ")
+                    args = args_str.split(",")
+                    if directive in (".word", ".4byte"):
+                        for w in args:
                             w = w.strip()
                             if not w or w[0].isdigit() or w[0] == "-":
                                 ival = (
@@ -362,35 +366,35 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
                             else:
                                 mips_file.new_data_sym(w)
-                    elif any(line.startswith(d) for d in (".short", ".half", ".2byte")):
-                        directive, args_str = line.split(maxsplit=1)
-                        for w in args_str.split(","):
+                    elif directive in (".short", ".half", ".2byte"):
+                        for w in args:
                             ival = (
                                 try_parse(lambda: int(w.strip(), 0), directive) & 0xFFFF
                             )
                             mips_file.new_data_bytes(struct.pack(">H", ival))
-                    elif line.startswith(".byte"):
-                        for w in line[5:].split(","):
-                            ival = try_parse(lambda: int(w.strip(), 0), ".byte") & 0xFF
+                    elif directive == ".byte":
+                        for w in args:
+                            ival = (
+                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFF
+                            )
                             mips_file.new_data_bytes(bytes([ival]))
-                    elif line.startswith(".float"):
-                        for w in line[6:].split(","):
-                            fval = try_parse(lambda: float(w.strip()), ".float")
+                    elif directive == ".float":
+                        for w in args:
+                            fval = try_parse(lambda: float(w.strip()), directive)
                             mips_file.new_data_bytes(struct.pack(">f", fval))
-                    elif line.startswith(".double"):
-                        for w in line[7:].split(","):
-                            fval = try_parse(lambda: float(w.strip()), ".double")
+                    elif directive == ".double":
+                        for w in args:
+                            fval = try_parse(lambda: float(w.strip()), directive)
                             mips_file.new_data_bytes(struct.pack(">d", fval))
-                    elif line.startswith(".asci"):
-                        z = line.startswith(".asciz") or line.startswith(".asciiz")
+                    elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
+                        z = directive.endswith("z")
                         mips_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
-                    elif line.startswith(".space") or line.startswith(".skip"):
-                        args = line.split(maxsplit=1)[1].split(",")
+                    elif directive in (".space", ".skip"):
                         if len(args) == 2:
                             fill = (
-                                try_parse(lambda: int(args[1].strip(), 0), ".space")
+                                try_parse(lambda: int(args[1].strip(), 0), directive)
                                 & 0xFF
                             )
                         elif len(args) == 1:
@@ -399,10 +403,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                             raise DecompFailure(
                                 f"Could not parse asm_data .space in {curr_section}: {line}"
                             )
-                        size = try_parse(lambda: int(args[0].strip(), 0), ".space")
+                        size = try_parse(lambda: int(args[0].strip(), 0), directive)
                         mips_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
-                        data = parse_incbin(line, options)
+                        data = parse_incbin(args, options)
                         if data is not None:
                             mips_file.new_data_bytes(data)
 

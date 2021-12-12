@@ -264,12 +264,11 @@ def parse_flags(flags: List[str]) -> Options:
         help="Mark preprocessor constant as undefined",
     )
     group.add_argument(
-        "-I",
         "--incbin-dir",
         dest="incbin_dir",
         default=None,
         type=Path,
-        help="Search path for loading .incbin directives",
+        help="Search path for loading .incbin directives in the input asm",
     )
 
     group = parser.add_argument_group("Output Options")
