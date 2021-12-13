@@ -204,16 +204,14 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
     return b"".join(ret)
 
 
-printed_warnings: Set[str] = set()
+def add_warning(warnings: List[str], new: str) -> None:
+    if new not in warnings:
+        warnings.append(new)
 
 
-def print_warning_once(warning: str) -> None:
-    if warning not in printed_warnings:
-        printed_warnings.add(warning)
-        print(warning)
-
-
-def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
+def parse_incbin(
+    args: List[str], options: Options, warnings: List[str]
+) -> Optional[bytes]:
     try:
         # TODO: Reuse ASCII string parser, instead of just stripping quotes
         filename = args[0].strip("'\"")
@@ -223,8 +221,9 @@ def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
         raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
 
     if not options.incbin_dirs:
-        print_warning_once(
-            f"/* Skipping .incbin directive for {filename}, pass --incbin-dir to set a search directory */"
+        add_warning(
+            warnings,
+            f"Skipping .incbin directive for {filename}, pass --incbin-dir to set a search directory",
         )
         return None
 
@@ -236,16 +235,20 @@ def parse_incbin(args: List[str], options: Options) -> Optional[bytes]:
                 data = f.read(size)
         except OSError:
             continue
+        except MemoryError:
+            data = b""
 
         if len(data) != size:
-            print_warning_once(
-                f"/* Unable to read {size} bytes from {full_path} at {offset:#x} (got {len(data)} bytes) */"
+            add_warning(
+                warnings,
+                f"Unable to read {size} bytes from {full_path} at {offset:#x} (got {len(data)} bytes)",
             )
             return None
         return data
 
-    print_warning_once(
-        f"/* Unable to find {filename} in any of {len(options.incbin_dirs)} search paths */"
+    add_warning(
+        warnings,
+        f"Unable to find {filename} in any of {len(options.incbin_dirs)} search paths",
     )
     return None
 
@@ -257,6 +260,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
     curr_section = ".text"
+    warnings: List[str] = []
 
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
@@ -337,9 +341,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 macro_name = line.split()[1]
                 if macro_name not in defines:
                     defines[macro_name] = 0
-                    print(
+                    add_warning(
+                        warnings,
                         f"Note: assuming {macro_name} is unset for .ifdef, "
-                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly."
+                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.",
                     )
                 level = defines[macro_name]
                 if line.startswith(".ifdef"):
@@ -430,7 +435,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         size = try_parse(lambda: int(args[0].strip(), 0), directive)
                         mips_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
-                        data = parse_incbin(args, options)
+                        data = parse_incbin(args, options, warnings)
                         if data is not None:
                             mips_file.new_data_bytes(data)
 
@@ -447,5 +452,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 )
                 instr: Instruction = parse_instruction(line, meta)
                 mips_file.new_instruction(instr)
+
+    if warnings:
+        print("/*")
+        print("\n".join(warnings))
+        print("*/")
 
     return mips_file
