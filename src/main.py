@@ -18,6 +18,7 @@ from .translate import (
     translate_to_ast,
 )
 from .types import TypePool
+from .arch_mips import MipsArch
 
 
 def print_current_exception(sanitize: bool) -> None:
@@ -59,6 +60,7 @@ def print_exception_as_comment(
 
 
 def run(options: Options) -> int:
+    arch = MipsArch()
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
     try:
@@ -108,7 +110,7 @@ def run(options: Options) -> int:
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
     )
-    global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
+    global_info = GlobalInfo(asm_data, arch, function_names, typemap, typepool)
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
