@@ -3252,29 +3252,36 @@ def handle_bgez(args: InstrArgs) -> Condition:
 
 
 def handle_rlwinm(
-    source: Expression, shift: Expression, mask_begin: Expression, mask_end: Expression
+    source: Expression, shift: int, mask_begin: int, mask_end: int
 ) -> Expression:
-    assert isinstance(shift, Literal)
-    assert isinstance(mask_begin, Literal)
-    assert isinstance(mask_end, Literal)
-    if shift.value != 0:
-        # TODO: Support nonzero shift
-        return fn_op("rlwinm", [source, shift, mask_begin, mask_end], source.type)
+    if shift != 0:
+        if mask_begin == 0 and shift + mask_end == 31:
+            # slwi: Shift left word immediate
+            return fold_mul_chains(BinaryOp.int(source, "<<", Literal(shift)))
+        elif mask_end == 31 and shift + mask_begin == 32:
+            # srwi: Shift right word immediate
+            return fold_gcc_divmod(BinaryOp.u32(source, ">>", Literal(shift)))
 
-    mask_range = (mask_begin.value, mask_end.value)
-    if mask_range == (24, 31):
+        # TODO: Support other nonzero shifts
+        return fn_op(
+            "rlwinm",
+            [source, Literal(shift), Literal(mask_begin), Literal(mask_end)],
+            source.type,
+        )
+
+    if (mask_begin, mask_end) == (24, 31):
         return as_type(source, Type.int_of_size(8), silent=False)
-    elif mask_range == (16, 31):
+    elif (mask_begin, mask_end) == (16, 31):
         return as_type(source, Type.int_of_size(16), silent=False)
 
     # Bit 0 is the MSB, Bit 31 is the LSB
     bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
-    if mask_range[0] <= mask_range[1]:
+    if mask_begin <= mask_end:
         # Set bits inside the range, fully inclusive
-        mask = bits_upto(mask_range[0]) - bits_upto(mask_range[1] + 1)
+        mask = bits_upto(mask_begin) - bits_upto(mask_end + 1)
     else:
-        # Set bits from [31, mask_range[1]] and [mask_range[0], 0]
-        mask = (bits_upto(mask_range[1] + 1) - bits_upto(mask_range[0])) ^ bits_upto(0)
+        # Set bits from [31, mask_end] and [mask_begin, 0]
+        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ bits_upto(0)
 
     return BinaryOp.int(left=source, op="&", right=Literal(mask))
 
@@ -3830,38 +3837,21 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
     "mflr": lambda a: a.regs[Register("lr")],
     "mr": lambda a: a.reg(1),
-    "rlwinm": lambda a: handle_rlwinm(a.reg(1), a.imm(2), a.imm(3), a.imm(4)),
-    "extlwi": lambda a: handle_rlwinm(
-        a.reg(1), a.imm(3), Literal(0), Literal(a.imm_value(2) - 1)
+    "rlwinm": lambda a: handle_rlwinm(
+        a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
     ),
+    "extlwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(3), 0, a.imm_value(2) - 1),
     "extrwi": lambda a: handle_rlwinm(
-        a.reg(1),
-        Literal(a.imm_value(3) + a.imm_value(2)),
-        Literal(32 - a.imm_value(2)),
-        Literal(31),
+        a.reg(1), a.imm_value(3) + a.imm_value(2), 32 - a.imm_value(2), 31
     ),
-    "rotlwi": lambda a: handle_rlwinm(a.reg(1), a.imm(2), Literal(0), Literal(31)),
-    "rotrwi": lambda a: handle_rlwinm(
-        a.reg(1), Literal(32 - a.imm_value(2)), Literal(0), Literal(31)
-    ),
-    "slwi": lambda a: handle_rlwinm(
-        a.reg(1), a.imm(2), Literal(0), Literal(31 - a.imm_value(2))
-    ),
-    "srwi": lambda a: handle_rlwinm(
-        a.reg(1), Literal(32 - a.imm_value(2)), a.imm(2), Literal(31)
-    ),
-    "clrlwi": lambda a: handle_rlwinm(a.reg(1), Literal(0), a.imm(2), Literal(31)),
-    "clrrwi": lambda a: handle_rlwinm(
-        a.reg(1),
-        Literal(0),
-        Literal(0),
-        Literal(31 - a.imm_value(2)),
-    ),
+    "rotlwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(2), 0, 31),
+    "rotrwi": lambda a: handle_rlwinm(a.reg(1), 32 - a.imm_value(2), 0, 31),
+    "slwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(2), 0, 31 - a.imm_value(2)),
+    "srwi": lambda a: handle_rlwinm(a.reg(1), 32 - a.imm_value(2), a.imm_value(2), 31),
+    "clrlwi": lambda a: handle_rlwinm(a.reg(1), 0, a.imm_value(2), 31),
+    "clrrwi": lambda a: handle_rlwinm(a.reg(1), 0, 0, 31 - a.imm_value(2)),
     "clrlslwi": lambda a: handle_rlwinm(
-        a.reg(1),
-        a.imm(3),
-        Literal(a.imm_value(2) - a.imm_value(3)),
-        Literal(31 - a.imm_value(3)),
+        a.reg(1), a.imm_value(3), a.imm_value(2) - a.imm_value(3), 31 - a.imm_value(3)
     ),
     "slw": lambda a: fold_mul_chains(
         BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
