@@ -574,7 +574,11 @@ def normalize_instruction(instr: Instruction) -> Instruction:
             and args[1].macro_name == "ha"
             and isinstance(args[1].argument, AsmLiteral)
         ):
-            lit = AsmLiteral(args[1].argument.value & 0xFFFF0000)
+            # The @ha macro compensates for the sign bit of the corresponding @l
+            value = args[1].argument.value
+            if value & 0x8000:
+                value += 0x10000
+            lit = AsmLiteral(value & 0xFFFF0000)
             return Instruction("li", [args[0], lit], instr.meta)
         if instr.mnemonic in LENGTH_THREE:
             return normalize_instruction(

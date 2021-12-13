@@ -3005,7 +3005,7 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         if y <= 1:
             return None
         result = round(x / y)
-        if x / (y + 0x10000) <= result <= x / (y - 0x10000):
+        if x / (y + 1) <= result <= x / (y - 1):
             return result
         return None
 
@@ -3358,9 +3358,15 @@ def strip_macros(arg: Argument) -> Argument:
             return arg.argument
         if arg.macro_name == "hi":
             raise DecompFailure("%hi macro outside of lui")
-        if arg.macro_name not in ["lo", "l"]:
-            raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
-        return AsmLiteral(0)
+        if arg.macro_name in ["lo", "l"]:
+            # PPC XXX: This is sort of weird; for `%lo(symbol)` we return 0 here and assume that
+            # this %lo is always perfectly paired with one other %hi. However, with `%lo(literal)`,
+            # we return the macro value, and assume it is paired with another `%hi(literal)`.
+            # This lets us reuse `%hi(literal)` values, but assumes that we never mix literal/symbols
+            if isinstance(arg.argument, AsmLiteral):
+                return AsmLiteral(arg.argument.value & 0xFFFF)
+            return AsmLiteral(0)
+        raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
         if arg.lhs.macro_name not in ["lo", "l"]:
             raise DecompFailure(
