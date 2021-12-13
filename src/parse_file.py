@@ -265,12 +265,12 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/# \t":
+        if s[0] in "/#; \t":
             return " "
         else:
             return s
 
-    re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
+    re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
     re_local_label = re.compile("loc_|locret_|def_|lbl_")
