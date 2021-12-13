@@ -194,13 +194,15 @@ label {
     color: #c0c0c0;
     box-shadow: 1px 1px 10px 0px black;
 }
+h4 { margin: 0px; color: red; }
 </style>
 </head>
 <body>
 <form action="?go" method="post">
 <div class="main">
+  <h4>experimental</h4>
   <div>
-    MIPS assembly:
+    PPC assembly:
   </div>
   <div style="flex: 20;">
     <textarea name="source" spellcheck="false"></textarea>
