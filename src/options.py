@@ -66,6 +66,7 @@ class Options:
     print_stack_structs: bool
     unk_inference: bool
     passes: int
+    incbin_dirs: List[Path]
 
     def formatter(self) -> "Formatter":
         return Formatter(

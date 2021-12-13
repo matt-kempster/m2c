@@ -204,6 +204,55 @@ def parse_ascii_directive(line: str, z: bool) -> bytes:
     return b"".join(ret)
 
 
+def add_warning(warnings: List[str], new: str) -> None:
+    if new not in warnings:
+        warnings.append(new)
+
+
+def parse_incbin(
+    args: List[str], options: Options, warnings: List[str]
+) -> Optional[bytes]:
+    try:
+        # TODO: Reuse ASCII string parser, instead of just stripping quotes
+        filename = args[0].strip("'\"")
+        offset = int(args[1].strip(), 0)
+        size = int(args[2].strip(), 0)
+    except ValueError:
+        raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
+
+    if not options.incbin_dirs:
+        add_warning(
+            warnings,
+            f"Skipping .incbin directive for {filename}, pass --incbin-dir to set a search directory",
+        )
+        return None
+
+    for incbin_dir in options.incbin_dirs:
+        full_path = incbin_dir / filename
+        try:
+            with full_path.open("rb") as f:
+                f.seek(offset)
+                data = f.read(size)
+        except OSError:
+            continue
+        except MemoryError:
+            data = b""
+
+        if len(data) != size:
+            add_warning(
+                warnings,
+                f"Unable to read {size} bytes from {full_path} at {offset:#x} (got {len(data)} bytes)",
+            )
+            return None
+        return data
+
+    add_warning(
+        warnings,
+        f"Unable to find {filename} in any of {len(options.incbin_dirs)} search paths",
+    )
+    return None
+
+
 def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     filename = Path(f.name).name
     mips_file: MIPSFile = MIPSFile(filename)
@@ -211,6 +260,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
     curr_section = ".text"
+    warnings: List[str] = []
 
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
@@ -223,8 +273,8 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
-    re_local_label = re.compile("loc_|locret_|def_")
-    re_label = re.compile(r"([a-zA-Z0-9_.]+):")
+    re_local_label = re.compile("loc_|locret_|def_|lbl_")
+    re_label = re.compile(r"([a-zA-Z0-9_.$]+):")
 
     T = TypeVar("T")
 
@@ -291,9 +341,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 macro_name = line.split()[1]
                 if macro_name not in defines:
                     defines[macro_name] = 0
-                    print(
+                    add_warning(
+                        warnings,
                         f"Note: assuming {macro_name} is unset for .ifdef, "
-                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly."
+                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.",
                     )
                 level = defines[macro_name]
                 if line.startswith(".ifdef"):
@@ -315,8 +366,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             elif ifdef_level == 0:
                 if line.startswith(".section"):
                     curr_section = line.split(" ")[1].split(",")[0]
-                    if curr_section in (".rdata", ".late_rodata"):
+                    if curr_section in (".rdata", ".late_rodata", ".sdata2"):
                         curr_section = ".rodata"
+                    if curr_section.startswith(".text"):
+                        curr_section = ".text"
                 elif (
                     line.startswith(".rdata")
                     or line.startswith(".rodata")
@@ -330,60 +383,62 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 elif line.startswith(".text"):
                     curr_section = ".text"
                 elif curr_section in (".rodata", ".data", ".bss"):
-                    if line.startswith(".word"):
-                        for w in line[5:].split(","):
+                    directive, _, args_str = line.partition(" ")
+                    args = args_str.split(",")
+                    if directive in (".word", ".4byte"):
+                        for w in args:
                             w = w.strip()
                             if not w or w[0].isdigit() or w[0] == "-":
                                 ival = (
-                                    try_parse(lambda: int(w, 0), ".word") & 0xFFFFFFFF
+                                    try_parse(lambda: int(w, 0), directive) & 0xFFFFFFFF
                                 )
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
                             else:
                                 mips_file.new_data_sym(w)
-                    elif line.startswith(".short"):
-                        for w in line[6:].split(","):
+                    elif directive in (".short", ".half", ".2byte"):
+                        for w in args:
                             ival = (
-                                try_parse(lambda: int(w.strip(), 0), ".short") & 0xFFFF
+                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFFFF
                             )
                             mips_file.new_data_bytes(struct.pack(">H", ival))
-                    elif line.startswith(".half"):
-                        for w in line[5:].split(","):
+                    elif directive == ".byte":
+                        for w in args:
                             ival = (
-                                try_parse(lambda: int(w.strip(), 0), ".half") & 0xFFFF
+                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFF
                             )
-                            mips_file.new_data_bytes(struct.pack(">H", ival))
-                    elif line.startswith(".byte"):
-                        for w in line[5:].split(","):
-                            ival = try_parse(lambda: int(w.strip(), 0), ".byte") & 0xFF
                             mips_file.new_data_bytes(bytes([ival]))
-                    elif line.startswith(".float"):
-                        for w in line[6:].split(","):
-                            fval = try_parse(lambda: float(w.strip()), ".float")
+                    elif directive == ".float":
+                        for w in args:
+                            fval = try_parse(lambda: float(w.strip()), directive)
                             mips_file.new_data_bytes(struct.pack(">f", fval))
-                    elif line.startswith(".double"):
-                        for w in line[7:].split(","):
-                            fval = try_parse(lambda: float(w.strip()), ".double")
+                    elif directive == ".double":
+                        for w in args:
+                            fval = try_parse(lambda: float(w.strip()), directive)
                             mips_file.new_data_bytes(struct.pack(">d", fval))
-                    elif line.startswith(".asci"):
-                        z = line.startswith(".asciz") or line.startswith(".asciiz")
+                    elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
+                        z = directive.endswith("z")
                         mips_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
-                    elif line.startswith(".space"):
-                        args = line[6:].split(",")
+                    elif directive in (".space", ".skip"):
                         if len(args) == 2:
                             fill = (
-                                try_parse(lambda: int(args[1].strip(), 0), ".space")
+                                try_parse(lambda: int(args[1].strip(), 0), directive)
                                 & 0xFF
                             )
                         elif len(args) == 1:
                             fill = 0
                         else:
                             raise DecompFailure(
-                                f"Could not parse asm_data .space in {curr_section}: {line}"
+                                f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
-                        size = try_parse(lambda: int(args[0].strip(), 0), ".space")
+                        size = try_parse(lambda: int(args[0].strip(), 0), directive)
                         mips_file.new_data_bytes(bytes([fill] * size))
+                    elif line.startswith(".incbin"):
+                        data = parse_incbin(args, options, warnings)
+                        if data is not None:
+                            mips_file.new_data_bytes(data)
+
         elif ifdef_level == 0:
             if line.startswith("glabel") or line.startswith("dlabel"):
                 process_label(line.split()[1], glabel=True)
@@ -397,5 +452,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 )
                 instr: Instruction = parse_instruction(line, meta)
                 mips_file.new_instruction(instr)
+
+    if warnings:
+        print("/*")
+        print("\n".join(warnings))
+        print("*/")
 
     return mips_file
