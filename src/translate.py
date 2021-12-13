@@ -3254,36 +3254,63 @@ def handle_bgez(args: InstrArgs) -> Condition:
 def handle_rlwinm(
     source: Expression, shift: int, mask_begin: int, mask_end: int
 ) -> Expression:
-    if shift != 0:
-        if mask_begin == 0 and shift + mask_end == 31:
-            # slwi: Shift left word immediate
-            return fold_mul_chains(BinaryOp.int(source, "<<", Literal(shift)))
-        elif mask_end == 31 and shift + mask_begin == 32:
-            # srwi: Shift right word immediate
-            return fold_gcc_divmod(BinaryOp.u32(source, ">>", Literal(shift)))
-
-        # TODO: Support other nonzero shifts
-        return fn_op(
-            "rlwinm",
-            [source, Literal(shift), Literal(mask_begin), Literal(mask_end)],
-            source.type,
-        )
-
-    if (mask_begin, mask_end) == (24, 31):
+    # Special case truncating casts
+    # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
+    if (shift, mask_begin, mask_end) == (0, 24, 31):
         return as_type(source, Type.int_of_size(8), silent=False)
-    elif (mask_begin, mask_end) == (16, 31):
+    elif (shift, mask_begin, mask_end) == (0, 16, 31):
         return as_type(source, Type.int_of_size(16), silent=False)
 
     # Bit 0 is the MSB, Bit 31 is the LSB
     bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
+    all_ones = bits_upto(0)
     if mask_begin <= mask_end:
         # Set bits inside the range, fully inclusive
         mask = bits_upto(mask_begin) - bits_upto(mask_end + 1)
     else:
         # Set bits from [31, mask_end] and [mask_begin, 0]
-        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ bits_upto(0)
+        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ all_ones
 
-    return BinaryOp.int(left=source, op="&", right=Literal(mask))
+    left_shift = shift
+    right_shift = 32 - shift
+    left_mask = (all_ones << left_shift) & mask
+    right_mask = (all_ones >> right_shift) & mask
+
+    upper_bits: Optional[Expression]
+    if left_mask == 0:
+        upper_bits = None
+    else:
+        upper_bits = source
+        if left_shift != 0:
+            upper_bits = BinaryOp.int(
+                left=upper_bits, op="<<", right=Literal(left_shift)
+            )
+        if left_mask != (all_ones << left_shift) & all_ones:
+            upper_bits = BinaryOp.int(left=upper_bits, op="&", right=Literal(left_mask))
+
+    lower_bits: Optional[Expression]
+    if right_mask == 0:
+        lower_bits = None
+    else:
+        lower_bits = source
+        if right_shift != 0:
+            lower_bits = BinaryOp.u32(
+                left=lower_bits, op=">>", right=Literal(right_shift)
+            )
+        if right_mask != (all_ones >> right_shift) & all_ones:
+            lower_bits = BinaryOp.int(
+                left=lower_bits, op="&", right=Literal(right_mask)
+            )
+
+    if upper_bits is None and lower_bits is None:
+        return Literal(0)
+    elif upper_bits is None:
+        assert isinstance(lower_bits, BinaryOp)
+        return fold_gcc_divmod(lower_bits)
+    elif lower_bits is None:
+        return fold_mul_chains(upper_bits)
+    else:
+        return BinaryOp.int(left=upper_bits, op="|", right=lower_bits)
 
 
 def handle_loadx(args: InstrArgs, type: Type) -> Expression:
