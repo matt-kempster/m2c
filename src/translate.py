@@ -2853,7 +2853,7 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
     for a modern writeup of a similar algorithm.
     """
     mult_high_ops = ("MULT_HI", "MULTU_HI")
-    possible_match_ops = mult_high_ops + ("-", ">>")
+    possible_match_ops = mult_high_ops + ("-", "+", ">>")
 
     # Only operate on integer expressions of certain operations
     if original_expr.is_floating() or original_expr.op not in possible_match_ops:
@@ -2914,6 +2914,19 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
             left_expr,
         )
 
+    # Remove outer error term: ((x / N) + ((x / N) >> 31)) --> x / N
+    if (
+        expr.op == "+"
+        and isinstance(left_expr, BinaryOp)
+        and left_expr.op == "/"
+        and isinstance(left_expr.right, Literal)
+        and isinstance(right_expr, BinaryOp)
+        and early_unwrap_ints(right_expr.left) == left_expr
+        and right_expr.op == ">>"
+        and early_unwrap_ints(right_expr.right) == Literal(31)
+    ):
+        return left_expr
+
     # Remove outer error term: ((x / N) - (x >> 31)) --> x / N
     if (
         expr.op == "-"
@@ -2958,6 +2971,9 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         expr = left_expr
         left_expr = early_unwrap_ints(expr.left)
         right_expr = early_unwrap_ints(expr.right)
+        # Normalize MULT_HI(N, x) to MULT_HI(x, N)
+        if isinstance(left_expr, Literal) and not isinstance(right_expr, Literal):
+            left_expr, right_expr = right_expr, left_expr
 
         # Remove inner addition: (MULT_HI(x, N) + x) >> M --> MULT_HI(x, N) >> M
         # MULT_HI performs signed multiplication, so the `+ x` acts as setting the 32nd bit
@@ -2989,7 +3005,7 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         if y <= 1:
             return None
         result = round(x / y)
-        if x / (y + 1) <= result <= x / (y - 1):
+        if x / (y + 0x10000) <= result <= x / (y - 0x10000):
             return result
         return None
 
@@ -3215,6 +3231,8 @@ def handle_add(args: InstrArgs) -> Expression:
 
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)
+    if isinstance(folded_expr, BinaryOp):
+        folded_expr = fold_gcc_divmod(folded_expr)
     if folded_expr is not expr:
         return folded_expr
     array_expr = array_access_from_add(expr, 0, stack_info, target_size=None, ptr=True)
@@ -3842,7 +3860,9 @@ CASES_DESTINATION_FIRST: InstrMap = {
     # PPC
     "add": lambda a: handle_add(a),
     "addis": lambda a: handle_addis(a),
-    "subf": lambda a: BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)),
+    "subf": lambda a: fold_gcc_divmod(
+        BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
+    ),
     "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
     "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
     "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
