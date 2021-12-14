@@ -109,6 +109,7 @@ TEMP_REGS: List[Register] = (
                 "cr0_lt",
                 "cr0_eq",
                 "cr0_so",
+                "ctr",
             ],
         )
     )
@@ -1648,8 +1649,9 @@ class SwitchControl:
         These are the appropriate bounds checks before using `jump_table`.
         """
         cmp_expr = simplify_condition(cond)
-        if not isinstance(cmp_expr, BinaryOp) or cmp_expr.op != ">=":
+        if not isinstance(cmp_expr, BinaryOp) or cmp_expr.op not in (">=", ">"):
             return False
+        cmp_exclusive = cmp_expr.op == ">"
 
         # The LHS may have been wrapped in a u32 cast
         left_expr = late_unwrap(cmp_expr.left)
@@ -1672,6 +1674,7 @@ class SwitchControl:
             self.jump_table is None
             or self.jump_table.asm_data_entry is None
             or not self.jump_table.asm_data_entry.is_jtbl
+            or not isinstance(right_expr, Literal)
         ):
             return False
 
@@ -1679,7 +1682,7 @@ class SwitchControl:
         jump_table_len = sum(
             isinstance(e, str) for e in self.jump_table.asm_data_entry.data
         )
-        return right_expr == Literal(jump_table_len)
+        return right_expr.value + int(cmp_exclusive) == jump_table_len
 
     @staticmethod
     def irregular_from_expr(control_expr: Expression) -> "SwitchControl":
@@ -3569,6 +3572,7 @@ CASES_JUMPS: InstrSet = {
     # PPC
     "b",
     "blr",
+    "bctr",
 }
 CASES_FN_CALL: InstrSet = {
     # Function call
@@ -3889,6 +3893,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
     "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
     "mflr": lambda a: a.regs[Register("lr")],
+    "mfctr": lambda a: a.regs[Register("ctr")],
     "mr": lambda a: a.reg(1),
     "rlwinm": lambda a: handle_rlwinm(
         a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
@@ -3994,6 +3999,7 @@ CASES_LOAD_UPDATE: InstrMap = {
 # there will just be separate dicts for each implicit dest register
 CASES_IMPLICIT_DESTINATION: ImplicitInstrMap = {
     "mtlr": (Register("lr"), lambda a: a.reg(0)),
+    "mtctr": (Register("ctr"), lambda a: a.reg(0)),
 }
 
 CASES_PPC_COMPARE: PPCCmpInstrMap = {
@@ -4581,10 +4587,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if isinstance(args.raw_arg(0), AsmGlobalSymbol):
                     # Unconditional jump
                     pass
-                else:
-                    # Switch jump
-                    assert isinstance(node, SwitchNode)
-                    switch_expr = args.reg(0)
+            elif mnemonic == "bctr":
+                # Switch jump
+                assert isinstance(node, SwitchNode)
+                switch_expr = args.regs[Register("ctr")]
             elif mnemonic == "jr":
                 # MIPS:
                 if args.reg_ref(0) == Register.ra():

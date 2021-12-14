@@ -468,9 +468,12 @@ class Instruction:
     def is_jump_instruction(self) -> bool:
         # (we don't treat jal/jalr as jumps, since control flow will return
         # after the call)
-        return self.is_branch_instruction() or self.mnemonic == (
-            "jr" if self.mips else "blr"
-        )
+        if self.is_branch_instruction():
+            return True
+        if self.mips:
+            return self.mnemonic == "jr"
+        else:
+            return self.mnemonic in ("blr", "bctr")
 
     def is_delay_slot_instruction(self) -> bool:
         return self.mips and (
@@ -504,9 +507,7 @@ class Instruction:
         if self.mips:
             return self.mnemonic == "jr" and not self.is_return_instruction()
         else:
-            return self.mnemonic == "b" and not isinstance(
-                self.args[0], AsmGlobalSymbol
-            )
+            return self.mnemonic == "bctr"
 
     def __str__(self) -> str:
         args = ", ".join(str(arg) for arg in self.args)
