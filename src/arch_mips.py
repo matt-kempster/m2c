@@ -56,7 +56,6 @@ class MipsArch(Arch):
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")
     return_address_reg = Register("ra")
-    temporary_reg = Register("at")
 
     base_return_regs = [Register(r) for r in ["v0", "f0"]]
     all_return_regs = [Register(r) for r in ["v0", "v1", "f0", "f1"]]

@@ -66,7 +66,6 @@ class Arch(abc.ABC):
     stack_pointer_reg: Register
     frame_pointer_reg: Register
     return_address_reg: Register
-    temporary_reg: Register
 
     base_return_regs: List[Register]
     all_return_regs: List[Register]
@@ -3626,40 +3625,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if reg in regs:
                 del regs[reg]
 
-    def overwrite_reg(reg: Register, expr: Expression) -> None:
-        prev = regs.get_raw(reg)
-        at = regs.get_raw(arch.temporary_reg)
-        if (
-            not isinstance(prev, EvalOnceExpr)
-            or isinstance(expr, Literal)
-            or reg == arch.stack_pointer_reg
-            or reg == arch.temporary_reg
-            or not prev.type.unify(expr.type)
-            or (at is not None and uses_expr(at, lambda e2: e2 == prev))
-        ):
-            set_reg(reg, expr)
-        else:
-            # TODO: This is a bit heavy-handed: we're preventing later uses
-            # even though we are not sure whether we will actually emit the
-            # overwrite. Doing this properly is hard, however -- it would
-            # involve tracking "time" for uses, and sometimes moving timestamps
-            # backwards when EvalOnceExpr's get emitted as vars.
-            if reg in regs:
-                # For ease of debugging, don't let prevent_later_value_uses see
-                # the register we're writing to.
-                del regs[reg]
-
-            prevent_later_value_uses(prev)
-            set_reg_maybe_return(
-                reg,
-                eval_once(
-                    expr,
-                    emit_exactly_once=False,
-                    trivial=is_trivial_expression(expr),
-                    reuse_var=prev.var,
-                ),
-            )
-
     def process_instr(instr: Instruction) -> None:
         nonlocal branch_condition, switch_expr, has_function_call
 
@@ -3917,17 +3882,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in arch.instrs_destination_first:
             target = args.reg_ref(0)
             val = arch.instrs_destination_first[mnemonic](args)
-            if False and target in args.raw_args[1:]:
-                # IDO tends to keep variables within single registers. Thus,
-                # if source = target, overwrite that variable instead of
-                # creating a new one.
-                # XXX This code path is disabled due to known bugs, and kept
-                # only to make it easy to experiment with. It should be removed
-                # entirely at some point, hopefully to be replaced by some more
-                # stable alternative.
-                overwrite_reg(target, val)
-            else:
-                set_reg(target, val)
+            # TODO: IDO tends to keep variables within single registers. Thus,
+            # if source = target, maybe we could overwrite that variable instead
+            # of creating a new one?
+            set_reg(target, val)
             mn_parts = mnemonic.split(".")
             if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
