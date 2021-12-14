@@ -3561,6 +3561,12 @@ CASES_BRANCHES: CmpInstrMap = {
     "bns": lambda a: a.cmp_reg("cr0_so").negated(),
     "bso": lambda a: a.cmp_reg("cr0_so"),
 }
+CASES_DECCTR_BRANCHES: CmpInstrMap = {
+    # PPC
+    # Decrement the CTR register, then branch
+    "bdnz": lambda a: a.cmp_reg("ctr"),
+    "bdz": lambda a: a.cmp_reg("ctr").negated(),
+}
 CASES_FLOAT_BRANCHES: InstrSet = {
     # Floating-point branch instructions
     "bc1t",
@@ -4073,6 +4079,8 @@ def output_regs_for_instr(
         return [Register("hi"), Register("lo")]
     if mnemonic in CASES_IMPLICIT_DESTINATION:
         return [CASES_IMPLICIT_DESTINATION[mnemonic][0]]
+    if mnemonic in CASES_DECCTR_BRANCHES:
+        return [Register("ctr")]
     if mnemonic in CASES_PPC_COMPARE:
         return [
             Register("cr0_lt"),
@@ -4571,6 +4579,13 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in CASES_BRANCHES:
             assert branch_condition is None
             branch_condition = CASES_BRANCHES[mnemonic](args)
+
+        elif mnemonic in CASES_DECCTR_BRANCHES:
+            assert branch_condition is None
+            branch_condition = CASES_DECCTR_BRANCHES[mnemonic](args)
+
+            ctr = Register("ctr")
+            set_reg(ctr, BinaryOp.int(args.regs[ctr], "-", Literal(1)))
 
         elif mnemonic in CASES_FLOAT_BRANCHES:
             assert branch_condition is None

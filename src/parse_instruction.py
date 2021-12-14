@@ -439,7 +439,17 @@ class Instruction:
                 or self.is_branch_likely_instruction()
             )
         else:
-            return self.mnemonic in ["b", "ble", "blt", "beq", "bge", "bgt", "bne"]
+            return self.mnemonic in [
+                "b",
+                "ble",
+                "blt",
+                "beq",
+                "bge",
+                "bgt",
+                "bne",
+                "bdnz",
+                "bdz",
+            ]
 
     def is_branch_likely_instruction(self) -> bool:
         return self.mips and self.mnemonic in [
