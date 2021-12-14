@@ -10,10 +10,12 @@ import typing
 from typing import (
     AbstractSet,
     Callable,
+    Collection,
     DefaultDict,
     Dict,
     Iterator,
     List,
+    Mapping,
     Optional,
     Set,
     Tuple,
@@ -51,13 +53,13 @@ from .types import (
     TypePool,
 )
 
-InstrSet = Set[str]
-InstrMap = Dict[str, Callable[["InstrArgs"], "Expression"]]
-StmtInstrMap = Dict[str, Callable[["InstrArgs"], "Statement"]]
-CmpInstrMap = Dict[str, Callable[["InstrArgs"], "Condition"]]
-StoreInstrMap = Dict[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
-MaybeInstrMap = Dict[str, Callable[["InstrArgs"], Optional["Expression"]]]
-PairInstrMap = Dict[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
+InstrSet = Collection[str]
+InstrMap = Mapping[str, Callable[["InstrArgs"], "Expression"]]
+StmtInstrMap = Mapping[str, Callable[["InstrArgs"], "Statement"]]
+CmpInstrMap = Mapping[str, Callable[["InstrArgs"], "Condition"]]
+StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
+MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
+PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
 
 
 class Arch(abc.ABC):
