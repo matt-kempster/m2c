@@ -2525,6 +2525,18 @@ def handle_addi(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
+
+    # PPC, `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
+    # i.e. as an `addis` followed by an `addi`
+    uw_source = early_unwrap(source)
+    if (
+        isinstance(uw_source, BinaryOp)
+        and uw_source.op == "+"
+        and uw_source.right == Literal(0x10000)
+        and isinstance(imm, Literal)
+        and -0x8000 <= imm.value < 0
+        ):
+        return add_imm(uw_source.left, Literal(imm.value + 0x10000), stack_info)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
 
