@@ -318,6 +318,10 @@ def parse_arg_elems(arg_elems: List[str], mips: bool = False) -> Optional[Argume
                 value = Register(word)
             else:
                 value = AsmGlobalSymbol(word)
+        elif tok == '"' and arg_elems[-1] == '"':
+            # Quoted global symbol
+            # TODO: properly match pairs of quotes, avoid splitting on internal spaces
+            return AsmGlobalSymbol("".join(arg_elems[1:-1]))
         elif tok in ">+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol))
