@@ -2535,7 +2535,7 @@ def handle_addi(args: InstrArgs) -> Expression:
         and uw_source.right == Literal(0x10000)
         and isinstance(imm, Literal)
         and -0x8000 <= imm.value < 0
-        ):
+    ):
         return add_imm(uw_source.left, Literal(imm.value + 0x10000), stack_info)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
