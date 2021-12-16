@@ -235,6 +235,7 @@ def create_project_tests(
     else:
         file_iter = find_tests_basic(asm_dir)
         base_flags = [
+            "--incbin-dir", str(base_dir),
             "--compiler=gcc",
             "--stack-structs",
             "--unk-underscore",
