@@ -3960,6 +3960,10 @@ CASES_DESTINATION_FIRST: InstrMap = {
     "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
     "fmr": lambda a: a.reg(1),
     "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
+    # TODO: This yields some awkward-looking C code, often in the form:
+    # `sp100 = (bitwise f64) (s32) x; y = sp104;` instead of `y = (s32) x;`.
+    # We should try to detect these idioms, along with int-to-float
+    "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
     # PPC Floating Poing Fused Multiply-{Add,Sub}
     "fmadd": lambda a: BinaryOp.f64(
         BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
