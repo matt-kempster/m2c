@@ -668,6 +668,17 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
             )
         return None
 
+    def try_replace_ppc_final_b(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        if i != len(function.body) - 1:
+            return None
+        instr = function.body[i]
+        if not isinstance(instr, Instruction) or instr.mnemonic != "b":
+            return None
+        return [
+            Instruction.derived("bl", instr.args, instr),
+            Instruction.derived("blr", [], instr),
+        ], 1
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return [function.body[i]], 1
 
@@ -691,7 +702,11 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
                 or no_replacement(i)
             )
         else:
-            repl, consumed = try_replace_ppc_fcmpo_cror(i) or no_replacement(i)
+            repl, consumed = (
+                try_replace_ppc_fcmpo_cror(i)
+                or try_replace_ppc_final_b(i)
+                or no_replacement(i)
+            )
         new_function.body.extend(repl)
         i += consumed
     return new_function
