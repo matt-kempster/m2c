@@ -554,12 +554,12 @@ def get_stack_info(
                 assert inst.args[0].register_name[0] == "r"
                 index = int(inst.args[0].register_name[1:])
                 while index <= 31:
-                    reg = Register(f"{index}")
+                    reg = Register(f"r{index}")
                     info.callee_save_reg_locations[reg] = stack_offset
                     callee_saved_offset_and_size.append((stack_offset, 4))
                     index += 1
                     stack_offset += 4
-            else:
+            elif inst.args[0] not in info.callee_save_reg_locations:
                 info.callee_save_reg_locations[inst.args[0]] = stack_offset
                 callee_saved_offset_and_size.append(
                     (stack_offset, 8 if inst.mnemonic in ("sdc1", "stfd") else 4)
