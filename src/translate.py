@@ -297,7 +297,11 @@ class StackInfo:
 
     def in_callee_save_reg_region(self, location: int) -> bool:
         lower_bound, upper_bound = self.callee_save_reg_region
-        return lower_bound <= location < upper_bound
+        # PPC saves LR in the header of the previous stack frame
+        return (
+            lower_bound <= location < upper_bound
+            or location == self.allocated_stack_size + 4
+        )
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
@@ -406,17 +410,17 @@ class StackInfo:
 
     def get_stack_var(self, location: int, *, store: bool) -> "Expression":
         # See `get_stack_info` for explanation
-        if self.location_above_stack(location):
+        if self.in_callee_save_reg_region(location):
+            # Some annoying bookkeeping instruction. To avoid
+            # further special-casing, just return whatever - it won't matter.
+            return LocalVar(location, type=Type.any_reg(), path=None)
+        elif self.location_above_stack(location):
             ret, arg = self.get_argument(location - self.allocated_stack_size)
             if not store:
                 self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any_reg())
-        elif self.in_callee_save_reg_region(location):
-            # Some annoying bookkeeping instruction. To avoid
-            # further special-casing, just return whatever - it won't matter.
-            return LocalVar(location, type=Type.any_reg(), path=None)
         else:
             # Local variable
             assert self.stack_pointer_type is not None
