@@ -3290,9 +3290,9 @@ def handle_rlwinm(
     # Special case truncating casts
     # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
     if (shift, mask_begin, mask_end) == (0, 24, 31):
-        return as_type(source, Type.int_of_size(8), silent=False)
+        return as_type(source, Type.u8(), silent=False)
     elif (shift, mask_begin, mask_end) == (0, 16, 31):
-        return as_type(source, Type.int_of_size(16), silent=False)
+        return as_type(source, Type.u16(), silent=False)
 
     # Bit 0 is the MSB, Bit 31 is the LSB
     bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
@@ -3943,6 +3943,7 @@ CASES_DESTINATION_FIRST: InstrMap = {
         )
     ),
     "srawi": lambda a: handle_sra(a),
+    "notnot.fictive": lambda a: UnaryOp(op="!!", expr=a.reg(1), type=Type.intish()),
     # TODO: Do we need to model the promotion from f32 to f64 here?
     "lfs": lambda a: handle_load(a, type=Type.f32()),
     "lfd": lambda a: handle_load(a, type=Type.f64()),

@@ -432,6 +432,12 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
         "cror 2, LIT, 2",
     )
 
+    ppc_double_not_pattern = make_pattern(
+        "neg $a, $x",
+        "addic r0, $a, -1",
+        "subfe r0, r0, $a",
+    )
+
     def try_match(starti: int, pattern: Pattern) -> Optional[List[BodyPart]]:
         symbolic_registers: Dict[str, Register] = {}
         symbolic_labels: Dict[str, str] = {}
@@ -679,6 +685,18 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
             Instruction.derived("blr", [], instr),
         ], 1
 
+    def try_replace_ppc_double_not(i: int) -> Optional[Tuple[List[BodyPart], int]]:
+        match = try_match(i, ppc_double_not_pattern)
+        if not match:
+            return None
+        assert isinstance(match[0], Instruction)
+        assert isinstance(match[1], Instruction)
+        return [
+            Instruction.derived(
+                "notnot.fictive", [match[1].args[0], match[0].args[1]], match[0]
+            )
+        ], len(match)
+
     def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
         return [function.body[i]], 1
 
@@ -705,6 +723,7 @@ def simplify_standard_patterns(function: Function, mips: bool = False) -> Functi
             repl, consumed = (
                 try_replace_ppc_fcmpo_cror(i)
                 or try_replace_ppc_final_b(i)
+                or try_replace_ppc_double_not(i)
                 or no_replacement(i)
             )
         new_function.body.extend(repl)
