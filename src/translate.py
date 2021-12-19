@@ -94,12 +94,24 @@ class Arch(abc.ABC):
         *,
         for_call: bool,
     ) -> "Abi":
+        """
+        Compute stack positions/registers used by a function based on its type
+        information. Also computes a list of registers that may contain arguments,
+        if the function has varargs or an unknown/incomplete type.
+        """
         ...
 
     @abc.abstractmethod
     def function_return(
         self, expr: "Expression"
     ) -> List[Tuple[Register, "Expression"]]:
+        """
+        Compute register location(s) & values that will hold the return value
+        of the function call `expr`.
+        This must use all of the registers in `all_return_regs` in order to stay
+        consistent with `output_regs_for_instr()`. This is why we can't use the
+        funciton's return type, even though it may be more accurate.
+        """
         ...
 
 
@@ -3728,16 +3740,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             prevent_later_function_calls()
             prevent_later_reads()
 
-            # We may not know what this function's return registers are --
-            # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
-            # it's fine to be liberal here and put the return value in all
-            # of them. (It's not perfect for u64's, but that's rare anyway.)
-            # However, if we have type information that says the function is
+            # If we have type information that says the function is
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
-            # Note that this logic is duplicated in output_regs_for_instr and
-            # needs to match exactly, which is why we can't look at
-            # fn_sig.return_type even though it may be more accurate.
             if not is_known_void:
                 for reg, val in arch.function_return(call):
                     assert reg in arch.all_return_regs

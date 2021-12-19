@@ -640,6 +640,10 @@ class MipsArch(Arch):
         )
 
     def function_return(self, expr: Expression) -> List[Tuple[Register, Expression]]:
+        # We may not know what this function's return registers are --
+        # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
+        # it's fine to be liberal here and put the return value in all
+        # of them. (It's not perfect for u64's, but that's rare anyway.)
         return [
             (
                 Register("f0"),
