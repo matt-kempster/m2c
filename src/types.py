@@ -19,6 +19,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
+from .demangle_cw import CxxSymbol, CxxTerm
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
@@ -770,6 +771,11 @@ class Type:
         return Type(TypeData(kind=TypeData.K_FN, fn_sig=fn_sig))
 
     @staticmethod
+    def demangled_symbol(sym: CxxSymbol) -> "Type":
+        fn_sig = FunctionSignature.from_demangled_symbol(sym)
+        return Type(TypeData(kind=TypeData.K_FN, fn_sig=fn_sig))
+
+    @staticmethod
     def f32() -> "Type":
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=32))
 
@@ -999,6 +1005,46 @@ class FunctionSignature:
         for x, y in zip(self.params, concrete.params):
             can_unify &= x.type.unify(y.type)
         return can_unify
+
+    @staticmethod
+    def from_demangled_symbol(sym: CxxSymbol) -> "FunctionSignature":
+        function_term = next(
+            (t for t in sym.type.terms if t.kind == CxxTerm.Kind.FUNCTION), None
+        )
+        if function_term is None:
+            return FunctionSignature()
+        assert function_term.function_params is not None
+
+        params = []
+        if len(sym.qualified_name) > 1:
+            params.append(FunctionParam(type=Type.ptr(), name="this"))
+
+        is_variadic = False
+        for i, cxx_type in enumerate(function_term.function_params, start=1):
+            assert cxx_type.terms
+            name = f"arg{i}"
+            if cxx_type.terms[0].kind == CxxTerm.Kind.VOID:
+                assert len(function_term.function_params) == 1
+            elif cxx_type.terms[0].kind == CxxTerm.Kind.ELLIPSIS:
+                assert cxx_type == function_term.function_params[-1]
+                is_variadic = True
+            elif cxx_type.terms[0].kind == CxxTerm.Kind.FLOAT:
+                params.append(FunctionParam(type=Type.f32(), name=name))
+            elif cxx_type.terms[0].kind == CxxTerm.Kind.DOUBLE:
+                params.append(FunctionParam(type=Type.f64(), name=name))
+            elif any(
+                t.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE)
+                for t in cxx_type.terms
+            ):
+                params.append(FunctionParam(type=Type.ptr(), name=name))
+            else:
+                # TODO: Parse (unsigned) int/short/char etc.
+                params.append(
+                    FunctionParam(type=Type.reg32(likely_float=False), name=name)
+                )
+        return FunctionSignature(
+            params=params, params_known=True, is_variadic=is_variadic
+        )
 
 
 @dataclass(eq=False)

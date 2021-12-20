@@ -388,9 +388,9 @@ def parse(mangled: str) -> CxxSymbol:
 
 def demangle(mangled: str) -> str:
     try:
-        return str(parse(arg))
+        return str(parse(mangled))
     except ValueError:
-        return arg
+        return mangled
 
 
 def main() -> None:

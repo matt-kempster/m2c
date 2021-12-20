@@ -21,6 +21,7 @@ from typing import (
 )
 
 from .c_types import CType, TypeMap
+from .demangle_cw import parse as demangle_cw_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     FlowGraph,
@@ -1356,6 +1357,7 @@ class GlobalSymbol(Expression):
     symbol_in_context: bool = False
     type_provided: bool = False
     initializer_in_typemap: bool = False
+    demangled_symbol: Optional[CxxSymbol] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -5102,10 +5104,16 @@ class GlobalInfo:
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
+            try:
+                demangled_symbol: Optional[CxxSymbol] = demangle_cw_parse(sym_name)
+            except ValueError:
+                demangled_symbol = None
+
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
                 symbol_name=sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
+                demangled_symbol=demangled_symbol,
             )
 
             fn = self.typemap.functions.get(sym_name)
@@ -5114,6 +5122,7 @@ class GlobalInfo:
                 ctype = fn.type
             else:
                 ctype = self.typemap.var_types.get(sym_name)
+
             if ctype is not None:
                 sym.symbol_in_context = True
                 sym.initializer_in_typemap = (
@@ -5124,6 +5133,10 @@ class GlobalInfo:
                     sym.type_provided = True
             elif sym_name in self.local_functions:
                 sym.type.unify(Type.function())
+
+            # Do this after unifying the type in the typemap, so that it has lower precedence
+            if sym.demangled_symbol is not None:
+                sym.type.unify(Type.demangled_symbol(sym.demangled_symbol))
 
         return AddressOf(sym, type=sym.type.reference())
 
