@@ -3414,9 +3414,31 @@ class Abi:
 
 def ppc_function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
     # TODO: Parse function signatures
+    if not fn_sig.params_known:
+        return Abi(
+            arg_slots=[],
+            possible_regs=ARGUMENT_REGS[:],
+        )
+
+    intptr_regs = [r for r in ARGUMENT_REGS if r.register_name[0] != "f"]
+    float_regs = [r for r in ARGUMENT_REGS if r.register_name[0] == "f"]
+    arg_slots = []
+    for ind, param in enumerate(fn_sig.params):
+        # TODO: Support passing parameters on the stack
+        param_type = param.type.decay()
+        if param_type.is_float():
+            reg = float_regs.pop(0)
+        else:
+            reg = intptr_regs.pop(0)
+        arg_slots.append(
+            AbiArgSlot(offset=4 * ind, reg=reg, name=param.name, type=param_type)
+        )
+    possible_regs = []
+    if fn_sig.is_variadic:
+        possible_regs = intptr_regs + float_regs
     return Abi(
-        arg_slots=[],
-        possible_regs=ARGUMENT_REGS[:],
+        arg_slots=arg_slots,
+        possible_regs=possible_regs,
     )
 
 
@@ -5087,6 +5109,7 @@ class FunctionInfo:
     stack_info: StackInfo
     flow_graph: FlowGraph
     return_type: Type
+    symbol: GlobalSymbol
 
 
 @dataclass
@@ -5530,4 +5553,4 @@ def translate_to_ast(
             v[phi.name] = phi
         pdb.set_trace()
 
-    return FunctionInfo(stack_info, flow_graph, return_type)
+    return FunctionInfo(stack_info, flow_graph, return_type, fn_sym)

@@ -1315,6 +1315,11 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
     function_lines: List[str] = []
 
+    if function_info.symbol.demangled_symbol:
+        function_lines.append(
+            fmt.with_comments("", [str(function_info.symbol.demangled_symbol)])
+        )
+
     fn_name = function_info.stack_info.function.name
     arg_strs = []
     for i, arg in enumerate(function_info.stack_info.arguments):
