@@ -261,8 +261,8 @@ class CxxTerm:
             function_return = None
             while peek(src) not in ("", "_", ",", ">"):
                 function_params.append(CxxType.parse(src))
-            c = src.read(1)
-            if c == "_":
+            if peek(src, 1) == "_":
+                src.read(1)
                 function_return = CxxType.parse(src)
             return CxxTerm(
                 kind=kind,
@@ -362,26 +362,36 @@ class CxxSymbol:
         with peeking(src):
             base_name = src.read()
 
+        strip_underscores = False
+        template_depth = 0
         with peeking(src):
             chars = ""
             while True:
                 c = src.read(1)
                 if not c:
                     break
+
+                if c in (",", ">") and template_depth == 0:
+                    break
+                elif c == "<":
+                    template_depth += 1
+                elif c == ">":
+                    template_depth -= 1
+
                 chars += c
-                if c != "_" or peek(src) != "_":
+                if not (c == "_" and peek(src) == "_"):
                     continue
+                strip_underscores = True
                 lookahead = peek(src, 2)
                 if len(lookahead) == 2:
                     if lookahead[1] not in "QFC0123456789":
                         continue
                 base_name = chars[:-1]
 
-        if base_name and "<" not in base_name and base_name[-1] in (",", ">"):
-            base_name = base_name[:-1]
-            src.read(len(base_name))
-        else:
+        if strip_underscores:
             src.read(len(base_name) + 2)
+        else:
+            src.read(len(base_name))
 
         class_name: Optional[CxxType] = CxxType.parse(src)
         if peek(src) not in ("", ",", ">"):
