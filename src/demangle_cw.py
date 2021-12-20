@@ -166,9 +166,11 @@ class CxxTerm:
         SHORT = "s"
         INT = "i"
         LONG = "l"
-        LONGLONG = "x"
+        LONG_LONG = "x"
+        WIDE_CHAR = "w"
         FLOAT = "f"
         DOUBLE = "d"
+        LONG_DOUBLE = "r"
 
         ARRAY = "A"
         QUALIFIED = "Q"
@@ -305,8 +307,12 @@ class CxxTerm:
             return "*"
         if self.kind == CxxTerm.Kind.REFERENCE:
             return "&"
-        if self.kind == CxxTerm.Kind.LONGLONG:
+        if self.kind == CxxTerm.Kind.LONG_LONG:
             return "long long"
+        if self.kind == CxxTerm.Kind.LONG_DOUBLE:
+            return "long double"
+        if self.kind == CxxTerm.Kind.WIDE_CHAR:
+            return "wchar_t"
         if self.kind == CxxTerm.Kind.ELLIPSIS:
             return "..."
         return self.kind.name.lower()
