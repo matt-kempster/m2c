@@ -21,7 +21,7 @@ from typing import (
 )
 
 from .c_types import CType, TypeMap
-from .demangle_cw import parse as demangle_cw_parse, CxxSymbol
+from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     FlowGraph,
@@ -5128,7 +5128,9 @@ class GlobalInfo:
             sym = self.global_symbol_map[sym_name]
         else:
             try:
-                demangled_symbol: Optional[CxxSymbol] = demangle_cw_parse(sym_name)
+                demangled_symbol: Optional[CxxSymbol] = demangle_codewarrior_parse(
+                    sym_name
+                )
             except ValueError:
                 demangled_symbol = None
 

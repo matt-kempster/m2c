@@ -19,7 +19,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
-from .demangle_cw import CxxSymbol, CxxTerm
+from .demangle_codewarrior import CxxSymbol, CxxTerm
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
