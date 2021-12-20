@@ -115,7 +115,7 @@ class CxxName:
         number = int(number_str)
 
         # Check if the number represents a template literal
-        if peek(src) in ",>":
+        if peek(src) in (",", ">"):
             return CxxName(number_str)
 
         # Otherwise, it is the length of the name
@@ -158,6 +158,7 @@ class CxxTerm:
         CONST = "C"
         POINTER = "P"
         REFERENCE = "R"
+        SIGNED = "S"
         UNSIGNED = "U"
         ELLIPSIS = "e"
         VOID = "v"
@@ -175,11 +176,13 @@ class CxxTerm:
         ARRAY = "A"
         QUALIFIED = "Q"
         FUNCTION = "F"
+        SYMBOL_REFERENCE = "&"
 
     NONTERMINATING_KINDS = {
         Kind.CONST,
         Kind.POINTER,
         Kind.REFERENCE,
+        Kind.SIGNED,
         Kind.UNSIGNED,
         Kind.ARRAY,
     }
@@ -236,6 +239,7 @@ class CxxTerm:
     function_params: Optional[List["CxxType"]] = None
     function_return: Optional["CxxType"] = None
     qualified_name: Optional[CxxQualifiedName] = None
+    symbol_reference: Optional["CxxSymbol"] = None
 
     @staticmethod
     def parse(src: TextIOBase) -> "CxxTerm":
@@ -255,7 +259,7 @@ class CxxTerm:
         if kind == CxxTerm.Kind.FUNCTION:
             function_params = []
             function_return = None
-            while peek(src) not in ("", "_"):
+            while peek(src) not in ("", "_", ",", ">"):
                 function_params.append(CxxType.parse(src))
             c = src.read(1)
             if c == "_":
@@ -274,6 +278,12 @@ class CxxTerm:
                     break
                 array_dim = (array_dim * 10) + int(c)
             return CxxTerm(kind=kind, array_dim=array_dim)
+
+        if kind == CxxTerm.Kind.SYMBOL_REFERENCE:
+            return CxxTerm(
+                kind=kind,
+                symbol_reference=CxxSymbol.parse(src),
+            )
 
         return CxxTerm(kind=kind)
 
@@ -303,6 +313,10 @@ class CxxTerm:
             args = ", ".join(str(p) for p in self.function_params)
             return f"{prefix}({args})"
 
+        if self.kind == CxxTerm.Kind.SYMBOL_REFERENCE:
+            assert self.symbol_reference is not None
+            return f"&{self.symbol_reference}"
+
         if self.kind == CxxTerm.Kind.POINTER:
             return "*"
         if self.kind == CxxTerm.Kind.REFERENCE:
@@ -326,6 +340,8 @@ class CxxType:
     def parse(src: TextIOBase) -> "CxxType":
         terms = []
         while True:
+            if peek(src) in (",", ">"):
+                break
             term = CxxTerm.parse(src)
             terms.append(term)
             if term.kind not in CxxTerm.NONTERMINATING_KINDS:
@@ -344,26 +360,31 @@ class CxxSymbol:
     @staticmethod
     def parse(src: TextIOBase) -> "CxxSymbol":
         with peeking(src):
-            function_name = src.read()
+            base_name = src.read()
 
         with peeking(src):
-            buf = ""
+            chars = ""
             while True:
                 c = src.read(1)
                 if not c:
                     break
-                buf += c
+                chars += c
                 if c != "_" or peek(src) != "_":
                     continue
                 lookahead = peek(src, 2)
                 if len(lookahead) == 2:
                     if lookahead[1] not in "QFC0123456789":
                         continue
-                function_name = buf[:-1]
+                base_name = chars[:-1]
 
-        src.read(len(function_name) + 2)
+        if base_name and "<" not in base_name and base_name[-1] in (",", ">"):
+            base_name = base_name[:-1]
+            src.read(len(base_name))
+        else:
+            src.read(len(base_name) + 2)
+
         class_name: Optional[CxxType] = CxxType.parse(src)
-        if peek(src):
+        if peek(src) not in ("", ",", ">"):
             type = CxxType.parse(src)
         else:
             assert class_name is not None
@@ -376,7 +397,9 @@ class CxxSymbol:
             assert class_name.terms[0].kind == CxxTerm.Kind.QUALIFIED
             assert class_name.terms[0].qualified_name is not None
             qualified_name.extend(class_name.terms[0].qualified_name)
-        qualified_name.append(CxxName(function_name))
+
+        with as_stringio(str(len(base_name)) + base_name) as buf:
+            qualified_name.append(CxxName.parse(buf))
 
         return CxxSymbol(qualified_name=qualified_name, type=type)
 
