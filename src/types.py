@@ -19,7 +19,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
-from .demangle_codewarrior import CxxSymbol, CxxTerm
+from .demangle_codewarrior import CxxName, CxxSymbol, CxxTerm, CxxType
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
@@ -771,11 +771,6 @@ class Type:
         return Type(TypeData(kind=TypeData.K_FN, fn_sig=fn_sig))
 
     @staticmethod
-    def demangled_symbol(sym: CxxSymbol) -> "Type":
-        fn_sig = FunctionSignature.from_demangled_symbol(sym)
-        return Type(TypeData(kind=TypeData.K_FN, fn_sig=fn_sig))
-
-    @staticmethod
     def f32() -> "Type":
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=32))
 
@@ -786,6 +781,10 @@ class Type:
     @staticmethod
     def f64() -> "Type":
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=64))
+
+    @staticmethod
+    def f128() -> "Type":
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=128))
 
     @staticmethod
     def s8() -> "Type":
@@ -936,6 +935,111 @@ class Type:
             return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
         static_assert_unreachable(real_ctype)
 
+    @staticmethod
+    def demangled_symbol(sym: CxxSymbol) -> "Type":
+        return Type.demangled_type(sym_type=sym.type, sym_name=sym.name)
+
+    @staticmethod
+    def demangled_type(sym_type: CxxType, sym_name: Optional[CxxTerm] = None) -> "Type":
+        # TODO: This function may need to depend on the ABI, so it may need to be moved out of types.py?
+        final_name = None
+        if sym_name is not None:
+            assert sym_name.kind == CxxTerm.Kind.QUALIFIED
+            assert sym_name.qualified_name is not None
+            assert len(sym_name.qualified_name) >= 1
+            final_name = str(sym_name.qualified_name[-1])
+
+        type = None
+        for term in sym_type.terms[::-1]:
+            if term.kind == CxxTerm.Kind.CONST:
+                pass
+            elif term.kind == CxxTerm.Kind.UNSIGNED:
+                unsigned = True
+            elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
+                type = Type.ptr(type)
+            elif term.kind == CxxTerm.Kind.BOOL:
+                type = Type.bool()
+            elif term.kind == CxxTerm.Kind.CHAR:
+                type = Type.int_of_size(8)
+            elif term.kind in (CxxTerm.Kind.SHORT, CxxTerm.Kind.WIDE_CHAR):
+                type = Type.int_of_size(16)
+            elif term.kind in (CxxTerm.Kind.INT, CxxTerm.Kind.LONG):
+                type = Type.int_of_size(32)
+            elif term.kind == CxxTerm.Kind.LONG_LONG:
+                type = Type.int_of_size(64)
+            elif term.kind == CxxTerm.Kind.FLOAT:
+                type = Type.f32()
+            elif term.kind == CxxTerm.Kind.DOUBLE:
+                type = Type.f64()
+            elif term.kind == CxxTerm.Kind.LONG_DOUBLE:
+                type = Type.f128()
+            elif term.kind == CxxTerm.Kind.SIGNED:
+                assert type is not None
+                type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED)))
+            elif term.kind == CxxTerm.Kind.UNSIGNED:
+                assert type is not None
+                type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED)))
+            elif term.kind == CxxTerm.Kind.ARRAY:
+                assert type is not None
+                assert term.array_dim is not None
+                type = Type.array(type, term.array_dim)
+            elif term.kind == CxxTerm.Kind.FUNCTION:
+                assert term.function_params is not None
+                params = []
+                if (
+                    sym_name is not None
+                    and sym_name.qualified_name is not None
+                    and len(sym_name.qualified_name) > 1
+                ):
+                    # NB: This assumes `this` is passed as the first arg,
+                    # which may be different on other ABIs
+                    params.append(FunctionParam(type=Type.ptr(), name="this"))
+                    # TODO: Virtual methods may take a second argument here
+                if final_name == "__dt":
+                    params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
+                is_variadic = False
+                for i, param_type in enumerate(term.function_params):
+                    name = f"arg{i}"
+                    if param_type.terms[0].kind == CxxTerm.Kind.VOID:
+                        assert len(term.function_params) == 1
+                    elif param_type.terms[0].kind == CxxTerm.Kind.ELLIPSIS:
+                        assert param_type == term.function_params[:-1]
+                        is_variadic = True
+                    else:
+                        params.append(
+                            FunctionParam(
+                                type=Type.demangled_type(param_type), name=name
+                            )
+                        )
+                return_type = Type.any()
+                if term.function_return is not None:
+                    return_type = Type.demangled_type(term.function_return)
+                elif final_name in ("__ct", "__dt"):
+                    return_type = Type.ptr()
+                type = Type.function(
+                    FunctionSignature(
+                        params=params,
+                        params_known=True,
+                        is_variadic=is_variadic,
+                        return_type=return_type,
+                    )
+                )
+            elif term.kind == CxxTerm.Kind.QUALIFIED:
+                # TODO
+                type = Type.any()
+            elif term.kind == CxxTerm.Kind.VOID:
+                pass
+            elif term.kind == CxxTerm.Kind.ELLIPSIS:
+                pass
+            else:
+                assert False, term.kind
+        if type is None:
+            return Type.any()
+        # TODO
+        # if final_name == "__vt":
+        #    return Type.array(Type.function())
+        return type
+
 
 @dataclass(eq=False)
 class FunctionParam:
@@ -1005,46 +1109,6 @@ class FunctionSignature:
         for x, y in zip(self.params, concrete.params):
             can_unify &= x.type.unify(y.type)
         return can_unify
-
-    @staticmethod
-    def from_demangled_symbol(sym: CxxSymbol) -> "FunctionSignature":
-        function_term = next(
-            (t for t in sym.type.terms if t.kind == CxxTerm.Kind.FUNCTION), None
-        )
-        if function_term is None:
-            return FunctionSignature()
-        assert function_term.function_params is not None
-
-        params = []
-        if len(sym.qualified_name) > 1:
-            params.append(FunctionParam(type=Type.ptr(), name="this"))
-
-        is_variadic = False
-        for i, cxx_type in enumerate(function_term.function_params, start=1):
-            assert cxx_type.terms
-            name = f"arg{i}"
-            if cxx_type.terms[0].kind == CxxTerm.Kind.VOID:
-                assert len(function_term.function_params) == 1
-            elif cxx_type.terms[0].kind == CxxTerm.Kind.ELLIPSIS:
-                assert cxx_type == function_term.function_params[-1]
-                is_variadic = True
-            elif cxx_type.terms[0].kind == CxxTerm.Kind.FLOAT:
-                params.append(FunctionParam(type=Type.f32(), name=name))
-            elif cxx_type.terms[0].kind == CxxTerm.Kind.DOUBLE:
-                params.append(FunctionParam(type=Type.f64(), name=name))
-            elif any(
-                t.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE)
-                for t in cxx_type.terms
-            ):
-                params.append(FunctionParam(type=Type.ptr(), name=name))
-            else:
-                # TODO: Parse (unsigned) int/short/char etc.
-                params.append(
-                    FunctionParam(type=Type.reg32(likely_float=False), name=name)
-                )
-        return FunctionSignature(
-            params=params, params_known=True, is_variadic=is_variadic
-        )
 
 
 @dataclass(eq=False)

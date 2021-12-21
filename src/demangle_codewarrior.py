@@ -47,7 +47,6 @@ from typing import Any, ClassVar, Iterator, List, Optional, Set, Tuple
 
 __all__ = [
     "CxxName",
-    "CxxQualifiedName",
     "CxxSymbol",
     "CxxTerm",
     "CxxType",
@@ -149,9 +148,6 @@ class CxxName:
         return f"{self.name}<{', '.join(str(p) for p in self.template_params)}>"
 
 
-CxxQualifiedName = List["CxxName"]
-
-
 @dataclass
 class CxxTerm:
     class Kind(Enum):
@@ -238,7 +234,7 @@ class CxxTerm:
     array_dim: Optional[int] = None
     function_params: Optional[List["CxxType"]] = None
     function_return: Optional["CxxType"] = None
-    qualified_name: Optional[CxxQualifiedName] = None
+    qualified_name: Optional[List["CxxName"]] = None
     symbol_reference: Optional["CxxSymbol"] = None
 
     @staticmethod
@@ -354,7 +350,7 @@ class CxxType:
 
 @dataclass
 class CxxSymbol:
-    qualified_name: CxxQualifiedName
+    name: CxxTerm
     type: CxxType
 
     @staticmethod
@@ -401,7 +397,7 @@ class CxxSymbol:
             type = class_name
             class_name = None
 
-        qualified_name: CxxQualifiedName = []
+        qualified_name: List["CxxName"] = []
         if class_name is not None:
             assert len(class_name.terms) == 1
             assert class_name.terms[0].kind == CxxTerm.Kind.QUALIFIED
@@ -411,11 +407,11 @@ class CxxSymbol:
         with as_stringio(str(len(base_name)) + base_name) as buf:
             qualified_name.append(CxxName.parse(buf))
 
-        return CxxSymbol(qualified_name=qualified_name, type=type)
+        name = CxxTerm(CxxTerm.Kind.QUALIFIED, qualified_name=qualified_name)
+        return CxxSymbol(name=name, type=type)
 
     def __str__(self) -> str:
-        name = CxxTerm(CxxTerm.Kind.QUALIFIED, qualified_name=self.qualified_name)
-        return f"{name} {self.type}"
+        return f"{self.name} {self.type}"
 
 
 def parse(mangled: str) -> CxxSymbol:
