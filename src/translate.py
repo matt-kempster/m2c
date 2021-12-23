@@ -829,8 +829,26 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
+    def spcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_type(left, Type.sintptr(), False),
+            op=op,
+            right=as_type(right, Type.sintptr(), False),
+            type=Type.bool(),
+        )
+
+    @staticmethod
     def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
+
+    @staticmethod
+    def upcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_type(left, Type.uintptr(), False),
+            op=op,
+            right=as_type(right, Type.uintptr(), False),
+            type=Type.bool(),
+        )
 
     @staticmethod
     def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -4054,10 +4072,10 @@ CASES_IMPLICIT_DESTINATION: ImplicitInstrMap = {
 }
 
 CASES_PPC_COMPARE: PPCCmpInstrMap = {
-    "cmpw": lambda a, op: BinaryOp.scmp(a.reg(0), op, a.reg(1)),
-    "cmpwi": lambda a, op: BinaryOp.scmp(a.reg(0), op, a.imm(1)),
-    "cmplw": lambda a, op: BinaryOp.ucmp(a.reg(0), op, a.reg(1)),
-    "cmplwi": lambda a, op: BinaryOp.ucmp(a.reg(0), op, a.imm(1)),
+    "cmpw": lambda a, op: BinaryOp.spcmp(a.reg(0), op, a.reg(1)),
+    "cmpwi": lambda a, op: BinaryOp.spcmp(a.reg(0), op, a.imm(1)),
+    "cmplw": lambda a, op: BinaryOp.upcmp(a.reg(0), op, a.reg(1)),
+    "cmplwi": lambda a, op: BinaryOp.upcmp(a.reg(0), op, a.imm(1)),
     # TODO: There is a difference in how these two instructions handle NaN
     # TODO: Assert that the first arg is cr0
     "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
