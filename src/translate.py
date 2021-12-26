@@ -1362,7 +1362,7 @@ class Literal(Expression):
                 and v < 2 ** size_bits
             ):
                 v -= 1 << size_bits
-            value = fmt.format_int(v)
+            value = fmt.format_int(v, size_bits=size_bits)
 
         return prefix + value + suffix
 
