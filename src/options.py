@@ -163,6 +163,10 @@ class Formatter:
         else:
             hex_digits = f"{abs(val):X}"
 
+        # Always pad 7-digit hex constants to 8 digits. (These are very common and easily confused.)
+        if len(hex_digits) == 7:
+            hex_digits = f"0{hex_digits}"
+
         if val < 0:
             return f"-0x{hex_digits}"
         else:
