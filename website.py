@@ -42,6 +42,8 @@ if "source" in form:
         cmd.append("--allman")
     if "leftptr" in form:
         cmd.extend(["--pointer-style", "left"])
+    if "zfillconstants" in form:
+        cmd.append("--zfill-constants")
     if "globals" in form:
         value = form.getfirst("globals")
         if value in ("all", "used", "none"):
@@ -253,6 +255,7 @@ label {
     <label><input type="checkbox" name="nocasts">Hide type casts</label>
     <label><input type="checkbox" name="allman">Allman braces</label>
     <label><input type="checkbox" name="leftptr">* to the left</label>
+    <label><input type="checkbox" name="zfillconstants">0-fill constants</label>
     <label><input type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
     <label><input type="checkbox" name="noswitches">Disable irregular switch detection</label>
     <label><input type="checkbox" name="nounkinference">Disable unknown struct/type inference</label>
@@ -338,7 +341,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "nounkinference", "stackstructs"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "nounkinference", "stackstructs"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];
