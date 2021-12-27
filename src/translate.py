@@ -3625,6 +3625,19 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if reg in regs:
                 del regs[reg]
 
+    def maybe_clear_local_var_writes(func_args: List[Expression]) -> None:
+        # Clear the `local_var_writes` dict if any of the `func_args` contain
+        # a reference to a stack var. (The called function may modify the stack,
+        # replacing the value we have in `local_var_writes`.)
+        for arg in func_args:
+            if uses_expr(
+                arg,
+                lambda expr: isinstance(expr, AddressOf)
+                and isinstance(expr.expr, LocalVar),
+            ):
+                local_var_writes.clear()
+                return
+
     def process_instr(instr: Instruction) -> None:
         nonlocal branch_condition, switch_expr, has_function_call
 
@@ -3817,6 +3830,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Clear out caller-save registers, for clarity and to ensure that
             # argument regs don't get passed into the next function.
             clear_caller_save_regs()
+
+            # Clear out local var write tracking if any argument contains a stack
+            # reference. That dict is used to track register saves/restores, which
+            # are unreliable if we call a function with a stack reference.
+            maybe_clear_local_var_writes(func_args)
 
             # Prevent reads and function calls from moving across this call.
             # This isn't really right, because this call might be moved later,
