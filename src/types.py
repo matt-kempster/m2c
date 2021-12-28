@@ -756,6 +756,14 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT))
 
     @staticmethod
+    def signed_int() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED))
+
+    @staticmethod
+    def unsigned_int() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED))
+
+    @staticmethod
     def intptr() -> "Type":
         return Type(TypeData(kind=TypeData.K_INTPTR))
 

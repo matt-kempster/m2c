@@ -20,11 +20,11 @@ from .translate import (
     as_intish,
     as_intptr,
     as_ptr,
-    as_s32,
     as_s64,
+    as_sint,
     as_type,
-    as_u32,
     as_u64,
+    as_uint,
     fn_op,
     fold_gcc_divmod,
     fold_mul_chains,
@@ -328,10 +328,10 @@ class MipsArch(Arch):
             fold_mul_chains(fold_gcc_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
         "negu": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+            UnaryOp.sint(op="-", expr=a.reg(1)),
         ),
         "neg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+            UnaryOp.sint(op="-", expr=a.reg(1)),
         ),
         "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
@@ -397,7 +397,7 @@ class MipsArch(Arch):
         ),
         "srl": lambda a: fold_gcc_divmod(
             BinaryOp(
-                left=as_u32(a.reg(1)),
+                left=as_uint(a.reg(1)),
                 op=">>",
                 right=as_intish(a.imm(2)),
                 type=Type.u32(),
@@ -405,7 +405,7 @@ class MipsArch(Arch):
         ),
         "srlv": lambda a: fold_gcc_divmod(
             BinaryOp(
-                left=as_u32(a.reg(1)),
+                left=as_uint(a.reg(1)),
                 op=">>",
                 right=as_intish(a.reg(2)),
                 type=Type.u32(),
@@ -414,7 +414,7 @@ class MipsArch(Arch):
         "sra": lambda a: handle_sra(a),
         "srav": lambda a: fold_gcc_divmod(
             BinaryOp(
-                left=as_s32(a.reg(1)),
+                left=as_sint(a.reg(1)),
                 op=">>",
                 right=as_intish(a.reg(2)),
                 type=Type.s32(),

@@ -146,6 +146,14 @@ def as_f64(expr: "Expression") -> "Expression":
     return as_type(expr, Type.f64(), True)
 
 
+def as_sint(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.signed_int(), True)
+
+
+def as_uint(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.unsigned_int(), True)
+
+
 def as_s32(expr: "Expression") -> "Expression":
     return as_type(expr, Type.s32(), True)
 
@@ -721,15 +729,17 @@ class BinaryOp(Condition):
     @staticmethod
     def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
-            left=as_s32(left),
+            left=as_sint(left),
             op=op,
-            right=as_s32(right),
+            right=as_sint(right),
             type=Type.bool(),
         )
 
     @staticmethod
     def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
+        return BinaryOp(
+            left=as_uint(left), op=op, right=as_uint(right), type=Type.bool()
+        )
 
     @staticmethod
     def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -897,6 +907,15 @@ class UnaryOp(Condition):
 
     def dependencies(self) -> List[Expression]:
         return [self.expr]
+
+    @staticmethod
+    def sint(op: str, expr: Expression) -> "UnaryOp":
+        expr = as_sint(expr)
+        return UnaryOp(
+            op=op,
+            expr=expr,
+            type=expr.type,
+        )
 
     def negated(self) -> "Condition":
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
@@ -2615,7 +2634,7 @@ def handle_sra(args: InstrArgs) -> Expression:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
     return fold_gcc_divmod(
-        BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
+        BinaryOp(as_sint(lhs), ">>", as_intish(shift), type=Type.s32())
     )
 
 
@@ -2940,7 +2959,7 @@ def array_access_from_add(
 
     if scale < 0:
         scale = -scale
-        index = UnaryOp("-", as_s32(index), type=Type.s32())
+        index = UnaryOp.sint("-", index)
 
     target_type = base.type.get_pointer_target()
     if target_type is None:
