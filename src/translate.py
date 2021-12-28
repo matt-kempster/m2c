@@ -146,12 +146,12 @@ def as_f64(expr: "Expression") -> "Expression":
     return as_type(expr, Type.f64(), True)
 
 
-def as_s32(expr: "Expression", *, silent: bool = False) -> "Expression":
-    return as_type(expr, Type.s32(), silent)
+def as_s32(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.s32(), True)
 
 
 def as_u32(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.u32(), False)
+    return as_type(expr, Type.u32(), True)
 
 
 def as_s64(expr: "Expression", *, silent: bool = False) -> "Expression":
@@ -721,9 +721,9 @@ class BinaryOp(Condition):
     @staticmethod
     def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
-            left=as_s32(left, silent=True),
+            left=as_s32(left),
             op=op,
-            right=as_s32(right, silent=True),
+            right=as_s32(right),
             type=Type.bool(),
         )
 
