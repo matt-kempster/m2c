@@ -722,24 +722,28 @@ class BinaryOp(Condition):
 
     @staticmethod
     def icmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(
-            left=as_intptr(left), op=op, right=as_intptr(right), type=Type.bool()
-        )
+        left = as_intptr(left)
+        right = as_intptr(right)
+        # When iterating over arrays, it's somewhat common to compare an incrementing pointer
+        # to the end of the array. However, the end-of-array address can be a different symbol
+        # with an unrelated type. Only unify with literals to avoid this case.
+        if isinstance(left, Literal) or isinstance(right, Literal):
+            left.type.unify(right.type)
+        return BinaryOp(left=left, op=op, right=right, type=Type.bool())
 
     @staticmethod
     def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(
-            left=as_sint(left),
-            op=op,
-            right=as_sint(right),
-            type=Type.bool(),
-        )
+        left = as_sint(left)
+        right = as_sint(right)
+        left.type.unify(right.type)
+        return BinaryOp(left=left, op=op, right=right, type=Type.bool())
 
     @staticmethod
     def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(
-            left=as_uint(left), op=op, right=as_uint(right), type=Type.bool()
-        )
+        left = as_uint(left)
+        right = as_uint(right)
+        left.type.unify(right.type)
+        return BinaryOp(left=left, op=op, right=right, type=Type.bool())
 
     @staticmethod
     def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":

@@ -170,7 +170,7 @@ void func_004009D0(s32 arg0) {
     func_00400090((u32) (arg0 % 1073741823));
     temp_a0 = arg0 & 0x3FFFFFFF;
     phi_a0 = temp_a0;
-    if ((arg0 < 0) && (temp_a0 != 0)) {
+    if ((arg0 < 0) && (temp_a0 != 0U)) {
         phi_a0 = temp_a0 - 0x40000000;
     }
     func_00400090(phi_a0);
