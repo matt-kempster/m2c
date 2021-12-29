@@ -3760,7 +3760,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         as_type(subroutine_args.pop(slot.offset), slot.type, True)
                     )
                 else:
-                    func_args.append(ErrorExpr(f"Missing stack arg {slot.offset:#x}"))
+                    func_args.append(
+                        ErrorExpr(f"Unable to find stack arg {slot.offset:#x} in block")
+                    )
 
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
@@ -3822,9 +3824,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
                     fn_sig.params.append(FunctionParam())
-                # We can only perform this naive zip when `params_known` is False, and
-                # we're assuming that each parameter is "basic" (<=4 bytes, no return struct, etc.)
-                # Otherwise, we would need to duplicate the logic from `function_abi` here.
+                # When the function signature isn't provided, the we only assume that each
+                # parameter is "simple" (<=4 bytes, no return struct, etc.). This may not
+                # match the actual function signature, but it's the best we can do.
+                # Without that assumption, the logic from `function_abi` would be needed here.
                 for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
                     func_args[i] = as_type(arg_expr, param.type.decay(), True)
 
