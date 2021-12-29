@@ -3494,7 +3494,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     to_write: List[Union[Statement]] = []
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
-    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
+    subroutine_args: Dict[int, Expression] = {}
     branch_condition: Optional[Condition] = None
     switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
@@ -3659,7 +3659,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # About to call a subroutine with this argument. Skip arguments for the
                 # first four stack slots; they are also passed in registers.
                 if to_store.dest.value >= 0x10:
-                    subroutine_args.append((to_store.source, to_store.dest))
+                    subroutine_args[to_store.dest.value] = to_store.source
             else:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
@@ -3755,6 +3755,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             for slot in abi.arg_slots:
                 if slot.reg:
                     func_args.append(as_type(regs[slot.reg], slot.type, True))
+                elif slot.offset in subroutine_args:
+                    func_args.append(
+                        as_type(subroutine_args.pop(slot.offset), slot.type, True)
+                    )
+                else:
+                    func_args.append(ErrorExpr(f"Missing stack arg {slot.offset:#x}"))
 
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
@@ -3808,16 +3814,19 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 func_args.append(regs[register])
 
             # Add the arguments after a3.
-            # TODO: limit this and unify types based on abi.arg_slots
-            subroutine_args.sort(key=lambda a: a[1].value)
-            for arg in subroutine_args:
-                func_args.append(arg[0])
+            # TODO: limit this based on abi.arg_slots. If the function type is known
+            # and not variadic, this list should be empty.
+            for _, arg in sorted(subroutine_args.items()):
+                func_args.append(arg)
 
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
                     fn_sig.params.append(FunctionParam())
-            for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
-                func_args[i] = as_type(arg_expr, param.type, True)
+                # We can only perform this naive zip when `params_known` is False, and
+                # we're assuming that each parameter is "basic" (<=4 bytes, no return struct, etc.)
+                # Otherwise, we would need to duplicate the logic from `function_abi` here.
+                for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
+                    func_args[i] = as_type(arg_expr, param.type.decay(), True)
 
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
