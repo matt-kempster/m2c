@@ -684,10 +684,9 @@ class CommentExpr(Expression):
     suffix: Optional[str] = None
 
     def dependencies(self) -> List[Expression]:
-        return self.expr.dependencies()
+        return [self.expr]
 
     def format(self, fmt: Formatter) -> str:
-        self.expr.type.unify(self.type)
         expr_str = self.expr.format(fmt)
 
         if fmt.coding_style.comment_style == CodingStyle.CommentStyle.NONE:
@@ -2091,7 +2090,7 @@ def is_trivial_expression(expr: Expression) -> bool:
         ),
     ):
         return True
-    if isinstance(expr, (AddressOf, CommentExpr)):
+    if isinstance(expr, AddressOf):
         return all(is_trivial_expression(e) for e in expr.dependencies())
     if isinstance(expr, Cast):
         return expr.is_trivial()
@@ -2121,8 +2120,6 @@ def is_type_obvious(expr: Expression) -> bool:
         ),
     ):
         return True
-    if isinstance(expr, CommentExpr):
-        return is_type_obvious(expr.expr)
     if isinstance(expr, EvalOnceExpr):
         if expr.need_decl():
             return True
@@ -2245,8 +2242,6 @@ def late_unwrap(expr: Expression) -> Expression:
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, CommentExpr):
-        return late_unwrap(expr.expr)
     if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
         return late_unwrap(expr.wrapped_expr)
     if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
@@ -2261,8 +2256,6 @@ def early_unwrap(expr: Expression) -> Expression:
     This is fine to use even while code is being generated, but disrespects decisions
     to use a temp for a value, so use with care.
     """
-    if isinstance(expr, CommentExpr):
-        return early_unwrap(expr.expr)
     if (
         isinstance(expr, EvalOnceExpr)
         and not expr.forced_emit
@@ -2293,8 +2286,6 @@ def unwrap_deep(expr: Expression) -> Expression:
     - just because unwrap_deep(a) == unwrap_deep(b) doesn't mean a and b are
       interchangable, because they may be computed in different places.
     """
-    if isinstance(expr, CommentExpr):
-        return unwrap_deep(expr.expr)
     if isinstance(expr, EvalOnceExpr):
         return unwrap_deep(expr.wrapped_expr)
     return expr
