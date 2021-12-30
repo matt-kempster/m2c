@@ -413,10 +413,10 @@ def parse_flags(flags: List[str]) -> Options:
         dest="compiler",
         type=Options.CompilerEnum,
         choices=list(Options.CompilerEnum),
-        default="ido",
+        default="mwcc",
         help="Original compiler family that produced the input files. "
         "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
-        "Default: ido",
+        "Default: mwcc",
     )
     group.add_argument(
         "--stop-on-error",

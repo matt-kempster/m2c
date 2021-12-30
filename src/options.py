@@ -34,6 +34,7 @@ class Options:
     class CompilerEnum(ChoicesEnum):
         IDO = "ido"
         GCC = "gcc"
+        MWCC = "mwcc"
 
     class GlobalDeclsEnum(ChoicesEnum):
         ALL = "all"

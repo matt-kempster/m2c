@@ -237,7 +237,6 @@ def create_project_tests(
         base_flags = [
             "--incbin-dir",
             str(base_dir),
-            "--compiler=gcc",
             "--stack-structs",
             "--unk-underscore",
         ]
