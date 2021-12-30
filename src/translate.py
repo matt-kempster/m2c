@@ -32,7 +32,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Formatter, Options
+from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
@@ -674,6 +674,35 @@ class ErrorExpr(Condition):
         if self.desc is not None:
             return f"MIPS2C_ERROR({self.desc})"
         return "MIPS2C_ERROR()"
+
+
+@dataclass(frozen=True)
+class CommentExpr(Expression):
+    expr: Expression
+    type: Type = field(compare=False)
+    prefix: Optional[str] = None
+    suffix: Optional[str] = None
+
+    def dependencies(self) -> List[Expression]:
+        return [self.expr]
+
+    def format(self, fmt: Formatter) -> str:
+        expr_str = self.expr.format(fmt)
+
+        if fmt.coding_style.comment_style == CodingStyle.CommentStyle.NONE:
+            return expr_str
+
+        prefix_str = f"/* {self.prefix} */ " if self.prefix is not None else ""
+        suffix_str = f" /* {self.suffix} */" if self.suffix is not None else ""
+        return f"{prefix_str}{expr_str}{suffix_str}"
+
+    @staticmethod
+    def wrap(
+        expr: Expression, prefix: Optional[str] = None, suffix: Optional[str] = None
+    ) -> Expression:
+        if prefix is None and suffix is None:
+            return expr
+        return CommentExpr(expr=expr, type=expr.type, prefix=prefix, suffix=suffix)
 
 
 @dataclass(frozen=True, eq=False)
@@ -3126,6 +3155,7 @@ class AbiArgSlot:
     reg: Optional[Register]
     name: Optional[str]
     type: Type
+    comment: Optional[str] = None
 
 
 @dataclass
@@ -3161,6 +3191,7 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
                 reg=Register("a0"),
                 name="__return__",
                 type=Type.ptr(fn_sig.return_type),
+                comment="return",
             )
         )
         offset = 4
@@ -3190,10 +3221,24 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
         else:
             for i in range(offset // 4, (offset + size) // 4):
                 unk_offset = 4 * i - offset
-                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}") if i < 4 else None
+                if size > 4:
+                    name2 = f"{name}_unk{unk_offset:X}" if name else None
+                    sub_type = Type.any()
+                    comment: Optional[str] = f"{param_type}+{unk_offset:#x}"
+                else:
+                    assert unk_offset == 0
+                    name2 = name
+                    sub_type = param_type
+                    comment = None
                 slots.append(
-                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param_type)
+                    AbiArgSlot(
+                        offset=4 * i,
+                        reg=reg2,
+                        name=name2,
+                        type=sub_type,
+                        comment=comment,
+                    )
                 )
         offset += size
 
@@ -3754,15 +3799,18 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             func_args: List[Expression] = []
             for slot in abi.arg_slots:
                 if slot.reg:
-                    func_args.append(as_type(regs[slot.reg], slot.type, True))
+                    expr = regs[slot.reg]
                 elif slot.offset in subroutine_args:
-                    func_args.append(
-                        as_type(subroutine_args.pop(slot.offset), slot.type, True)
-                    )
+                    expr = subroutine_args.pop(slot.offset)
                 else:
-                    func_args.append(
-                        ErrorExpr(f"Unable to find stack arg {slot.offset:#x} in block")
+                    expr = ErrorExpr(
+                        f"Unable to find stack arg {slot.offset:#x} in block"
                     )
+                func_args.append(
+                    CommentExpr.wrap(
+                        as_type(expr, slot.type, True), prefix=slot.comment
+                    )
+                )
 
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
@@ -3819,7 +3867,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # TODO: limit this based on abi.arg_slots. If the function type is known
             # and not variadic, this list should be empty.
             for _, arg in sorted(subroutine_args.items()):
-                func_args.append(arg)
+                if fn_sig.params_known and not fn_sig.is_variadic:
+                    func_args.append(CommentExpr.wrap(arg, prefix="extra?"))
+                else:
+                    func_args.append(arg)
 
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
