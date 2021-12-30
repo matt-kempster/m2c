@@ -15,7 +15,7 @@ void test(u32 a) {
 }
 
 void func_00400098(s8 arg0) {
-    func_00400090((u32) ((s32) ((s8) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x18) >> 0x1F)) >> 1), arg0);
+    func_00400090((u32) ((s32) ((s8) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x18) >> 0x1F)) >> 1), /* extra? */ arg0);
     func_00400090((u32) (s8) (subroutine_arg4 / 3));
     func_00400090((u32) (s8) (subroutine_arg4 / 5));
     func_00400090((u32) (s8) (subroutine_arg4 / 7));
@@ -32,7 +32,7 @@ void func_00400098(s8 arg0) {
 }
 
 void func_004003A8(s16 arg0) {
-    func_00400090((u32) ((s32) ((s16) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x10) >> 0x1F)) >> 1), arg0);
+    func_00400090((u32) ((s32) ((s16) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x10) >> 0x1F)) >> 1), /* extra? */ arg0);
     func_00400090((u32) (s16) (subroutine_arg4 / 3));
     func_00400090((u32) (s16) (subroutine_arg4 / 5));
     func_00400090((u32) (s16) (subroutine_arg4 / 7));

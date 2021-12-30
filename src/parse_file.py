@@ -440,8 +440,10 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                             mips_file.new_data_bytes(data)
 
         elif ifdef_level == 0:
-            if line.startswith("glabel") or line.startswith("dlabel"):
-                process_label(line.split()[1], glabel=True)
+            parts = line.split()
+            if parts and parts[0] in ("glabel", "dlabel"):
+                if len(parts) >= 2:
+                    process_label(parts[1], glabel=True)
 
             elif curr_section == ".text":
                 meta = InstructionMeta(

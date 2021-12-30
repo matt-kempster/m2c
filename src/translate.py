@@ -32,7 +32,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Formatter, Options
+from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
@@ -702,6 +702,35 @@ class ErrorExpr(Condition):
         if self.desc is not None:
             return f"MIPS2C_ERROR({self.desc})"
         return "MIPS2C_ERROR()"
+
+
+@dataclass(frozen=True)
+class CommentExpr(Expression):
+    expr: Expression
+    type: Type = field(compare=False)
+    prefix: Optional[str] = None
+    suffix: Optional[str] = None
+
+    def dependencies(self) -> List[Expression]:
+        return [self.expr]
+
+    def format(self, fmt: Formatter) -> str:
+        expr_str = self.expr.format(fmt)
+
+        if fmt.coding_style.comment_style == CodingStyle.CommentStyle.NONE:
+            return expr_str
+
+        prefix_str = f"/* {self.prefix} */ " if self.prefix is not None else ""
+        suffix_str = f" /* {self.suffix} */" if self.suffix is not None else ""
+        return f"{prefix_str}{expr_str}{suffix_str}"
+
+    @staticmethod
+    def wrap(
+        expr: Expression, prefix: Optional[str] = None, suffix: Optional[str] = None
+    ) -> Expression:
+        if prefix is None and suffix is None:
+            return expr
+        return CommentExpr(expr=expr, type=expr.type, prefix=prefix, suffix=suffix)
 
 
 @dataclass(frozen=True, eq=False)
@@ -1390,7 +1419,7 @@ class Literal(Expression):
                 and v < 2 ** size_bits
             ):
                 v -= 1 << size_bits
-            value = fmt.format_int(v)
+            value = fmt.format_int(v, size_bits=size_bits)
 
         return prefix + value + suffix
 
@@ -3154,6 +3183,7 @@ class AbiArgSlot:
     reg: Optional[Register]
     type: Type
     name: Optional[str] = None
+    comment: Optional[str] = None
 
 
 @dataclass
@@ -3449,7 +3479,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     to_write: List[Union[Statement]] = []
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
-    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
+    subroutine_args: Dict[int, Expression] = {}
     branch_condition: Optional[Condition] = None
     switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
@@ -3580,6 +3610,19 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if reg in regs:
                 del regs[reg]
 
+    def maybe_clear_local_var_writes(func_args: List[Expression]) -> None:
+        # Clear the `local_var_writes` dict if any of the `func_args` contain
+        # a reference to a stack var. (The called function may modify the stack,
+        # replacing the value we have in `local_var_writes`.)
+        for arg in func_args:
+            if uses_expr(
+                arg,
+                lambda expr: isinstance(expr, AddressOf)
+                and isinstance(expr.expr, LocalVar),
+            ):
+                local_var_writes.clear()
+                return
+
     def process_instr(instr: Instruction) -> None:
         nonlocal branch_condition, switch_expr, has_function_call
 
@@ -3601,7 +3644,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # About to call a subroutine with this argument. Skip arguments for the
                 # first four stack slots; they are also passed in registers.
                 if to_store.dest.value >= 0x10:
-                    subroutine_args.append((to_store.source, to_store.dest))
+                    subroutine_args[to_store.dest.value] = to_store.source
             else:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
@@ -3703,23 +3746,41 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             func_args: List[Expression] = []
             for slot in abi.arg_slots:
                 if slot.reg:
-                    func_args.append(as_type(regs[slot.reg], slot.type, True))
+                    expr = regs[slot.reg]
+                elif slot.offset in subroutine_args:
+                    expr = subroutine_args.pop(slot.offset)
+                else:
+                    expr = ErrorExpr(
+                        f"Unable to find stack arg {slot.offset:#x} in block"
+                    )
+                func_args.append(
+                    CommentExpr.wrap(
+                        as_type(expr, slot.type, True), prefix=slot.comment
+                    )
+                )
 
             for slot in abi.possible_slots:
                 assert slot.reg is not None
                 func_args.append(regs[slot.reg])
 
             # Add the arguments after a3.
-            # TODO: limit this and unify types based on abi.arg_slots
-            subroutine_args.sort(key=lambda a: a[1].value)
-            for arg in subroutine_args:
-                func_args.append(arg[0])
+            # TODO: limit this based on abi.arg_slots. If the function type is known
+            # and not variadic, this list should be empty.
+            for _, arg in sorted(subroutine_args.items()):
+                if fn_sig.params_known and not fn_sig.is_variadic:
+                    func_args.append(CommentExpr.wrap(arg, prefix="extra?"))
+                else:
+                    func_args.append(arg)
 
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
                     fn_sig.params.append(FunctionParam())
-            for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
-                func_args[i] = as_type(arg_expr, param.type, True)
+                # When the function signature isn't provided, the we only assume that each
+                # parameter is "simple" (<=4 bytes, no return struct, etc.). This may not
+                # match the actual function signature, but it's the best we can do.
+                # Without that assumption, the logic from `function_abi` would be needed here.
+                for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
+                    func_args[i] = as_type(arg_expr, param.type.decay(), True)
 
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
@@ -3732,6 +3793,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # Clear out caller-save registers, for clarity and to ensure that
             # argument regs don't get passed into the next function.
             clear_caller_save_regs()
+
+            # Clear out local var write tracking if any argument contains a stack
+            # reference. That dict is used to track register saves/restores, which
+            # are unreliable if we call a function with a stack reference.
+            maybe_clear_local_var_writes(func_args)
 
             # Prevent reads and function calls from moving across this call.
             # This isn't really right, because this call might be moved later,

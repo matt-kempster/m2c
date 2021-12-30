@@ -6,6 +6,7 @@
     \label:
 .endm
 
+glabel
 loc_whatever:
 nop
 

@@ -516,6 +516,7 @@ class MipsArch(Arch):
                         reg=Register("a0"),
                         name="__return__",
                         type=Type.ptr(fn_sig.return_type),
+                        comment="return",
                     )
                 )
                 offset = 4
@@ -552,13 +553,23 @@ class MipsArch(Arch):
                 else:
                     for i in range(offset // 4, (offset + size) // 4):
                         unk_offset = 4 * i - offset
-                        name2 = (
-                            f"{name}_unk{unk_offset:X}" if name and unk_offset else name
-                        )
                         reg2 = Register(f"a{i}") if i < 4 else None
+                        if size > 4:
+                            name2 = f"{name}_unk{unk_offset:X}" if name else None
+                            sub_type = Type.any()
+                            comment: Optional[str] = f"{param_type}+{unk_offset:#x}"
+                        else:
+                            assert unk_offset == 0
+                            name2 = name
+                            sub_type = param_type
+                            comment = None
                         known_slots.append(
                             AbiArgSlot(
-                                offset=4 * i, reg=reg2, name=name2, type=param_type
+                                offset=4 * i,
+                                reg=reg2,
+                                name=name2,
+                                type=sub_type,
+                                comment=comment,
                             )
                         )
                 offset += size
