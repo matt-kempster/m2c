@@ -3,7 +3,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Set
 
 from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
@@ -59,6 +59,25 @@ def print_exception_as_comment(
         print("*/")
 
 
+def get_next_func(
+    names: Set[str], functions: Dict[str, Function], globalinfo: GlobalInfo
+) -> Optional[Function]:
+    for func in names:
+        if func in globalinfo.typemap.functions:
+            names.remove(func)
+            return functions[func]
+
+    for func in names:
+        if func in globalinfo.global_symbol_map:
+            names.remove(func)
+            return functions[func]
+
+    for func in names:
+        names.remove(func)
+        return functions[func]
+    return None
+
+
 def run(options: Options) -> int:
     arch = MipsArch()
     all_functions: Dict[str, Function] = {}
@@ -85,9 +104,9 @@ def run(options: Options) -> int:
         return 0
 
     if not options.function_indexes_or_names:
-        functions = list(all_functions.values())
+        funcs = list(all_functions.values())
     else:
-        functions = []
+        funcs = []
         for index_or_name in options.function_indexes_or_names:
             if isinstance(index_or_name, int):
                 if not (0 <= index_or_name < len(all_functions)):
@@ -97,12 +116,12 @@ def run(options: Options) -> int:
                         file=sys.stderr,
                     )
                     return 1
-                functions.append(list(all_functions.values())[index_or_name])
+                funcs.append(list(all_functions.values())[index_or_name])
             else:
                 if index_or_name not in all_functions:
                     print(f"Function {index_or_name} not found.", file=sys.stderr)
                     return 1
-                functions.append(all_functions[index_or_name])
+                funcs.append(all_functions[index_or_name])
 
     fmt = options.formatter()
     function_names = set(all_functions.keys())
@@ -112,18 +131,23 @@ def run(options: Options) -> int:
     )
     global_info = GlobalInfo(asm_data, arch, function_names, typemap, typepool)
 
-    flow_graphs: List[Union[FlowGraph, Exception]] = []
-    for function in functions:
+    functions: Dict[str, Function] = {f.name: f for f in funcs}
+
+    flow_graphs: Dict[str, Union[FlowGraph, Exception]] = {}
+    for name, function in functions.items():
         try:
-            flow_graphs.append(build_flowgraph(function, global_info.asm_data))
+            flow_graphs[name] = build_flowgraph(function, global_info.asm_data)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
-            flow_graphs.append(e)
+            flow_graphs[name] = e
 
     # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
     for i in range(options.passes - 1):
         preliminary_infos = []
-        for function, flow_graph in zip(functions, flow_graphs):
+        function_set: Set[str] = {f.name for f in functions.values()}
+
+        while function := get_next_func(function_set, functions, global_info):  # type: ignore
+            flow_graph = flow_graphs[function.name]
             try:
                 if isinstance(flow_graph, Exception):
                     raise flow_graph
@@ -146,22 +170,24 @@ def run(options: Options) -> int:
         # after discarding all of the translated Expressions.
         typepool.prune_structs()
 
-    function_infos: List[Union[FunctionInfo, Exception]] = []
-    for function, flow_graph in zip(functions, flow_graphs):
+    function_set: Set[str] = {f.name for f in functions.values()}  # type: ignore
+    function_infos: Dict[str, Union[FunctionInfo, Exception]] = {}
+    while function := get_next_func(function_set, functions, global_info):  # type: ignore
+        flow_graph = flow_graphs[function.name]
         try:
             if isinstance(flow_graph, Exception):
                 raise flow_graph
             flow_graph.reset_block_info()
             info = translate_to_ast(function, flow_graph, options, global_info)
-            function_infos.append(info)
+            function_infos[function.name] = info
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
-            function_infos.append(e)
+            function_infos[function.name] = e
 
     return_code = 0
     try:
         if options.visualize_flowgraph:
-            fn_info = function_infos[0]
+            fn_info = function_infos[list(functions.values())[0].name]
             if isinstance(fn_info, Exception):
                 raise fn_info
             print(visualize_flowgraph(fn_info.flow_graph))
@@ -176,7 +202,7 @@ def run(options: Options) -> int:
         global_decls = global_info.global_decls(
             fmt,
             options.global_decls,
-            [fn for fn in function_infos if isinstance(fn, FunctionInfo)],
+            [fn for fn in function_infos.values() if isinstance(fn, FunctionInfo)],
         )
         if global_decls:
             print(global_decls)
@@ -186,7 +212,9 @@ def run(options: Options) -> int:
         )
         return_code = 1
 
-    for index, (function, function_info) in enumerate(zip(functions, function_infos)):
+    for index, (func, function) in enumerate(functions.items()):
+        function_info = function_infos[func]
+
         if index != 0:
             print()
         try:
