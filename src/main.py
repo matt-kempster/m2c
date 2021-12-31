@@ -146,7 +146,8 @@ def run(options: Options) -> int:
         preliminary_infos = []
         function_set: Set[str] = {f.name for f in functions.values()}
 
-        while function := get_next_func(function_set, functions, global_info):  # type: ignore
+        function = get_next_func(function_set, functions, global_info)  # type: ignore
+        while function:
             flow_graph = flow_graphs[function.name]
             try:
                 if isinstance(flow_graph, Exception):
@@ -156,6 +157,8 @@ def run(options: Options) -> int:
                 preliminary_infos.append(info)
             except:
                 pass
+            function = get_next_func(function_set, functions, global_info)  # type: ignore
+
         try:
             global_info.global_decls(fmt, options.global_decls, [])
         except:
@@ -172,7 +175,9 @@ def run(options: Options) -> int:
 
     function_set: Set[str] = {f.name for f in functions.values()}  # type: ignore
     function_infos: Dict[str, Union[FunctionInfo, Exception]] = {}
-    while function := get_next_func(function_set, functions, global_info):  # type: ignore
+
+    function = get_next_func(function_set, functions, global_info)  # type: ignore
+    while function:
         flow_graph = flow_graphs[function.name]
         try:
             if isinstance(flow_graph, Exception):
@@ -183,6 +188,7 @@ def run(options: Options) -> int:
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
             function_infos[function.name] = e
+        function = get_next_func(function_set, functions, global_info)  # type: ignore
 
     return_code = 0
     try:
