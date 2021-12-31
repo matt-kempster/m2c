@@ -60,7 +60,7 @@ def print_exception_as_comment(
 
 
 def get_next_func(
-    names: Set[str], functions: Dict[str, Function], globalinfo: GlobalInfo
+    names: List[str], functions: Dict[str, Function], globalinfo: GlobalInfo
 ) -> Optional[Function]:
     for func in names:
         if func in globalinfo.typemap.functions:
@@ -124,61 +124,44 @@ def run(options: Options) -> int:
                 funcs.append(all_functions[index_or_name])
 
     fmt = options.formatter()
-    function_names = set(all_functions.keys())
     typepool = TypePool(
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
     )
-    global_info = GlobalInfo(asm_data, arch, function_names, typemap, typepool)
+    global_info = GlobalInfo(
+        asm_data, arch, set(all_functions.keys()), typemap, typepool
+    )
 
     functions: Dict[str, Function] = {f.name: f for f in funcs}
-
+    function_infos: Dict[str, Union[FunctionInfo, Exception]] = {}
     flow_graphs: Dict[str, Union[FlowGraph, Exception]] = {}
-    for name, function in functions.items():
+    function_names: List[str] = [f.name for f in funcs]
+
+    function = get_next_func(function_names, functions, global_info)
+    while function:
         try:
-            flow_graphs[name] = build_flowgraph(function, global_info.asm_data)
+            flow_graphs[function.name] = build_flowgraph(function, global_info.asm_data)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
-            flow_graphs[name] = e
+            flow_graphs[function.name] = e
 
-    # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
-    for i in range(options.passes - 1):
+        flow_graph = flow_graphs[function.name]
         preliminary_infos = []
-        function_set: Set[str] = {f.name for f in functions.values()}
-
-        function = get_next_func(function_set, functions, global_info)  # type: ignore
-        while function:
-            flow_graph = flow_graphs[function.name]
-            try:
-                if isinstance(flow_graph, Exception):
-                    raise flow_graph
-                flow_graph.reset_block_info()
-                info = translate_to_ast(function, flow_graph, options, global_info)
-                preliminary_infos.append(info)
-            except:
-                pass
-            function = get_next_func(function_set, functions, global_info)  # type: ignore
-
         try:
-            global_info.global_decls(fmt, options.global_decls, [])
+            if isinstance(flow_graph, Exception):
+                raise flow_graph
+            flow_graph.reset_block_info()
+            info = translate_to_ast(function, flow_graph, options, global_info)
+            preliminary_infos.append(info)
         except:
             pass
+
         for info in preliminary_infos:
             try:
                 get_function_text(info, options)
             except:
                 pass
 
-        # This operation can change struct field paths, so it is only performed
-        # after discarding all of the translated Expressions.
-        typepool.prune_structs()
-
-    function_set: Set[str] = {f.name for f in functions.values()}  # type: ignore
-    function_infos: Dict[str, Union[FunctionInfo, Exception]] = {}
-
-    function = get_next_func(function_set, functions, global_info)  # type: ignore
-    while function:
-        flow_graph = flow_graphs[function.name]
         try:
             if isinstance(flow_graph, Exception):
                 raise flow_graph
@@ -188,7 +171,8 @@ def run(options: Options) -> int:
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
             function_infos[function.name] = e
-        function = get_next_func(function_set, functions, global_info)  # type: ignore
+
+        function = get_next_func(function_names, functions, global_info)
 
     return_code = 0
     try:
