@@ -32,7 +32,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Formatter, Options
+from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
@@ -682,6 +682,35 @@ class ErrorExpr(Condition):
         if self.desc is not None:
             return f"MIPS2C_ERROR({self.desc})"
         return "MIPS2C_ERROR()"
+
+
+@dataclass(frozen=True)
+class CommentExpr(Expression):
+    expr: Expression
+    type: Type = field(compare=False)
+    prefix: Optional[str] = None
+    suffix: Optional[str] = None
+
+    def dependencies(self) -> List[Expression]:
+        return [self.expr]
+
+    def format(self, fmt: Formatter) -> str:
+        expr_str = self.expr.format(fmt)
+
+        if fmt.coding_style.comment_style == CodingStyle.CommentStyle.NONE:
+            return expr_str
+
+        prefix_str = f"/* {self.prefix} */ " if self.prefix is not None else ""
+        suffix_str = f" /* {self.suffix} */" if self.suffix is not None else ""
+        return f"{prefix_str}{expr_str}{suffix_str}"
+
+    @staticmethod
+    def wrap(
+        expr: Expression, prefix: Optional[str] = None, suffix: Optional[str] = None
+    ) -> Expression:
+        if prefix is None and suffix is None:
+            return expr
+        return CommentExpr(expr=expr, type=expr.type, prefix=prefix, suffix=suffix)
 
 
 @dataclass(frozen=True, eq=False)
@@ -1639,13 +1668,24 @@ class SwitchControl:
         add_expr = early_unwrap(struct_expr.struct_var)
         if not isinstance(add_expr, BinaryOp) or add_expr.op != "+":
             return error_expr
-        jtbl_addr_expr = early_unwrap(add_expr.left)
-        if not isinstance(jtbl_addr_expr, AddressOf) or not isinstance(
-            jtbl_addr_expr.expr, GlobalSymbol
+
+        # Check for either `*(&jump_table + (control_expr * 4))` and `*((control_expr * 4) + &jump_table)`
+        left_expr, right_expr = early_unwrap(add_expr.left), early_unwrap(
+            add_expr.right
+        )
+        if isinstance(left_expr, AddressOf) and isinstance(
+            left_expr.expr, GlobalSymbol
         ):
+            jtbl_addr_expr, mul_expr = left_expr, right_expr
+        elif isinstance(right_expr, AddressOf) and isinstance(
+            right_expr.expr, GlobalSymbol
+        ):
+            mul_expr, jtbl_addr_expr = left_expr, right_expr
+        else:
             return error_expr
+
         jump_table = jtbl_addr_expr.expr
-        mul_expr = early_unwrap(add_expr.right)
+        assert isinstance(jump_table, GlobalSymbol)
         if (
             not isinstance(mul_expr, BinaryOp)
             or mul_expr.op != "*"
@@ -3145,6 +3185,7 @@ class AbiArgSlot:
     reg: Optional[Register]
     name: Optional[str]
     type: Type
+    comment: Optional[str] = None
 
 
 @dataclass
@@ -3180,6 +3221,7 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
                 reg=Register("a0"),
                 name="__return__",
                 type=Type.ptr(fn_sig.return_type),
+                comment="return",
             )
         )
         offset = 4
@@ -3209,10 +3251,24 @@ def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
         else:
             for i in range(offset // 4, (offset + size) // 4):
                 unk_offset = 4 * i - offset
-                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
                 reg2 = Register(f"a{i}") if i < 4 else None
+                if size > 4:
+                    name2 = f"{name}_unk{unk_offset:X}" if name else None
+                    sub_type = Type.any()
+                    comment: Optional[str] = f"{param_type}+{unk_offset:#x}"
+                else:
+                    assert unk_offset == 0
+                    name2 = name
+                    sub_type = param_type
+                    comment = None
                 slots.append(
-                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param_type)
+                    AbiArgSlot(
+                        offset=4 * i,
+                        reg=reg2,
+                        name=name2,
+                        type=sub_type,
+                        comment=comment,
+                    )
                 )
         offset += size
 
@@ -3513,7 +3569,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     to_write: List[Union[Statement]] = []
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
-    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
+    subroutine_args: Dict[int, Expression] = {}
     branch_condition: Optional[Condition] = None
     switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
@@ -3678,7 +3734,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # About to call a subroutine with this argument. Skip arguments for the
                 # first four stack slots; they are also passed in registers.
                 if to_store.dest.value >= 0x10:
-                    subroutine_args.append((to_store.source, to_store.dest))
+                    subroutine_args[to_store.dest.value] = to_store.source
             else:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
@@ -3773,7 +3829,18 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             func_args: List[Expression] = []
             for slot in abi.arg_slots:
                 if slot.reg:
-                    func_args.append(as_type(regs[slot.reg], slot.type, True))
+                    expr = regs[slot.reg]
+                elif slot.offset in subroutine_args:
+                    expr = subroutine_args.pop(slot.offset)
+                else:
+                    expr = ErrorExpr(
+                        f"Unable to find stack arg {slot.offset:#x} in block"
+                    )
+                func_args.append(
+                    CommentExpr.wrap(
+                        as_type(expr, slot.type, True), prefix=slot.comment
+                    )
+                )
 
             valid_extra_regs: Set[str] = set()
             for register in abi.possible_regs:
@@ -3827,16 +3894,23 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 func_args.append(regs[register])
 
             # Add the arguments after a3.
-            # TODO: limit this and unify types based on abi.arg_slots
-            subroutine_args.sort(key=lambda a: a[1].value)
-            for arg in subroutine_args:
-                func_args.append(arg[0])
+            # TODO: limit this based on abi.arg_slots. If the function type is known
+            # and not variadic, this list should be empty.
+            for _, arg in sorted(subroutine_args.items()):
+                if fn_sig.params_known and not fn_sig.is_variadic:
+                    func_args.append(CommentExpr.wrap(arg, prefix="extra?"))
+                else:
+                    func_args.append(arg)
 
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
                     fn_sig.params.append(FunctionParam())
-            for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
-                func_args[i] = as_type(arg_expr, param.type, True)
+                # When the function signature isn't provided, the we only assume that each
+                # parameter is "simple" (<=4 bytes, no return struct, etc.). This may not
+                # match the actual function signature, but it's the best we can do.
+                # Without that assumption, the logic from `function_abi` would be needed here.
+                for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
+                    func_args[i] = as_type(arg_expr, param.type.decay(), True)
 
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
