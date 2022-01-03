@@ -1011,17 +1011,18 @@ def build_graph_from_block(
             jtbl_names = []
             for ins in block.instructions:
                 for arg in ins.args:
+                    if isinstance(arg, AsmAddressMode):
+                        arg = arg.lhs
                     if (
-                        isinstance(arg, AsmAddressMode)
-                        and isinstance(arg.lhs, Macro)
-                        and arg.lhs.macro_name == "lo"
-                        and isinstance(arg.lhs.argument, AsmGlobalSymbol)
+                        isinstance(arg, Macro)
+                        and arg.macro_name == "lo"
+                        and isinstance(arg.argument, AsmGlobalSymbol)
                         and any(
-                            arg.lhs.argument.symbol_name.startswith(prefix)
+                            arg.argument.symbol_name.startswith(prefix)
                             for prefix in ("jtbl", "jpt_")
                         )
                     ):
-                        jtbl_names.append(arg.lhs.argument.symbol_name)
+                        jtbl_names.append(arg.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
                     f"Unable to determine jump table for jr instruction {jump.meta.loc_str()}.\n\n"

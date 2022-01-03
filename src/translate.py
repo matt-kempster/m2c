@@ -1649,13 +1649,24 @@ class SwitchControl:
         add_expr = early_unwrap(struct_expr.struct_var)
         if not isinstance(add_expr, BinaryOp) or add_expr.op != "+":
             return error_expr
-        jtbl_addr_expr = early_unwrap(add_expr.left)
-        if not isinstance(jtbl_addr_expr, AddressOf) or not isinstance(
-            jtbl_addr_expr.expr, GlobalSymbol
+
+        # Check for either `*(&jump_table + (control_expr * 4))` and `*((control_expr * 4) + &jump_table)`
+        left_expr, right_expr = early_unwrap(add_expr.left), early_unwrap(
+            add_expr.right
+        )
+        if isinstance(left_expr, AddressOf) and isinstance(
+            left_expr.expr, GlobalSymbol
         ):
+            jtbl_addr_expr, mul_expr = left_expr, right_expr
+        elif isinstance(right_expr, AddressOf) and isinstance(
+            right_expr.expr, GlobalSymbol
+        ):
+            mul_expr, jtbl_addr_expr = left_expr, right_expr
+        else:
             return error_expr
+
         jump_table = jtbl_addr_expr.expr
-        mul_expr = early_unwrap(add_expr.right)
+        assert isinstance(jump_table, GlobalSymbol)
         if (
             not isinstance(mul_expr, BinaryOp)
             or mul_expr.op != "*"
