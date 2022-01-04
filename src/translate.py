@@ -110,7 +110,7 @@ class Arch(abc.ABC):
         of the function call `expr`.
         This must use all of the registers in `all_return_regs` in order to stay
         consistent with `output_regs_for_instr()`. This is why we can't use the
-        funciton's return type, even though it may be more accurate.
+        function's return type, even though it may be more accurate.
         """
         ...
 
