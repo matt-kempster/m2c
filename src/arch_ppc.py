@@ -17,11 +17,10 @@ from .translate import (
     CommentStmt,
     ErrorExpr,
     Expression,
+    ImplicitInstrMap,
     InstrMap,
     InstrSet,
-    ImplicitInstrMap,
     PPCCmpInstrMap,
-    Literal,
     PairInstrMap,
     SecondF64Half,
     StmtInstrMap,
@@ -34,10 +33,8 @@ from .translate import (
     as_intptr,
     as_ptr,
     as_s32,
-    as_s64,
     as_type,
     as_u32,
-    as_u64,
     fn_op,
     fold_gcc_divmod,
     fold_mul_chains,
@@ -46,22 +43,12 @@ from .translate import (
     handle_add_float,
     handle_addi,
     handle_addis,
-    handle_bgez,
-    handle_conditional_move,
     handle_convert,
-    handle_la,
     handle_load,
     handle_loadx,
-    handle_rlwinm,
-    handle_lwl,
-    handle_lwr,
     handle_or,
-    handle_sltiu,
-    handle_sltu,
+    handle_rlwinm,
     handle_sra,
-    handle_swl,
-    handle_swr,
-    imm_add_32,
     load_upper,
     make_store,
     make_storex,
@@ -166,7 +153,6 @@ class PpcArch(Arch):
 
     instrs_ignore: InstrSet = {
         "nop",
-        "j",
         # PPC: assume stmw/lmw are only used for saving/restoring saved regs
         "stmw",
         "lmw",
@@ -203,7 +189,6 @@ class PpcArch(Arch):
     }
     instrs_branches: CmpInstrMap = {
         # Branch instructions/pseudoinstructions
-        # PPC
         # TODO: Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
         # This assumption may not hold if the bits are modified with instructions like
         # `crand` which modify individual bits in CR.
@@ -224,8 +209,7 @@ class PpcArch(Arch):
     }
     instrs_float_branches: InstrSet = {}
     instrs_jumps: InstrSet = {
-        # Unconditional jump
-        # "jr",
+        # Unconditional jumps
         # PPC
         "b",
         "blr",
@@ -246,68 +230,13 @@ class PpcArch(Arch):
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
     }
     instrs_destination_first: InstrMap = {
-        # Flag-setting instructions
-        "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
-        "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
-        "sltu": lambda a: handle_sltu(a),
-        "sltiu": lambda a: handle_sltiu(a),
         # Integer arithmetic
         "addi": lambda a: handle_addi(a),
-        "addiu": lambda a: handle_addi(a),
-        "addu": lambda a: handle_add(a),
-        "subu": lambda a: (
-            fold_mul_chains(fold_gcc_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
-        ),
-        "negu": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
-        ),
         "neg": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
         ),
         "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
-        # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
-        "daddi": lambda a: handle_addi(a),
-        "daddiu": lambda a: handle_addi(a),
-        "daddu": lambda a: handle_add(a),
-        "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
-        "dnegu": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
-        ),
-        "dneg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
-        ),
-        # Hi/lo register uses (used after division/multiplication)
-        "mfhi": lambda a: a.regs[Register("hi")],
-        "mflo": lambda a: a.regs[Register("lo")],
-        # Floating point arithmetic
-        "add.s": lambda a: handle_add_float(a),
-        "sub.s": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
-        "neg.s": lambda a: UnaryOp("-", as_f32(a.reg(1)), type=Type.f32()),
-        "abs.s": lambda a: fn_op("fabsf", [as_f32(a.reg(1))], Type.f32()),
-        "sqrt.s": lambda a: fn_op("sqrtf", [as_f32(a.reg(1))], Type.f32()),
-        "div.s": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
-        "mul.s": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
-        # Double-precision arithmetic
-        "add.d": lambda a: handle_add_double(a),
-        "sub.d": lambda a: BinaryOp.f64(a.dreg(1), "-", a.dreg(2)),
-        "neg.d": lambda a: UnaryOp("-", as_f64(a.dreg(1)), type=Type.f64()),
-        "abs.d": lambda a: fn_op("fabs", [as_f64(a.dreg(1))], Type.f64()),
-        "sqrt.d": lambda a: fn_op("sqrt", [as_f64(a.dreg(1))], Type.f64()),
-        "div.d": lambda a: BinaryOp.f64(a.dreg(1), "/", a.dreg(2)),
-        "mul.d": lambda a: BinaryOp.f64(a.dreg(1), "*", a.dreg(2)),
-        # Floating point conversions
-        "cvt.d.s": lambda a: handle_convert(a.reg(1), Type.f64(), Type.f32()),
-        "cvt.d.w": lambda a: handle_convert(a.reg(1), Type.f64(), Type.intish()),
-        "cvt.s.d": lambda a: handle_convert(a.dreg(1), Type.f32(), Type.f64()),
-        "cvt.s.w": lambda a: handle_convert(a.reg(1), Type.f32(), Type.intish()),
-        "cvt.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
-        "cvt.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
-        "cvt.s.u.fictive": lambda a: handle_convert(a.reg(1), Type.f32(), Type.u32()),
-        "cvt.u.d.fictive": lambda a: handle_convert(a.dreg(1), Type.u32(), Type.f64()),
-        "cvt.u.s.fictive": lambda a: handle_convert(a.reg(1), Type.u32(), Type.f32()),
-        "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
-        "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
         # Bit arithmetic
         "ori": lambda a: handle_or(a, a.reg(1), a.unsigned_imm(2)),
         "oris": lambda a: handle_or(a, a.reg(1), a.shifted_imm(2)),
@@ -323,19 +252,8 @@ class PpcArch(Arch):
         "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
         "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
         # Shifts
-        "sll": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
-        ),
         "sllv": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
-        ),
-        "srl": lambda a: fold_gcc_divmod(
-            BinaryOp(
-                left=as_u32(a.reg(1)),
-                op=">>",
-                right=as_intish(a.imm(2)),
-                type=Type.u32(),
-            )
         ),
         "srlv": lambda a: fold_gcc_divmod(
             BinaryOp(
@@ -345,7 +263,6 @@ class PpcArch(Arch):
                 type=Type.u32(),
             )
         ),
-        "sra": lambda a: handle_sra(a),
         "srav": lambda a: fold_gcc_divmod(
             BinaryOp(
                 left=as_s32(a.reg(1)),
@@ -354,63 +271,9 @@ class PpcArch(Arch):
                 type=Type.s32(),
             )
         ),
-        # 64-bit shifts
-        "dsll": lambda a: fold_mul_chains(
-            BinaryOp.int64(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
-        ),
-        "dsll32": lambda a: fold_mul_chains(
-            BinaryOp.int64(left=a.reg(1), op="<<", right=imm_add_32(a.imm(2)))
-        ),
-        "dsllv": lambda a: BinaryOp.int64(
-            left=a.reg(1), op="<<", right=as_intish(a.reg(2))
-        ),
-        "dsrl": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u64()
-        ),
-        "dsrl32": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.u64()
-        ),
-        "dsrlv": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u64()
-        ),
-        "dsra": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s64()
-        ),
-        "dsra32": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.s64()
-        ),
-        "dsrav": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s64()
-        ),
-        # Move pseudoinstruction
-        "move": lambda a: a.reg(1),
-        # Floating point moving instructions
-        "mfc1": lambda a: a.reg(1),
-        "mov.s": lambda a: a.reg(1),
-        "mov.d": lambda a: as_f64(a.dreg(1)),
-        # Conditional moves
-        "movn": lambda a: handle_conditional_move(a, True),
-        "movz": lambda a: handle_conditional_move(a, False),
-        # FCSR get
-        "cfc1": lambda a: ErrorExpr("cfc1"),
-        # Immediates
+        ## Immediates
         "li": lambda a: a.full_imm(1),
-        "lui": lambda a: load_upper(a),
-        "la": lambda a: handle_la(a),
-        # Loading instructions
-        "lb": lambda a: handle_load(a, type=Type.s8()),
-        "lbu": lambda a: handle_load(a, type=Type.u8()),
-        "lh": lambda a: handle_load(a, type=Type.s16()),
-        "lhu": lambda a: handle_load(a, type=Type.u16()),
-        "lw": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-        "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
-        "lwu": lambda a: handle_load(a, type=Type.u32()),
-        "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
-        "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
-        # Unaligned loads
-        "lwl": lambda a: handle_lwl(a),
-        "lwr": lambda a: handle_lwr(a),
-        # PPC
+        ## PPC
         "add": lambda a: handle_add(a),
         "addis": lambda a: handle_addis(a),
         "subf": lambda a: fold_gcc_divmod(
@@ -492,8 +355,8 @@ class PpcArch(Arch):
         "lfsx": lambda a: handle_loadx(a, type=Type.f32()),
         "lfdx": lambda a: handle_loadx(a, type=Type.f64()),
         # PPC Floating Point
-        "fadd": lambda a: BinaryOp.f64(a.reg(1), "+", a.reg(2)),
-        "fadds": lambda a: BinaryOp.f32(a.reg(1), "+", a.reg(2)),
+        "fadd": lambda a: handle_add_double(a),
+        "fadds": lambda a: handle_add_float(a),
         "fdiv": lambda a: BinaryOp.f64(a.reg(1), "/", a.reg(2)),
         "fdivs": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
         "fmul": lambda a: BinaryOp.f64(a.reg(1), "*", a.reg(2)),
