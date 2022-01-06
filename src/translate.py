@@ -10,10 +10,12 @@ import typing
 from typing import (
     AbstractSet,
     Callable,
+    Collection,
     DefaultDict,
     Dict,
     Iterator,
     List,
+    Mapping,
     Optional,
     Set,
     Tuple,
@@ -31,7 +33,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Formatter, Options
+from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     Argument,
@@ -52,118 +54,78 @@ from .types import (
     TypePool,
 )
 
+InstrSet = Collection[str]
+InstrMap = Mapping[str, Callable[["InstrArgs"], "Expression"]]
+StmtInstrMap = Mapping[str, Callable[["InstrArgs"], "Statement"]]
+CmpInstrMap = Mapping[str, Callable[["InstrArgs"], "Condition"]]
+StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
+MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
+PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
+ImplicitInstrMap = Mapping[str, Tuple[Register, Callable[["InstrArgs"], "Expression"]]]
+PPCCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
+
+
+class Arch(abc.ABC):
+    stack_pointer_reg: Register
+    frame_pointer_reg: Optional[Register]
+    return_address_reg: Register
+
+    base_return_regs: List[Register]
+    all_return_regs: List[Register]
+    argument_regs: List[Register]
+    simple_temp_regs: List[Register]
+    temp_regs: List[Register]
+    saved_regs: List[Register]
+
+    instrs_ignore: InstrSet = set()
+    instrs_store: StoreInstrMap = {}
+    instrs_store_update: StoreInstrMap = {}
+    instrs_branches: CmpInstrMap = {}
+    instrs_decctr_branches: CmpInstrMap = {}
+    instrs_float_branches: InstrSet = set()
+    instrs_jumps: InstrSet = set()
+    instrs_fn_call: InstrSet = set()
+    instrs_no_dest: StmtInstrMap = {}
+    instrs_float_comp: CmpInstrMap = {}
+    instrs_hi_lo: PairInstrMap = {}
+    instrs_source_first: InstrMap = {}
+    instrs_destination_first: InstrMap = {}
+    instrs_load_update: InstrMap = {}
+    instrs_implicit_destination: ImplicitInstrMap = {}
+    instrs_ppc_compare: PPCCmpInstrMap = {}
+
+    @abc.abstractmethod
+    def function_abi(
+        self,
+        fn_sig: FunctionSignature,
+        likely_regs: Dict[Register, bool],
+        *,
+        for_call: bool,
+    ) -> "Abi":
+        """
+        Compute stack positions/registers used by a function based on its type
+        information. Also computes a list of registers that may contain arguments,
+        if the function has varargs or an unknown/incomplete type.
+        """
+        ...
+
+    @abc.abstractmethod
+    def function_return(
+        self, expr: "Expression"
+    ) -> List[Tuple[Register, "Expression"]]:
+        """
+        Compute register location(s) & values that will hold the return value
+        of the function call `expr`.
+        This must use all of the registers in `all_return_regs` in order to stay
+        consistent with `output_regs_for_instr()`. This is why we can't use the
+        function's return type, even though it may be more accurate.
+        """
+        ...
+
+
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
 PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI"}
-
-ARGUMENT_REGS: List[Register] = list(
-    # map(Register, ["a0", "a1", "a2", "a3", "f12", "f14"])
-    map(
-        Register,
-        [
-            "r3",
-            "r4",
-            "r5",
-            "r6",
-            "r7",
-            "r8",
-            "r9",
-            "r10",
-            "f1",
-            "f2",
-            "f3",
-            "f4",
-            "f5",
-            "f6",
-            "f7",
-            "f8",
-            "f9",
-            "f10",
-            "f11",
-            "f12",
-            "f13",
-        ],
-    )
-)
-
-SIMPLE_TEMP_REGS: List[Register] = list(
-    map(
-        Register,
-        # [ "v0", "v1", "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f13", "f15", "f16", "f17", "f18", "f19", ],
-        [
-            "r11",
-            "r12",
-        ],
-    )
-)
-
-TEMP_REGS: List[Register] = (
-    ARGUMENT_REGS
-    + SIMPLE_TEMP_REGS
-    + list(
-        map(
-            Register,
-            [
-                # "at", "hi", "lo", "condition_bit",
-                "f0",
-                "cr0_gt",
-                "cr0_lt",
-                "cr0_eq",
-                "cr0_so",
-                "ctr",
-            ],
-        )
-    )
-)
-
-SAVED_REGS: List[Register] = SIMPLE_TEMP_REGS + list(
-    map(
-        Register,
-        # [ "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31", "ra", "31", "fp", "gp", ],
-        [
-            # PPC: $r2 & $r13 are used for the small-data region, and are like $gp in MIPS
-            "lr",
-            # TODO: Some of the bits in CR are required to be saved (but usually the whole reg is?)
-            "r13",
-            "r14",
-            "r15",
-            "r16",
-            "r17",
-            "r18",
-            "r19",
-            "r20",
-            "r21",
-            "r22",
-            "r23",
-            "r24",
-            "r25",
-            "r26",
-            "r27",
-            "r28",
-            "r29",
-            "r30",
-            "r31",
-            "f14",
-            "f15",
-            "f16",
-            "f17",
-            "f18",
-            "f19",
-            "f20",
-            "f21",
-            "f22",
-            "f23",
-            "f24",
-            "f25",
-            "f26",
-            "f27",
-            "f28",
-            "f29",
-            "f30",
-            "f31",
-        ],
-    )
-)
 
 
 @dataclass
@@ -473,9 +435,9 @@ class StackInfo:
         self.used_reg_vars.add(var.reg)
 
     def is_stack_reg(self, reg: Register) -> bool:
-        if reg == Register.sp():
+        if reg == self.global_info.arch.stack_pointer_reg:
             return True
-        if reg == Register("fp"):
+        if reg == self.global_info.arch.frame_pointer_reg:
             return self.uses_framepointer
         return False
 
@@ -509,6 +471,7 @@ def get_stack_info(
     flow_graph: FlowGraph,
 ) -> StackInfo:
     info = StackInfo(function, global_info)
+    arch = global_info.arch
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -525,19 +488,19 @@ def get_stack_info(
     for inst in flow_graph.entry_node().block.instructions:
         if inst.mnemonic == "jal":
             break
-        elif inst.mnemonic == "addiu" and inst.args[0] == Register.sp():
+        elif inst.mnemonic == "addiu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer.
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
-        elif inst.mnemonic == "stwu" and inst.args[0] == Register.sp():
+        elif inst.mnemonic == "stwu" and inst.args[0] == arch.stack_pointer_reg:
             # PPC: Moving the stack pointer.
             assert isinstance(inst.args[1], AsmAddressMode)
             assert isinstance(inst.args[1].lhs, AsmLiteral)
             info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
         elif (
             inst.mnemonic == "move"
-            and inst.args[0] == Register("fp")
-            and inst.args[1] == Register.sp()
+            and inst.args[0] == arch.frame_pointer_reg
+            and inst.args[1] == arch.stack_pointer_reg
         ):
             # "move fp, sp" very likely means the code is compiled with frame
             # pointers enabled; thus fp should be treated the same as sp.
@@ -545,13 +508,13 @@ def get_stack_info(
         elif (
             inst.mnemonic in ["sw", "swc1", "sdc1", "stw", "stmw", "stfd"]
             and isinstance(inst.args[0], Register)
-            and inst.args[0] in SAVED_REGS
+            and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)
-            and inst.args[1].rhs == Register.sp()
+            and inst.args[1].rhs == arch.stack_pointer_reg
             and inst.args[0] not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
-            if inst.args[0] == Register.ra() or inst.args[0] == Register("r0"):
+            if inst.args[0] in (arch.return_address_reg, Register("r0")):
                 # Saving the return address on the stack.
                 info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
@@ -581,7 +544,7 @@ def get_stack_info(
                 if (
                     inst.mnemonic in ["lw", "lwc1", "ldc1", "lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
-                    and inst.args[1].rhs == Register.sp()
+                    and inst.args[1].rhs == arch.stack_pointer_reg
                     and inst.args[1].lhs_as_literal() >= 16
                 ):
                     info.subroutine_arg_top = min(
@@ -589,8 +552,8 @@ def get_stack_info(
                     )
                 elif (
                     inst.mnemonic == "addiu"
-                    and inst.args[0] != Register.sp()
-                    and inst.args[1] == Register.sp()
+                    and inst.args[0] != arch.stack_pointer_reg
+                    and inst.args[1] == arch.stack_pointer_reg
                     and isinstance(inst.args[2], AsmLiteral)
                     and inst.args[2].value < info.allocated_stack_size
                 ):
@@ -775,6 +738,35 @@ class ErrorExpr(Condition):
         if self.desc is not None:
             return f"MIPS2C_ERROR({self.desc})"
         return "MIPS2C_ERROR()"
+
+
+@dataclass(frozen=True)
+class CommentExpr(Expression):
+    expr: Expression
+    type: Type = field(compare=False)
+    prefix: Optional[str] = None
+    suffix: Optional[str] = None
+
+    def dependencies(self) -> List[Expression]:
+        return [self.expr]
+
+    def format(self, fmt: Formatter) -> str:
+        expr_str = self.expr.format(fmt)
+
+        if fmt.coding_style.comment_style == CodingStyle.CommentStyle.NONE:
+            return expr_str
+
+        prefix_str = f"/* {self.prefix} */ " if self.prefix is not None else ""
+        suffix_str = f" /* {self.suffix} */" if self.suffix is not None else ""
+        return f"{prefix_str}{expr_str}{suffix_str}"
+
+    @staticmethod
+    def wrap(
+        expr: Expression, prefix: Optional[str] = None, suffix: Optional[str] = None
+    ) -> Expression:
+        if prefix is None and suffix is None:
+            return expr
+        return CommentExpr(expr=expr, type=expr.type, prefix=prefix, suffix=suffix)
 
 
 @dataclass(frozen=True, eq=False)
@@ -1482,7 +1474,7 @@ class Literal(Expression):
                 and v < 2 ** size_bits
             ):
                 v -= 1 << size_bits
-            value = fmt.format_int(v)
+            value = fmt.format_int(v, size_bits=size_bits)
 
         return prefix + value + suffix
 
@@ -1742,13 +1734,24 @@ class SwitchControl:
         add_expr = early_unwrap(struct_expr.struct_var)
         if not isinstance(add_expr, BinaryOp) or add_expr.op != "+":
             return error_expr
-        jtbl_addr_expr = early_unwrap(add_expr.left)
-        if not isinstance(jtbl_addr_expr, AddressOf) or not isinstance(
-            jtbl_addr_expr.expr, GlobalSymbol
+
+        # Check for either `*(&jump_table + (control_expr * 4))` and `*((control_expr * 4) + &jump_table)`
+        left_expr, right_expr = early_unwrap(add_expr.left), early_unwrap(
+            add_expr.right
+        )
+        if isinstance(left_expr, AddressOf) and isinstance(
+            left_expr.expr, GlobalSymbol
         ):
+            jtbl_addr_expr, mul_expr = left_expr, right_expr
+        elif isinstance(right_expr, AddressOf) and isinstance(
+            right_expr.expr, GlobalSymbol
+        ):
+            mul_expr, jtbl_addr_expr = left_expr, right_expr
+        else:
             return error_expr
+
         jump_table = jtbl_addr_expr.expr
-        mul_expr = early_unwrap(add_expr.right)
+        assert isinstance(jump_table, GlobalSymbol)
         if (
             not isinstance(mul_expr, BinaryOp)
             or mul_expr.op != "*"
@@ -3420,673 +3423,15 @@ def strip_macros(arg: Argument) -> Argument:
 class AbiArgSlot:
     offset: int
     reg: Optional[Register]
-    name: Optional[str]
     type: Type
+    name: Optional[str] = None
+    comment: Optional[str] = None
 
 
 @dataclass
 class Abi:
     arg_slots: List[AbiArgSlot]
-    possible_regs: List[Register]
-
-
-def ppc_function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
-    # TODO: Parse function signatures
-    if not fn_sig.params_known:
-        return Abi(
-            arg_slots=[],
-            possible_regs=ARGUMENT_REGS[:],
-        )
-
-    intptr_regs = [r for r in ARGUMENT_REGS if r.register_name[0] != "f"]
-    float_regs = [r for r in ARGUMENT_REGS if r.register_name[0] == "f"]
-    arg_slots = []
-    for ind, param in enumerate(fn_sig.params):
-        # TODO: Support passing parameters on the stack
-        param_type = param.type.decay()
-        if param_type.is_float():
-            reg = float_regs.pop(0)
-        else:
-            reg = intptr_regs.pop(0)
-        arg_slots.append(
-            AbiArgSlot(offset=4 * ind, reg=reg, name=param.name, type=param_type)
-        )
-    possible_regs = []
-    if fn_sig.is_variadic:
-        possible_regs = intptr_regs + float_regs
-    return Abi(
-        arg_slots=arg_slots,
-        possible_regs=possible_regs,
-    )
-
-
-def function_abi(fn_sig: FunctionSignature, *, for_call: bool) -> Abi:
-    """Compute stack positions/registers used by a function according to the o32 ABI,
-    based on C type information. Additionally computes a list of registers that might
-    contain arguments, if the function is a varargs function. (Additional varargs
-    arguments may be passed on the stack; we could compute the offset at which that
-    would start but right now don't care -- we just slurp up everything.)"""
-    if not fn_sig.params_known:
-        return Abi(
-            arg_slots=[],
-            possible_regs=[
-                Register(r) for r in ["f12", "f13", "f14", "a0", "a1", "a2", "a3"]
-            ],
-        )
-
-    offset = 0
-    only_floats = True
-    slots: List[AbiArgSlot] = []
-    possible: List[Register] = []
-    if fn_sig.return_type.is_struct():
-        # The ABI for struct returns is to pass a pointer to where it should be written
-        # as the first argument.
-        slots.append(
-            AbiArgSlot(
-                offset=0,
-                reg=Register("a0"),
-                name="__return__",
-                type=Type.ptr(fn_sig.return_type),
-            )
-        )
-        offset = 4
-        only_floats = False
-
-    for ind, param in enumerate(fn_sig.params):
-        # Array parameters decay into pointers
-        param_type = param.type.decay()
-        size, align = param_type.get_parameter_size_align_bytes()
-        size = (size + 3) & ~3
-        only_floats = only_floats and param_type.is_float()
-        offset = (offset + align - 1) & -align
-        name = param.name
-        reg2: Optional[Register]
-        if ind < 2 and only_floats:
-            reg = Register("f12" if ind == 0 else "f14")
-            is_double = param_type.is_float() and param_type.get_size_bits() == 64
-            slots.append(AbiArgSlot(offset=offset, reg=reg, name=name, type=param_type))
-            if is_double and not for_call:
-                name2 = f"{name}_lo" if name else None
-                reg2 = Register("f13" if ind == 0 else "f15")
-                slots.append(
-                    AbiArgSlot(
-                        offset=offset + 4, reg=reg2, name=name2, type=Type.any_reg()
-                    )
-                )
-        else:
-            for i in range(offset // 4, (offset + size) // 4):
-                unk_offset = 4 * i - offset
-                name2 = f"{name}_unk{unk_offset:X}" if name and unk_offset else name
-                reg2 = Register(f"a{i}") if i < 4 else None
-                slots.append(
-                    AbiArgSlot(offset=4 * i, reg=reg2, name=name2, type=param_type)
-                )
-        offset += size
-
-    if fn_sig.is_variadic:
-        for i in range(offset // 4, 4):
-            possible.append(Register(f"a{i}"))
-
-    return Abi(
-        arg_slots=slots,
-        possible_regs=possible,
-    )
-
-
-InstrSet = Set[str]
-InstrMap = Dict[str, Callable[[InstrArgs], Expression]]
-StmtInstrMap = Dict[str, Callable[[InstrArgs], Statement]]
-CmpInstrMap = Dict[str, Callable[[InstrArgs], Condition]]
-StoreInstrMap = Dict[str, Callable[[InstrArgs], Optional[StoreStmt]]]
-MaybeInstrMap = Dict[str, Callable[[InstrArgs], Optional[Expression]]]
-PairInstrMap = Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]]
-ImplicitInstrMap = Dict[str, Tuple[Register, Callable[[InstrArgs], Expression]]]
-PPCCmpInstrMap = Dict[str, Callable[[InstrArgs, str], Expression]]
-
-CASES_IGNORE: InstrSet = {
-    # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
-    # FCSR gets are as well, but it's fine to read MIPS2C_ERROR for those.
-    "ctc1",
-    "nop",
-    # "b" is ignored in MIPS, but is important for PPC
-    # "b",
-    "j",
-    # PPC: assume stmw/lmw are only used for saving/restoring saved regs
-    "stmw",
-    "lmw",
-    # PPC: `{crclr,crset} 6` are used as part of the ABI for floats & varargs
-    # For now, we can ignore them (and later use them to help in ppc_function_abi)
-    "crclr",
-    "crset",
-}
-CASES_STORE: StoreInstrMap = {
-    # Storage instructions
-    "sb": lambda a: make_store(a, type=Type.int_of_size(8)),
-    "sh": lambda a: make_store(a, type=Type.int_of_size(16)),
-    "sw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
-    "sd": lambda a: make_store(a, type=Type.reg64(likely_float=False)),
-    # Unaligned stores
-    "swl": lambda a: handle_swl(a),
-    "swr": lambda a: handle_swr(a),
-    # Floating point storage/conversion
-    "swc1": lambda a: make_store(a, type=Type.reg32(likely_float=True)),
-    "sdc1": lambda a: make_store(a, type=Type.reg64(likely_float=True)),
-    # PPC
-    "stb": lambda a: make_store(a, type=Type.int_of_size(8)),
-    "sth": lambda a: make_store(a, type=Type.int_of_size(16)),
-    "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
-    "stbx": lambda a: make_storex(a, type=Type.int_of_size(8)),
-    "sthx": lambda a: make_storex(a, type=Type.int_of_size(16)),
-    "stwx": lambda a: make_storex(a, type=Type.reg32(likely_float=False)),
-    # TODO: Do we need to model the truncation from f64 to f32 here?
-    "stfs": lambda a: make_store(a, type=Type.f32()),
-    "stfd": lambda a: make_store(a, type=Type.f64()),
-    "stfsx": lambda a: make_storex(a, type=Type.f32()),
-    "stfdx": lambda a: make_storex(a, type=Type.f64()),
-}
-CASES_STORE_UPDATE: StoreInstrMap = {
-    "stbu": lambda a: make_store(a, type=Type.int_of_size(8)),
-    "sthu": lambda a: make_store(a, type=Type.int_of_size(16)),
-    "stwu": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
-    "stbux": lambda a: make_storex(a, type=Type.int_of_size(8)),
-    "sthux": lambda a: make_storex(a, type=Type.int_of_size(16)),
-    "stwux": lambda a: make_storex(a, type=Type.reg32(likely_float=False)),
-    "stfsu": lambda a: make_store(a, type=Type.f32()),
-    "stfdu": lambda a: make_store(a, type=Type.f64()),
-    "stfsux": lambda a: make_storex(a, type=Type.f32()),
-    "stfdux": lambda a: make_storex(a, type=Type.f64()),
-}
-CASES_BRANCHES: CmpInstrMap = {
-    # Branch instructions/pseudoinstructions
-    # "beq": lambda a: BinaryOp.icmp(a.reg(0), "==", a.reg(1)),
-    # "bne": lambda a: BinaryOp.icmp(a.reg(0), "!=", a.reg(1)),
-    # "beqz": lambda a: BinaryOp.icmp(a.reg(0), "==", Literal(0)),
-    # "bnez": lambda a: BinaryOp.icmp(a.reg(0), "!=", Literal(0)),
-    # "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
-    # "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
-    # "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
-    # "bgez": lambda a: handle_bgez(a),
-    # PPC
-    # TODO: Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
-    # This assumption may not hold if the bits are modified with instructions like
-    # `crand` which modify individual bits in CR.
-    "beq": lambda a: a.cmp_reg("cr0_eq"),
-    "bge": lambda a: a.cmp_reg("cr0_lt").negated(),
-    "bgt": lambda a: a.cmp_reg("cr0_gt"),
-    "ble": lambda a: a.cmp_reg("cr0_gt").negated(),
-    "blt": lambda a: a.cmp_reg("cr0_lt"),
-    "bne": lambda a: a.cmp_reg("cr0_eq").negated(),
-    "bns": lambda a: a.cmp_reg("cr0_so").negated(),
-    "bso": lambda a: a.cmp_reg("cr0_so"),
-}
-CASES_DECCTR_BRANCHES: CmpInstrMap = {
-    # PPC
-    # Decrement the CTR register, then branch
-    "bdnz": lambda a: a.cmp_reg("ctr"),
-    "bdz": lambda a: a.cmp_reg("ctr").negated(),
-}
-CASES_FLOAT_BRANCHES: InstrSet = {
-    # Floating-point branch instructions
-    "bc1t",
-    "bc1f",
-}
-CASES_JUMPS: InstrSet = {
-    # Unconditional jump
-    # "jr",
-    # PPC
-    "b",
-    "blr",
-    "bctr",
-}
-CASES_FN_CALL: InstrSet = {
-    # Function call
-    "jal",
-    "jalr",
-}
-CASES_FN_CALL_PPC: InstrSet = {
-    "bl",
-    "blrl",
-}
-CASES_NO_DEST: StmtInstrMap = {
-    # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
-    # output than MIPS2C_ERROR(...))
-    "teq": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]
-    ),
-    "tne": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]
-    ),
-    "tlt": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]
-    ),
-    "tltu": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]
-    ),
-    "tge": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]
-    ),
-    "tgeu": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
-    ),
-    "teqi": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
-    ),
-    "tnei": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
-    ),
-    "tlti": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
-    ),
-    "tltiu": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
-    ),
-    "tgei": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
-    ),
-    "tgeiu": lambda a: void_fn_op(
-        "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
-    ),
-    "break": lambda a: void_fn_op("MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []),
-    "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
-    "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
-}
-CASES_FLOAT_COMP: CmpInstrMap = {
-    # Float comparisons that don't raise exception on nan
-    "c.eq.s": lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)),
-    "c.olt.s": lambda a: BinaryOp.fcmp(a.reg(0), "<", a.reg(1)),
-    "c.oge.s": lambda a: BinaryOp.fcmp(a.reg(0), ">=", a.reg(1)),
-    "c.ole.s": lambda a: BinaryOp.fcmp(a.reg(0), "<=", a.reg(1)),
-    "c.ogt.s": lambda a: BinaryOp.fcmp(a.reg(0), ">", a.reg(1)),
-    "c.neq.s": lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)).negated(),
-    "c.uge.s": lambda a: BinaryOp.fcmp(a.reg(0), "<", a.reg(1)).negated(),
-    "c.ult.s": lambda a: BinaryOp.fcmp(a.reg(0), ">=", a.reg(1)).negated(),
-    "c.ugt.s": lambda a: BinaryOp.fcmp(a.reg(0), "<=", a.reg(1)).negated(),
-    "c.ule.s": lambda a: BinaryOp.fcmp(a.reg(0), ">", a.reg(1)).negated(),
-    # Float comparisons that may raise exception on nan
-    "c.seq.s": lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)),
-    "c.lt.s": lambda a: BinaryOp.fcmp(a.reg(0), "<", a.reg(1)),
-    "c.ge.s": lambda a: BinaryOp.fcmp(a.reg(0), ">=", a.reg(1)),
-    "c.le.s": lambda a: BinaryOp.fcmp(a.reg(0), "<=", a.reg(1)),
-    "c.gt.s": lambda a: BinaryOp.fcmp(a.reg(0), ">", a.reg(1)),
-    "c.sne.s": lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)).negated(),
-    "c.nle.s": lambda a: BinaryOp.fcmp(a.reg(0), "<=", a.reg(1)).negated(),
-    "c.nlt.s": lambda a: BinaryOp.fcmp(a.reg(0), "<", a.reg(1)).negated(),
-    "c.nge.s": lambda a: BinaryOp.fcmp(a.reg(0), ">=", a.reg(1)).negated(),
-    "c.ngt.s": lambda a: BinaryOp.fcmp(a.reg(0), ">", a.reg(1)).negated(),
-    # Double comparisons that don't raise exception on nan
-    "c.eq.d": lambda a: BinaryOp.dcmp(a.dreg(0), "==", a.dreg(1)),
-    "c.olt.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<", a.dreg(1)),
-    "c.oge.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1)),
-    "c.ole.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<=", a.dreg(1)),
-    "c.ogt.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1)),
-    "c.neq.d": lambda a: BinaryOp.dcmp(a.dreg(0), "==", a.dreg(1)).negated(),
-    "c.uge.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<", a.dreg(1)).negated(),
-    "c.ult.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1)).negated(),
-    "c.ugt.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<=", a.dreg(1)).negated(),
-    "c.ule.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1)).negated(),
-    # Double comparisons that may raise exception on nan
-    "c.seq.d": lambda a: BinaryOp.dcmp(a.dreg(0), "==", a.dreg(1)),
-    "c.lt.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<", a.dreg(1)),
-    "c.ge.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1)),
-    "c.le.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<=", a.dreg(1)),
-    "c.gt.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1)),
-    "c.sne.d": lambda a: BinaryOp.dcmp(a.dreg(0), "==", a.dreg(1)).negated(),
-    "c.nle.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<=", a.dreg(1)).negated(),
-    "c.nlt.d": lambda a: BinaryOp.dcmp(a.dreg(0), "<", a.dreg(1)).negated(),
-    "c.nge.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1)).negated(),
-    "c.ngt.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1)).negated(),
-}
-CASES_HI_LO: PairInstrMap = {
-    # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
-    "div": lambda a: (
-        BinaryOp.s32(a.reg(0), "%", a.reg(1)),
-        BinaryOp.s32(a.reg(0), "/", a.reg(1)),
-    ),
-    "divu": lambda a: (
-        BinaryOp.u32(a.reg(0), "%", a.reg(1)),
-        BinaryOp.u32(a.reg(0), "/", a.reg(1)),
-    ),
-    "ddiv": lambda a: (
-        BinaryOp.s64(a.reg(0), "%", a.reg(1)),
-        BinaryOp.s64(a.reg(0), "/", a.reg(1)),
-    ),
-    "ddivu": lambda a: (
-        BinaryOp.u64(a.reg(0), "%", a.reg(1)),
-        BinaryOp.u64(a.reg(0), "/", a.reg(1)),
-    ),
-    "mult": lambda a: (
-        fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
-        BinaryOp.int(a.reg(0), "*", a.reg(1)),
-    ),
-    "multu": lambda a: (
-        fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
-        BinaryOp.int(a.reg(0), "*", a.reg(1)),
-    ),
-    "dmult": lambda a: (
-        BinaryOp.int64(a.reg(0), "DMULT_HI", a.reg(1)),
-        BinaryOp.int64(a.reg(0), "*", a.reg(1)),
-    ),
-    "dmultu": lambda a: (
-        BinaryOp.int64(a.reg(0), "DMULTU_HI", a.reg(1)),
-        BinaryOp.int64(a.reg(0), "*", a.reg(1)),
-    ),
-}
-CASES_SOURCE_FIRST: InstrMap = {
-    # Floating point moving instruction
-    "mtc1": lambda a: a.reg(0)
-}
-CASES_DESTINATION_FIRST: InstrMap = {
-    # Flag-setting instructions
-    "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
-    "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
-    "sltu": lambda a: handle_sltu(a),
-    "sltiu": lambda a: handle_sltiu(a),
-    # Integer arithmetic
-    "addi": lambda a: handle_addi(a),
-    "addiu": lambda a: handle_addi(a),
-    "addu": lambda a: handle_add(a),
-    "subu": lambda a: (
-        fold_mul_chains(fold_gcc_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
-    ),
-    "negu": lambda a: fold_mul_chains(
-        UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
-    ),
-    "neg": lambda a: fold_mul_chains(
-        UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
-    ),
-    "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
-    "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
-    # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
-    "daddi": lambda a: handle_addi(a),
-    "daddiu": lambda a: handle_addi(a),
-    "daddu": lambda a: handle_add(a),
-    "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
-    "dnegu": lambda a: fold_mul_chains(
-        UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
-    ),
-    "dneg": lambda a: fold_mul_chains(
-        UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
-    ),
-    # Hi/lo register uses (used after division/multiplication)
-    "mfhi": lambda a: a.regs[Register("hi")],
-    "mflo": lambda a: a.regs[Register("lo")],
-    # Floating point arithmetic
-    "add.s": lambda a: handle_add_float(a),
-    "sub.s": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
-    "neg.s": lambda a: UnaryOp("-", as_f32(a.reg(1)), type=Type.f32()),
-    "abs.s": lambda a: fn_op("fabsf", [as_f32(a.reg(1))], Type.f32()),
-    "sqrt.s": lambda a: fn_op("sqrtf", [as_f32(a.reg(1))], Type.f32()),
-    "div.s": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
-    "mul.s": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
-    # Double-precision arithmetic
-    "add.d": lambda a: handle_add_double(a),
-    "sub.d": lambda a: BinaryOp.f64(a.dreg(1), "-", a.dreg(2)),
-    "neg.d": lambda a: UnaryOp("-", as_f64(a.dreg(1)), type=Type.f64()),
-    "abs.d": lambda a: fn_op("fabs", [as_f64(a.dreg(1))], Type.f64()),
-    "sqrt.d": lambda a: fn_op("sqrt", [as_f64(a.dreg(1))], Type.f64()),
-    "div.d": lambda a: BinaryOp.f64(a.dreg(1), "/", a.dreg(2)),
-    "mul.d": lambda a: BinaryOp.f64(a.dreg(1), "*", a.dreg(2)),
-    # Floating point conversions
-    "cvt.d.s": lambda a: handle_convert(a.reg(1), Type.f64(), Type.f32()),
-    "cvt.d.w": lambda a: handle_convert(a.reg(1), Type.f64(), Type.intish()),
-    "cvt.s.d": lambda a: handle_convert(a.dreg(1), Type.f32(), Type.f64()),
-    "cvt.s.w": lambda a: handle_convert(a.reg(1), Type.f32(), Type.intish()),
-    "cvt.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
-    "cvt.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
-    "cvt.s.u.fictive": lambda a: handle_convert(a.reg(1), Type.f32(), Type.u32()),
-    "cvt.u.d.fictive": lambda a: handle_convert(a.dreg(1), Type.u32(), Type.f64()),
-    "cvt.u.s.fictive": lambda a: handle_convert(a.reg(1), Type.u32(), Type.f32()),
-    "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
-    "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
-    # Bit arithmetic
-    "ori": lambda a: handle_or(a, a.reg(1), a.unsigned_imm(2)),
-    "oris": lambda a: handle_or(a, a.reg(1), a.shifted_imm(2)),
-    "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
-    "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
-    "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
-    "nor": lambda a: UnaryOp(
-        "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
-    ),
-    "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
-    "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
-    "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
-    "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
-    "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
-    # Shifts
-    "sll": lambda a: fold_mul_chains(
-        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
-    ),
-    "sllv": lambda a: fold_mul_chains(
-        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
-    ),
-    "srl": lambda a: fold_gcc_divmod(
-        BinaryOp(
-            left=as_u32(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u32()
-        )
-    ),
-    "srlv": lambda a: fold_gcc_divmod(
-        BinaryOp(
-            left=as_u32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u32()
-        )
-    ),
-    "sra": lambda a: handle_sra(a),
-    "srav": lambda a: fold_gcc_divmod(
-        BinaryOp(
-            left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
-        )
-    ),
-    # 64-bit shifts
-    "dsll": lambda a: fold_mul_chains(
-        BinaryOp.int64(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
-    ),
-    "dsll32": lambda a: fold_mul_chains(
-        BinaryOp.int64(left=a.reg(1), op="<<", right=imm_add_32(a.imm(2)))
-    ),
-    "dsllv": lambda a: BinaryOp.int64(
-        left=a.reg(1), op="<<", right=as_intish(a.reg(2))
-    ),
-    "dsrl": lambda a: BinaryOp(
-        left=as_u64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u64()
-    ),
-    "dsrl32": lambda a: BinaryOp(
-        left=as_u64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.u64()
-    ),
-    "dsrlv": lambda a: BinaryOp(
-        left=as_u64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u64()
-    ),
-    "dsra": lambda a: BinaryOp(
-        left=as_s64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s64()
-    ),
-    "dsra32": lambda a: BinaryOp(
-        left=as_s64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.s64()
-    ),
-    "dsrav": lambda a: BinaryOp(
-        left=as_s64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s64()
-    ),
-    # Move pseudoinstruction
-    "move": lambda a: a.reg(1),
-    # Floating point moving instructions
-    "mfc1": lambda a: a.reg(1),
-    "mov.s": lambda a: a.reg(1),
-    "mov.d": lambda a: as_f64(a.dreg(1)),
-    # Conditional moves
-    "movn": lambda a: handle_conditional_move(a, True),
-    "movz": lambda a: handle_conditional_move(a, False),
-    # FCSR get
-    "cfc1": lambda a: ErrorExpr("cfc1"),
-    # Immediates
-    "li": lambda a: a.full_imm(1),
-    "lui": lambda a: load_upper(a),
-    "la": lambda a: handle_la(a),
-    # Loading instructions
-    "lb": lambda a: handle_load(a, type=Type.s8()),
-    "lbu": lambda a: handle_load(a, type=Type.u8()),
-    "lh": lambda a: handle_load(a, type=Type.s16()),
-    "lhu": lambda a: handle_load(a, type=Type.u16()),
-    "lw": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-    "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
-    "lwu": lambda a: handle_load(a, type=Type.u32()),
-    "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
-    "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
-    # Unaligned loads
-    "lwl": lambda a: handle_lwl(a),
-    "lwr": lambda a: handle_lwr(a),
-    # PPC
-    "add": lambda a: handle_add(a),
-    "addis": lambda a: handle_addis(a),
-    "subf": lambda a: fold_gcc_divmod(
-        BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
-    ),
-    "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
-    "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
-    "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
-    "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
-    "mulhw": lambda a: fold_gcc_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
-    "mulhwu": lambda a: fold_gcc_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
-    "lba": lambda a: handle_load(a, type=Type.s8()),
-    "lbz": lambda a: handle_load(a, type=Type.u8()),
-    "lha": lambda a: handle_load(a, type=Type.s16()),
-    "lhz": lambda a: handle_load(a, type=Type.u16()),
-    "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-    "lbax": lambda a: handle_loadx(a, type=Type.s8()),
-    "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
-    "lhax": lambda a: handle_loadx(a, type=Type.s16()),
-    "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
-    "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
-    "lis": lambda a: load_upper(a),
-    "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
-    "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
-    "mflr": lambda a: a.regs[Register("lr")],
-    "mfctr": lambda a: a.regs[Register("ctr")],
-    "mr": lambda a: a.reg(1),
-    "rlwinm": lambda a: handle_rlwinm(
-        a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
-    ),
-    "extlwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(3), 0, a.imm_value(2) - 1),
-    "extrwi": lambda a: handle_rlwinm(
-        a.reg(1), a.imm_value(3) + a.imm_value(2), 32 - a.imm_value(2), 31
-    ),
-    "rotlwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(2), 0, 31),
-    "rotrwi": lambda a: handle_rlwinm(a.reg(1), 32 - a.imm_value(2), 0, 31),
-    "slwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(2), 0, 31 - a.imm_value(2)),
-    "srwi": lambda a: handle_rlwinm(a.reg(1), 32 - a.imm_value(2), a.imm_value(2), 31),
-    "clrlwi": lambda a: handle_rlwinm(a.reg(1), 0, a.imm_value(2), 31),
-    "clrrwi": lambda a: handle_rlwinm(a.reg(1), 0, 0, 31 - a.imm_value(2)),
-    "clrlslwi": lambda a: handle_rlwinm(
-        a.reg(1), a.imm_value(3), a.imm_value(2) - a.imm_value(3), 31 - a.imm_value(3)
-    ),
-    "slw": lambda a: fold_mul_chains(
-        BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
-    ),
-    "srw": lambda a: fold_gcc_divmod(
-        BinaryOp(
-            left=as_u32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u32()
-        )
-    ),
-    "sraw": lambda a: fold_gcc_divmod(
-        BinaryOp(
-            left=as_s32(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s32()
-        )
-    ),
-    "srawi": lambda a: handle_sra(a),
-    "notnot.fictive": lambda a: UnaryOp(op="!!", expr=a.reg(1), type=Type.intish()),
-    # TODO: Do we need to model the promotion from f32 to f64 here?
-    "lfs": lambda a: handle_load(a, type=Type.f32()),
-    "lfd": lambda a: handle_load(a, type=Type.f64()),
-    "lfsx": lambda a: handle_loadx(a, type=Type.f32()),
-    "lfdx": lambda a: handle_loadx(a, type=Type.f64()),
-    # PPC Floating Point
-    "fadd": lambda a: BinaryOp.f64(a.reg(1), "+", a.reg(2)),
-    "fadds": lambda a: BinaryOp.f32(a.reg(1), "+", a.reg(2)),
-    "fdiv": lambda a: BinaryOp.f64(a.reg(1), "/", a.reg(2)),
-    "fdivs": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
-    "fmul": lambda a: BinaryOp.f64(a.reg(1), "*", a.reg(2)),
-    "fmuls": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
-    "fsub": lambda a: BinaryOp.f64(a.reg(1), "-", a.reg(2)),
-    "fsubs": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
-    "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
-    "fmr": lambda a: a.reg(1),
-    "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
-    # TODO: This yields some awkward-looking C code, often in the form:
-    # `sp100 = (bitwise f64) (s32) x; y = sp104;` instead of `y = (s32) x;`.
-    # We should try to detect these idioms, along with int-to-float
-    "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
-    # PPC Floating Poing Fused Multiply-{Add,Sub}
-    "fmadd": lambda a: BinaryOp.f64(
-        BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
-    ),
-    "fmadds": lambda a: BinaryOp.f32(
-        BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
-    ),
-    "fnmadd": lambda a: UnaryOp(
-        op="-",
-        expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
-        type=Type.f64(),
-    ),
-    "fnmadds": lambda a: UnaryOp(
-        op="-",
-        expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
-        type=Type.f32(),
-    ),
-    "fmsub": lambda a: BinaryOp.f64(
-        BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)
-    ),
-    "fmsubs": lambda a: BinaryOp.f32(
-        BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)
-    ),
-    "fnmsub": lambda a: UnaryOp(
-        op="-",
-        expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
-        type=Type.f64(),
-    ),
-    "fnmsubs": lambda a: UnaryOp(
-        op="-",
-        expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
-        type=Type.f32(),
-    ),
-    # TODO: Detect if we should use fabs or fabsf
-    "fabs": lambda a: fn_op("fabs", [a.reg(1)], Type.floatish()),
-}
-CASES_LOAD_UPDATE: InstrMap = {
-    "lbau": lambda a: handle_load(a, type=Type.s8()),
-    "lbzu": lambda a: handle_load(a, type=Type.u8()),
-    "lhau": lambda a: handle_load(a, type=Type.s16()),
-    "lhzu": lambda a: handle_load(a, type=Type.u16()),
-    "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-    "lbaux": lambda a: handle_loadx(a, type=Type.s8()),
-    "lbzux": lambda a: handle_loadx(a, type=Type.u8()),
-    "lhaux": lambda a: handle_loadx(a, type=Type.s16()),
-    "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
-    "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
-    "lfsu": lambda a: handle_load(a, type=Type.f32()),
-    "lfdu": lambda a: handle_load(a, type=Type.f64()),
-    "lfsux": lambda a: handle_loadx(a, type=Type.f32()),
-    "lfdux": lambda a: handle_loadx(a, type=Type.f64()),
-}
-
-# TODO: Unclear if there will be many instructions like this, or if
-# there will just be separate dicts for each implicit dest register
-CASES_IMPLICIT_DESTINATION: ImplicitInstrMap = {
-    "mtlr": (Register("lr"), lambda a: a.reg(0)),
-    "mtctr": (Register("ctr"), lambda a: a.reg(0)),
-}
-
-CASES_PPC_COMPARE: PPCCmpInstrMap = {
-    "cmpw": lambda a, op: BinaryOp.spcmp(a.reg(0), op, a.reg(1)),
-    "cmpwi": lambda a, op: BinaryOp.spcmp(a.reg(0), op, a.imm(1)),
-    "cmplw": lambda a, op: BinaryOp.upcmp(a.reg(0), op, a.reg(1)),
-    "cmplwi": lambda a, op: BinaryOp.upcmp(a.reg(0), op, a.imm(1)),
-    # TODO: There is a difference in how these two instructions handle NaN
-    # TODO: Assert that the first arg is cr0
-    "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
-    "fcmpu": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
-    "fcmpo.lte": lambda a, op: BinaryOp.fcmp(
-        a.reg(1), op if op != "==" else "<=", a.reg(2)
-    ),
-    "fcmpo.gte": lambda a, op: BinaryOp.fcmp(
-        a.reg(1), op if op != "==" else ">=", a.reg(2)
-    ),
-}
+    possible_slots: List[AbiArgSlot]
 
 
 def output_regs_for_instr(
@@ -4102,14 +3447,15 @@ def output_regs_for_instr(
             return []
         return [reg]
 
+    arch = global_info.arch
     mnemonic = instr.mnemonic
     if (
-        mnemonic in CASES_JUMPS
-        or mnemonic in CASES_STORE
-        or mnemonic in CASES_BRANCHES
-        or mnemonic in CASES_FLOAT_BRANCHES
-        or mnemonic in CASES_IGNORE
-        or mnemonic in CASES_NO_DEST
+        mnemonic in arch.instrs_jumps
+        or mnemonic in arch.instrs_store
+        or mnemonic in arch.instrs_branches
+        or mnemonic in arch.instrs_float_branches
+        or mnemonic in arch.instrs_ignore
+        or mnemonic in arch.instrs_no_dest
     ):
         return []
     if mnemonic == "jal":
@@ -4117,14 +3463,11 @@ def output_regs_for_instr(
         if isinstance(fn_target, AsmGlobalSymbol):
             if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
-    if mnemonic in CASES_FN_CALL:
-        # return list(map(Register, ["f0", "f1", "v0", "v1"]))
-        return list(map(Register, ["f1", "f2", "r3", "r4"]))
-    if mnemonic in CASES_SOURCE_FIRST:
+    if mnemonic in arch.instrs_fn_call:
+        return arch.all_return_regs
+    if mnemonic in arch.instrs_source_first:
         return reg_at(1)
-    if mnemonic in CASES_STORE_UPDATE:
-        return reg_at(1)
-    if mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
+    if mnemonic.rstrip(".") in arch.instrs_destination_first:
         reg = reg_at(0)
         if mnemonic.endswith("."):
             return [
@@ -4134,17 +3477,15 @@ def output_regs_for_instr(
                 Register("cr0_so"),
             ] + reg
         return reg
-    if mnemonic in CASES_LOAD_UPDATE:
-        return reg_at(0) + reg_at(1)
-    if mnemonic in CASES_FLOAT_COMP:
+    if mnemonic in arch.instrs_float_comp:
         return [Register("condition_bit")]
-    if mnemonic in CASES_HI_LO:
+    if mnemonic in arch.instrs_hi_lo:
         return [Register("hi"), Register("lo")]
-    if mnemonic in CASES_IMPLICIT_DESTINATION:
-        return [CASES_IMPLICIT_DESTINATION[mnemonic][0]]
-    if mnemonic in CASES_DECCTR_BRANCHES:
+    if mnemonic in arch.instrs_implicit_destination:
+        return [arch.instrs_implicit_destination[mnemonic][0]]
+    if mnemonic in arch.instrs_decctr_branches:
         return [Register("ctr")]
-    if mnemonic in CASES_PPC_COMPARE:
+    if mnemonic in arch.instrs_ppc_compare:
         return [
             Register("cr0_lt"),
             Register("cr0_gt"),
@@ -4172,8 +3513,8 @@ def regs_clobbered_until_dominator(
         for instr in n.block.instructions:
             with current_instr(instr):
                 clobbered.update(output_regs_for_instr(instr, global_info))
-                if instr.mnemonic in CASES_FN_CALL:
-                    clobbered.update(TEMP_REGS)
+                if instr.mnemonic in global_info.arch.instrs_fn_call:
+                    clobbered.update(global_info.arch.temp_regs)
         stack.extend(n.parents)
     return clobbered
 
@@ -4195,7 +3536,10 @@ def reg_always_set(
         clobbered: Optional[bool] = None
         for instr in n.block.instructions:
             with current_instr(instr):
-                if instr.mnemonic in CASES_FN_CALL and reg in TEMP_REGS:
+                if (
+                    instr.mnemonic in global_info.arch.instrs_fn_call
+                    and reg in global_info.arch.temp_regs
+                ):
                     clobbered = True
                 if reg in output_regs_for_instr(instr, global_info):
                     clobbered = False
@@ -4354,7 +3698,7 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
 
 
 def determine_return_register(
-    return_blocks: List[BlockInfo], fn_decl_provided: bool
+    return_blocks: List[BlockInfo], fn_decl_provided: bool, arch: Arch
 ) -> Optional[Register]:
     """Determine which of v0 and f0 is the most likely to contain the return
     value, or if the function is likely void."""
@@ -4374,8 +3718,7 @@ def determine_return_register(
 
     best_reg: Optional[Register] = None
     best_prio = -1
-    # for reg in [Register("v0"), Register("f0")]:
-    for reg in [Register("r3"), Register("f1")]:
+    for reg in arch.base_return_regs:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
         if max_prio == 3:
@@ -4400,11 +3743,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     to_write: List[Union[Statement]] = []
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = {}
-    subroutine_args: List[Tuple[Expression, SubroutineArg]] = []
+    subroutine_args: Dict[int, Expression] = {}
     branch_condition: Optional[Condition] = None
     switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
     has_function_call: bool = False
+    arch = stack_info.global_info.arch
 
     def eval_once(
         expr: Expression,
@@ -4526,43 +3870,22 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg_maybe_return(reg, expr)
 
     def clear_caller_save_regs() -> None:
-        for reg in TEMP_REGS:
+        for reg in arch.temp_regs:
             if reg in regs:
                 del regs[reg]
 
-    def overwrite_reg(reg: Register, expr: Expression) -> None:
-        prev = regs.get_raw(reg)
-        at = regs.get_raw(Register("at"))
-        if (
-            not isinstance(prev, EvalOnceExpr)
-            or isinstance(expr, Literal)
-            or reg == Register.sp()
-            or reg == Register("at")
-            or not prev.type.unify(expr.type)
-            or (at is not None and uses_expr(at, lambda e2: e2 == prev))
-        ):
-            set_reg(reg, expr)
-        else:
-            # TODO: This is a bit heavy-handed: we're preventing later uses
-            # even though we are not sure whether we will actually emit the
-            # overwrite. Doing this properly is hard, however -- it would
-            # involve tracking "time" for uses, and sometimes moving timestamps
-            # backwards when EvalOnceExpr's get emitted as vars.
-            if reg in regs:
-                # For ease of debugging, don't let prevent_later_value_uses see
-                # the register we're writing to.
-                del regs[reg]
-
-            prevent_later_value_uses(prev)
-            set_reg_maybe_return(
-                reg,
-                eval_once(
-                    expr,
-                    emit_exactly_once=False,
-                    trivial=is_trivial_expression(expr),
-                    reuse_var=prev.var,
-                ),
-            )
+    def maybe_clear_local_var_writes(func_args: List[Expression]) -> None:
+        # Clear the `local_var_writes` dict if any of the `func_args` contain
+        # a reference to a stack var. (The called function may modify the stack,
+        # replacing the value we have in `local_var_writes`.)
+        for arg in func_args:
+            if uses_expr(
+                arg,
+                lambda expr: isinstance(expr, AddressOf)
+                and isinstance(expr.expr, LocalVar),
+            ):
+                local_var_writes.clear()
+                return
 
     def process_instr(instr: Instruction) -> None:
         nonlocal branch_condition, switch_expr, has_function_call
@@ -4572,17 +3895,17 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         expr: Expression
 
         # Figure out what code to generate!
-        if mnemonic in CASES_IGNORE:
+        if mnemonic in arch.instrs_ignore:
             pass
 
-        elif mnemonic in CASES_STORE or mnemonic in CASES_STORE_UPDATE:
+        elif mnemonic in arch.instrs_store or mnemonic in arch.instrs_store_update:
             # Store a value in a permanent place.
-            if mnemonic in CASES_STORE:
-                to_store = CASES_STORE[mnemonic](args)
+            if mnemonic in arch.instrs_store:
+                to_store = arch.instrs_store[mnemonic](args)
             else:
                 # PPC specific store-and-update instructions
                 # `stwu r3, 8(r4)` is equivalent to `$r3 = *($r4 + 8); $r4 += 8;`
-                to_store = CASES_STORE_UPDATE[mnemonic](args)
+                to_store = arch.instrs_store_update[mnemonic](args)
 
                 # Update the register in the second argument
                 # TODO: is it OK to do this here, or does it need to happen at the end of the fn?
@@ -4603,7 +3926,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # About to call a subroutine with this argument. Skip arguments for the
                 # first four stack slots; they are also passed in registers.
                 if to_store.dest.value >= 0x10:
-                    subroutine_args.append((to_store.source, to_store.dest))
+                    subroutine_args[to_store.dest.value] = to_store.source
             else:
                 if isinstance(to_store.dest, LocalVar):
                     stack_info.add_local_var(to_store.dest)
@@ -4635,22 +3958,22 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 prevent_later_function_calls()
                 to_write.append(to_store)
 
-        elif mnemonic in CASES_SOURCE_FIRST:
+        elif mnemonic in arch.instrs_source_first:
             # Just 'mtc1'. It's reversed, so we have to specially handle it.
-            set_reg(args.reg_ref(1), CASES_SOURCE_FIRST[mnemonic](args))
+            set_reg(args.reg_ref(1), arch.instrs_source_first[mnemonic](args))
 
-        elif mnemonic in CASES_BRANCHES:
+        elif mnemonic in arch.instrs_branches:
             assert branch_condition is None
-            branch_condition = CASES_BRANCHES[mnemonic](args)
+            branch_condition = arch.instrs_branches[mnemonic](args)
 
-        elif mnemonic in CASES_DECCTR_BRANCHES:
+        elif mnemonic in arch.instrs_decctr_branches:
             assert branch_condition is None
-            branch_condition = CASES_DECCTR_BRANCHES[mnemonic](args)
+            branch_condition = arch.instrs_decctr_branches[mnemonic](args)
 
             ctr = Register("ctr")
             set_reg(ctr, BinaryOp.int(args.regs[ctr], "-", Literal(1)))
 
-        elif mnemonic in CASES_FLOAT_BRANCHES:
+        elif mnemonic in arch.instrs_float_branches:
             assert branch_condition is None
             cond_bit = regs[Register("condition_bit")]
             if not isinstance(cond_bit, BinaryOp):
@@ -4660,7 +3983,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             elif mnemonic == "bc1f":
                 branch_condition = cond_bit.negated()
 
-        elif mnemonic in CASES_JUMPS:
+        elif mnemonic in arch.instrs_jumps:
             if mnemonic == "b":
                 if isinstance(args.raw_arg(0), AsmGlobalSymbol):
                     # Unconditional jump
@@ -4671,7 +3994,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 switch_expr = args.regs[Register("ctr")]
             elif mnemonic == "jr":
                 # MIPS:
-                if args.reg_ref(0) == Register.ra():
+                if args.reg_ref(0) == arch.return_address_reg:
                     # Return from the function.
                     assert isinstance(node, ReturnNode)
                 else:
@@ -4683,7 +4006,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             else:
                 raise DecompFailure(f"Unhandled jump mnemonic {mnemonic}")
 
-        elif mnemonic in CASES_FN_CALL or mnemonic in CASES_FN_CALL_PPC:
+        elif mnemonic in arch.instrs_fn_call:
             is_known_void = False
             if mnemonic in ["jal", "bl"]:
                 fn_target = args.imm(0)
@@ -4706,7 +4029,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if args.count() == 1:
                     fn_target = args.reg(0)
                 elif args.count() == 2:
-                    if args.reg_ref(0) != Register.ra():
+                    if args.reg_ref(0) != arch.return_address_reg:
                         raise DecompFailure(
                             "Two-argument form of jalr is not supported."
                         )
@@ -4717,90 +4040,60 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
             assert fn_sig is not None, "known function pointers must have a signature"
-            # abi = function_abi(fn_sig, for_call=True)
-            abi = ppc_function_abi(fn_sig, for_call=True)
 
-            func_args: List[Expression] = []
-            for slot in abi.arg_slots:
-                if slot.reg:
-                    func_args.append(as_type(regs[slot.reg], slot.type, True))
-
-            valid_extra_regs: Set[str] = set()
-            for register in abi.possible_regs:
-                raw_expr = regs.get_raw(register)
-                meta = regs.get_meta(register)
-                if raw_expr is None or meta is None:
-                    continue
-
+            likely_regs: Dict[Register, bool] = {}
+            for reg, data in regs.contents.items():
                 # PPC TODO: This is a much stricter filter than we use for MIPS,
                 # but it seems more accurate because the same registers are used
                 # for arguments & return values. The ABI can also mix & match the
                 # rN & fN registers, which makes the "require" heuristic less powerful.
-                if meta.function_return or meta.inherited:
+                if data.meta.function_return or data.meta.inherited:
                     continue
 
-                # Don't pass this register if lower numbered ones are undefined.
-                # Following the o32 ABI, register order can be a prefix of either:
-                # a0, a1, a2, a3
-                # f12, a1, a2, a3
-                # f12, f14, a2, a3
-                # f12, f13, a2, a3
-                # f12, f13, f14, f15
-                require: Optional[List[str]] = None
-                if register == abi.possible_regs[0]:
-                    # For varargs, a subset of a0 .. a3 may be used. Don't check
-                    # earlier registers for the first member of that subset.
-                    pass
-                # elif register == Register("f13") or register == Register("f14"):
-                #    require = ["f12"]
-                # elif register == Register("a1"):
-                #    require = ["a0", "f12"]
-                # elif register == Register("a2"):
-                #    require = ["a1", "f13", "f14"]
-                # elif register == Register("a3"):
-                #    require = ["a2"]
+                likely_regs[reg] = (
+                    not isinstance(data.value, PassedInArg) or data.value.copied
+                )
+
+            abi = arch.function_abi(fn_sig, likely_regs, for_call=True)
+
+            func_args: List[Expression] = []
+            for slot in abi.arg_slots:
+                if slot.reg:
+                    expr = regs[slot.reg]
+                elif slot.offset in subroutine_args:
+                    expr = subroutine_args.pop(slot.offset)
                 else:
-                    # PPC is simple; only r3-r10 can be used for arguments
-                    regname = register.register_name
-                    prev_reg = f"{regname[0]}{int(regname[1:])-1}"
-                    if Register(prev_reg) in ARGUMENT_REGS:
-                        require = [prev_reg]
-                if require and not any(r in valid_extra_regs for r in require):
-                    continue
+                    expr = ErrorExpr(
+                        f"Unable to find stack arg {slot.offset:#x} in block"
+                    )
+                func_args.append(
+                    CommentExpr.wrap(
+                        as_type(expr, slot.type, True), prefix=slot.comment
+                    )
+                )
 
-                valid_extra_regs.add(register.register_name)
-
-                # if register == Register("f13"):
-                #    # We don't pass in f13 or f15 because they will often only
-                #    # contain SecondF64Half(), and otherwise would need to be
-                #    # merged with f12/f14 which we don't have logic for right
-                #    # now. However, f13 can still matter for whether a2 should
-                #    # be passed, and so is kept in possible_regs.
-                #    continue
-
-                # Skip registers that are untouched from our initial parameter
-                # list. This is sometimes wrong (can give both false positives
-                # and negatives), but having a heuristic here is unavoidable
-                # without access to function signatures, or when dealing with
-                # varargs functions. Decompiling multiple functions at once
-                # would help. TODO: don't do this in the middle of the argument
-                # list, except for f12 if a0 is passed and such.
-                if isinstance(raw_expr, PassedInArg) and not raw_expr.copied:
-                    continue
-
-                func_args.append(regs[register])
+            for slot in abi.possible_slots:
+                assert slot.reg is not None
+                func_args.append(regs[slot.reg])
 
             # Add the arguments after a3.
-            # TODO: limit this and unify types based on abi.arg_slots
-            subroutine_args.sort(key=lambda a: a[1].value)
-            for arg in subroutine_args:
-                func_args.append(arg[0])
+            # TODO: limit this based on abi.arg_slots. If the function type is known
+            # and not variadic, this list should be empty.
+            for _, arg in sorted(subroutine_args.items()):
+                if fn_sig.params_known and not fn_sig.is_variadic:
+                    func_args.append(CommentExpr.wrap(arg, prefix="extra?"))
+                else:
+                    func_args.append(arg)
 
             if not fn_sig.params_known:
                 while len(func_args) > len(fn_sig.params):
                     fn_sig.params.append(FunctionParam())
-            for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
-                func_args[i] = as_type(arg_expr, param.type, True)
+                # When the function signature isn't provided, the we only assume that each
+                # parameter is "simple" (<=4 bytes, no return struct, etc.). This may not
+                # match the actual function signature, but it's the best we can do.
+                # Without that assumption, the logic from `function_abi` would be needed here.
+                for i, (arg_expr, param) in enumerate(zip(func_args, fn_sig.params)):
+                    func_args[i] = as_type(arg_expr, param.type.decay(), True)
 
             # Reset subroutine_args, for the next potential function call.
             subroutine_args.clear()
@@ -4814,6 +4107,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # argument regs don't get passed into the next function.
             clear_caller_save_regs()
 
+            # Clear out local var write tracking if any argument contains a stack
+            # reference. That dict is used to track register saves/restores, which
+            # are unreliable if we call a function with a stack reference.
+            maybe_clear_local_var_writes(func_args)
+
             # Prevent reads and function calls from moving across this call.
             # This isn't really right, because this call might be moved later,
             # and then this prevention should also be... but it's the best we
@@ -4821,93 +4119,53 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             prevent_later_function_calls()
             prevent_later_reads()
 
-            # We may not know what this function's return registers are --
-            # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
-            # it's fine to be liberal here and put the return value in all
-            # of them. (It's not perfect for u64's, but that's rare anyway.)
-            # However, if we have type information that says the function is
+            # If we have type information that says the function is
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
-            # Note that this logic is duplicated in output_regs_for_instr and
-            # needs to match exactly, which is why we can't look at
-            # fn_sig.return_type even though it may be more accurate.
             if not is_known_void:
-
-                def set_return_reg(reg: Register, val: Expression) -> None:
-                    val = eval_once(
-                        val,
-                        emit_exactly_once=False,
-                        trivial=False,
-                        prefix=reg.register_name,
-                    )
-                    regs.set_with_meta(reg, val, RegMeta(function_return=True))
-
-                set_return_reg(
-                    # Register("f0"),
-                    Register("f1"),
-                    Cast(
-                        expr=call, reinterpret=True, silent=True, type=Type.floatish()
-                    ),
-                )
-                set_return_reg(
-                    # Register("v0"),
-                    Register("r3"),
-                    Cast(expr=call, reinterpret=True, silent=True, type=Type.any_reg()),
-                )
-                set_return_reg(
-                    # Register("v1"),
-                    Register("r4"),
-                    as_u32(
-                        Cast(
-                            expr=call,
-                            reinterpret=True,
-                            silent=False,
-                            type=Type.reg64(likely_float=False),
+                for reg, val in arch.function_return(call):
+                    assert reg in arch.all_return_regs
+                    if not isinstance(val, SecondF64Half):
+                        val = eval_once(
+                            val,
+                            emit_exactly_once=False,
+                            trivial=False,
+                            prefix=reg.register_name,
                         )
-                    ),
-                )
-                # regs[Register("f1")] = SecondF64Half()
+                    regs.set_with_meta(reg, val, RegMeta(function_return=True))
 
             has_function_call = True
 
-        elif mnemonic in CASES_FLOAT_COMP:
-            expr = CASES_FLOAT_COMP[mnemonic](args)
+        elif mnemonic in arch.instrs_float_comp:
+            expr = arch.instrs_float_comp[mnemonic](args)
             regs[Register("condition_bit")] = expr
 
-        elif mnemonic in CASES_HI_LO:
-            hi, lo = CASES_HI_LO[mnemonic](args)
+        elif mnemonic in arch.instrs_hi_lo:
+            hi, lo = arch.instrs_hi_lo[mnemonic](args)
             set_reg(Register("hi"), hi)
             set_reg(Register("lo"), lo)
 
-        elif mnemonic in CASES_IMPLICIT_DESTINATION:
-            reg, expr_fn = CASES_IMPLICIT_DESTINATION[mnemonic]
+        elif mnemonic in arch.instrs_implicit_destination:
+            reg, expr_fn = arch.instrs_implicit_destination[mnemonic]
             set_reg(reg, expr_fn(args))
 
-        elif mnemonic in CASES_PPC_COMPARE:
-            set_reg(Register("cr0_eq"), CASES_PPC_COMPARE[mnemonic](args, "=="))
-            set_reg(Register("cr0_gt"), CASES_PPC_COMPARE[mnemonic](args, ">"))
-            set_reg(Register("cr0_lt"), CASES_PPC_COMPARE[mnemonic](args, "<"))
+        elif mnemonic in arch.instrs_ppc_compare:
+            set_reg(Register("cr0_eq"), arch.instrs_ppc_compare[mnemonic](args, "=="))
+            set_reg(Register("cr0_gt"), arch.instrs_ppc_compare[mnemonic](args, ">"))
+            set_reg(Register("cr0_lt"), arch.instrs_ppc_compare[mnemonic](args, "<"))
             set_reg(Register("cr0_so"), Literal(0))
 
-        elif mnemonic in CASES_NO_DEST:
-            stmt = CASES_NO_DEST[mnemonic](args)
+        elif mnemonic in arch.instrs_no_dest:
+            stmt = arch.instrs_no_dest[mnemonic](args)
             to_write.append(stmt)
 
-        elif mnemonic.rstrip(".") in CASES_DESTINATION_FIRST:
+        elif mnemonic.rstrip(".") in arch.instrs_destination_first:
             target = args.reg_ref(0)
-
-            val = CASES_DESTINATION_FIRST[mnemonic.rstrip(".")](args)
-            if False and target in args.raw_args[1:]:
-                # IDO tends to keep variables within single registers. Thus,
-                # if source = target, overwrite that variable instead of
-                # creating a new one.
-                # XXX This code path is disabled due to known bugs, and kept
-                # only to make it easy to experiment with. It should be removed
-                # entirely at some point, hopefully to be replaced by some more
-                # stable alternative.
-                overwrite_reg(target, val)
-            else:
-                set_reg(target, val)
+            val = arch.instrs_destination_first[mnemonic.rstrip(".")](args)
+            # TODO: IDO tends to keep variables within single registers. Thus,
+            # if source = target, maybe we could overwrite that variable instead
+            # of creating a new one?
+            set_reg(target, val)
             mn_parts = mnemonic.split(".")
             if mnemonic.endswith("."):
                 # PPC: Instructions suffixed with . set condition bits (CR0) based on the result value
@@ -4952,9 +4210,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             elif (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
 
-        elif mnemonic in CASES_LOAD_UPDATE:
+        elif mnemonic in arch.instrs_load_update:
             target = args.reg_ref(0)
-            val = CASES_LOAD_UPDATE[mnemonic](args)
+            val = arch.instrs_load_update[mnemonic](args)
             set_reg(target, val)
 
             if mnemonic in ["lwzux", "lhzux", "lbzux"]:
@@ -5133,6 +4391,7 @@ class FunctionInfo:
 @dataclass
 class GlobalInfo:
     asm_data: AsmData
+    arch: Arch
     local_functions: Set[str]
     typemap: TypeMap
     typepool: TypePool
@@ -5459,13 +4718,10 @@ def translate_to_ast(
     stack_info = get_stack_info(function, global_info, flow_graph)
     start_regs: RegInfo = RegInfo(stack_info=stack_info)
 
-    start_regs[Register.sp()] = GlobalSymbol("sp", type=Type.ptr())
-    for reg in SAVED_REGS:
+    arch = global_info.arch
+    start_regs[arch.stack_pointer_reg] = GlobalSymbol("sp", type=Type.ptr())
+    for reg in arch.saved_regs:
         start_regs[reg] = stack_info.saved_reg_symbol(reg.register_name)
-
-    def make_arg(offset: int, type: Type) -> PassedInArg:
-        assert offset % 4 == 0
-        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
 
     fn_sym = global_info.address_of_gsym(function.name).expr
     assert isinstance(fn_sym, GlobalSymbol)
@@ -5477,35 +4733,29 @@ def translate_to_ast(
     return_type = fn_sig.return_type
     stack_info.is_variadic = fn_sig.is_variadic
 
-    if fn_sig.params_known:
-        # abi = function_abi(fn_sig, for_call=False)
-        abi = ppc_function_abi(fn_sig, for_call=False)
-        for slot in abi.arg_slots:
-            stack_info.add_known_param(slot.offset, slot.name, slot.type)
-            if slot.reg is not None:
-                start_regs[slot.reg] = make_arg(slot.offset, slot.type)
-        for reg in abi.possible_regs:
-            offset = 4 * int(reg.register_name[1])
-            start_regs[reg] = make_arg(offset, Type.any_reg())
-    else:
-        # start_regs[Register("a0")] = make_arg(0, Type.intptr())
-        # start_regs[Register("a1")] = make_arg(4, Type.any_reg())
-        # start_regs[Register("a2")] = make_arg(8, Type.any_reg())
-        # start_regs[Register("a3")] = make_arg(12, Type.any_reg())
-        # start_regs[Register("f12")] = make_arg(0, Type.floatish())
-        # start_regs[Register("f14")] = make_arg(4, Type.floatish())
-        for i, reg in enumerate(ARGUMENT_REGS):
-            if reg.register_name[0] == "f":
-                start_regs[reg] = make_arg(i * 4, Type.floatish())
-            else:
-                start_regs[reg] = make_arg(i * 4, Type.intptr())
+    def make_arg(offset: int, type: Type) -> PassedInArg:
+        assert offset % 4 == 0
+        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
+
+    abi = arch.function_abi(
+        fn_sig,
+        likely_regs={reg: True for reg in arch.argument_regs},
+        for_call=False,
+    )
+    for slot in abi.arg_slots:
+        stack_info.add_known_param(slot.offset, slot.name, slot.type)
+        if slot.reg is not None:
+            start_regs[slot.reg] = make_arg(slot.offset, slot.type)
+    for slot in abi.possible_slots:
+        if slot.reg is not None:
+            start_regs[slot.reg] = make_arg(slot.offset, slot.type)
 
     if options.reg_vars == ["saved"]:
-        reg_vars = SAVED_REGS
+        reg_vars = arch.saved_regs
     elif options.reg_vars == ["most"]:
-        reg_vars = SAVED_REGS + SIMPLE_TEMP_REGS
+        reg_vars = arch.saved_regs + arch.simple_temp_regs
     elif options.reg_vars == ["all"]:
-        reg_vars = SAVED_REGS + SIMPLE_TEMP_REGS + ARGUMENT_REGS
+        reg_vars = arch.saved_regs + arch.simple_temp_regs + arch.argument_regs
     else:
         reg_vars = list(map(Register, options.reg_vars))
     for reg in reg_vars:
@@ -5526,14 +4776,15 @@ def translate_to_ast(
         options,
     )
 
-    # for reg in [Register("v0"), Register("f0")]:
-    for reg in [Register("r3"), Register("f1")]:
+    for reg in arch.base_return_regs:
         propagate_register_meta(flow_graph.nodes, reg)
 
     return_reg: Optional[Register] = None
 
     if not options.void and not return_type.is_void():
-        return_reg = determine_return_register(return_blocks, fn_sym.type_provided)
+        return_reg = determine_return_register(
+            return_blocks, fn_sym.type_provided, arch
+        )
 
     if return_reg is not None:
         for b in return_blocks:

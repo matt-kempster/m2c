@@ -1412,6 +1412,9 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     any_decl = False
 
     with fmt.indented():
+        # Format the body first, because this can result in additional type inferencce
+        formatted_body = body.format(fmt)
+
         local_vars = function_info.stack_info.local_vars
         # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
         # IDO's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
@@ -1465,7 +1468,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         if any_decl:
             function_lines.append("")
 
-        function_lines.append(body.format(fmt))
+        function_lines.append(formatted_body)
         function_lines.append("}")
     full_function_text: str = "\n".join(function_lines)
     return full_function_text

@@ -14,22 +14,22 @@ s32 test(s32 arg0) {
     if (arg0 == 5) {
         do {
             D_410120 = phi_a0;
-            temp_a0 = phi_a0 + 1;
-            D_410120 = temp_a0;
-            temp_a0_2 = temp_a0 + 1;
+            temp_a0_2 = phi_a0 + 1;
             D_410120 = temp_a0_2;
             temp_a0_3 = temp_a0_2 + 1;
             D_410120 = temp_a0_3;
             temp_a0_4 = temp_a0_3 + 1;
             D_410120 = temp_a0_4;
-            D_410120 = temp_a0_4;
             temp_a0_5 = temp_a0_4 + 1;
             D_410120 = temp_a0_5;
+            D_410120 = temp_a0_5;
             temp_a0_6 = temp_a0_5 + 1;
-            D_410120 = temp_a0_3;
-            phi_a0 = temp_a0_6;
-        } while (temp_a0_6 == 5);
-        sp4 = temp_a0_3;
+            D_410120 = temp_a0_6;
+            temp_a0 = temp_a0_6 + 1;
+            D_410120 = temp_a0_4;
+            phi_a0 = temp_a0;
+        } while (temp_a0 == 5);
+        sp4 = temp_a0_4;
     }
     return sp4;
 }

@@ -18,6 +18,8 @@ from .translate import (
     translate_to_ast,
 )
 from .types import TypePool
+from .arch_mips import MipsArch
+from .arch_ppc import PpcArch
 
 
 def print_current_exception(sanitize: bool) -> None:
@@ -59,6 +61,7 @@ def print_exception_as_comment(
 
 
 def run(options: Options) -> int:
+    arch = PpcArch()
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
     try:
@@ -108,7 +111,7 @@ def run(options: Options) -> int:
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
     )
-    global_info = GlobalInfo(asm_data, function_names, typemap, typepool)
+    global_info = GlobalInfo(asm_data, arch, function_names, typemap, typepool)
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
@@ -396,6 +399,12 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
         help="Don't emit any type casts",
     )
+    group.add_argument(
+        "--zfill-constants",
+        dest="zfill_constants",
+        action="store_true",
+        help="Pad hex constants with 0's to fill their type's width.",
+    )
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
@@ -544,6 +553,7 @@ def parse_flags(flags: List[str]) -> Options:
         switch_detection=args.switch_detection,
         andor_detection=args.andor_detection,
         skip_casts=args.skip_casts,
+        zfill_constants=args.zfill_constants,
         reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
         stop_on_error=args.stop_on_error,

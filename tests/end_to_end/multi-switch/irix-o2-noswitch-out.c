@@ -11,8 +11,8 @@ s32 test(s32 arg0) {
     phi_a0_3 = arg0;
     phi_a0_4 = arg0;
     phi_a0_5 = arg0;
-    if (arg0 >= 0x33) {
-        if (arg0 >= 0x6C) {
+    if (arg0 >= 0x00000033) {
+        if (arg0 >= 0x0000006C) {
             if (arg0 != 0xC8) {
                 goto block_23;
             }
@@ -36,7 +36,7 @@ s32 test(s32 arg0) {
             D_410210 = phi_a0;
             return 2;
         }
-        if (arg0 >= -0x31) {
+        if (arg0 >= -0x00000031) {
             switch (arg0) { // switch 2
             case 1: // switch 2
                 return arg0 * arg0;

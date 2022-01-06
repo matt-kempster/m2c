@@ -89,16 +89,6 @@ class Register:
         num = int(self.register_name[1:])
         return Register(f"f{num ^ 1}")
 
-    @staticmethod
-    def sp() -> "Register":
-        # return Register("sp")
-        return Register("r1")
-
-    @staticmethod
-    def ra() -> "Register":
-        # return Register("ra")
-        return Register("lr")
-
     def __str__(self) -> str:
         return f"${self.register_name}"
 
