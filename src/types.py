@@ -19,7 +19,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
-from .demangle_codewarrior import CxxName, CxxSymbol, CxxTerm, CxxType
+from .demangle_codewarrior import CxxSymbol, CxxTerm, CxxType
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
@@ -998,6 +998,7 @@ class Type:
                     sym_name is not None
                     and sym_name.qualified_name is not None
                     and len(sym_name.qualified_name) > 1
+                    and final_name not in CxxSymbol.STATIC_FUNCTIONS
                 ):
                     # NB: This assumes `this` is passed as the first arg,
                     # which may be different on other ABIs

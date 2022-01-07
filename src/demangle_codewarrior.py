@@ -350,6 +350,8 @@ class CxxType:
 
 @dataclass
 class CxxSymbol:
+    STATIC_FUNCTIONS = {"__sinit", "__sterm"}
+
     name: CxxTerm
     type: CxxType
 
@@ -358,7 +360,7 @@ class CxxSymbol:
         with peeking(src):
             base_name = src.read()
 
-        strip_underscores = False
+        strip_underscores = 0
         template_depth = 0
         with peeking(src):
             chars = ""
@@ -375,19 +377,34 @@ class CxxSymbol:
                     template_depth -= 1
 
                 chars += c
-                if not (c == "_" and peek(src) == "_"):
+                if chars in CxxSymbol.STATIC_FUNCTIONS:
+                    base_name = chars
+                    strip_underscores = 1
+                    break
+                elif not (c == "_" and peek(src) == "_"):
                     continue
-                strip_underscores = True
+                strip_underscores = 2
                 lookahead = peek(src, 2)
                 if len(lookahead) == 2:
                     if lookahead[1] not in "QFC0123456789":
                         continue
                 base_name = chars[:-1]
 
-        if strip_underscores:
-            src.read(len(base_name) + 2)
-        else:
-            src.read(len(base_name))
+        src.read(len(base_name) + strip_underscores)
+
+        if base_name in CxxSymbol.STATIC_FUNCTIONS:
+            # This is a special case. A function like `__sinit_AnimalBase_cpp` is the static
+            # constructor (ctor) for "AnimalBase.cpp".
+            # "Demangle" this into `void AnimalBase_cpp::__sinit(void)`
+            with as_stringio("Fv_v") as buf:
+                type = CxxType.parse(buf)
+            return CxxSymbol(
+                name=CxxTerm(
+                    CxxTerm.Kind.QUALIFIED,
+                    qualified_name=[CxxName(src.read()), CxxName(base_name)],
+                ),
+                type=type,
+            )
 
         class_name: Optional[CxxType] = CxxType.parse(src)
         if peek(src) not in ("", ",", ">"):
