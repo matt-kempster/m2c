@@ -2680,14 +2680,10 @@ def handle_sra(args: InstrArgs) -> Expression:
             if expr.op == "<<" and rhs == shift.value:
                 return as_type(expr.left, tp, silent=False)
             elif expr.op == "<<" and rhs > shift.value:
-                return fold_mul_chains(
-                    BinaryOp(
-                        as_type(expr.left, tp, silent=False),
-                        "<<",
-                        Literal(rhs - shift.value),
-                        type=tp,
-                    )
+                new_shift = fold_mul_chains(
+                    BinaryOp.int(expr.left, "<<", Literal(rhs - shift.value))
                 )
+                return as_type(new_shift, tp, silent=False)
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
