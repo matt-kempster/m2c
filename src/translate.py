@@ -84,9 +84,9 @@ class Arch(ArchAsm, abc.ABC):
     instrs_store: StoreInstrMap = {}
     instrs_store_update: StoreInstrMap = {}
 
-    @staticmethod
     @abc.abstractmethod
     def function_abi(
+        self,
         fn_sig: FunctionSignature,
         likely_regs: Dict[Register, bool],
         *,
@@ -99,9 +99,10 @@ class Arch(ArchAsm, abc.ABC):
         """
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def function_return(expr: "Expression") -> List[Tuple[Register, "Expression"]]:
+    def function_return(
+        self, expr: "Expression"
+    ) -> List[Tuple[Register, "Expression"]]:
         """
         Compute register location(s) & values that will hold the return value
         of the function call `expr`.

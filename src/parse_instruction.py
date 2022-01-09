@@ -355,49 +355,40 @@ class ArchAsm(abc.ABC):
     saved_regs: List[Register]
     all_regs: List[Register]
 
-    @staticmethod
     @abc.abstractmethod
-    def is_branch_instruction(instr: Instruction) -> bool:
+    def is_branch_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def is_branch_likely_instruction(instr: Instruction) -> bool:
+    def is_branch_likely_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def get_branch_target(instr: Instruction) -> JumpTarget:
+    def get_branch_target(self, instr: Instruction) -> JumpTarget:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def is_jump_instruction(instr: Instruction) -> bool:
+    def is_jump_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def is_delay_slot_instruction(instr: Instruction) -> bool:
+    def is_delay_slot_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def is_return_instruction(instr: Instruction) -> bool:
+    def is_return_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def is_conditional_return_instruction(instr: Instruction) -> bool:
+    def is_conditional_return_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def is_jumptable_instruction(instr: Instruction) -> bool:
+    def is_jumptable_instruction(self, instr: Instruction) -> bool:
         ...
 
-    @staticmethod
     @abc.abstractmethod
-    def normalize_instruction(instr: Instruction) -> Instruction:
+    def normalize_instruction(self, instr: Instruction) -> Instruction:
         ...
 
 
