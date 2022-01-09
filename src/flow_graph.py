@@ -19,6 +19,7 @@ from .error import DecompFailure
 from .options import Formatter
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
+    ArchAsm,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
@@ -107,12 +108,12 @@ class BlockBuilder:
         return self.blocks
 
 
-def verify_no_trailing_delay_slot(function: Function) -> None:
+def verify_no_trailing_delay_slot(function: Function, arch: ArchAsm) -> None:
     last_ins: Optional[Instruction] = None
     for item in function.body:
         if isinstance(item, Instruction):
             last_ins = item
-    if last_ins and last_ins.is_delay_slot_instruction():
+    if last_ins and arch.is_delay_slot_instruction(last_ins):
         raise DecompFailure(f"Last instruction is missing a delay slot:\n{last_ins}")
 
 
@@ -132,7 +133,7 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-def normalize_likely_branches(function: Function) -> Function:
+def normalize_likely_branches(function: Function, arch: ArchAsm) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
     taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
@@ -185,9 +186,9 @@ def normalize_likely_branches(function: Function) -> Function:
     for item in body_iter:
         orig_item = item
         if isinstance(item, Instruction) and (
-            item.is_branch_likely_instruction() or item.mnemonic == "b"
+            arch.is_branch_likely_instruction(item) or item.mnemonic == "b"
         ):
-            old_label = item.get_branch_target().target
+            old_label = arch.get_branch_target(item).target
             if old_label not in label_prev_instr:
                 raise DecompFailure(
                     f"Unable to parse branch: label {old_label} does not exist in function {function.name}"
@@ -203,7 +204,7 @@ def normalize_likely_branches(function: Function) -> Function:
             if (
                 item.mnemonic == "b"
                 and before_before_target is not None
-                and before_before_target.is_delay_slot_instruction()
+                and arch.is_delay_slot_instruction(before_before_target)
             ):
                 # Don't treat 'b' instructions as branch likelies if doing so would
                 # introduce a label in a delay slot.
@@ -254,15 +255,17 @@ def normalize_likely_branches(function: Function) -> Function:
     return new_function
 
 
-def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function:
+def prune_unreferenced_labels(
+    function: Function, asm_data: AsmData, arch: ArchAsm
+) -> Function:
     labels_used: Set[str] = {
         label.name
         for label in function.body
         if isinstance(label, Label) and label.name in asm_data.mentioned_labels
     }
     for item in function.body:
-        if isinstance(item, Instruction) and item.is_branch_instruction():
-            labels_used.add(item.get_branch_target().target)
+        if isinstance(item, Instruction) and arch.is_branch_instruction(item):
+            labels_used.add(arch.get_branch_target(item).target)
 
     new_function = function.bodyless_copy()
     for item in function.body:
@@ -272,7 +275,7 @@ def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function
     return new_function
 
 
-def simplify_standard_patterns(function: Function) -> Function:
+def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
     """Detect and simplify various standard patterns emitted by IDO and GCC."""
     BodyPart = Union[Instruction, Label]
     PatternPart = Union[Instruction, Label, None]
@@ -288,7 +291,7 @@ def simplify_standard_patterns(function: Function) -> Function:
             elif part.endswith(":"):
                 ret.append((Label(""), optional))
             else:
-                ins = parse_instruction(part, InstructionMeta.missing())
+                ins = parse_instruction(part, InstructionMeta.missing(), arch)
                 ret.append((ins, optional))
         return ret
 
@@ -669,12 +672,12 @@ def simplify_standard_patterns(function: Function) -> Function:
     return new_function
 
 
-def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
-    verify_no_trailing_delay_slot(function)
-    function = normalize_likely_branches(function)
-    function = prune_unreferenced_labels(function, asm_data)
-    function = simplify_standard_patterns(function)
-    function = prune_unreferenced_labels(function, asm_data)
+def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[Block]:
+    verify_no_trailing_delay_slot(function, arch)
+    function = normalize_likely_branches(function, arch)
+    function = prune_unreferenced_labels(function, asm_data, arch)
+    function = simplify_standard_patterns(function, arch)
+    function = prune_unreferenced_labels(function, asm_data, arch)
 
     block_builder = BlockBuilder()
 
@@ -688,7 +691,7 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
             block_builder.set_label(item)
             return
 
-        if not item.is_delay_slot_instruction():
+        if not arch.is_delay_slot_instruction(item):
             block_builder.add_instruction(item)
             return
 
@@ -726,13 +729,13 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
                     ]
                 raise DecompFailure("\n".join(msg))
 
-        if next_item.is_delay_slot_instruction():
+        if arch.is_delay_slot_instruction(next_item):
             raise DecompFailure(
                 f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
             )
 
-        if item.is_branch_likely_instruction():
-            target = item.get_branch_target()
+        if arch.is_branch_likely_instruction(item):
+            target = arch.get_branch_target(item)
             branch_likely_counts[target.target] += 1
             index = branch_likely_counts[target.target]
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
@@ -766,7 +769,7 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
             block_builder.add_instruction(item)
             block_builder.add_instruction(next_item)
 
-        if item.is_jump_instruction():
+        if arch.is_jump_instruction(item):
             # Split blocks at jumps, after the next instruction.
             block_builder.new_block()
 
@@ -957,7 +960,11 @@ class NaturalLoop:
 
 
 def build_graph_from_block(
-    block: Block, blocks: List[Block], nodes: List[Node], asm_data: AsmData
+    block: Block,
+    blocks: List[Block],
+    nodes: List[Node],
+    asm_data: AsmData,
+    arch: ArchAsm,
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -979,7 +986,7 @@ def build_graph_from_block(
 
     # Extract branching instructions from this block.
     jumps: List[Instruction] = [
-        inst for inst in block.instructions if inst.is_jump_instruction()
+        inst for inst in block.instructions if arch.is_jump_instruction(inst)
     ]
     assert len(jumps) in [0, 1], "too many jump instructions in one block"
 
@@ -990,7 +997,9 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes, asm_data)
+        new_node.successor = build_graph_from_block(
+            next_block, blocks, nodes, asm_data, arch
+        )
     elif len(jumps) == 1:
         # There is a jump. This is either:
         # - a ReturnNode, if it's "jr $ra",
@@ -1050,14 +1059,16 @@ def build_graph_from_block(
                 case_block = find_block_by_label(entry)
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
-                case_node = build_graph_from_block(case_block, blocks, nodes, asm_data)
+                case_node = build_graph_from_block(
+                    case_block, blocks, nodes, asm_data, arch
+                )
                 new_node.cases.append(case_node)
             return new_node
 
-        assert jump.is_branch_instruction()
+        assert arch.is_branch_instruction(jump)
 
         # Get the block associated with the jump target.
-        branch_label = jump.get_branch_target()
+        branch_label = arch.get_branch_target(jump)
         branch_block = find_block_by_label(branch_label.target)
         if branch_block is None:
             target = branch_label.target
@@ -1071,7 +1082,7 @@ def build_graph_from_block(
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(
-                branch_block, blocks, nodes, asm_data
+                branch_block, blocks, nodes, asm_data, arch
             )
         else:
             # A conditional branch means the fallthrough block is the next
@@ -1081,10 +1092,10 @@ def build_graph_from_block(
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(
-                branch_block, blocks, nodes, asm_data
+                branch_block, blocks, nodes, asm_data, arch
             )
             new_node.fallthrough_edge = build_graph_from_block(
-                next_block, blocks, nodes, asm_data
+                next_block, blocks, nodes, asm_data, arch
             )
     return new_node
 
@@ -1118,7 +1129,7 @@ def reachable_without(start: Node, end: Node, without: Node) -> bool:
 
 
 def build_nodes(
-    function: Function, blocks: List[Block], asm_data: AsmData
+    function: Function, blocks: List[Block], asm_data: AsmData, arch: ArchAsm
 ) -> List[Node]:
     terminal_node = TerminalNode.terminal()
     graph: List[Node] = [terminal_node]
@@ -1130,7 +1141,7 @@ def build_nodes(
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph, asm_data)
+    build_graph_from_block(entry_block, blocks, graph, asm_data, arch)
 
     # Give the TerminalNode a new index so that it sorts to the end of the list
     assert [n for n in graph if isinstance(n, TerminalNode)] == [terminal_node]
@@ -1426,9 +1437,9 @@ class FlowGraph:
             node.block.block_info = None
 
 
-def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
-    blocks = build_blocks(function, asm_data)
-    nodes = build_nodes(function, blocks, asm_data)
+def build_flowgraph(function: Function, asm_data: AsmData, arch: ArchAsm) -> FlowGraph:
+    blocks = build_blocks(function, asm_data, arch)
+    nodes = build_nodes(function, blocks, asm_data, arch)
     nodes = duplicate_premature_returns(nodes)
     compute_relations(nodes)
     terminate_infinite_loops(nodes)

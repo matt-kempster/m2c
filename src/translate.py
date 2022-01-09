@@ -35,6 +35,7 @@ from .flow_graph import (
 from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
+    ArchAsm,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -62,18 +63,7 @@ MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
 PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
 
 
-class Arch(abc.ABC):
-    stack_pointer_reg: Register
-    frame_pointer_reg: Register
-    return_address_reg: Register
-
-    base_return_regs: List[Register]
-    all_return_regs: List[Register]
-    argument_regs: List[Register]
-    simple_temp_regs: List[Register]
-    temp_regs: List[Register]
-    saved_regs: List[Register]
-
+class Arch(ArchAsm, abc.ABC):
     instrs_ignore: InstrSet
     instrs_store: StoreInstrMap
     instrs_branches: CmpInstrMap
@@ -86,9 +76,9 @@ class Arch(abc.ABC):
     instrs_source_first: InstrMap
     instrs_destination_first: InstrMap
 
+    @staticmethod
     @abc.abstractmethod
     def function_abi(
-        self,
         fn_sig: FunctionSignature,
         likely_regs: Dict[Register, bool],
         *,
@@ -101,10 +91,9 @@ class Arch(abc.ABC):
         """
         ...
 
+    @staticmethod
     @abc.abstractmethod
-    def function_return(
-        self, expr: "Expression"
-    ) -> List[Tuple[Register, "Expression"]]:
+    def function_return(expr: "Expression") -> List[Tuple[Register, "Expression"]]:
         """
         Compute register location(s) & values that will hold the return value
         of the function call `expr`.

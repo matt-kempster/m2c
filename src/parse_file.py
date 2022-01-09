@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, U
 
 from .error import DecompFailure
 from .options import Options
-from .parse_instruction import Instruction, InstructionMeta, parse_instruction
+from .parse_instruction import ArchAsm, Instruction, InstructionMeta, parse_instruction
 
 
 @dataclass(frozen=True)
@@ -253,7 +253,7 @@ def parse_incbin(
     return None
 
 
-def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
+def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
     filename = Path(f.name).name
     mips_file: MIPSFile = MIPSFile(filename)
     defines: Dict[str, int] = options.preproc_defines
@@ -452,7 +452,7 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                instr: Instruction = parse_instruction(line, meta)
+                instr: Instruction = parse_instruction(line, meta, arch)
                 mips_file.new_instruction(instr)
 
     if warnings:
