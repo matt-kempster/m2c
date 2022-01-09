@@ -5,8 +5,15 @@ from typing import (
     Set,
     Tuple,
 )
+from .error import DecompFailure
 from .types import FunctionSignature, Type
-from .parse_instruction import Register
+from .parse_instruction import (
+    AsmGlobalSymbol,
+    AsmLiteral,
+    Instruction,
+    JumpTarget,
+    Register,
+)
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -61,6 +68,74 @@ from .translate import (
     make_store,
     void_fn_op,
 )
+
+
+LENGTH_TWO: Set[str] = {
+    "neg",
+    "negu",
+    "not",
+    "neg.s",
+    "abs.s",
+    "sqrt.s",
+    "neg.d",
+    "abs.d",
+    "sqrt.d",
+}
+
+LENGTH_THREE: Set[str] = {
+    "slt",
+    "slti",
+    "sltu",
+    "sltiu",
+    "addi",
+    "addiu",
+    "addu",
+    "subu",
+    "daddi",
+    "daddiu",
+    "dsubu",
+    "add.s",
+    "sub.s",
+    "div.s",
+    "mul.s",
+    "add.d",
+    "sub.d",
+    "div.d",
+    "mul.d",
+    "ori",
+    "and",
+    "or",
+    "nor",
+    "xor",
+    "andi",
+    "xori",
+    "sll",
+    "sllv",
+    "srl",
+    "srlv",
+    "sra",
+    "srav",
+    "dsll",
+    "dsll32",
+    "dsllv",
+    "dsrl",
+    "dsrl32",
+    "dsrlv",
+    "dsra",
+    "dsra32",
+    "dsrav",
+}
+
+DIV_MULT_INSTRUCTIONS: Set[str] = {
+    "div",
+    "divu",
+    "ddiv",
+    "ddivu",
+    "mult",
+    "multu",
+    "dmult",
+    "dmultu",
+}
 
 
 class MipsArch(Arch):
@@ -148,6 +223,140 @@ class MipsArch(Arch):
             "gp",
         ]
     ]
+    all_regs = saved_regs + temp_regs
+
+    @staticmethod
+    def is_branch_instruction(instr: Instruction) -> bool:
+        return (
+            instr.mnemonic
+            in [
+                "j",
+                "b",
+                "beq",
+                "bne",
+                "beqz",
+                "bnez",
+                "bgez",
+                "bgtz",
+                "blez",
+                "bltz",
+                "bc1t",
+                "bc1f",
+            ]
+            or MipsArch.is_branch_likely_instruction(instr)
+        )
+
+    @staticmethod
+    def is_branch_likely_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic in [
+            "beql",
+            "bnel",
+            "beqzl",
+            "bnezl",
+            "bgezl",
+            "bgtzl",
+            "blezl",
+            "bltzl",
+            "bc1tl",
+            "bc1fl",
+        ]
+
+    @staticmethod
+    def get_branch_target(instr: Instruction) -> JumpTarget:
+        label = instr.args[-1]
+        if isinstance(label, AsmGlobalSymbol):
+            return JumpTarget(label.symbol_name)
+        if not isinstance(label, JumpTarget):
+            raise DecompFailure(
+                f'Couldn\'t parse instruction "{instr}": invalid branch target'
+            )
+        return label
+
+    @staticmethod
+    def is_jump_instruction(instr: Instruction) -> bool:
+        # (we don't treat jal/jalr as jumps, since control flow will return
+        # after the call)
+        return MipsArch.is_branch_instruction(instr) or instr.mnemonic == "jr"
+
+    @staticmethod
+    def is_delay_slot_instruction(instr: Instruction) -> bool:
+        return MipsArch.is_branch_instruction(instr) or instr.mnemonic in [
+            "jr",
+            "jal",
+            "jalr",
+        ]
+
+    @staticmethod
+    def is_return_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "jr" and instr.args[0] == Register("ra")
+
+    @staticmethod
+    def is_conditional_return_instruction(instr: Instruction) -> bool:
+        return False
+
+    @staticmethod
+    def is_jumptable_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "jr" and instr.args[0] != Register("ra")
+
+    @staticmethod
+    def normalize_instruction(instr: Instruction) -> Instruction:
+        args = instr.args
+        if len(args) == 3:
+            if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
+                return Instruction("nop", [], instr.meta)
+            if instr.mnemonic == "or" and args[2] == Register("zero"):
+                return Instruction("move", args[:2], instr.meta)
+            if instr.mnemonic == "addu" and args[2] == Register("zero"):
+                return Instruction("move", args[:2], instr.meta)
+            if instr.mnemonic == "daddu" and args[2] == Register("zero"):
+                return Instruction("move", args[:2], instr.meta)
+            if instr.mnemonic == "nor" and args[1] == Register("zero"):
+                return Instruction("not", [args[0], args[2]], instr.meta)
+            if instr.mnemonic == "nor" and args[2] == Register("zero"):
+                return Instruction("not", [args[0], args[1]], instr.meta)
+            if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
+                return Instruction("move", args[:2], instr.meta)
+            if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
+                if args[0] != Register("zero"):
+                    raise DecompFailure("first argument to div/mult must be $zero")
+                return Instruction(instr.mnemonic, args[1:], instr.meta)
+            if (
+                instr.mnemonic == "ori"
+                and args[1] == Register("zero")
+                and isinstance(args[2], AsmLiteral)
+            ):
+                lit = AsmLiteral(args[2].value & 0xFFFF)
+                return Instruction("li", [args[0], lit], instr.meta)
+            if (
+                instr.mnemonic == "addiu"
+                and args[1] == Register("zero")
+                and isinstance(args[2], AsmLiteral)
+            ):
+                lit = AsmLiteral(((args[2].value + 0x8000) & 0xFFFF) - 0x8000)
+                return Instruction("li", [args[0], lit], instr.meta)
+            if instr.mnemonic == "beq" and args[0] == args[1] == Register("zero"):
+                return Instruction("b", [args[2]], instr.meta)
+            if instr.mnemonic in ["bne", "beq", "beql", "bnel"] and args[1] == Register(
+                "zero"
+            ):
+                mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
+                return Instruction(mn, [args[0], args[2]], instr.meta)
+        if len(args) == 2:
+            if instr.mnemonic == "beqz" and args[0] == Register("zero"):
+                return Instruction("b", [args[1]], instr.meta)
+            if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
+                lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
+                return Instruction("li", [args[0], lit], instr.meta)
+            if instr.mnemonic in LENGTH_THREE:
+                return MipsArch.normalize_instruction(
+                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
+                )
+        if len(args) == 1:
+            if instr.mnemonic in LENGTH_TWO:
+                return MipsArch.normalize_instruction(
+                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
+                )
+        return instr
 
     instrs_ignore: InstrSet = {
         # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
@@ -489,8 +698,8 @@ class MipsArch(Arch):
         "lwr": lambda a: handle_lwr(a),
     }
 
+    @staticmethod
     def function_abi(
-        self,
         fn_sig: FunctionSignature,
         likely_regs: Dict[Register, bool],
         *,
@@ -650,7 +859,8 @@ class MipsArch(Arch):
             possible_slots=possible_slots,
         )
 
-    def function_return(self, expr: Expression) -> List[Tuple[Register, Expression]]:
+    @staticmethod
+    def function_return(expr: Expression) -> List[Tuple[Register, Expression]]:
         # We may not know what this function's return registers are --
         # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
         # it's fine to be liberal here and put the return value in all

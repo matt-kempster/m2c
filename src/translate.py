@@ -36,6 +36,7 @@ from .flow_graph import (
 from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
+    ArchAsm,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -65,38 +66,27 @@ ImplicitInstrMap = Mapping[str, Tuple[Register, Callable[["InstrArgs"], "Express
 PPCCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
-class Arch(abc.ABC):
-    stack_pointer_reg: Register
-    frame_pointer_reg: Optional[Register]
-    return_address_reg: Register
-
-    base_return_regs: List[Register]
-    all_return_regs: List[Register]
-    argument_regs: List[Register]
-    simple_temp_regs: List[Register]
-    temp_regs: List[Register]
-    saved_regs: List[Register]
-
-    instrs_ignore: InstrSet = set()
-    instrs_store: StoreInstrMap = {}
-    instrs_store_update: StoreInstrMap = {}
+class Arch(ArchAsm, abc.ABC):
     instrs_branches: CmpInstrMap = {}
     instrs_decctr_branches: CmpInstrMap = {}
-    instrs_float_branches: InstrSet = set()
-    instrs_jumps: InstrSet = set()
-    instrs_fn_call: InstrSet = set()
-    instrs_no_dest: StmtInstrMap = {}
-    instrs_float_comp: CmpInstrMap = {}
-    instrs_hi_lo: PairInstrMap = {}
-    instrs_source_first: InstrMap = {}
     instrs_destination_first: InstrMap = {}
-    instrs_load_update: InstrMap = {}
+    instrs_float_branches: InstrSet = set()
+    instrs_float_comp: CmpInstrMap = {}
+    instrs_fn_call: InstrSet = set()
+    instrs_hi_lo: PairInstrMap = {}
+    instrs_ignore: InstrSet = set()
     instrs_implicit_destination: ImplicitInstrMap = {}
+    instrs_jumps: InstrSet = set()
+    instrs_load_update: InstrMap = {}
+    instrs_no_dest: StmtInstrMap = {}
     instrs_ppc_compare: PPCCmpInstrMap = {}
+    instrs_source_first: InstrMap = {}
+    instrs_store: StoreInstrMap = {}
+    instrs_store_update: StoreInstrMap = {}
 
+    @staticmethod
     @abc.abstractmethod
     def function_abi(
-        self,
         fn_sig: FunctionSignature,
         likely_regs: Dict[Register, bool],
         *,
@@ -109,10 +99,9 @@ class Arch(abc.ABC):
         """
         ...
 
+    @staticmethod
     @abc.abstractmethod
-    def function_return(
-        self, expr: "Expression"
-    ) -> List[Tuple[Register, "Expression"]]:
+    def function_return(expr: "Expression") -> List[Tuple[Register, "Expression"]]:
         """
         Compute register location(s) & values that will hold the return value
         of the function call `expr`.
@@ -2805,6 +2794,11 @@ def handle_sra(args: InstrArgs) -> Expression:
             rhs = expr.right.value
             if expr.op == "<<" and rhs == shift.value:
                 return as_type(expr.left, tp, silent=False)
+            elif expr.op == "<<" and rhs > shift.value:
+                new_shift = fold_mul_chains(
+                    BinaryOp.int(expr.left, "<<", Literal(rhs - shift.value))
+                )
+                return as_type(new_shift, tp, silent=False)
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)

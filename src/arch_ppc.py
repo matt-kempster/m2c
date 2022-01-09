@@ -5,8 +5,15 @@ from typing import (
     Set,
     Tuple,
 )
-from .types import FunctionSignature, Type
-from .parse_instruction import Register
+from .error import DecompFailure
+from .parse_instruction import (
+    AsmGlobalSymbol,
+    AsmLiteral,
+    Instruction,
+    JumpTarget,
+    Macro,
+    Register,
+)
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -54,6 +61,26 @@ from .translate import (
     make_storex,
     void_fn_op,
 )
+from .types import FunctionSignature, Type
+
+LENGTH_TWO: Set[str] = {
+    "neg",
+    "not",
+}
+
+LENGTH_THREE: Set[str] = {
+    "addi",
+    "ori",
+    "and",
+    "or",
+    "nor",
+    "xor",
+    "andi",
+    "xori",
+    "sllv",
+    "srlv",
+    "srav",
+}
 
 
 class PpcArch(Arch):
@@ -150,6 +177,134 @@ class PpcArch(Arch):
             "f31",
         ]
     ]
+    all_regs = (
+        saved_regs
+        + temp_regs
+        + [
+            Register(r)
+            for r in [
+                "r0",
+                "r1",
+                "r2",
+                "cr0",
+                "cr1",
+                "cr2",
+                "cr3",
+                "cr4",
+                "cr5",
+                "cr6",
+                "cr7",
+            ]
+        ]
+    )
+
+    @staticmethod
+    def is_branch_instruction(instr: Instruction) -> bool:
+        return PpcArch.is_conditional_return_instruction(instr) or instr.mnemonic in [
+            "b",
+            "ble",
+            "blt",
+            "beq",
+            "bge",
+            "bgt",
+            "bne",
+            "bdnz",
+            "bdz",
+        ]
+
+    @staticmethod
+    def is_branch_likely_instruction(instr: Instruction) -> bool:
+        return False
+
+    @staticmethod
+    def get_branch_target(instr: Instruction) -> JumpTarget:
+        label = instr.args[-1]
+        if isinstance(label, AsmGlobalSymbol):
+            return JumpTarget(label.symbol_name)
+        if not isinstance(label, JumpTarget):
+            raise DecompFailure(
+                f'Couldn\'t parse instruction "{instr}": invalid branch target'
+            )
+        return label
+
+    @staticmethod
+    def is_jump_instruction(instr: Instruction) -> bool:
+        # (we don't treat jal/jalr as jumps, since control flow will return
+        # after the call)
+        return PpcArch.is_branch_instruction(instr) or instr.mnemonic in ("blr", "bctr")
+
+    @staticmethod
+    def is_delay_slot_instruction(instr: Instruction) -> bool:
+        return False
+
+    @staticmethod
+    def is_return_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "blr"
+
+    @staticmethod
+    def is_conditional_return_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic in (
+            "beqlr",
+            "bgelr",
+            "bgtlr",
+            "blelr",
+            "bltlr",
+            "bnelr",
+            "bnglr",
+            "bnllr",
+            "bnslr",
+            "bsolr",
+        )
+
+    @staticmethod
+    def is_jumptable_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "bctr"
+
+    @staticmethod
+    def normalize_instruction(instr: Instruction) -> Instruction:
+        # Remove +/- suffix, which indicates branch-un/likely an can be ignored
+        if instr.mnemonic.startswith("b") and (
+            instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
+        ):
+            return PpcArch.normalize_instruction(
+                Instruction(instr.mnemonic[:-1], instr.args, instr.meta)
+            )
+
+        args = instr.args
+        if len(args) == 3:
+            if (
+                instr.mnemonic == "addi"
+                and isinstance(args[2], Macro)
+                and args[1] in (Register("r2"), Register("r13"))
+                and args[2].macro_name in ("sda2", "sda21")
+            ):
+                return Instruction("li", [args[0], args[2].argument], instr.meta)
+        if len(args) == 2:
+            if instr.mnemonic == "lis" and isinstance(args[1], AsmLiteral):
+                lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
+                return Instruction("li", [args[0], lit], instr.meta)
+            if (
+                instr.mnemonic == "lis"
+                and isinstance(args[1], Macro)
+                and args[1].macro_name == "ha"
+                and isinstance(args[1].argument, AsmLiteral)
+            ):
+                # The @ha macro compensates for the sign bit of the corresponding @l
+                value = args[1].argument.value
+                if value & 0x8000:
+                    value += 0x10000
+                lit = AsmLiteral(value & 0xFFFF0000)
+                return Instruction("li", [args[0], lit], instr.meta)
+            if instr.mnemonic in LENGTH_THREE:
+                return PpcArch.normalize_instruction(
+                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
+                )
+        if len(args) == 1:
+            if instr.mnemonic in LENGTH_TWO:
+                return PpcArch.normalize_instruction(
+                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
+                )
+        return instr
 
     instrs_ignore: InstrSet = {
         "nop",
@@ -157,7 +312,7 @@ class PpcArch(Arch):
         "stmw",
         "lmw",
         # PPC: `{crclr,crset} 6` are used as part of the ABI for floats & varargs
-        # For now, we can ignore them (and later use them to help in ppc_function_abi)
+        # For now, we can ignore them (and later use them to help in function_abi)
         "crclr",
         "crset",
     }
@@ -447,8 +602,8 @@ class PpcArch(Arch):
         ),
     }
 
+    @staticmethod
     def function_abi(
-        self,
         fn_sig: FunctionSignature,
         likely_regs: Dict[Register, bool],
         *,
@@ -458,8 +613,8 @@ class PpcArch(Arch):
         candidate_slots: List[AbiArgSlot] = []
 
         # TODO: We don't actually know the order
-        intptr_regs = [r for r in self.argument_regs if r.register_name[0] != "f"]
-        float_regs = [r for r in self.argument_regs if r.register_name[0] == "f"]
+        intptr_regs = [r for r in PpcArch.argument_regs if r.register_name[0] != "f"]
+        float_regs = [r for r in PpcArch.argument_regs if r.register_name[0] == "f"]
 
         if fn_sig.params_known:
             # TODO: Parse function signatures
@@ -495,7 +650,7 @@ class PpcArch(Arch):
                         )
                     )
         else:
-            for ind, reg in enumerate(self.argument_regs):
+            for ind, reg in enumerate(PpcArch.argument_regs):
                 if reg.register_name[0] != "f":
                     candidate_slots.append(
                         AbiArgSlot(offset=4 * ind, reg=reg, type=Type.intptr())
@@ -522,7 +677,10 @@ class PpcArch(Arch):
                 # PPC is simple; only r3-r10/f1-f13 can be used for arguments
                 regname = slot.reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
-                if prev_reg in self.argument_regs and prev_reg not in valid_extra_regs:
+                if (
+                    prev_reg in PpcArch.argument_regs
+                    and prev_reg not in valid_extra_regs
+                ):
                     continue
 
             valid_extra_regs.add(slot.reg)
@@ -545,7 +703,8 @@ class PpcArch(Arch):
             possible_slots=possible_slots,
         )
 
-    def function_return(self, expr: Expression) -> List[Tuple[Register, Expression]]:
+    @staticmethod
+    def function_return(expr: Expression) -> List[Tuple[Register, Expression]]:
         return [
             (
                 Register("f1"),
