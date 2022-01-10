@@ -338,6 +338,8 @@ class Instruction:
         return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
 
     def __str__(self) -> str:
+        if not self.args:
+            return self.mnemonic
         args = ", ".join(str(arg) for arg in self.args)
         return f"{self.mnemonic} {args}"
 
@@ -385,6 +387,10 @@ class ArchAsm(abc.ABC):
 
     @abc.abstractmethod
     def is_jumptable_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def missing_return(self) -> List[Instruction]:
         ...
 
     @abc.abstractmethod

@@ -772,14 +772,16 @@ def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[B
             block_builder.new_block()
             return
 
-        if mips and not arch.is_delay_slot_instruction(item):
+        if not arch.is_delay_slot_instruction(item):
             block_builder.add_instruction(item)
+            # Split blocks at jumps, at the next instruction.
+            if arch.is_jump_instruction(item):
+                block_builder.new_block()
             return
 
         process_after: List[Union[Instruction, Label]] = []
         next_item: Optional[Union[Instruction, Label]] = None
-        if mips:
-            next_item = next(body_iter)
+        next_item = next(body_iter)
 
         if isinstance(next_item, Label):
             # Delay slot is a jump target, so we need the delay slot
@@ -870,15 +872,15 @@ def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[B
     for item in body_iter:
         process(item)
 
-    if mips and block_builder.curr_label:
+    if block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
         # anonymous ("jr" instructions create new anonymous blocks, so if it's
         # not we must be missing a "jr $ra").
         label = block_builder.curr_label.name
-        print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
-        meta = InstructionMeta.missing()
-        block_builder.add_instruction(Instruction("jr", [Register("ra")], meta))
-        block_builder.add_instruction(Instruction("nop", [], meta))
+        return_instrs = arch.missing_return()
+        print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
+        for instr in return_instrs:
+            block_builder.add_instruction(instr)
         block_builder.new_block()
 
     if cond_return_target is not None:
@@ -1133,7 +1135,7 @@ def build_graph_from_block(
                         jtbl_names.append(arg.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
-                    f"Unable to determine jump table for jr instruction {jump.meta.loc_str()}.\n\n"
+                    f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable in the same block as\n"
                     'the instruction, which has a name starting with "jtbl"/"jpt_"/"lbl_".'
                 )
@@ -1141,7 +1143,7 @@ def build_graph_from_block(
             jtbl_name = jtbl_names[0]
             if jtbl_name not in asm_data.values:
                 raise DecompFailure(
-                    f"Found jr instruction {jump.meta.loc_str()}, but the "
+                    f"Found {jump.mnemonic} instruction {jump.meta.loc_str()}, but the "
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file(s), or in an additional file.\n"

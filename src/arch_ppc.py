@@ -10,6 +10,7 @@ from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
+    InstructionMeta,
     JumpTarget,
     Macro,
     Register,
@@ -259,6 +260,10 @@ class PpcArch(Arch):
     @staticmethod
     def is_jumptable_instruction(instr: Instruction) -> bool:
         return instr.mnemonic == "bctr"
+
+    @staticmethod
+    def missing_return() -> List[Instruction]:
+        return [Instruction("blr", [], InstructionMeta.missing())]
 
     @staticmethod
     def normalize_instruction(instr: Instruction) -> Instruction:

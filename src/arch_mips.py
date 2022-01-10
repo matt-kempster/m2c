@@ -11,6 +11,7 @@ from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
+    InstructionMeta,
     JumpTarget,
     Register,
 )
@@ -297,6 +298,11 @@ class MipsArch(Arch):
     @staticmethod
     def is_jumptable_instruction(instr: Instruction) -> bool:
         return instr.mnemonic == "jr" and instr.args[0] != Register("ra")
+
+    @staticmethod
+    def missing_return() -> List[Instruction]:
+        meta = InstructionMeta.missing()
+        return [Instruction("jr", [Register("ra")], meta), Instruction("nop", [], meta)]
 
     @staticmethod
     def normalize_instruction(instr: Instruction) -> Instruction:
