@@ -35,6 +35,7 @@ from .flow_graph import (
 from .options import CodingStyle, Formatter, Options
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
+    ArchAsm,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -62,18 +63,7 @@ MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
 PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
 
 
-class Arch(abc.ABC):
-    stack_pointer_reg: Register
-    frame_pointer_reg: Register
-    return_address_reg: Register
-
-    base_return_regs: List[Register]
-    all_return_regs: List[Register]
-    argument_regs: List[Register]
-    simple_temp_regs: List[Register]
-    temp_regs: List[Register]
-    saved_regs: List[Register]
-
+class Arch(ArchAsm, abc.ABC):
     instrs_ignore: InstrSet
     instrs_store: StoreInstrMap
     instrs_branches: CmpInstrMap
