@@ -2410,7 +2410,7 @@ def handle_la(args: InstrArgs) -> Expression:
     return add_imm(var, Literal(target.offset), stack_info)
 
 
-def handle_or(args: InstrArgs, left: Expression, right: Expression) -> Expression:
+def handle_or(left: Expression, right: Expression) -> Expression:
     if (
         isinstance(left, Literal)
         and isinstance(right, Literal)

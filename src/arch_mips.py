@@ -605,7 +605,7 @@ class MipsArch(Arch):
         "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
         "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
         # Bit arithmetic
-        "ori": lambda a: handle_or(a, a.reg(1), a.unsigned_imm(2)),
+        "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
         "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
         "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
