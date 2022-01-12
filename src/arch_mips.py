@@ -11,6 +11,7 @@ from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
+    InstructionMeta,
     JumpTarget,
     Register,
 )
@@ -57,7 +58,7 @@ from .translate import (
     handle_load,
     handle_lwl,
     handle_lwr,
-    handle_ori,
+    handle_or,
     handle_sltiu,
     handle_sltu,
     handle_sra,
@@ -223,6 +224,12 @@ class MipsArch(Arch):
             "gp",
         ]
     ]
+    all_regs = saved_regs + temp_regs
+
+    aliased_regs = {
+        "s8": Register("fp"),
+        "r0": Register("zero"),
+    }
 
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
@@ -284,6 +291,19 @@ class MipsArch(Arch):
             "jal",
             "jalr",
         ]
+
+    @staticmethod
+    def is_return_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "jr" and instr.args[0] == Register("ra")
+
+    @staticmethod
+    def is_jumptable_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "jr" and instr.args[0] != Register("ra")
+
+    @staticmethod
+    def missing_return() -> List[Instruction]:
+        meta = InstructionMeta.missing()
+        return [Instruction("jr", [Register("ra")], meta), Instruction("nop", [], meta)]
 
     @staticmethod
     def normalize_instruction(instr: Instruction) -> Instruction:
@@ -585,7 +605,7 @@ class MipsArch(Arch):
         "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
         "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
         # Bit arithmetic
-        "ori": lambda a: handle_ori(a),
+        "ori": lambda a: handle_or(a, a.reg(1), a.unsigned_imm(2)),
         "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
         "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),

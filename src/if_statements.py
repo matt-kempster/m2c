@@ -1360,11 +1360,14 @@ def build_body(context: Context, options: Options) -> Body:
 
     # Check no nodes were skipped: build_flowgraph_between should hit every node in
     # well-formed (reducible) graphs; and build_naive explicitly emits every node
-    unemitted_nodes = (
+    unemitted_nodes = list(
         set(context.flow_graph.nodes)
         - context.emitted_nodes
         - {context.flow_graph.terminal_node()}
     )
+    # NB: Sorting by name isn't perfectly correct ("100" comes before "2"), but this does
+    # create a reproducable output order because names are unique (unlike `n.block.index`).
+    unemitted_nodes.sort(key=lambda n: n.name())
     for node in unemitted_nodes:
         if isinstance(node, ReturnNode) and not node.is_real():
             continue

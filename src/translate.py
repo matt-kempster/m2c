@@ -64,17 +64,17 @@ PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Express
 
 
 class Arch(ArchAsm, abc.ABC):
-    instrs_ignore: InstrSet
-    instrs_store: StoreInstrMap
-    instrs_branches: CmpInstrMap
-    instrs_float_branches: InstrSet
-    instrs_jumps: InstrSet
-    instrs_fn_call: InstrSet
-    instrs_no_dest: StmtInstrMap
-    instrs_float_comp: CmpInstrMap
-    instrs_hi_lo: PairInstrMap
-    instrs_source_first: InstrMap
-    instrs_destination_first: InstrMap
+    instrs_ignore: InstrSet = set()
+    instrs_store: StoreInstrMap = {}
+    instrs_branches: CmpInstrMap = {}
+    instrs_float_branches: InstrSet = set()
+    instrs_jumps: InstrSet = set()
+    instrs_fn_call: InstrSet = set()
+    instrs_no_dest: StmtInstrMap = {}
+    instrs_float_comp: CmpInstrMap = {}
+    instrs_hi_lo: PairInstrMap = {}
+    instrs_source_first: InstrMap = {}
+    instrs_destination_first: InstrMap = {}
 
     @abc.abstractmethod
     def function_abi(
@@ -2410,13 +2410,15 @@ def handle_la(args: InstrArgs) -> Expression:
     return add_imm(var, Literal(target.offset), stack_info)
 
 
-def handle_ori(args: InstrArgs) -> Expression:
-    imm = args.unsigned_imm(2)
-    r = args.reg(1)
-    if isinstance(r, Literal) and isinstance(imm, Literal) and (r.value & 0xFFFF) == 0:
-        return Literal(value=(r.value | imm.value))
+def handle_or(args: InstrArgs, left: Expression, right: Expression) -> Expression:
+    if (
+        isinstance(left, Literal)
+        and isinstance(right, Literal)
+        and (left.value & 0xFFFF) == 0
+    ):
+        return Literal(value=(left.value | right.value))
     # Regular bitwise OR.
-    return BinaryOp.int(left=r, op="|", right=imm)
+    return BinaryOp.int(left=left, op="|", right=right)
 
 
 def handle_sltu(args: InstrArgs) -> Expression:

@@ -3,7 +3,7 @@
 import abc
 from dataclasses import dataclass, replace
 import string
-from typing import List, Optional, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 from .error import DecompFailure
 
@@ -107,7 +107,7 @@ Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
 
-valid_word = string.ascii_letters + string.digits + "_"
+valid_word = string.ascii_letters + string.digits + "_$"
 valid_number = "-xX" + string.hexdigits
 
 
@@ -148,10 +148,11 @@ def constant_fold(arg: Argument) -> Argument:
 
 
 # Main parser.
-def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
+def parse_arg_elems(arg_elems: List[str], arch: "ArchAsm") -> Optional[Argument]:
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
+        assert arg_elems, f"Expected one of {list(n)}, but reached end of string"
         g = arg_elems.pop(0)
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
@@ -164,13 +165,15 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
         elif tok == "$":
             # Register.
             assert value is None
-            arg_elems.pop(0)
-            reg = parse_word(arg_elems)
-            if reg == "s8":
-                reg = "fp"
-            if reg == "r0":
-                reg = "zero"
-            value = Register(reg)
+            word = parse_word(arg_elems)
+            reg = word[1:]
+            if "$" in reg:
+                # If there is a second $ in the word, it's a symbol
+                value = AsmGlobalSymbol(word)
+            elif reg in arch.aliased_regs:
+                value = arch.aliased_regs[reg]
+            else:
+                value = Register(reg)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None
@@ -188,7 +191,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             assert macro_name in ("hi", "lo")
             expect("(")
             # Get the argument of the macro (which must exist).
-            m = parse_arg_elems(arg_elems)
+            m = parse_arg_elems(arg_elems, arch)
             assert m is not None
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
@@ -206,7 +209,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             assert value is None or isinstance(value, (AsmLiteral, Macro))
             expect("(")
             # Get what is being dereferenced.
-            rhs = parse_arg_elems(arg_elems)
+            rhs = parse_arg_elems(arg_elems, arch)
             assert rhs is not None
             expect(")")
             if isinstance(rhs, BinOp):
@@ -219,7 +222,12 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
         elif tok in valid_word:
             # Global symbol.
             assert value is None
-            value = AsmGlobalSymbol(parse_word(arg_elems))
+            word = parse_word(arg_elems)
+            maybe_reg = Register(word)
+            if maybe_reg in arch.all_regs:
+                value = maybe_reg
+            else:
+                value = AsmGlobalSymbol(word)
         elif tok in ">+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol))
@@ -231,7 +239,7 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
             else:
                 op = expect("&+-*")
 
-            rhs = parse_arg_elems(arg_elems)
+            rhs = parse_arg_elems(arg_elems, arch)
             # These operators can only use constants as the right-hand-side.
             if rhs and isinstance(rhs, BinOp) and rhs.op == "*":
                 rhs = constant_fold(rhs)
@@ -251,9 +259,9 @@ def parse_arg_elems(arg_elems: List[str]) -> Optional[Argument]:
     return value
 
 
-def parse_arg(arg: str) -> Optional[Argument]:
+def parse_arg(arg: str, arch: "ArchAsm") -> Optional[Argument]:
     arg_elems: List[str] = list(arg)
-    return parse_arg_elems(arg_elems)
+    return parse_arg_elems(arg_elems, arch)
 
 
 @dataclass(frozen=True)
@@ -287,13 +295,15 @@ class Instruction:
         return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
 
     def __str__(self) -> str:
+        if not self.args:
+            return self.mnemonic
         args = ", ".join(str(arg) for arg in self.args)
         return f"{self.mnemonic} {args}"
 
 
 class ArchAsm(abc.ABC):
     stack_pointer_reg: Register
-    frame_pointer_reg: Register
+    frame_pointer_reg: Optional[Register]
     return_address_reg: Register
 
     base_return_regs: List[Register]
@@ -302,6 +312,9 @@ class ArchAsm(abc.ABC):
     simple_temp_regs: List[Register]
     temp_regs: List[Register]
     saved_regs: List[Register]
+    all_regs: List[Register]
+
+    aliased_regs: Dict[str, Register]
 
     @abc.abstractmethod
     def is_branch_instruction(self, instr: Instruction) -> bool:
@@ -324,6 +337,18 @@ class ArchAsm(abc.ABC):
         ...
 
     @abc.abstractmethod
+    def is_return_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_jumptable_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def missing_return(self) -> List[Instruction]:
+        ...
+
+    @abc.abstractmethod
     def normalize_instruction(self, instr: Instruction) -> Instruction:
         ...
 
@@ -336,10 +361,11 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         # Parse arguments.
         args: List[Argument] = list(
             filter(
-                None, [parse_arg(arg_str.strip()) for arg_str in args_str.split(",")]
+                None,
+                [parse_arg(arg_str.strip(), arch) for arg_str in args_str.split(",")],
             )
         )
         instr = Instruction(mnemonic, args, meta)
         return arch.normalize_instruction(instr)
-    except Exception as e:
+    except:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
