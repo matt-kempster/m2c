@@ -227,11 +227,11 @@ h4 { margin: 0px; color: red; }
     <option value="none">none</option>
     </select>
     </label>
-    <label>Original compiler:
+    <label>Arch &amp; compiler:
     <select name="compiler">
-    <option value="ido">ido</option>
-    <option value="gcc">gcc</option>
-    <option value="mwcc">mwcc</option>
+    <option value="mwcc">PPC, mwcc</option>
+    <option value="ido">MIPS, ido</option>
+    <option value="gcc">MIPS, gcc</option>
     </select>
     </label>
     <label>Comment style:

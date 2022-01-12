@@ -242,9 +242,8 @@ class StackInfo:
         return prefix + (f"_{counter}" if counter > 1 else "")
 
     def in_subroutine_arg_region(self, location: int) -> bool:
-        # PPC TODO: Determine how PPC compilers lay out stack regions
-        # For now, assume all args are passed in regs (there's so many of them to use!)
-        return False
+        if not self.global_info.arch.is_mips:
+            return False
         if self.is_leaf:
             return False
         assert self.subroutine_arg_top is not None
@@ -252,11 +251,15 @@ class StackInfo:
 
     def in_callee_save_reg_region(self, location: int) -> bool:
         lower_bound, upper_bound = self.callee_save_reg_region
+        if lower_bound <= location < upper_bound:
+            return True
         # PPC saves LR in the header of the previous stack frame
-        return (
-            lower_bound <= location < upper_bound
-            or location == self.allocated_stack_size + 4
-        )
+        if (
+            not self.global_info.arch.is_mips
+            and location == self.allocated_stack_size + 4
+        ):
+            return True
+        return False
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
@@ -2033,25 +2036,29 @@ class InstrArgs:
                 f"Expected instruction argument {reg} to be a float register"
             )
         ret = self.regs[reg]
+
         # PPC: FPR's hold doubles (64 bits), so we don't need to do anything special
-        return ret
-        # if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
-        #    return ret
-        # reg_num = int(reg.register_name[1:])
-        # if reg_num % 2 != 0:
-        #    raise DecompFailure(
-        #        "Tried to use a double-precision instruction with odd-numbered float "
-        #        f"register {reg}"
-        #    )
-        # other = self.regs[Register(f"f{reg_num+1}")]
-        # if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
-        #    raise DecompFailure(
-        #        f"Unable to determine a value for double-precision register {reg} "
-        #        "whose second half is non-static. This is a mips_to_c restriction "
-        #        "which may be lifted in the future."
-        #    )
-        # value = ret.value | (other.value << 32)
-        # return Literal(value, type=Type.f64())
+        if not self.stack_info.global_info.arch.is_mips:
+            return ret
+
+        # MIPS: Look at the paired FPR to get the full 64-bit value
+        if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
+            return ret
+        reg_num = int(reg.register_name[1:])
+        if reg_num % 2 != 0:
+            raise DecompFailure(
+                "Tried to use a double-precision instruction with odd-numbered float "
+                f"register {reg}"
+            )
+        other = self.regs[Register(f"f{reg_num+1}")]
+        if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
+            raise DecompFailure(
+                f"Unable to determine a value for double-precision register {reg} "
+                "whose second half is non-static. This is a mips_to_c restriction "
+                "which may be lifted in the future."
+            )
+        value = ret.value | (other.value << 32)
+        return Literal(value, type=Type.f64())
 
     def cmp_reg(self, key: str) -> Condition:
         cond = self.regs[Register(key)]
@@ -2080,7 +2087,7 @@ class InstrArgs:
         arg = self.raw_arg(index)
         if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha", "h"):
             raise DecompFailure(
-                f"Got lui instruction with macro other than %hi/@ha: {arg}"
+                f"Got lui/lis instruction with macro other than %hi/@ha/@h: {arg}"
             )
         return arg.argument
 
@@ -2497,13 +2504,11 @@ def handle_la(args: InstrArgs) -> Expression:
 
 
 def handle_or(left: Expression, right: Expression) -> Expression:
-    if (
-        isinstance(left, Literal)
-        and isinstance(right, Literal)
-        and (left.value & 0xFFFF0000) == 0
-        and (right.value & 0xFFFF) == 0
-    ):
-        return Literal(value=(left.value | right.value))
+    if isinstance(left, Literal) and isinstance(right, Literal):
+        if (((left.value & 0xFFFF) == 0 and (right.value & 0xFFFF0000) == 0)) or (
+            (right.value & 0xFFFF) == 0 and (left.value & 0xFFFF0000) == 0
+        ):
+            return Literal(value=(left.value | right.value))
     # Regular bitwise OR.
     return BinaryOp.int(left=left, op="|", right=right)
 
@@ -3397,15 +3402,16 @@ def strip_macros(arg: Argument) -> Argument:
             return arg.argument
         if arg.macro_name == "hi":
             raise DecompFailure("%hi macro outside of lui")
-        if arg.macro_name in ["lo", "l"]:
-            # PPC XXX: This is sort of weird; for `%lo(symbol)` we return 0 here and assume that
-            # this %lo is always perfectly paired with one other %hi. However, with `%lo(literal)`,
-            # we return the macro value, and assume it is paired with another `%hi(literal)`.
-            # This lets us reuse `%hi(literal)` values, but assumes that we never mix literal/symbols
-            if isinstance(arg.argument, AsmLiteral):
-                return AsmLiteral(arg.argument.value & 0xFFFF)
-            return AsmLiteral(0)
-        raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
+        if arg.macro_name not in ["lo", "l"]:
+            raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
+        # PPC: This is sort of weird; for `@l(symbol)` we return 0 here and assume
+        # that this @l is always perfectly paired with one other @ha.
+        # However, with `@l(literal)`, we return the macro value, and assume it is
+        # paired with another `@ha(literal)`. This lets us reuse `@ha(literal)` values,
+        # but assumes that we never mix literals & symbols
+        if isinstance(arg.argument, AsmLiteral):
+            return AsmLiteral(arg.argument.value & 0xFFFF)
+        return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
         if arg.lhs.macro_name not in ["lo", "l"]:
             raise DecompFailure(
@@ -4044,7 +4050,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # but it seems more accurate because the same registers are used
                 # for arguments & return values. The ABI can also mix & match the
                 # rN & fN registers, which makes the "require" heuristic less powerful.
-                if data.meta.function_return or data.meta.inherited:
+                if not arch.is_mips and (
+                    data.meta.function_return or data.meta.inherited
+                ):
                     continue
 
                 likely_regs[reg] = (

@@ -85,6 +85,8 @@ LENGTH_THREE: Set[str] = {
 
 
 class PpcArch(Arch):
+    is_mips = False
+
     stack_pointer_reg = Register("r1")
     frame_pointer_reg = None
     return_address_reg = Register("lr")
@@ -199,9 +201,9 @@ class PpcArch(Arch):
         ]
     )
 
-    aliased_regs: Dict[str, Register] = {}
-
-    uses_delay_slots = False
+    aliased_regs: Dict[str, Register] = {
+        # "r0": Register("zero"),
+    }
 
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:

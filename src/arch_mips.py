@@ -140,6 +140,8 @@ DIV_MULT_INSTRUCTIONS: Set[str] = {
 
 
 class MipsArch(Arch):
+    is_mips = True
+
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")
     return_address_reg = Register("ra")
@@ -230,8 +232,6 @@ class MipsArch(Arch):
         "s8": Register("fp"),
         "r0": Register("zero"),
     }
-
-    uses_delay_slots = True
 
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:

@@ -146,6 +146,8 @@ class Instruction:
 
 
 class ArchAsm(abc.ABC):
+    is_mips: bool
+
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
     return_address_reg: Register
@@ -320,7 +322,9 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
             assert value is None
             word = parse_word(arg_elems)
             maybe_reg = Register(word)
-            if maybe_reg in arch.all_regs:
+            if word in arch.aliased_regs:
+                value = arch.aliased_regs[word]
+            elif maybe_reg in arch.all_regs:
                 value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)

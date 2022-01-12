@@ -706,8 +706,7 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
     new_function = function.bodyless_copy()
     i = 0
     while i < len(function.body):
-        # TODO: This should be an "is-MIPS" check
-        if arch.uses_delay_slots:
+        if arch.is_mips:
             repl, consumed = (
                 try_replace_div(i)
                 or try_replace_divu(i)
@@ -736,7 +735,7 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
 
 
 def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[Block]:
-    if arch.uses_delay_slots:
+    if arch.is_mips:
         verify_no_trailing_delay_slot(function, arch)
         function = normalize_likely_branches(function, arch)
 
