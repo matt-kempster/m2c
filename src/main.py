@@ -12,6 +12,7 @@ from .if_statements import get_function_text
 from .options import CodingStyle, Options
 from .parse_file import AsmData, Function, parse_file
 from .translate import (
+    Arch,
     FunctionInfo,
     GlobalInfo,
     InstrProcessingFailure,
@@ -61,7 +62,12 @@ def print_exception_as_comment(
 
 
 def run(options: Options) -> int:
-    arch = PpcArch()
+    arch: Arch
+    if options.compiler == Options.CompilerEnum.MWCC:
+        arch = PpcArch()
+    else:
+        arch = MipsArch()
+
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
     try:
@@ -422,7 +428,7 @@ def parse_flags(flags: List[str]) -> Options:
         dest="compiler",
         type=Options.CompilerEnum,
         choices=list(Options.CompilerEnum),
-        default="mwcc",
+        default="ido",
         help="Original compiler family that produced the input files. "
         "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
         "Default: mwcc",

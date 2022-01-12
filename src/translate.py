@@ -2078,7 +2078,7 @@ class InstrArgs:
 
     def hi_imm(self, index: int) -> Argument:
         arg = self.raw_arg(index)
-        if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha"):
+        if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha", "h"):
             raise DecompFailure(
                 f"Got lui instruction with macro other than %hi/@ha: {arg}"
             )

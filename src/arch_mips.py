@@ -231,6 +231,8 @@ class MipsArch(Arch):
         "r0": Register("zero"),
     }
 
+    uses_delay_slots = True
+
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
         return (

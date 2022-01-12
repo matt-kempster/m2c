@@ -201,6 +201,8 @@ class PpcArch(Arch):
 
     aliased_regs: Dict[str, Register] = {}
 
+    uses_delay_slots = False
+
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
         return PpcArch.is_conditional_return_instruction(instr) or instr.mnemonic in [

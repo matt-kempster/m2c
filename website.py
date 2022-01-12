@@ -52,7 +52,7 @@ if "source" in form:
         cmd.append("--visualize")
     if "compiler" in form:
         value = form.getfirst("compiler")
-        if value in ("ido", "gcc"):
+        if value in ("ido", "gcc", "mwcc"):
             cmd.extend(["--compiler", value])
     if "nounkinference" in form:
         cmd.append("--no-unk-inference")
@@ -204,7 +204,7 @@ h4 { margin: 0px; color: red; }
 <div class="main">
   <h4>experimental</h4>
   <div>
-    PPC assembly:
+    Assembly:
   </div>
   <div style="flex: 20;">
     <textarea name="source" spellcheck="false"></textarea>
@@ -231,6 +231,7 @@ h4 { margin: 0px; color: red; }
     <select name="compiler">
     <option value="ido">ido</option>
     <option value="gcc">gcc</option>
+    <option value="mwcc">mwcc</option>
     </select>
     </label>
     <label>Comment style:

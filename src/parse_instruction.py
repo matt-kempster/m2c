@@ -160,6 +160,8 @@ class ArchAsm(abc.ABC):
 
     aliased_regs: Dict[str, Register]
 
+    uses_delay_slots: bool
+
     @abc.abstractmethod
     def is_branch_instruction(self, instr: Instruction) -> bool:
         ...
@@ -367,7 +369,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
                 )
             return BinOp(op, value, rhs)
         elif tok == "@":
-            # A reloc (i.e. (...)@ha or (...)@l).
+            # A relocation (e.g. (...)@ha or (...)@l).
             arg_elems.pop(0)
             reloc_name = parse_word(arg_elems)
             if reloc_name in ("sda2", "sda21") and arg_elems:
@@ -379,7 +381,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
                 assert value
                 return Macro(reloc_name, value)
             else:
-                assert reloc_name in ("ha", "l", "sda2", "sda21")
+                assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
                 assert value
                 value = Macro(reloc_name, value)
         else:
