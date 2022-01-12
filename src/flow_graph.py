@@ -888,7 +888,8 @@ def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[B
         meta = InstructionMeta.missing()
         return_instr = Instruction("blr", [], meta)
         block_builder.set_label(Label(cond_return_target.target))
-        block_builder.add_instruction(return_instr)
+        for instr in arch.missing_return():
+            block_builder.add_instruction(instr)
         block_builder.new_block()
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
@@ -922,7 +923,7 @@ class BaseNode(_BaseNode, abc.ABC):
         ...
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}: {self.block.index}>"
+        return f"<{self.__class__.__name__}: {self.name()}>"
 
 
 @dataclass(eq=False, repr=False)
@@ -942,7 +943,7 @@ class BasicNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> {self.successor.block.index}",
+                f"# {self.name()} -> {self.successor.name()}",
                 " (loop)" if self.loop else "",
                 " (goto)" if self.emit_goto else "",
             ]
@@ -963,11 +964,11 @@ class ConditionalNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> ",
-                f"cond: {self.conditional_edge.block.index}",
+                f"# {self.name()} -> ",
+                f"cond: {self.conditional_edge.name()}",
                 " (loop)" if self.loop else "",
                 ", ",
-                f"def: {self.fallthrough_edge.block.index}",
+                f"def: {self.fallthrough_edge.name()}",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -992,7 +993,7 @@ class ReturnNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> ret",
+                f"# {self.name()} -> ret",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -1013,8 +1014,8 @@ class SwitchNode(BaseNode):
         return children
 
     def __str__(self) -> str:
-        targets = ", ".join(str(c.block.index) for c in self.cases)
-        return f"{self.block}\n# {self.block.index} -> {targets}"
+        targets = ", ".join(c.name() for c in self.cases)
+        return f"{self.block}\n# {self.name()} -> {targets}"
 
 
 @dataclass(eq=False, repr=False)

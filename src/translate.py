@@ -67,22 +67,24 @@ PPCCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
 class Arch(ArchAsm, abc.ABC):
-    instrs_branches: CmpInstrMap = {}
-    instrs_decctr_branches: CmpInstrMap = {}
-    instrs_destination_first: InstrMap = {}
-    instrs_float_branches: InstrSet = set()
-    instrs_float_comp: CmpInstrMap = {}
-    instrs_fn_call: InstrSet = set()
-    instrs_hi_lo: PairInstrMap = {}
     instrs_ignore: InstrSet = set()
-    instrs_implicit_destination: ImplicitInstrMap = {}
-    instrs_jumps: InstrSet = set()
-    instrs_load_update: InstrMap = {}
-    instrs_no_dest: StmtInstrMap = {}
-    instrs_ppc_compare: PPCCmpInstrMap = {}
-    instrs_source_first: InstrMap = {}
     instrs_store: StoreInstrMap = {}
     instrs_store_update: StoreInstrMap = {}
+    instrs_load_update: InstrMap = {}
+
+    instrs_branches: CmpInstrMap = {}
+    instrs_decctr_branches: CmpInstrMap = {}
+    instrs_float_branches: InstrSet = set()
+    instrs_float_comp: CmpInstrMap = {}
+    instrs_ppc_compare: PPCCmpInstrMap = {}
+    instrs_jumps: InstrSet = set()
+    instrs_fn_call: InstrSet = set()
+
+    instrs_no_dest: StmtInstrMap = {}
+    instrs_hi_lo: PairInstrMap = {}
+    instrs_source_first: InstrMap = {}
+    instrs_destination_first: InstrMap = {}
+    instrs_implicit_destination: ImplicitInstrMap = {}
 
     @abc.abstractmethod
     def function_abi(
@@ -2494,7 +2496,7 @@ def handle_la(args: InstrArgs) -> Expression:
     return add_imm(var, Literal(target.offset), stack_info)
 
 
-def handle_or(args: InstrArgs, left: Expression, right: Expression) -> Expression:
+def handle_or(left: Expression, right: Expression) -> Expression:
     if (
         isinstance(left, Literal)
         and isinstance(right, Literal)

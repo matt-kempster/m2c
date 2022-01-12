@@ -3,7 +3,7 @@
 import abc
 from dataclasses import dataclass, replace
 import string
-from typing import List, Optional, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 from .error import DecompFailure
 
@@ -104,17 +104,104 @@ class JumpTarget:
 
 
 Argument = Union[
-    Register,
-    AsmGlobalSymbol,
-    AsmAddressMode,
-    Macro,
-    AsmLiteral,
-    BinOp,
-    JumpTarget,
+    Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
 
-# valid_word = string.ascii_letters + string.digits + "_"
-valid_word = string.ascii_letters + string.digits + "_" + "$"
+
+@dataclass(frozen=True)
+class InstructionMeta:
+    emit_goto: bool
+    filename: str
+    lineno: int
+    synthetic: bool
+
+    @staticmethod
+    def missing() -> "InstructionMeta":
+        return InstructionMeta(
+            emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
+        )
+
+    def loc_str(self) -> str:
+        adj = "near" if self.synthetic else "at"
+        return f"{adj} {self.filename} line {self.lineno}"
+
+
+@dataclass(frozen=True)
+class Instruction:
+    mnemonic: str
+    args: List[Argument]
+    meta: InstructionMeta
+
+    @staticmethod
+    def derived(
+        mnemonic: str, args: List[Argument], old: "Instruction"
+    ) -> "Instruction":
+        return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
+
+    def __str__(self) -> str:
+        if not self.args:
+            return self.mnemonic
+        args = ", ".join(str(arg) for arg in self.args)
+        return f"{self.mnemonic} {args}"
+
+
+class ArchAsm(abc.ABC):
+    stack_pointer_reg: Register
+    frame_pointer_reg: Optional[Register]
+    return_address_reg: Register
+
+    base_return_regs: List[Register]
+    all_return_regs: List[Register]
+    argument_regs: List[Register]
+    simple_temp_regs: List[Register]
+    temp_regs: List[Register]
+    saved_regs: List[Register]
+    all_regs: List[Register]
+
+    aliased_regs: Dict[str, Register]
+
+    @abc.abstractmethod
+    def is_branch_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_branch_likely_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def get_branch_target(self, instr: Instruction) -> JumpTarget:
+        ...
+
+    @abc.abstractmethod
+    def is_conditional_return_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_jump_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_delay_slot_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_return_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_jumptable_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def missing_return(self) -> List[Instruction]:
+        ...
+
+    @abc.abstractmethod
+    def normalize_instruction(self, instr: Instruction) -> Instruction:
+        ...
+
+
+valid_word = string.ascii_letters + string.digits + "_$"
 valid_number = "-xX" + string.hexdigits
 
 
@@ -155,7 +242,7 @@ def constant_fold(arg: Argument) -> Argument:
 
 
 # Main parser.
-def parse_arg_elems(arg_elems: List[str], arch: "ArchAsm") -> Optional[Argument]:
+def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
@@ -175,13 +262,11 @@ def parse_arg_elems(arg_elems: List[str], arch: "ArchAsm") -> Optional[Argument]
             word = parse_word(arg_elems)
             reg = word[1:]
             if "$" in reg:
-                # If there are at least two $'s in the word, it's a symbol
+                # If there is a second $ in the word, it's a symbol
                 value = AsmGlobalSymbol(word)
+            elif reg in arch.aliased_regs:
+                value = arch.aliased_regs[reg]
             else:
-                if reg == "s8":
-                    reg = "fp"
-                if reg == "r0":
-                    reg = "zero"
                 value = Register(reg)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
@@ -232,8 +317,9 @@ def parse_arg_elems(arg_elems: List[str], arch: "ArchAsm") -> Optional[Argument]
             # Global symbol.
             assert value is None
             word = parse_word(arg_elems)
-            if Register(word) in arch.all_regs:
-                value = Register(word)
+            maybe_reg = Register(word)
+            if maybe_reg in arch.all_regs:
+                value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)
         elif tok == '"' and arg_elems[-1] == '"':
@@ -302,100 +388,9 @@ def parse_arg_elems(arg_elems: List[str], arch: "ArchAsm") -> Optional[Argument]
     return value
 
 
-def parse_arg(arg: str, arch: "ArchAsm") -> Optional[Argument]:
+def parse_arg(arg: str, arch: ArchAsm) -> Optional[Argument]:
     arg_elems: List[str] = list(arg)
     return parse_arg_elems(arg_elems, arch)
-
-
-@dataclass(frozen=True)
-class InstructionMeta:
-    emit_goto: bool
-    filename: str
-    lineno: int
-    synthetic: bool
-
-    @staticmethod
-    def missing() -> "InstructionMeta":
-        return InstructionMeta(
-            emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
-        )
-
-    def loc_str(self) -> str:
-        adj = "near" if self.synthetic else "at"
-        return f"{adj} {self.filename} line {self.lineno}"
-
-
-@dataclass(frozen=True)
-class Instruction:
-    mnemonic: str
-    args: List[Argument]
-    meta: InstructionMeta
-
-    @staticmethod
-    def derived(
-        mnemonic: str, args: List[Argument], old: "Instruction"
-    ) -> "Instruction":
-        return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
-
-    def __str__(self) -> str:
-        if not self.args:
-            return self.mnemonic
-        args = ", ".join(str(arg) for arg in self.args)
-        return f"{self.mnemonic} {args}"
-
-
-class ArchAsm(abc.ABC):
-    stack_pointer_reg: Register
-    frame_pointer_reg: Optional[Register]
-    return_address_reg: Register
-
-    base_return_regs: List[Register]
-    all_return_regs: List[Register]
-    argument_regs: List[Register]
-    simple_temp_regs: List[Register]
-    temp_regs: List[Register]
-    saved_regs: List[Register]
-    all_regs: List[Register]
-
-    @abc.abstractmethod
-    def is_branch_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_branch_likely_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def get_branch_target(self, instr: Instruction) -> JumpTarget:
-        ...
-
-    @abc.abstractmethod
-    def is_jump_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_delay_slot_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_return_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_conditional_return_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_jumptable_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def missing_return(self) -> List[Instruction]:
-        ...
-
-    @abc.abstractmethod
-    def normalize_instruction(self, instr: Instruction) -> Instruction:
-        ...
 
 
 def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instruction:
@@ -412,5 +407,5 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         )
         instr = Instruction(mnemonic, args, meta)
         return arch.normalize_instruction(instr)
-    except:
+    except Exception:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")

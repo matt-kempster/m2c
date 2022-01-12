@@ -199,6 +199,8 @@ class PpcArch(Arch):
         ]
     )
 
+    aliased_regs: Dict[str, Register] = {}
+
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
         return PpcArch.is_conditional_return_instruction(instr) or instr.mnemonic in [
@@ -398,8 +400,8 @@ class PpcArch(Arch):
         "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
         # Bit arithmetic
-        "ori": lambda a: handle_or(a, a.reg(1), a.unsigned_imm(2)),
-        "oris": lambda a: handle_or(a, a.reg(1), a.shifted_imm(2)),
+        "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
+        "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
         "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
         "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
