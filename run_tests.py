@@ -157,6 +157,12 @@ def create_e2e_tests(
     return cases
 
 
+def find_tests_basic(asm_dir: Path) -> Iterator[List[Path]]:
+    # This has been tested with doldecomp projects for SMS, Melee, and SMB1
+    for asm_file in asm_dir.rglob("*.s"):
+        yield [asm_file]
+
+
 def find_tests_oot(asm_dir: Path) -> Iterator[List[Path]]:
     rodata_suffixes = [".rodata.s", ".rodata2.s"]
     for asm_file in asm_dir.rglob("*.s"):
@@ -225,6 +231,14 @@ def create_project_tests(
             "--stack-structs",
             "--unk-underscore",
             "--pointer-style=left",
+        ]
+    else:
+        file_iter = find_tests_basic(asm_dir)
+        base_flags = [
+            "--incbin-dir",
+            str(base_dir),
+            "--stack-structs",
+            "--unk-underscore",
         ]
 
     for file_list in file_iter:
