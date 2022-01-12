@@ -784,10 +784,10 @@ def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[B
         # anonymous ("jr" instructions create new anonymous blocks, so if it's
         # not we must be missing a "jr $ra").
         label = block_builder.curr_label.name
-        print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
-        meta = InstructionMeta.missing()
-        block_builder.add_instruction(Instruction("jr", [Register("ra")], meta))
-        block_builder.add_instruction(Instruction("nop", [], meta))
+        return_instrs = arch.missing_return()
+        print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
+        for instr in return_instrs:
+            block_builder.add_instruction(instr)
         block_builder.new_block()
 
     # Throw away whatever is past the last "jr $ra" and return what we have.
@@ -821,7 +821,7 @@ class BaseNode(_BaseNode, abc.ABC):
         ...
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}: {self.block.index}>"
+        return f"<{self.__class__.__name__}: {self.name()}>"
 
 
 @dataclass(eq=False, repr=False)
@@ -841,7 +841,7 @@ class BasicNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> {self.successor.block.index}",
+                f"# {self.name()} -> {self.successor.name()}",
                 " (loop)" if self.loop else "",
                 " (goto)" if self.emit_goto else "",
             ]
@@ -862,11 +862,11 @@ class ConditionalNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> ",
-                f"cond: {self.conditional_edge.block.index}",
+                f"# {self.name()} -> ",
+                f"cond: {self.conditional_edge.name()}",
                 " (loop)" if self.loop else "",
                 ", ",
-                f"def: {self.fallthrough_edge.block.index}",
+                f"def: {self.fallthrough_edge.name()}",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -891,7 +891,7 @@ class ReturnNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> ret",
+                f"# {self.name()} -> ret",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -912,8 +912,8 @@ class SwitchNode(BaseNode):
         return children
 
     def __str__(self) -> str:
-        targets = ", ".join(str(c.block.index) for c in self.cases)
-        return f"{self.block}\n# {self.block.index} -> {targets}"
+        targets = ", ".join(c.name() for c in self.cases)
+        return f"{self.block}\n# {self.name()} -> {targets}"
 
 
 @dataclass(eq=False, repr=False)
@@ -1008,12 +1008,12 @@ def build_graph_from_block(
         # - a ConditionalNode.
         jump = jumps[0]
 
-        if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
+        if arch.is_return_instruction(jump):
             new_node = ReturnNode(block, False, index=0, terminal=terminal_node)
             nodes.append(new_node)
             return new_node
 
-        if jump.mnemonic == "jr":
+        if arch.is_jumptable_instruction(jump):
             new_node = SwitchNode(block, False, [])
             nodes.append(new_node)
 
@@ -1034,7 +1034,7 @@ def build_graph_from_block(
                         jtbl_names.append(arg.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
-                    f"Unable to determine jump table for jr instruction {jump.meta.loc_str()}.\n\n"
+                    f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable in the same block as\n"
                     'the instruction, which has a name starting with "jtbl"/"jpt_".'
                 )
@@ -1042,7 +1042,7 @@ def build_graph_from_block(
             jtbl_name = jtbl_names[0]
             if jtbl_name not in asm_data.values:
                 raise DecompFailure(
-                    f"Found jr instruction {jump.meta.loc_str()}, but the "
+                    f"Found {jump.mnemonic} instruction {jump.meta.loc_str()}, but the "
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file(s), or in an additional file.\n"
