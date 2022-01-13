@@ -597,10 +597,10 @@ class PpcArch(Arch):
     }
 
     instrs_ppc_compare: PPCCmpInstrMap = {
-        "cmpw": lambda a, op: BinaryOp.spcmp(a.reg(0), op, a.reg(1)),
-        "cmpwi": lambda a, op: BinaryOp.spcmp(a.reg(0), op, a.imm(1)),
-        "cmplw": lambda a, op: BinaryOp.upcmp(a.reg(0), op, a.reg(1)),
-        "cmplwi": lambda a, op: BinaryOp.upcmp(a.reg(0), op, a.imm(1)),
+        "cmpw": lambda a, op: BinaryOp.sintptr_cmp(a.reg(0), op, a.reg(1)),
+        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(0), op, a.imm(1)),
+        "cmplw": lambda a, op: BinaryOp.uintptr_cmp(a.reg(0), op, a.reg(1)),
+        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(0), op, a.imm(1)),
         # TODO: There is a difference in how these two instructions handle NaN
         # TODO: Assert that the first arg is cr0
         "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),

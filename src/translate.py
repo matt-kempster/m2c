@@ -816,7 +816,7 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def spcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def sintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_type(left, Type.sintptr(), False),
             op=op,
@@ -829,7 +829,7 @@ class BinaryOp(Condition):
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
 
     @staticmethod
-    def upcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def uintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
             left=as_type(left, Type.uintptr(), False),
             op=op,
@@ -3446,7 +3446,6 @@ def output_regs_for_instr(
             return [reg.rhs]
         if not isinstance(reg, Register):
             # We'll deal with this error later
-            assert 0
             return []
         return [reg]
 
@@ -4046,7 +4045,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             likely_regs: Dict[Register, bool] = {}
             for reg, data in regs.contents.items():
-                # PPC TODO: This is a much stricter filter than we use for MIPS,
+                # PPC: This is a much stricter filter than we use for MIPS,
                 # but it seems more accurate because the same registers are used
                 # for arguments & return values. The ABI can also mix & match the
                 # rN & fN registers, which makes the "require" heuristic less powerful.
