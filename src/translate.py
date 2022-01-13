@@ -2752,15 +2752,9 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
 def make_storex(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     size = type.get_size_bytes()
     assert size is not None
-    source = args.reg(0)
 
-    # rS, rA, rB
-    if args.reg_ref(1) == Register("r0"):
-        # rA is 0, thus load from rB only
-        ptr = args.reg(2)
-    else:
-        # (rA + rB)
-        ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
+    source = args.reg(0)
+    ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
 
     # TODO: Can we assume storex's are never used to save registers to the stack?
     dest = deref(ptr, args.regs, args.stack_info, size=size, store=True)
@@ -3379,14 +3373,7 @@ def handle_loadx(args: InstrArgs, type: Type) -> Expression:
     size = type.get_size_bytes()
     assert size is not None
 
-    # rD, rA, rB
-    if args.reg_ref(1) == Register("r0"):
-        # rA is 0, thus load from rB only
-        ptr = args.reg(2)
-    else:
-        # (rA + rB)
-        ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
-
+    ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
     expr = deref(ptr, args.regs, args.stack_info, size=size)
     # TODO: Do we need to check for float constants here, like in `handle_load`?
     return as_type(expr, type, silent=True)

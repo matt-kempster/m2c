@@ -201,9 +201,7 @@ class PpcArch(Arch):
         ]
     )
 
-    aliased_regs: Dict[str, Register] = {
-        # "r0": Register("zero"),
-    }
+    aliased_regs: Dict[str, Register] = {}
 
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
