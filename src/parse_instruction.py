@@ -52,7 +52,7 @@ def asm_section_global_symbol(section_name: str, addend: int) -> AsmSectionGloba
 @dataclass(frozen=True)
 class Macro:
     macro_name: str
-    argument: "Argument"  # forward-declare
+    argument: "Argument"
 
     def __str__(self) -> str:
         return f"%{self.macro_name}({self.argument})"
@@ -71,7 +71,7 @@ class AsmLiteral:
 
 @dataclass(frozen=True)
 class AsmAddressMode:
-    lhs: Union[AsmLiteral, Macro]
+    lhs: "Argument"
     rhs: Register
 
     def lhs_as_literal(self) -> int:
@@ -283,6 +283,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
             # Get the argument of the macro (which must exist).
             m = parse_arg_elems(arg_elems, arch)
             assert m is not None
+            m = constant_fold(m)
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
             value = Macro(macro_name, m)
@@ -295,8 +296,6 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
             value = AsmLiteral(parse_number(arg_elems))
         elif tok == "(":
             # Address mode or binary operation.
-            # There was possibly an offset, so value could be a AsmLiteral or Macro.
-            assert value is None or isinstance(value, (AsmLiteral, Macro))
             expect("(")
             # Get what is being dereferenced.
             rhs = parse_arg_elems(arg_elems, arch)
@@ -304,6 +303,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
             expect(")")
             if isinstance(rhs, BinOp):
                 # Binary operation.
+                assert value is None
                 value = constant_fold(rhs)
             else:
                 # Address mode.
@@ -318,27 +318,27 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
                 value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)
-        elif tok in ">+-&*":
+        elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
-            assert isinstance(value, (AsmLiteral, AsmGlobalSymbol))
+            assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
 
-            if tok == ">":
-                expect(">")
-                expect(">")
-                op = ">>"
+            if tok in "<>":
+                # bitshifts
+                expect(tok)
+                expect(tok)
+                op = tok + tok
             else:
                 op = expect("&+-*")
 
             rhs = parse_arg_elems(arg_elems, arch)
-            # These operators can only use constants as the right-hand-side.
-            if rhs and isinstance(rhs, BinOp) and rhs.op == "*":
+            assert rhs is not None
+            if isinstance(rhs, BinOp) and rhs.op == "*":
                 rhs = constant_fold(rhs)
             if isinstance(rhs, BinOp) and isinstance(constant_fold(rhs), AsmLiteral):
                 raise DecompFailure(
                     "Math is too complicated for mips_to_c. Try adding parentheses."
                 )
-            assert isinstance(rhs, AsmLiteral)
-            if isinstance(value, AsmSectionGlobalSymbol):
+            if isinstance(rhs, AsmLiteral) and isinstance(value, AsmSectionGlobalSymbol):
                 return asm_section_global_symbol(
                     value.section_name, value.addend + rhs.value
                 )
@@ -349,9 +349,11 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
     return value
 
 
-def parse_arg(arg: str, arch: ArchAsm) -> Optional[Argument]:
+def parse_arg(arg: str, arch: ArchAsm) -> Argument:
     arg_elems: List[str] = list(arg)
-    return parse_arg_elems(arg_elems, arch)
+    ret = parse_arg_elems(arg_elems, arch)
+    assert ret is not None
+    return constant_fold(ret)
 
 
 def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instruction:
@@ -360,12 +362,11 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         line = line.strip()
         mnemonic, _, args_str = line.partition(" ")
         # Parse arguments.
-        args: List[Argument] = list(
-            filter(
-                None,
-                [parse_arg(arg_str.strip(), arch) for arg_str in args_str.split(",")],
-            )
-        )
+        args: List[Argument] = []
+        if args_str.strip():
+            args = [
+                parse_arg(arg_str.strip(), arch) for arg_str in args_str.split(",")
+            ]
         instr = Instruction(mnemonic, args, meta)
         return arch.normalize_instruction(instr)
     except Exception:

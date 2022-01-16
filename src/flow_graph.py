@@ -20,9 +20,11 @@ from .options import Formatter
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     ArchAsm,
+    Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
+    BinOp,
     Instruction,
     InstructionMeta,
     JumpTarget,
@@ -318,32 +320,32 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
 
     mod_p2_pattern = make_pattern(
         "bgez $x, .A",
-        "andi $y, $x, LIT",
+        "andi $y, $x, N",
         "beqz $y, .A",
         "nop",
-        "addiu $y, $y, LIT",
+        "addiu $y, $y, (-1 - N)",
         ".A:",
     )
 
     div_p2_pattern_1 = make_pattern(
         "bgez $x, .A",
-        "sra $y, $x, LIT",
-        "addiu $at, $x, LIT",
-        "sra $y, $at, LIT",
+        "sra $y, $x, N",
+        "addiu $at, $x, ((1 << N) - 1)",
+        "sra $y, $at, N",
         ".A:",
     )
 
     div_p2_pattern_2 = make_pattern(
         "bgez $x, .A",
         "move $at, $x",
-        "addiu $at, $x, LIT",
+        "addiu $at, $x, M",
         ".A:",
-        "sra $x, $at, LIT",
+        "sra $x, $at, N",
     )
 
     div_2_s16_pattern = make_pattern(
-        "sll $x, $x, LIT",
-        "sra $y, $x, LIT",
+        "sll $x, $x, N",
+        "sra $y, $x, N",
         "srl $x, $x, 0x1f",
         "addu $y, $y, $x",
         "sra $y, $y, 1",
@@ -417,7 +419,7 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
     trapuv_pattern = make_pattern(
         "lui $x, 0xfffa",
         "move $y, $sp",
-        "addiu $sp, $sp, LIT",
+        "addiu $sp, $sp, N",
         "ori $x, $x, 0x5a5a",
         ".loop:",
         "addiu $y, $y, -8",
@@ -429,6 +431,7 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
     def try_match(starti: int, pattern: Pattern) -> Optional[List[BodyPart]]:
         symbolic_registers: Dict[str, Register] = {}
         symbolic_labels: Dict[str, str] = {}
+        symbolic_literals: Dict[str, int] = {}
 
         def match_reg(actual: Register, exp: Register) -> bool:
             if len(exp.register_name) <= 1:
@@ -439,6 +442,24 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
             elif exp.register_name != actual.register_name:
                 return False
             return True
+
+        def eval_math(e: Argument) -> int:
+            if isinstance(e, AsmLiteral):
+                return e.value
+            if isinstance(e, BinOp):
+                if e.op == "+":
+                    return eval_math(e.lhs) + eval_math(e.rhs)
+                if e.op == "-":
+                    return eval_math(e.lhs) - eval_math(e.rhs)
+                if e.op == "<<":
+                    return eval_math(e.lhs) << eval_math(e.rhs)
+                assert False, f"bad binop in math pattern: {e}"
+            elif isinstance(e, AsmGlobalSymbol):
+                assert e.symbol_name in symbolic_literals, \
+                        f"undefined variable in math pattern: {e.symbol_name}"
+                return symbolic_literals[e.symbol_name]
+            else:
+                assert False, f"bad pattern part in math pattern: {e}"
 
         def match_one(actual: BodyPart, exp: PatternPart) -> bool:
             if exp is None:
@@ -464,8 +485,12 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
                         if not isinstance(a, Register) or not match_reg(a, e):
                             return False
                     elif isinstance(e, AsmGlobalSymbol):
-                        if e.symbol_name == "LIT":
+                        if e.symbol_name.isupper():
                             if not isinstance(a, AsmLiteral):
+                                return False
+                            if e.symbol_name not in symbolic_literals:
+                                symbolic_literals[e.symbol_name] = a.value
+                            elif symbolic_literals[e.symbol_name] != a.value:
                                 return False
                         else:
                             if (
@@ -486,6 +511,9 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
                         if e.target not in symbolic_labels:
                             symbolic_labels[e.target] = a.target
                         elif symbolic_labels[e.target] != a.target:
+                            return False
+                    elif isinstance(e, BinOp):
+                        if not isinstance(a, AsmLiteral) or a.value != eval_math(e):
                             return False
                     else:
                         assert False, f"bad pattern part: {exp} contains {type(e)}"
@@ -543,8 +571,6 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
         sll1 = typing.cast(Instruction, match[0])
         sra1 = typing.cast(Instruction, match[1])
         sra = typing.cast(Instruction, match[4])
-        if sll1.args[2] != sra1.args[2]:
-            return None
         div = Instruction.derived(
             "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
         )
