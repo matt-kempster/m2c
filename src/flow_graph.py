@@ -16,7 +16,7 @@ from typing import (
 )
 
 from .error import DecompFailure
-from .options import Formatter
+from .options import Formatter, Target
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     ArchAsm,
@@ -706,7 +706,7 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
     new_function = function.bodyless_copy()
     i = 0
     while i < len(function.body):
-        if arch.is_mips:
+        if arch.arch == Target.ArchEnum.MIPS:
             repl, consumed = (
                 try_replace_div(i)
                 or try_replace_divu(i)
@@ -722,20 +722,22 @@ def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
                 or try_replace_trapuv(i)
                 or no_replacement(i)
             )
-        else:
+        elif arch.arch == Target.ArchEnum.PPC:
             repl, consumed = (
                 try_replace_ppc_fcmpo_cror(i)
                 or try_replace_ppc_final_b(i)
                 or try_replace_ppc_double_not(i)
                 or no_replacement(i)
             )
+        else:
+            repl, consumed = no_replacement(i)
         new_function.body.extend(repl)
         i += consumed
     return new_function
 
 
 def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[Block]:
-    if arch.is_mips:
+    if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function, arch)
         function = normalize_likely_branches(function, arch)
 

@@ -33,7 +33,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import CodingStyle, Formatter, Options
+from .options import CodingStyle, Formatter, Options, Target
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     ArchAsm,
@@ -242,7 +242,7 @@ class StackInfo:
         return prefix + (f"_{counter}" if counter > 1 else "")
 
     def in_subroutine_arg_region(self, location: int) -> bool:
-        if not self.global_info.arch.is_mips:
+        if self.global_info.arch.arch == Target.ArchEnum.PPC:
             return False
         if self.is_leaf:
             return False
@@ -255,7 +255,7 @@ class StackInfo:
             return True
         # PPC saves LR in the header of the previous stack frame
         if (
-            not self.global_info.arch.is_mips
+            self.global_info.arch.arch == Target.ArchEnum.PPC
             and location == self.allocated_stack_size + 4
         ):
             return True
@@ -2038,7 +2038,7 @@ class InstrArgs:
         ret = self.regs[reg]
 
         # PPC: FPR's hold doubles (64 bits), so we don't need to do anything special
-        if not self.stack_info.global_info.arch.is_mips:
+        if self.stack_info.global_info.arch.arch == Target.ArchEnum.PPC:
             return ret
 
         # MIPS: Look at the paired FPR to get the full 64-bit value
@@ -4036,7 +4036,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 # but it seems more accurate because the same registers are used
                 # for arguments & return values. The ABI can also mix & match the
                 # rN & fN registers, which makes the "require" heuristic less powerful.
-                if not arch.is_mips and (
+                if arch.arch == Target.ArchEnum.PPC and (
                     data.meta.function_return or data.meta.inherited
                 ):
                     continue
@@ -4383,6 +4383,7 @@ class FunctionInfo:
 class GlobalInfo:
     asm_data: AsmData
     arch: Arch
+    target: Target
     local_functions: Set[str]
     typemap: TypeMap
     typepool: TypePool
@@ -4395,12 +4396,12 @@ class GlobalInfo:
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
-            try:
-                demangled_symbol: Optional[CxxSymbol] = demangle_codewarrior_parse(
-                    sym_name
-                )
-            except ValueError:
-                demangled_symbol = None
+            demangled_symbol: Optional[CxxSymbol] = None
+            if self.target.language == Target.LanguageEnum.CXX:
+                try:
+                    demangled_symbol = demangle_codewarrior_parse(sym_name)
+                except ValueError:
+                    pass
 
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
                 symbol_name=sym_name,

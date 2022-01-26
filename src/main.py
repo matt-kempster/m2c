@@ -9,7 +9,7 @@ from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
-from .options import CodingStyle, Options
+from .options import CodingStyle, Options, Target
 from .parse_file import AsmData, Function, parse_file
 from .translate import (
     Arch,
@@ -63,10 +63,12 @@ def print_exception_as_comment(
 
 def run(options: Options) -> int:
     arch: Arch
-    if options.compiler == Options.CompilerEnum.MWCC:
+    if options.target.arch == Target.ArchEnum.MIPS:
+        arch = MipsArch()
+    elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     else:
-        arch = MipsArch()
+        raise ValueError("Invalid target arch: {}", options.target.arch)
 
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
@@ -117,7 +119,9 @@ def run(options: Options) -> int:
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
     )
-    global_info = GlobalInfo(asm_data, arch, function_names, typemap, typepool)
+    global_info = GlobalInfo(
+        asm_data, arch, options.target, function_names, typemap, typepool
+    )
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
@@ -281,6 +285,43 @@ def parse_flags(flags: List[str]) -> Options:
         help="Add search path for loading .incbin directives in the input asm",
     )
 
+    group = parser.add_argument_group("Target Options")
+    group.add_argument(
+        "--target-arch",
+        dest="target_arch",
+        type=Target.ArchEnum,
+        choices=list(Target.ArchEnum),
+        default="ppc",
+        help="Assembly architecture. Default: ppc",
+    )
+    group.add_argument(
+        "--target-compiler",
+        dest="target_compiler",
+        type=Target.CompilerEnum,
+        choices=list(Target.CompilerEnum),
+        default="mwcc",
+        help="Original compiler family that produced the input files. "
+        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
+        "Default: mwcc",
+    )
+    group.add_argument(
+        "--compiler",
+        dest="target_compiler",
+        type=Target.CompilerEnum,
+        choices=list(Target.CompilerEnum),
+        help=argparse.SUPPRESS,  # For backwards compatibility; now use `--target-compiler`
+    )
+    group.add_argument(
+        "--target-language",
+        dest="target_language",
+        type=Target.LanguageEnum,
+        choices=list(Target.LanguageEnum),
+        default="c++",
+        help="Original source language that was compiled into the input files. "
+        "`c++` enables additional features, such as demangling. "
+        "Default: c++",
+    )
+
     group = parser.add_argument_group("Output Options")
     group.add_argument(
         "-f",
@@ -424,16 +465,6 @@ def parse_flags(flags: List[str]) -> Options:
         "output, particularly when decompiling multiple functions. Default: 2",
     )
     group.add_argument(
-        "--compiler",
-        dest="compiler",
-        type=Options.CompilerEnum,
-        choices=list(Options.CompilerEnum),
-        default="ido",
-        help="Original compiler family that produced the input files. "
-        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
-        "Default: mwcc",
-    )
-    group.add_argument(
         "--stop-on-error",
         dest="stop_on_error",
         action="store_true",
@@ -529,6 +560,12 @@ def parse_flags(flags: List[str]) -> Options:
     )
     filenames = args.filename + args.rodata_filenames
 
+    target = Target(
+        arch=args.target_arch,
+        compiler=args.target_compiler,
+        language=args.target_language,
+    )
+
     # Backwards compatibility: giving a function index/name as a final argument, or "all"
     assert filenames, "checked by argparse, nargs='+'"
     if filenames[-1] == "all":
@@ -574,7 +611,7 @@ def parse_flags(flags: List[str]) -> Options:
         sanitize_tracebacks=args.sanitize_tracebacks,
         valid_syntax=args.valid_syntax,
         global_decls=args.global_decls,
-        compiler=args.compiler,
+        target=target,
         print_stack_structs=args.print_stack_structs,
         unk_inference=args.unk_inference,
         passes=args.passes,

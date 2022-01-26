@@ -6,6 +6,7 @@ import string
 from typing import Dict, List, Optional, Set, Union
 
 from .error import DecompFailure
+from .options import Target
 
 
 @dataclass(frozen=True)
@@ -146,7 +147,7 @@ class Instruction:
 
 
 class ArchAsm(abc.ABC):
-    is_mips: bool
+    arch: Target.ArchEnum
 
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
@@ -161,8 +162,6 @@ class ArchAsm(abc.ABC):
     all_regs: List[Register]
 
     aliased_regs: Dict[str, Register]
-
-    uses_delay_slots: bool
 
     @abc.abstractmethod
     def is_branch_instruction(self, instr: Instruction) -> bool:

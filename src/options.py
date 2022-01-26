@@ -30,12 +30,27 @@ class CodingStyle:
 
 
 @dataclass
-class Options:
+class Target:
+    class ArchEnum(ChoicesEnum):
+        MIPS = "mips"
+        PPC = "ppc"
+
     class CompilerEnum(ChoicesEnum):
         IDO = "ido"
         GCC = "gcc"
         MWCC = "mwcc"
 
+    class LanguageEnum(ChoicesEnum):
+        C = "c"
+        CXX = "c++"
+
+    arch: ArchEnum
+    compiler: CompilerEnum
+    language: LanguageEnum
+
+
+@dataclass
+class Options:
     class GlobalDeclsEnum(ChoicesEnum):
         ALL = "all"
         USED = "used"
@@ -64,7 +79,7 @@ class Options:
     sanitize_tracebacks: bool
     valid_syntax: bool
     global_decls: GlobalDeclsEnum
-    compiler: CompilerEnum
+    target: Target
     print_stack_structs: bool
     unk_inference: bool
     passes: int

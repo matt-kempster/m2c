@@ -6,7 +6,7 @@ from typing import (
     Tuple,
 )
 from .error import DecompFailure
-from .types import FunctionSignature, Type
+from .options import Target
 from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
@@ -69,6 +69,7 @@ from .translate import (
     make_store,
     void_fn_op,
 )
+from .types import FunctionSignature, Type
 
 
 LENGTH_TWO: Set[str] = {
@@ -140,7 +141,7 @@ DIV_MULT_INSTRUCTIONS: Set[str] = {
 
 
 class MipsArch(Arch):
-    is_mips = True
+    arch = Target.ArchEnum.MIPS
 
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")

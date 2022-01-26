@@ -6,6 +6,7 @@ from typing import (
     Tuple,
 )
 from .error import DecompFailure
+from .options import Target
 from .parse_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
@@ -85,7 +86,7 @@ LENGTH_THREE: Set[str] = {
 
 
 class PpcArch(Arch):
-    is_mips = False
+    arch = Target.ArchEnum.PPC
 
     stack_pointer_reg = Register("r1")
     frame_pointer_reg = None

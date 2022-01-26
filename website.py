@@ -50,10 +50,32 @@ if "source" in form:
             cmd.extend(["--globals", value])
     if "visualize" in form:
         cmd.append("--visualize")
-    if "compiler" in form:
-        value = form.getfirst("compiler")
-        if value in ("ido", "gcc", "mwcc"):
-            cmd.extend(["--compiler", value])
+    if "target" in form:
+        value = form.getfirst("target")
+        if value == "ppc-mwcc-c":
+            cmd.extend([
+                "--target-arch", "ppc",
+                "--target-compiler", "mwcc",
+                "--target-language", "c",
+            ])
+        elif value == "ppc-mwcc-c++":
+            cmd.extend([
+                "--target-arch", "ppc",
+                "--target-compiler", "mwcc",
+                "--target-language", "c++",
+            ])
+        elif value == "mips-ido-c":
+            cmd.extend([
+                "--target-arch", "mips",
+                "--target-compiler", "ido",
+                "--target-language", "c",
+            ])
+        elif value == "mips-gcc-c":
+            cmd.extend([
+                "--target-arch", "mips",
+                "--target-compiler", "gcc",
+                "--target-language", "c",
+            ])
     if "nounkinference" in form:
         cmd.append("--no-unk-inference")
     if "stackstructs" in form:
@@ -227,11 +249,12 @@ h4 { margin: 0px; color: red; }
     <option value="none">none</option>
     </select>
     </label>
-    <label>Arch &amp; compiler:
-    <select name="compiler">
-    <option value="mwcc">PPC, mwcc</option>
-    <option value="ido">MIPS, ido</option>
-    <option value="gcc">MIPS, gcc</option>
+    <label>Target arch, compiler, &amp; language:
+    <select name="target">
+    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
+    <option value="ppc-mwcc-c">PPC, MWCC, C</option>
+    <option value="mips-ido-c">MIPS, IDO, C</option>
+    <option value="mips-gcc-c">MIPS, GCC, C</option>
     </select>
     </label>
     <label>Comment style:
@@ -344,7 +367,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "nounkinference", "stackstructs"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "target", "nounkinference", "stackstructs"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];
