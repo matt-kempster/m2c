@@ -4225,7 +4225,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
             if mnemonic.endswith("."):
-                # PPC; unimplemented instructions that modify CR0
+                # PPC: unimplemented instructions that modify CR0
                 set_reg(Register("cr0_eq"), expr)
                 set_reg(Register("cr0_gt"), expr)
                 set_reg(Register("cr0_lt"), expr)

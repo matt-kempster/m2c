@@ -126,6 +126,7 @@ class PpcArch(Arch):
         + [
             Register(r)
             for r in [
+                "r0",
                 "f0",
                 "cr0_gt",
                 "cr0_lt",
@@ -138,9 +139,10 @@ class PpcArch(Arch):
     saved_regs = [
         Register(r)
         for r in [
-            # PPC: $r2 & $r13 are used for the small-data region, and are like $gp in MIPS
-            "lr",
             # TODO: Some of the bits in CR are required to be saved (but usually the whole reg is?)
+            "lr",
+            # $r2 & $r13 are used for the small-data region, and are like $gp in MIPS
+            "r2",
             "r13",
             "r14",
             "r15",
@@ -183,12 +185,12 @@ class PpcArch(Arch):
     all_regs = (
         saved_regs
         + temp_regs
+        + [stack_pointer_reg]
         + [
             Register(r)
             for r in [
-                "r0",
-                "r1",
-                "r2",
+                # TODO: These `crX` registers are only used to parse instructions, but
+                # the instructions that use these registers aren't implemented yet.
                 "cr0",
                 "cr1",
                 "cr2",
@@ -621,12 +623,11 @@ class PpcArch(Arch):
         known_slots: List[AbiArgSlot] = []
         candidate_slots: List[AbiArgSlot] = []
 
-        # TODO: We don't actually know the order
+        # $rX & $fX regs can be interspersed in function args, unlike in the MIPS O32 ABI
         intptr_regs = [r for r in PpcArch.argument_regs if r.register_name[0] != "f"]
         float_regs = [r for r in PpcArch.argument_regs if r.register_name[0] == "f"]
 
         if fn_sig.params_known:
-            # TODO: Parse function signatures
             for ind, param in enumerate(fn_sig.params):
                 # TODO: Support passing parameters on the stack
                 param_type = param.type.decay()

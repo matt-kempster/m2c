@@ -7,7 +7,8 @@
 #   $ ./demangle_cw.py 'check__3FooCFUlR3Bar'
 #   Foo::check (long unsigned, Bar &) const
 #
-# Based on `demangler.cs` by arookas, which was provided under the 3-clause BSD License below:
+# This file, like the rest of this repository, is licensed under the GPL v3. It is based
+# on `demangler.cs` by arookas, which was provided under the 3-clause BSD License below:
 #
 #   https://gist.github.com/arookas/0c0cd842c9ca836d7a9ed06a655b1a22
 #
