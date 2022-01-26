@@ -1,4 +1,5 @@
 from typing import (
+    ClassVar,
     Dict,
     List,
     Optional,
@@ -8,6 +9,8 @@ from typing import (
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
+    Argument,
+    AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
@@ -272,6 +275,42 @@ class PpcArch(Arch):
     def missing_return() -> List[Instruction]:
         return [Instruction("blr", [], InstructionMeta.missing())]
 
+    INSTRS_R0_AS_ZERO: ClassVar[Set[str]] = {
+        "addi",
+        "addis",
+        "lbz",
+        "lbzx",
+        "lfd",
+        "lfdx",
+        "lfsx",
+        "lha",
+        "lhbrx",
+        "lhz",
+        "lhzx",
+        "lmw",
+        "lwarx",
+        "lwbrx",
+        "lwz",
+        "lwzx",
+        "stb",
+        "stbx",
+        "stfd",
+        "stfdx",
+        "stfiwx",
+        "stfs",
+        "stfsx",
+        "sth",
+        "sthbrx",
+        "sthx",
+        "stmw",
+        "stswi",
+        "stswx",
+        "stw",
+        "stwbrx",
+        "stwcx.",
+        "stwx",
+    }
+
     @staticmethod
     def normalize_instruction(instr: Instruction) -> Instruction:
         # Remove +/- suffix, which indicates branch-un/likely an can be ignored
@@ -283,6 +322,18 @@ class PpcArch(Arch):
             )
 
         args = instr.args
+        if len(args) >= 2 and instr.mnemonic in PpcArch.INSTRS_R0_AS_ZERO:
+            new_arg1: Optional[Argument] = None
+            if args[1] == Register("r0"):
+                new_arg1 = Register("zero")
+            elif isinstance(args[1], AsmAddressMode) and args[1].rhs == Register("r0"):
+                new_arg1 = AsmAddressMode(lhs=args[1].lhs, rhs=Register("zero"))
+            if new_arg1 is not None:
+                return PpcArch.normalize_instruction(
+                    Instruction(
+                        instr.mnemonic, [args[0], new_arg1] + args[2:], instr.meta
+                    )
+                )
         if len(args) == 3:
             if (
                 instr.mnemonic == "addi"
