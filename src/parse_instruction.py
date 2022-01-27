@@ -147,6 +147,7 @@ class Instruction:
 
 class ArchAsmParsing(abc.ABC):
     """Arch-specific information needed to parse asm."""
+
     all_regs: List[Register]
     aliased_regs: Dict[str, Register]
 
@@ -157,6 +158,7 @@ class ArchAsmParsing(abc.ABC):
 
 class ArchAsm(ArchAsmParsing):
     """Arch-specific information that relates to the asm level. Extends the above."""
+
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
     return_address_reg: Register
@@ -207,12 +209,12 @@ class ArchAsm(ArchAsmParsing):
 class NaiveParsingArch(ArchAsmParsing):
     """A fake arch that can parse asm in a naive fashion. Used by the pattern matching
     machinery to reduce arch dependence."""
+
     all_regs: List[Register] = []
     aliased_regs: Dict[str, Register] = {}
 
     def normalize_instruction(self, instr: Instruction) -> Instruction:
         return instr
-
 
 
 valid_word = string.ascii_letters + string.digits + "_$"
@@ -356,7 +358,9 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 raise DecompFailure(
                     "Math is too complicated for mips_to_c. Try adding parentheses."
                 )
-            if isinstance(rhs, AsmLiteral) and isinstance(value, AsmSectionGlobalSymbol):
+            if isinstance(rhs, AsmLiteral) and isinstance(
+                value, AsmSectionGlobalSymbol
+            ):
                 return asm_section_global_symbol(
                     value.section_name, value.addend + rhs.value
                 )
@@ -374,7 +378,9 @@ def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
     return constant_fold(ret)
 
 
-def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsmParsing) -> Instruction:
+def parse_instruction(
+    line: str, meta: InstructionMeta, arch: ArchAsmParsing
+) -> Instruction:
     try:
         # First token is instruction name, rest is args.
         line = line.strip()
@@ -382,9 +388,7 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsmParsing) ->
         # Parse arguments.
         args: List[Argument] = []
         if args_str.strip():
-            args = [
-                parse_arg(arg_str.strip(), arch) for arg_str in args_str.split(",")
-            ]
+            args = [parse_arg(arg_str.strip(), arch) for arg_str in args_str.split(",")]
         instr = Instruction(mnemonic, args, meta)
         return arch.normalize_instruction(instr)
     except Exception:

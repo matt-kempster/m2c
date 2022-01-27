@@ -287,7 +287,9 @@ def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Funct
     return new_function
 
 
-def build_blocks(function: Function, asm_data: AsmData, arch: ArchFlowGraph) -> List[Block]:
+def build_blocks(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+) -> List[Block]:
     verify_no_trailing_delay_slot(function, arch)
     function = normalize_likely_branches(function, arch)
     function = prune_unreferenced_labels(function, asm_data, arch)
@@ -1052,7 +1054,9 @@ class FlowGraph:
             node.block.block_info = None
 
 
-def build_flowgraph(function: Function, asm_data: AsmData, arch: ArchFlowGraph) -> FlowGraph:
+def build_flowgraph(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+) -> FlowGraph:
     blocks = build_blocks(function, asm_data, arch)
     nodes = build_nodes(function, blocks, asm_data, arch)
     nodes = duplicate_premature_returns(nodes)

@@ -208,6 +208,7 @@ class ModP2Pattern(AsmPattern):
 
 class DivP2Pattern1(AsmPattern):
     """Division by power of two where input reg != output reg."""
+
     pattern = make_pattern(
         "bgez $i, .A",
         "sra $o, $i, N",
@@ -229,6 +230,7 @@ class DivP2Pattern1(AsmPattern):
 
 class DivP2Pattern2(AsmPattern):
     """Division by power of two where input reg = output reg."""
+
     pattern = make_pattern(
         "bgez $x, .A",
         "move $at, $x",
@@ -262,9 +264,7 @@ class Div2S16Pattern(AsmPattern):
         if not m:
             return None
         # Keep 32->16 conversion from $i to $o, just add a division
-        div = m.derived_instr(
-            "div.fictive", [m.regs["o"], m.regs["o"], AsmLiteral(2)]
-        )
+        div = m.derived_instr("div.fictive", [m.regs["o"], m.regs["o"], AsmLiteral(2)])
         return Replacement(m.body[:2] + [div], len(m.body))
 
 
@@ -279,9 +279,7 @@ class Div2S32Pattern(AsmPattern):
         m = matcher.try_match(self.pattern)
         if not m:
             return None
-        div = m.derived_instr(
-            "div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)]
-        )
+        div = m.derived_instr("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
         return Replacement([div], len(m.body))
 
 
@@ -300,9 +298,7 @@ class UtfPattern(AsmPattern):
         m = matcher.try_match(self.pattern)
         if not m:
             return None
-        new_instr = m.derived_instr(
-            "cvt.s.u.fictive", [m.regs["o"], m.regs["i"]]
-        )
+        new_instr = m.derived_instr("cvt.s.u.fictive", [m.regs["o"], m.regs["i"]])
         return Replacement([new_instr], len(m.body) - 1)
 
 

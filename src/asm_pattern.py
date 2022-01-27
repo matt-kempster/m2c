@@ -89,8 +89,9 @@ class TryMatchState:
                 return self.eval_math(e.lhs) << self.eval_math(e.rhs)
             assert False, f"bad binop in math pattern: {e}"
         elif isinstance(e, AsmGlobalSymbol):
-            assert e.symbol_name in self.symbolic_literals, \
-                    f"undefined variable in math pattern: {e.symbol_name}"
+            assert (
+                e.symbol_name in self.symbolic_literals
+            ), f"undefined variable in math pattern: {e.symbol_name}"
             return self.symbolic_literals[e.symbol_name]
         else:
             assert False, f"bad pattern part in math pattern: {e}"
@@ -100,9 +101,7 @@ class TryMatchState:
             return True
         if isinstance(exp, Label):
             name = self.symbolic_labels.get(exp.name)
-            return isinstance(actual, Label) and (
-                name is None or actual.name == name
-            )
+            return isinstance(actual, Label) and (name is None or actual.name == name)
         if not isinstance(actual, Instruction):
             return False
         ins = actual
@@ -180,7 +179,9 @@ class AsmMatcher:
         self.index += repl.num_consumed
 
 
-def simplify_patterns(body: List[BodyPart], patterns: List[AsmPattern]) -> List[BodyPart]:
+def simplify_patterns(
+    body: List[BodyPart], patterns: List[AsmPattern]
+) -> List[BodyPart]:
     """Detect and simplify asm standard patterns emitted by known compilers. This is
     especially useful for patterns that involve branches, which are hard to deal with
     in the translate phase."""
