@@ -1,3 +1,4 @@
+import typing
 from typing import (
     Dict,
     List,
@@ -5,15 +6,23 @@ from typing import (
     Set,
     Tuple,
 )
+
 from .error import DecompFailure
 from .types import FunctionSignature, Type
 from .parse_instruction import (
+    AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
     Instruction,
     InstructionMeta,
     JumpTarget,
     Register,
+)
+from .asm_pattern import (
+    AsmMatcher,
+    AsmMatch,
+    AsmPattern,
+    make_pattern,
 )
 from .translate import (
     Abi,
@@ -137,6 +146,313 @@ DIV_MULT_INSTRUCTIONS: Set[str] = {
     "dmult",
     "dmultu",
 }
+
+
+def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
+    assert isinstance(sra.args[2], AsmLiteral)
+    shift = sra.args[2].value & 0x1F
+    return Instruction.derived(
+        "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)], sra
+    )
+
+
+class DivPattern(AsmPattern):
+    pattern = make_pattern(
+        "bnez $x, .A",
+        "*",  # nop or div
+        "break",
+        ".A:",
+        "li $at, -1",
+        "bne $x, $at, .B",
+        "li $at, 0x80000000",
+        "bne $y, $at, .B",
+        "nop",
+        "break",
+        ".B:",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        return AsmMatch([match[1]], len(match) - 1)
+
+
+class DivuPattern(AsmPattern):
+    pattern = make_pattern(
+        "bnez $x, .A",
+        "nop",
+        "break",
+        ".A:",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        return AsmMatch([], len(match) - 1)
+
+
+class ModP2Pattern(AsmPattern):
+    pattern = make_pattern(
+        "bgez $x, .A",
+        "andi $y, $x, N",
+        "beqz $y, .A",
+        "nop",
+        "addiu $y, $y, (-1 - N)",
+        ".A:",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        andi = typing.cast(Instruction, match[1])
+        val = (typing.cast(AsmLiteral, andi.args[2]).value & 0xFFFF) + 1
+        mod = Instruction.derived(
+            "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
+        )
+        return AsmMatch([mod], len(match) - 1)
+
+
+class DivP2Pattern1(AsmPattern):
+    """Division by power of two where input reg != output reg."""
+    pattern = make_pattern(
+        "bgez $x, .A",
+        "sra $y, $x, N",
+        "addiu $at, $x, ((1 << N) - 1)",
+        "sra $y, $at, N",
+        ".A:",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        bnez = typing.cast(Instruction, match[0])
+        div = create_div_p2(bnez, typing.cast(Instruction, match[3]))
+        return AsmMatch([div], len(match) - 1)
+
+
+class DivP2Pattern2(AsmPattern):
+    """Division by power of two where input reg = output reg."""
+    pattern = make_pattern(
+        "bgez $x, .A",
+        "move $at, $x",
+        "addiu $at, $x, M",
+        ".A:",
+        "sra $x, $at, N",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        bnez = typing.cast(Instruction, match[0])
+        div = create_div_p2(bnez, typing.cast(Instruction, match[4]))
+        return AsmMatch([div], len(match))
+
+
+class DivP2S16Pattern(AsmPattern):
+    pattern = make_pattern(
+        "sll $x, $x, N",
+        "sra $y, $x, N",
+        "srl $x, $x, 0x1f",
+        "addu $y, $y, $x",
+        "sra $y, $y, 1",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        sll1 = typing.cast(Instruction, match[0])
+        sra1 = typing.cast(Instruction, match[1])
+        sra = typing.cast(Instruction, match[4])
+        div = Instruction.derived(
+            "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
+        )
+        return AsmMatch([sll1, sra1, div], len(match))
+
+
+class DivP2S32Pattern(AsmPattern):
+    pattern = make_pattern(
+        "srl $x, $y, 0x1f",
+        "addu $x, $y, $x",
+        "sra $x, $x, 1",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        addu = typing.cast(Instruction, match[1])
+        sra = typing.cast(Instruction, match[2])
+        div = Instruction.derived(
+            "div.fictive", [sra.args[0], addu.args[1], AsmLiteral(2)], sra
+        )
+        return AsmMatch([div], len(match))
+
+
+class UtfPattern(AsmPattern):
+    pattern = make_pattern(
+        "bgez $x, .A",
+        "cvt.s.w",
+        "li $at, 0x4f800000",
+        "mtc1",
+        "nop",
+        "add.s",
+        ".A:",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        cvt_instr = typing.cast(Instruction, match[1])
+        new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
+        return AsmMatch([new_instr], len(match) - 1)
+
+
+class FtuPattern(AsmPattern):
+    pattern = make_pattern(
+        "cfc1 $y, $31",
+        "nop",
+        "andi",
+        "andi?",  # (skippable)
+        "*",  # bnez or bneql
+        "*",
+        "li?",
+        "mtc1",
+        "mtc1?",
+        "li",
+        "*",  # sub.fmt *, X, *
+        "ctc1",
+        "nop",
+        "*",  # cvt.w.fmt *, *
+        "cfc1",
+        "nop",
+        "andi",
+        "andi?",
+        "bnez",
+        "nop",
+        "mfc1",
+        "li",
+        "b",
+        "or",
+        ".A:",
+        "b",
+        "li",
+        "*",  # label: (moved one step down if bneql)
+        "*",  # mfc1
+        "nop",
+        "bltz",
+        "nop",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        sub = next(
+            x
+            for x in match
+            if isinstance(x, Instruction) and x.mnemonic.startswith("sub")
+        )
+        cfc = match[0]
+        assert isinstance(cfc, Instruction)
+        fmt = sub.mnemonic.split(".")[-1]
+        args = [cfc.args[0], sub.args[1]]
+        if fmt == "s":
+            new_instr = Instruction.derived("cvt.u.s.fictive", args, cfc)
+        else:
+            new_instr = Instruction.derived("cvt.u.d.fictive", args, cfc)
+        return AsmMatch([new_instr], len(match))
+
+
+class Mips1DoubleLoadStorePattern(AsmPattern):
+    lwc_pattern = make_pattern(
+        "lwc1",
+        "lwc1",
+    )
+
+    swc_pattern = make_pattern(
+        "swc1",
+        "swc1",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        # TODO: sometimes the instructions aren't consecutive.
+        match = matcher.try_match(self.lwc_pattern) or matcher.try_match(self.swc_pattern)
+        if not match:
+            return None
+        a, b = match
+        assert isinstance(a, Instruction)
+        assert isinstance(b, Instruction)
+        ra, rb = a.args[0], b.args[0]
+        ma, mb = a.args[1], b.args[1]
+        # Ideally we'd verify that the memory locations are consecutive as well,
+        # but that's a bit annoying with %lo macros vs raw offsets, and they
+        # might also be misidentified as separate globals.
+        if not (
+            isinstance(ra, Register)
+            and ra.is_float()
+            and ra.other_f64_reg() == rb
+            and isinstance(ma, AsmAddressMode)
+            and isinstance(mb, AsmAddressMode)
+            and ma.rhs == mb.rhs
+        ):
+            return None
+        num = int(ra.register_name[1:])
+        if num % 2 == 1:
+            ra, rb = rb, ra
+            ma, mb = mb, ma
+        # Store the even-numbered register (ra) into the low address (mb).
+        new_args = [ra, mb]
+        new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
+        new_instr = Instruction.derived(new_mn, new_args, a)
+        return AsmMatch([new_instr], len(match))
+
+
+class GccSqrtPattern(AsmPattern):
+    pattern = make_pattern(
+        "sqrt.s $x, $y",
+        "c.eq.s",
+        "nop",
+        "bc1t",
+        "*",
+        "jal sqrtf",
+        "nop",
+        "mov.s $x, $f0?",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        return AsmMatch([match[0]], len(match))
+
+
+class TrapuvPattern(AsmPattern):
+    pattern = make_pattern(
+        "li $x, 0xfffa0000",
+        "move $y, $sp",
+        "addiu $sp, $sp, N",
+        "ori $x, $x, 0x5a5a",
+        ".loop:",
+        "addiu $y, $y, -8",
+        "sw $x, ($y)",
+        "bne $y, $sp, .loop",
+        "sw $x, 4($y)",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[AsmMatch]:
+        match = matcher.try_match(self.pattern)
+        if not match:
+            return None
+        assert isinstance(match[0], Instruction)
+        new_instr = Instruction.derived("trapuv.fictive", [], match[0])
+        return AsmMatch([match[2], new_instr], len(match))
 
 
 class MipsArch(Arch):
@@ -364,6 +680,21 @@ class MipsArch(Arch):
                     Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
                 )
         return instr
+
+    asm_patterns = [
+        DivPattern(),
+        DivuPattern(),
+        DivP2Pattern1(),
+        DivP2Pattern2(),
+        DivP2S16Pattern(),
+        DivP2S32Pattern(),
+        ModP2Pattern(),
+        UtfPattern(),
+        FtuPattern(),
+        Mips1DoubleLoadStorePattern(),
+        GccSqrtPattern(),
+        TrapuvPattern(),
+    ]
 
     instrs_ignore: InstrSet = {
         # Ignore FCSR sets; they are leftovers from float->unsigned conversions.

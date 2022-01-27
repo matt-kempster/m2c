@@ -25,6 +25,7 @@ from typing import (
 from .c_types import CType, TypeMap
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
+    ArchFlowGraph,
     FlowGraph,
     Function,
     Node,
@@ -63,7 +64,7 @@ MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
 PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
 
 
-class Arch(ArchAsm, abc.ABC):
+class Arch(ArchFlowGraph):
     instrs_ignore: InstrSet = set()
     instrs_store: StoreInstrMap = {}
     instrs_branches: CmpInstrMap = {}

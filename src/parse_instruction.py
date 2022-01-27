@@ -145,7 +145,18 @@ class Instruction:
         return f"{self.mnemonic} {args}"
 
 
-class ArchAsm(abc.ABC):
+class ArchAsmParsing(abc.ABC):
+    """Arch-specific information needed to parse asm."""
+    all_regs: List[Register]
+    aliased_regs: Dict[str, Register]
+
+    @abc.abstractmethod
+    def normalize_instruction(self, instr: Instruction) -> Instruction:
+        ...
+
+
+class ArchAsm(ArchAsmParsing):
+    """Arch-specific information that relates to the asm level. Extends the above."""
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
     return_address_reg: Register
@@ -192,9 +203,16 @@ class ArchAsm(abc.ABC):
     def missing_return(self) -> List[Instruction]:
         ...
 
-    @abc.abstractmethod
+
+class NaiveParsingArch(ArchAsmParsing):
+    """A fake arch that can parse asm in a naive fashion. Used by the pattern matching
+    machinery to reduce arch dependence."""
+    all_regs: List[Register] = []
+    aliased_regs: Dict[str, Register] = {}
+
     def normalize_instruction(self, instr: Instruction) -> Instruction:
-        ...
+        return instr
+
 
 
 valid_word = string.ascii_letters + string.digits + "_$"
@@ -238,7 +256,7 @@ def constant_fold(arg: Argument) -> Argument:
 
 
 # Main parser.
-def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
+def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argument]:
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
@@ -349,14 +367,14 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsm) -> Optional[Argument]:
     return value
 
 
-def parse_arg(arg: str, arch: ArchAsm) -> Argument:
+def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
     arg_elems: List[str] = list(arg)
     ret = parse_arg_elems(arg_elems, arch)
     assert ret is not None
     return constant_fold(ret)
 
 
-def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instruction:
+def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsmParsing) -> Instruction:
     try:
         # First token is instruction name, rest is args.
         line = line.strip()
