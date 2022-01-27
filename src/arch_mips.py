@@ -19,9 +19,11 @@ from .parse_instruction import (
     Register,
 )
 from .asm_pattern import (
+    AsmMatch,
     AsmMatcher,
     AsmPattern,
     Replacement,
+    SimpleAsmPattern,
     make_pattern,
 )
 from .translate import (
@@ -148,7 +150,7 @@ DIV_MULT_INSTRUCTIONS: Set[str] = {
 }
 
 
-class DivPattern(AsmPattern):
+class DivPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bnez $q, .A",
         "*",  # nop or div
@@ -163,14 +165,11 @@ class DivPattern(AsmPattern):
         ".B:",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         return Replacement([m.body[1]], len(m.body) - 1)
 
 
-class DivuPattern(AsmPattern):
+class DivuPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bnez $q, .A",
         "nop",
@@ -178,14 +177,11 @@ class DivuPattern(AsmPattern):
         ".A:",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         return Replacement([], len(m.body) - 1)
 
 
-class ModP2Pattern(AsmPattern):
+class ModP2Pattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bgez $i, .A",
         "andi $o, $i, N",
@@ -195,10 +191,7 @@ class ModP2Pattern(AsmPattern):
         ".A:",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         val = (m.literals["N"] & 0xFFFF) + 1
         mod = m.derived_instr(
             "mod.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(val)]
@@ -206,7 +199,7 @@ class ModP2Pattern(AsmPattern):
         return Replacement([mod], len(m.body) - 1)
 
 
-class DivP2Pattern1(AsmPattern):
+class DivP2Pattern1(SimpleAsmPattern):
     """Division by power of two where input reg != output reg."""
 
     pattern = make_pattern(
@@ -217,10 +210,7 @@ class DivP2Pattern1(AsmPattern):
         ".A:",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
         div = m.derived_instr(
             "div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2 ** shift)]
@@ -228,7 +218,7 @@ class DivP2Pattern1(AsmPattern):
         return Replacement([div], len(m.body) - 1)
 
 
-class DivP2Pattern2(AsmPattern):
+class DivP2Pattern2(SimpleAsmPattern):
     """Division by power of two where input reg = output reg."""
 
     pattern = make_pattern(
@@ -239,10 +229,7 @@ class DivP2Pattern2(AsmPattern):
         "sra $x, $at, N",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
         div = m.derived_instr(
             "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2 ** shift)]
@@ -250,7 +237,7 @@ class DivP2Pattern2(AsmPattern):
         return Replacement([div], len(m.body))
 
 
-class Div2S16Pattern(AsmPattern):
+class Div2S16Pattern(SimpleAsmPattern):
     pattern = make_pattern(
         "sll $i, $i, N",
         "sra $o, $i, N",
@@ -259,31 +246,25 @@ class Div2S16Pattern(AsmPattern):
         "sra $o, $o, 1",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         # Keep 32->16 conversion from $i to $o, just add a division
         div = m.derived_instr("div.fictive", [m.regs["o"], m.regs["o"], AsmLiteral(2)])
         return Replacement(m.body[:2] + [div], len(m.body))
 
 
-class Div2S32Pattern(AsmPattern):
+class Div2S32Pattern(SimpleAsmPattern):
     pattern = make_pattern(
         "srl $o, $i, 0x1f",
         "addu $o, $i, $o",
         "sra $o, $o, 1",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         div = m.derived_instr("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
         return Replacement([div], len(m.body))
 
 
-class UtfPattern(AsmPattern):
+class UtfPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bgez $x, .A",
         "cvt.s.w $o, $i",
@@ -294,15 +275,12 @@ class UtfPattern(AsmPattern):
         ".A:",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         new_instr = m.derived_instr("cvt.s.u.fictive", [m.regs["o"], m.regs["i"]])
         return Replacement([new_instr], len(m.body) - 1)
 
 
-class FtuPattern(AsmPattern):
+class FtuPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "cfc1 $o, $31",  # use out register as scratch
         "nop",
@@ -338,10 +316,7 @@ class FtuPattern(AsmPattern):
         "nop",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         sub = next(
             x
             for x in m.body
@@ -393,7 +368,7 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         return Replacement([new_instr], len(m.body))
 
 
-class GccSqrtPattern(AsmPattern):
+class GccSqrtPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "sqrt.s $o, $i",
         "c.eq.s",
@@ -405,14 +380,11 @@ class GccSqrtPattern(AsmPattern):
         "mov.s $o, $f0?",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         return Replacement([m.body[0]], len(m.body))
 
 
-class TrapuvPattern(AsmPattern):
+class TrapuvPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "li $x, 0xfffa0000",
         "move $y, $sp",
@@ -425,10 +397,7 @@ class TrapuvPattern(AsmPattern):
         "sw $x, 4($y)",
     )
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern)
-        if not m:
-            return None
+    def replace(self, m: AsmMatch) -> Replacement:
         new_instr = m.derived_instr("trapuv.fictive", [])
         return Replacement([m.body[2], new_instr], len(m.body))
 

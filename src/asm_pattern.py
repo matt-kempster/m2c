@@ -61,6 +61,23 @@ class AsmPattern(abc.ABC):
         ...
 
 
+class SimpleAsmPattern(AsmPattern):
+    @property
+    @abc.abstractmethod
+    def pattern(self) -> Pattern:
+        ...
+
+    @abc.abstractmethod
+    def replace(self, m: "AsmMatch") -> Optional[Replacement]:
+        ...
+
+    def match(self, matcher: "AsmMatcher") -> Optional[Replacement]:
+        m = matcher.try_match(self.pattern)
+        if not m:
+            return None
+        return self.replace(m)
+
+
 @dataclass
 class TryMatchState:
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
