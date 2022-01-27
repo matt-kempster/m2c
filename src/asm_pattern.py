@@ -39,14 +39,25 @@ def make_pattern(*parts: str) -> Pattern:
 
 
 @dataclass
-class AsmMatch:
-    replacement: List[BodyPart]
+class Replacement:
+    new_body: List[BodyPart]
     num_consumed: int
+
+
+@dataclass
+class AsmMatch:
+    body: List[BodyPart]
+    regs: Dict[str, Register]
+    literals: Dict[str, int]
+
+    def derived_instr(self, mnemonic: str, args: List[Argument]) -> Instruction:
+        old_instr = next(part for part in self.body if isinstance(part, Instruction))
+        return Instruction.derived(mnemonic, args, old_instr)
 
 
 class AsmPattern(abc.ABC):
     @abc.abstractmethod
-    def match(self, matcher: "AsmMatcher") -> Optional[AsmMatch]:
+    def match(self, matcher: "AsmMatcher") -> Optional[Replacement]:
         ...
 
 
@@ -149,7 +160,7 @@ class AsmMatcher:
     output: List[BodyPart] = field(default_factory=list)
     index: int = 0
 
-    def try_match(self, pattern: Pattern) -> Optional[List[BodyPart]]:
+    def try_match(self, pattern: Pattern) -> Optional[AsmMatch]:
         state = TryMatchState()
 
         start_index = index = self.index
@@ -158,11 +169,15 @@ class AsmMatcher:
                 index += 1
             elif not optional:
                 return None
-        return self.input[start_index:index]
+        return AsmMatch(
+            self.input[start_index:index],
+            state.symbolic_registers,
+            state.symbolic_literals,
+        )
 
-    def apply(self, match: AsmMatch) -> None:
-        self.output.extend(match.replacement)
-        self.index += match.num_consumed
+    def apply(self, repl: Replacement) -> None:
+        self.output.extend(repl.new_body)
+        self.index += repl.num_consumed
 
 
 def simplify_patterns(body: List[BodyPart], patterns: List[AsmPattern]) -> List[BodyPart]:
@@ -177,6 +192,6 @@ def simplify_patterns(body: List[BodyPart], patterns: List[AsmPattern]) -> List[
                 matcher.apply(m)
                 break
         else:
-            matcher.apply(AsmMatch([matcher.input[matcher.index]], 1))
+            matcher.apply(Replacement([matcher.input[matcher.index]], 1))
 
     return matcher.output
