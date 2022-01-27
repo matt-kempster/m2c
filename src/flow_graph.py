@@ -20,16 +20,22 @@ from .options import Formatter, Target
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     ArchAsm,
+    Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
+    BinOp,
     Instruction,
     InstructionMeta,
     JumpTarget,
     Macro,
     Register,
-    parse_instruction,
 )
+from .asm_pattern import simplify_patterns, AsmPattern
+
+
+class ArchFlowGraph(ArchAsm):
+    asm_patterns: List[AsmPattern] = []
 
 
 @dataclass(eq=False)
@@ -108,7 +114,7 @@ class BlockBuilder:
         return self.blocks
 
 
-def verify_no_trailing_delay_slot(function: Function, arch: ArchAsm) -> None:
+def verify_no_trailing_delay_slot(function: Function, arch: ArchFlowGraph) -> None:
     last_ins: Optional[Instruction] = None
     for item in function.body:
         if isinstance(item, Instruction):
@@ -133,7 +139,7 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-def normalize_likely_branches(function: Function, arch: ArchAsm) -> Function:
+def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
     taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
@@ -256,7 +262,7 @@ def normalize_likely_branches(function: Function, arch: ArchAsm) -> Function:
 
 
 def prune_unreferenced_labels(
-    function: Function, asm_data: AsmData, arch: ArchAsm
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
 ) -> Function:
     labels_used: Set[str] = {
         label.name
@@ -279,464 +285,16 @@ def prune_unreferenced_labels(
     return new_function
 
 
-def simplify_standard_patterns(function: Function, arch: ArchAsm) -> Function:
-    """Detect and simplify various standard patterns emitted by IDO and GCC."""
-    BodyPart = Union[Instruction, Label]
-    PatternPart = Union[Instruction, Label, None]
-    Pattern = List[Tuple[PatternPart, bool]]
-
-    def make_pattern(*parts: str) -> Pattern:
-        ret: Pattern = []
-        for part in parts:
-            optional = part.endswith("?")
-            part = part.rstrip("?")
-            if part == "*":
-                ret.append((None, optional))
-            elif part.endswith(":"):
-                ret.append((Label(""), optional))
-            else:
-                ins = parse_instruction(part, InstructionMeta.missing(), arch)
-                ret.append((ins, optional))
-        return ret
-
-    div_pattern = make_pattern(
-        "bnez $x, .A",
-        "*",  # nop or div
-        "break",
-        ".A:",
-        "li $at, -1",
-        "bne $x, $at, .B",
-        "li $at, 0x80000000",
-        "bne $y, $at, .B",
-        "nop",
-        "break",
-        ".B:",
-    )
-
-    divu_pattern = make_pattern(
-        "bnez $x, .A",
-        "nop",
-        "break",
-        ".A:",
-    )
-
-    mod_p2_pattern = make_pattern(
-        "bgez $x, .A",
-        "andi $y, $x, LIT",
-        "beqz $y, .A",
-        "nop",
-        "addiu $y, $y, LIT",
-        ".A:",
-    )
-
-    div_p2_pattern_1 = make_pattern(
-        "bgez $x, .A",
-        "sra $y, $x, LIT",
-        "addiu $at, $x, LIT",
-        "sra $y, $at, LIT",
-        ".A:",
-    )
-
-    div_p2_pattern_2 = make_pattern(
-        "bgez $x, .A",
-        "move $at, $x",
-        "addiu $at, $x, LIT",
-        ".A:",
-        "sra $x, $at, LIT",
-    )
-
-    div_2_s16_pattern = make_pattern(
-        "sll $x, $x, LIT",
-        "sra $y, $x, LIT",
-        "srl $x, $x, 0x1f",
-        "addu $y, $y, $x",
-        "sra $y, $y, 1",
-    )
-
-    div_2_s32_pattern = make_pattern(
-        "srl $x, $y, 0x1f",
-        "addu $x, $y, $x",
-        "sra $x, $x, 1",
-    )
-
-    utf_pattern = make_pattern(
-        "bgez $x, .A",
-        "cvt.s.w",
-        "li $at, 0x4f800000",
-        "mtc1",
-        "nop",
-        "add.s",
-        ".A:",
-    )
-
-    ftu_pattern = make_pattern(
-        "cfc1 $y, $31",
-        "nop",
-        "andi",
-        "andi?",  # (skippable)
-        "*",  # bnez or bneql
-        "*",
-        "li?",
-        "mtc1",
-        "mtc1?",
-        "li",
-        "*",  # sub.fmt *, X, *
-        "ctc1",
-        "nop",
-        "*",  # cvt.w.fmt *, *
-        "cfc1",
-        "nop",
-        "andi",
-        "andi?",
-        "bnez",
-        "nop",
-        "mfc1",
-        "li",
-        "b",
-        "or",
-        ".A:",
-        "b",
-        "li",
-        "*",  # label: (moved one step down if bneql)
-        "*",  # mfc1
-        "nop",
-        "bltz",
-        "nop",
-    )
-
-    lwc1_twice_pattern = make_pattern("lwc1", "lwc1")
-    swc1_twice_pattern = make_pattern("swc1", "swc1")
-
-    gcc_sqrt_pattern = make_pattern(
-        "sqrt.s $x, $y",
-        "c.eq.s",
-        "nop",
-        "bc1t",
-        "*",
-        "jal sqrtf",
-        "nop",
-        "mov.s $x, $f0?",
-    )
-
-    trapuv_pattern = make_pattern(
-        "lui $x, 0xfffa",
-        "move $y, $sp",
-        "addiu $sp, $sp, LIT",
-        "ori $x, $x, 0x5a5a",
-        ".loop:",
-        "addiu $y, $y, -8",
-        "sw $x, ($y)",
-        "bne $y, $sp, .loop",
-        "sw $x, 4($y)",
-    )
-
-    ppc_fcmpo_cror_pattern = make_pattern(
-        "fcmpo cr0, $x, $y",
-        "cror 2, LIT, 2",
-    )
-
-    ppc_double_not_pattern = make_pattern(
-        "neg $a, $x",
-        "addic r0, $a, -1",
-        "subfe r0, r0, $a",
-    )
-
-    def try_match(starti: int, pattern: Pattern) -> Optional[List[BodyPart]]:
-        symbolic_registers: Dict[str, Register] = {}
-        symbolic_labels: Dict[str, str] = {}
-
-        def match_reg(actual: Register, exp: Register) -> bool:
-            if len(exp.register_name) <= 1:
-                if exp.register_name not in symbolic_registers:
-                    symbolic_registers[exp.register_name] = actual
-                elif symbolic_registers[exp.register_name] != actual:
-                    return False
-            elif exp.register_name != actual.register_name:
-                return False
-            return True
-
-        def match_one(actual: BodyPart, exp: PatternPart) -> bool:
-            if exp is None:
-                return True
-            if isinstance(exp, Label):
-                name = symbolic_labels.get(exp.name)
-                return isinstance(actual, Label) and (
-                    name is None or actual.name == name
-                )
-            if not isinstance(actual, Instruction):
-                return False
-            ins = actual
-            if ins.mnemonic != exp.mnemonic:
-                return False
-            if exp.args:
-                if len(exp.args) != len(ins.args):
-                    return False
-                for (e, a) in zip(exp.args, ins.args):
-                    if isinstance(e, AsmLiteral):
-                        if not isinstance(a, AsmLiteral) or a.value != e.value:
-                            return False
-                    elif isinstance(e, Register):
-                        if not isinstance(a, Register) or not match_reg(a, e):
-                            return False
-                    elif isinstance(e, AsmGlobalSymbol):
-                        if e.symbol_name == "LIT":
-                            if not isinstance(a, AsmLiteral):
-                                return False
-                        else:
-                            if (
-                                not isinstance(a, AsmGlobalSymbol)
-                                or a.symbol_name != e.symbol_name
-                            ):
-                                return False
-                    elif isinstance(e, AsmAddressMode):
-                        if (
-                            not isinstance(a, AsmAddressMode)
-                            or a.lhs != e.lhs
-                            or not match_reg(a.rhs, e.rhs)
-                        ):
-                            return False
-                    elif isinstance(e, JumpTarget):
-                        if not isinstance(a, JumpTarget):
-                            return False
-                        if e.target not in symbolic_labels:
-                            symbolic_labels[e.target] = a.target
-                        elif symbolic_labels[e.target] != a.target:
-                            return False
-                    else:
-                        assert False, f"bad pattern part: {exp} contains {type(e)}"
-            return True
-
-        actuali = starti
-        for (pat, optional) in pattern:
-            if actuali < len(function.body) and match_one(function.body[actuali], pat):
-                actuali += 1
-            elif not optional:
-                return None
-        return function.body[starti:actuali]
-
-    def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
-        assert isinstance(sra.args[2], AsmLiteral)
-        shift = sra.args[2].value & 0x1F
-        return Instruction.derived(
-            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)], sra
-        )
-
-    def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, div_pattern)
-        if not match:
-            return None
-        return [match[1]], len(match) - 1
-
-    def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, divu_pattern)
-        if not match:
-            return None
-        return [], len(match) - 1
-
-    def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        # Division by power of two where input reg != output reg
-        match = try_match(i, div_p2_pattern_1)
-        if not match:
-            return None
-        bnez = typing.cast(Instruction, match[0])
-        div = create_div_p2(bnez, typing.cast(Instruction, match[3]))
-        return [div], len(match) - 1
-
-    def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        # Division by power of two where input reg = output reg
-        match = try_match(i, div_p2_pattern_2)
-        if not match:
-            return None
-        bnez = typing.cast(Instruction, match[0])
-        div = create_div_p2(bnez, typing.cast(Instruction, match[4]))
-        return [div], len(match)
-
-    def try_replace_div_2_s16(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, div_2_s16_pattern)
-        if not match:
-            return None
-        sll1 = typing.cast(Instruction, match[0])
-        sra1 = typing.cast(Instruction, match[1])
-        sra = typing.cast(Instruction, match[4])
-        if sll1.args[2] != sra1.args[2]:
-            return None
-        div = Instruction.derived(
-            "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
-        )
-        return [sll1, sra1, div], len(match)
-
-    def try_replace_div_2_s32(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, div_2_s32_pattern)
-        if not match:
-            return None
-        addu = typing.cast(Instruction, match[1])
-        sra = typing.cast(Instruction, match[2])
-        div = Instruction.derived(
-            "div.fictive", [sra.args[0], addu.args[1], AsmLiteral(2)], sra
-        )
-        return [div], len(match)
-
-    def try_replace_mod_p2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, mod_p2_pattern)
-        if not match:
-            return None
-        andi = typing.cast(Instruction, match[1])
-        val = (typing.cast(AsmLiteral, andi.args[2]).value & 0xFFFF) + 1
-        mod = Instruction.derived(
-            "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
-        )
-        return [mod], len(match) - 1
-
-    def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, utf_pattern)
-        if not match:
-            return None
-        cvt_instr = typing.cast(Instruction, match[1])
-        new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
-        return [new_instr], len(match) - 1
-
-    def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, ftu_pattern)
-        if not match:
-            return None
-        sub = next(
-            x
-            for x in match
-            if isinstance(x, Instruction) and x.mnemonic.startswith("sub")
-        )
-        cfc = match[0]
-        assert isinstance(cfc, Instruction)
-        fmt = sub.mnemonic.split(".")[-1]
-        args = [cfc.args[0], sub.args[1]]
-        if fmt == "s":
-            new_instr = Instruction.derived("cvt.u.s.fictive", args, cfc)
-        else:
-            new_instr = Instruction.derived("cvt.u.d.fictive", args, cfc)
-        return [new_instr], len(match)
-
-    def try_replace_mips1_double_load_store(
-        i: int,
-    ) -> Optional[Tuple[List[BodyPart], int]]:
-        # TODO: sometimes the instructions aren't consecutive.
-        match = try_match(i, lwc1_twice_pattern) or try_match(i, swc1_twice_pattern)
-        if not match:
-            return None
-        a, b = match
-        assert isinstance(a, Instruction)
-        assert isinstance(b, Instruction)
-        ra, rb = a.args[0], b.args[0]
-        ma, mb = a.args[1], b.args[1]
-        # TODO: verify that the memory locations are consecutive as well (a bit
-        # annoying with macros...)
-        if not (
-            isinstance(ra, Register)
-            and ra.is_float()
-            and ra.other_f64_reg() == rb
-            and isinstance(ma, AsmAddressMode)
-            and isinstance(mb, AsmAddressMode)
-            and ma.rhs == mb.rhs
-        ):
-            return None
-        num = int(ra.register_name[1:])
-        if num % 2 == 1:
-            ra, rb = rb, ra
-            ma, mb = mb, ma
-        # Store the even-numbered register (ra) into the low address (mb).
-        new_args = [ra, mb]
-        new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
-        new_instr = Instruction.derived(new_mn, new_args, a)
-        return [new_instr], len(match)
-
-    def try_replace_gcc_sqrt(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, gcc_sqrt_pattern)
-        if not match:
-            return None
-        return [match[0]], len(match)
-
-    def try_replace_trapuv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, trapuv_pattern)
-        if not match:
-            return None
-        assert isinstance(match[0], Instruction)
-        new_instr = Instruction.derived("trapuv.fictive", [], match[0])
-        return [match[2], new_instr], len(match)
-
-    def try_replace_ppc_fcmpo_cror(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, ppc_fcmpo_cror_pattern)
-        if not match:
-            return None
-        assert isinstance(match[0], Instruction)
-        assert isinstance(match[1], Instruction)
-        if match[1].args[1] == AsmLiteral(0):
-            return [Instruction.derived("fcmpo.lte", match[0].args, match[0])], len(
-                match
-            )
-        elif match[1].args[1] == AsmLiteral(1):
-            return [Instruction.derived("fcmpo.gte", match[0].args, match[0])], len(
-                match
-            )
-        return None
-
-    def try_replace_ppc_final_b(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        if i != len(function.body) - 1:
-            return None
-        instr = function.body[i]
-        if not isinstance(instr, Instruction) or instr.mnemonic != "b":
-            return None
-        return [
-            Instruction.derived("bl", instr.args, instr),
-            Instruction.derived("blr", [], instr),
-        ], 1
-
-    def try_replace_ppc_double_not(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, ppc_double_not_pattern)
-        if not match:
-            return None
-        assert isinstance(match[0], Instruction)
-        assert isinstance(match[1], Instruction)
-        return [
-            Instruction.derived(
-                "notnot.fictive", [match[1].args[0], match[0].args[1]], match[0]
-            )
-        ], len(match)
-
-    def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
-        return [function.body[i]], 1
-
+def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Function:
+    new_body = simplify_patterns(function.body, arch.asm_patterns)
     new_function = function.bodyless_copy()
-    i = 0
-    while i < len(function.body):
-        if arch.arch == Target.ArchEnum.MIPS:
-            repl, consumed = (
-                try_replace_div(i)
-                or try_replace_divu(i)
-                or try_replace_div_p2_1(i)
-                or try_replace_div_p2_2(i)
-                or try_replace_div_2_s32(i)
-                or try_replace_div_2_s16(i)
-                or try_replace_mod_p2(i)
-                or try_replace_utf_conv(i)
-                or try_replace_ftu_conv(i)
-                or try_replace_mips1_double_load_store(i)
-                or try_replace_gcc_sqrt(i)
-                or try_replace_trapuv(i)
-                or no_replacement(i)
-            )
-        elif arch.arch == Target.ArchEnum.PPC:
-            repl, consumed = (
-                try_replace_ppc_fcmpo_cror(i)
-                or try_replace_ppc_final_b(i)
-                or try_replace_ppc_double_not(i)
-                or no_replacement(i)
-            )
-        else:
-            repl, consumed = no_replacement(i)
-        new_function.body.extend(repl)
-        i += consumed
+    new_function.body.extend(new_body)
     return new_function
 
 
-def build_blocks(function: Function, asm_data: AsmData, arch: ArchAsm) -> List[Block]:
+def build_blocks(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+) -> List[Block]:
     if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function, arch)
         function = normalize_likely_branches(function, arch)
@@ -1066,7 +624,7 @@ def build_graph_from_block(
     blocks: List[Block],
     nodes: List[Node],
     asm_data: AsmData,
-    arch: ArchAsm,
+    arch: ArchFlowGraph,
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -1231,7 +789,7 @@ def reachable_without(start: Node, end: Node, without: Node) -> bool:
 
 
 def build_nodes(
-    function: Function, blocks: List[Block], asm_data: AsmData, arch: ArchAsm
+    function: Function, blocks: List[Block], asm_data: AsmData, arch: ArchFlowGraph
 ) -> List[Node]:
     terminal_node = TerminalNode.terminal()
     graph: List[Node] = [terminal_node]
@@ -1539,7 +1097,9 @@ class FlowGraph:
             node.block.block_info = None
 
 
-def build_flowgraph(function: Function, asm_data: AsmData, arch: ArchAsm) -> FlowGraph:
+def build_flowgraph(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+) -> FlowGraph:
     blocks = build_blocks(function, asm_data, arch)
     nodes = build_nodes(function, blocks, asm_data, arch)
     nodes = duplicate_premature_returns(nodes)

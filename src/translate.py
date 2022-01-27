@@ -26,6 +26,7 @@ from .c_types import CType, TypeMap
 from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
+    ArchFlowGraph,
     FlowGraph,
     Function,
     Node,
@@ -66,7 +67,7 @@ ImplicitInstrMap = Mapping[str, Tuple[Register, Callable[["InstrArgs"], "Express
 PPCCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
-class Arch(ArchAsm, abc.ABC):
+class Arch(ArchFlowGraph):
     instrs_ignore: InstrSet = set()
     instrs_store: StoreInstrMap = {}
     instrs_store_update: StoreInstrMap = {}
@@ -393,7 +394,7 @@ class StackInfo:
             # TODO: Because the types are tracked in StackInfo instead of RegInfo, it is
             # possible that a load could incorrectly use a weak type from a sibling node
             # instead of a parent node. A more correct implementation would use similar
-            # logic to the PhiNode system. In practice however, storing types in StackInfo
+            # logic to the PhiExpr system. In practice however, storing types in StackInfo
             # works well enough because nodes are traversed approximately depth-first.
             # TODO: Maybe only do this for certain configurable regions?
 

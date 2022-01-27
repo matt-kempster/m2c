@@ -19,6 +19,14 @@ from .parse_instruction import (
     Macro,
     Register,
 )
+from .asm_pattern import (
+    AsmMatch,
+    AsmMatcher,
+    AsmPattern,
+    Replacement,
+    SimpleAsmPattern,
+    make_pattern,
+)
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -86,6 +94,52 @@ LENGTH_THREE: Set[str] = {
     "srlv",
     "srav",
 }
+
+
+class FcmpoCrorPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "fcmpo cr0, $x, $y",
+        "cror 2, N, 2",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        fcmpo = m.body[0]
+        assert isinstance(fcmpo, Instruction)
+        if m.literals["N"] == 0:
+            return Replacement([m.derived_instr("fcmpo.lte", fcmpo.args)], len(m.body))
+        elif m.literals["N"] == 1:
+            return Replacement([m.derived_instr("fcmpo.gte", fcmpo.args)], len(m.body))
+        return None
+
+
+class TailCallPattern(AsmPattern):
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        if matcher.index != len(matcher.input) - 1:
+            return None
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction) or instr.mnemonic != "b":
+            return None
+        return Replacement(
+            [
+                Instruction.derived("bl", instr.args, instr),
+                Instruction.derived("blr", [], instr),
+            ],
+            1,
+        )
+
+
+class DoubleNotPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "neg $a, $x",
+        "addic r0, $a, -1",
+        "subfe r0, r0, $a",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        return Replacement(
+            [m.derived_instr("notnot.fictive", [Register("r0"), m.regs["x"]])],
+            len(m.body),
+        )
 
 
 class PpcArch(Arch):
@@ -368,6 +422,12 @@ class PpcArch(Arch):
                     Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
                 )
         return instr
+
+    asm_patterns = [
+        FcmpoCrorPattern(),
+        TailCallPattern(),
+        DoubleNotPattern(),
+    ]
 
     instrs_ignore: InstrSet = {
         "nop",
