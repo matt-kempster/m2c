@@ -48,6 +48,39 @@ class Target:
     compiler: CompilerEnum
     language: LanguageEnum
 
+    @staticmethod
+    def parse(name: str) -> "Target":
+        """
+        Parse an `arch-compiler-language` triple.
+        If `-language` is missing, use the default for the compiler.
+        If `-compiler` is missing, use the default for the arch.
+        (This makes `mips` an alias for `mips-ido-c`, etc.)
+        """
+        terms = name.split("-")
+        try:
+            arch = Target.ArchEnum(terms[0])
+            if len(terms) >= 2:
+                compiler = Target.CompilerEnum(terms[1])
+            elif arch == Target.ArchEnum.PPC:
+                compiler = Target.CompilerEnum.MWCC
+            else:
+                compiler = Target.CompilerEnum.IDO
+
+            if len(terms) >= 3:
+                language = Target.LanguageEnum(terms[2])
+            elif compiler == Target.CompilerEnum.MWCC:
+                language = Target.LanguageEnum.CXX
+            else:
+                language = Target.LanguageEnum.C
+        except ValueError as e:
+            raise ValueError(f"Unable to parse Target '{name}' ({e})")
+
+        return Target(
+            arch=arch,
+            compiler=compiler,
+            language=language,
+        )
+
 
 @dataclass
 class Options:

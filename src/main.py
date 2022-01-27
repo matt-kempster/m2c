@@ -287,22 +287,39 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Target Options")
     group.add_argument(
+        "-t",
+        "--target",
+        dest="target",
+        type=Target.parse,
+        default="ppc-mwcc-c++",
+        help="Target architecture, compiler, and language triple. "
+        "Supported triples: mips-ido-c, mips-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
+        "Default is ppc-mwcc-c++, `mips` is an alias for mips-ido-c. ",
+    )
+    group.add_argument(
         "--target-arch",
         dest="target_arch",
         type=Target.ArchEnum,
         choices=list(Target.ArchEnum),
-        default="ppc",
-        help="Assembly architecture. Default: ppc",
+        help="Input assembly architecture. " "Overrides the value in --target. ",
     )
     group.add_argument(
         "--target-compiler",
         dest="target_compiler",
         type=Target.CompilerEnum,
         choices=list(Target.CompilerEnum),
-        default="mwcc",
         help="Original compiler family that produced the input files. "
         "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
-        "Default: mwcc",
+        "Overrides the value in --target. ",
+    )
+    group.add_argument(
+        "--target-language",
+        dest="target_language",
+        type=Target.LanguageEnum,
+        choices=list(Target.LanguageEnum),
+        help="Original source language that was compiled into the input files. "
+        "`c++` enables additional features, such as demangling. "
+        "Overrides the value in --target. ",
     )
     group.add_argument(
         "--compiler",
@@ -310,16 +327,6 @@ def parse_flags(flags: List[str]) -> Options:
         type=Target.CompilerEnum,
         choices=list(Target.CompilerEnum),
         help=argparse.SUPPRESS,  # For backwards compatibility; now use `--target-compiler`
-    )
-    group.add_argument(
-        "--target-language",
-        dest="target_language",
-        type=Target.LanguageEnum,
-        choices=list(Target.LanguageEnum),
-        default="c++",
-        help="Original source language that was compiled into the input files. "
-        "`c++` enables additional features, such as demangling. "
-        "Default: c++",
     )
 
     group = parser.add_argument_group("Output Options")
@@ -560,11 +567,13 @@ def parse_flags(flags: List[str]) -> Options:
     )
     filenames = args.filename + args.rodata_filenames
 
-    target = Target(
-        arch=args.target_arch,
-        compiler=args.target_compiler,
-        language=args.target_language,
-    )
+    target = args.target
+    if args.target_arch:
+        target.arch = args.target_arch
+    if args.target_compiler:
+        target.compiler = args.target_compiler
+    if args.target_language:
+        target.language = args.target_language
 
     # Backwards compatibility: giving a function index/name as a final argument, or "all"
     assert filenames, "checked by argparse, nargs='+'"
