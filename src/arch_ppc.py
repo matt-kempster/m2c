@@ -98,7 +98,7 @@ LENGTH_THREE: Set[str] = {
 
 class FcmpoCrorPattern(SimpleAsmPattern):
     pattern = make_pattern(
-        "fcmpo cr0, $x, $y",
+        "fcmpo $cr0, $x, $y",
         "cror 2, N, 2",
     )
 
@@ -131,8 +131,8 @@ class TailCallPattern(AsmPattern):
 class DoubleNotPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "neg $a, $x",
-        "addic r0, $a, -1",
-        "subfe r0, r0, $a",
+        "addic $r0, $a, -1",
+        "subfe $r0, $r0, $a",
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
