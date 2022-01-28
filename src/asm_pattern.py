@@ -1,6 +1,6 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, TypeVar, Union
 
 from .parse_file import Label
 from .parse_instruction import (
@@ -84,15 +84,21 @@ class TryMatchState:
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
     symbolic_literals: Dict[str, int] = field(default_factory=dict)
 
+    T = TypeVar("T")
+
+    def match_var(self, var_map: Dict[str, T], key: str, value: T) -> bool:
+        if key in var_map:
+            if var_map[key] != value:
+                return False
+        else:
+            var_map[key] = value
+        return True
+
     def match_reg(self, actual: Register, exp: Register) -> bool:
         if len(exp.register_name) <= 1:
-            if exp.register_name not in self.symbolic_registers:
-                self.symbolic_registers[exp.register_name] = actual
-            elif self.symbolic_registers[exp.register_name] != actual:
-                return False
-        elif exp.register_name != actual.register_name:
-            return False
-        return True
+            return self.match_var(self.symbolic_registers, exp.register_name, actual)
+        else:
+            return exp.register_name == actual.register_name
 
     def eval_math(self, e: Argument) -> int:
         if isinstance(e, AsmLiteral):
@@ -113,6 +119,32 @@ class TryMatchState:
         else:
             assert False, f"bad pattern part in math pattern: {e}"
 
+    def match_arg(self, a: Argument, e: Argument) -> bool:
+        if isinstance(e, AsmLiteral):
+            return isinstance(a, AsmLiteral) and a.value == e.value
+        if isinstance(e, Register):
+            return isinstance(a, Register) and self.match_reg(a, e)
+        if isinstance(e, AsmGlobalSymbol):
+            if e.symbol_name.isupper():
+                return isinstance(a, AsmLiteral) and self.match_var(
+                    self.symbolic_literals, e.symbol_name, a.value
+                )
+            else:
+                return isinstance(a, AsmGlobalSymbol) and a.symbol_name == e.symbol_name
+        if isinstance(e, AsmAddressMode):
+            return (
+                isinstance(a, AsmAddressMode)
+                and a.lhs == e.lhs
+                and self.match_reg(a.rhs, e.rhs)
+            )
+        if isinstance(e, JumpTarget):
+            return isinstance(a, JumpTarget) and self.match_var(
+                self.symbolic_labels, e.target, a.target
+            )
+        if isinstance(e, BinOp):
+            return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
+        assert False, f"bad pattern part: {e}"
+
     def match_one(self, actual: BodyPart, exp: PatternPart) -> bool:
         if exp is None:
             return True
@@ -125,48 +157,11 @@ class TryMatchState:
         if ins.mnemonic != exp.mnemonic:
             return False
         if exp.args:
-            if len(exp.args) != len(ins.args):
+            if len(ins.args) != len(exp.args):
                 return False
-            for (e, a) in zip(exp.args, ins.args):
-                if isinstance(e, AsmLiteral):
-                    if not isinstance(a, AsmLiteral) or a.value != e.value:
-                        return False
-                elif isinstance(e, Register):
-                    if not isinstance(a, Register) or not self.match_reg(a, e):
-                        return False
-                elif isinstance(e, AsmGlobalSymbol):
-                    if e.symbol_name.isupper():
-                        if not isinstance(a, AsmLiteral):
-                            return False
-                        if e.symbol_name not in self.symbolic_literals:
-                            self.symbolic_literals[e.symbol_name] = a.value
-                        elif self.symbolic_literals[e.symbol_name] != a.value:
-                            return False
-                    else:
-                        if (
-                            not isinstance(a, AsmGlobalSymbol)
-                            or a.symbol_name != e.symbol_name
-                        ):
-                            return False
-                elif isinstance(e, AsmAddressMode):
-                    if (
-                        not isinstance(a, AsmAddressMode)
-                        or a.lhs != e.lhs
-                        or not self.match_reg(a.rhs, e.rhs)
-                    ):
-                        return False
-                elif isinstance(e, JumpTarget):
-                    if not isinstance(a, JumpTarget):
-                        return False
-                    if e.target not in self.symbolic_labels:
-                        self.symbolic_labels[e.target] = a.target
-                    elif self.symbolic_labels[e.target] != a.target:
-                        return False
-                elif isinstance(e, BinOp):
-                    if not isinstance(a, AsmLiteral) or a.value != self.eval_math(e):
-                        return False
-                else:
-                    assert False, f"bad pattern part: {exp} contains {type(e)}"
+            for (a, e) in zip(ins.args, exp.args):
+                if not self.match_arg(a, e):
+                    return False
         return True
 
 
