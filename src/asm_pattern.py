@@ -31,7 +31,7 @@ def make_pattern(*parts: str) -> Pattern:
         if part == "*":
             ret.append((None, optional))
         elif part.endswith(":"):
-            ret.append((Label(""), optional))
+            ret.append((Label(part.strip(".:")), optional))
         else:
             ins = parse_instruction(part, InstructionMeta.missing(), NaiveParsingArch())
             ret.append((ins, optional))
@@ -149,8 +149,9 @@ class TryMatchState:
         if exp is None:
             return True
         if isinstance(exp, Label):
-            name = self.symbolic_labels.get(exp.name)
-            return isinstance(actual, Label) and (name is None or actual.name == name)
+            return isinstance(actual, Label) and self.match_var(
+                self.symbolic_labels, exp.name, actual.name
+            )
         if not isinstance(actual, Instruction):
             return False
         ins = actual
