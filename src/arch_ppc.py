@@ -117,15 +117,15 @@ class TailCallPattern(AsmPattern):
         if matcher.index != len(matcher.input) - 1:
             return None
         instr = matcher.input[matcher.index]
-        if not isinstance(instr, Instruction) or instr.mnemonic != "b":
-            return None
-        return Replacement(
-            [
-                Instruction.derived("bl", instr.args, instr),
-                Instruction.derived("blr", [], instr),
-            ],
-            1,
-        )
+        if isinstance(instr, Instruction) and instr.mnemonic == "b" and isinstance(instr.args[0], AsmGlobalSymbol):
+            return Replacement(
+                [
+                    Instruction.derived("bl", instr.args, instr),
+                    Instruction.derived("blr", [], instr),
+                ],
+                1,
+            )
+        return None
 
 
 class DoubleNotPattern(SimpleAsmPattern):
