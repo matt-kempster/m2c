@@ -38,10 +38,12 @@ class ElfFile:
 
     @staticmethod
     def parse(data: bytes) -> "ElfFile":
+        if not data:
+            raise ValueError("Input data is empty")
         e_ident = data[:16]
         if e_ident[:4] != b"\x7FELF":
             raise ValueError(
-                "Input data is not an ELF file (magic number is {e_ident[:4]!r})"
+                f"Input data is not an ELF file (magic number is {e_ident[:4]!r})"
             )
 
         SHT_PROGBITS = 1

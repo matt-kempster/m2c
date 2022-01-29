@@ -1,8 +1,8 @@
 import struct
 import sys
 import capstone as cs
-from typing import Any, BinaryIO, List, Optional, Set, TextIO
-from elf_file import ElfFile, ElfSection
+from typing import Any, BinaryIO, List, Optional, Set, TextIO, Tuple
+from elf_file import ElfFile, ElfSection, ElfSymbol
 
 # Based on `doldisasm.py` from camthesaxman:
 # https://gist.github.com/camthesaxman/a36f610dbf4cc53a874322ef146c4123
@@ -87,6 +87,25 @@ LOAD_STORE_MNEMONICS: Set[CsMnemonic] = {
     cs.ppc.PPC_INS_STDU,
 }
 
+# These name substitutions are performed by doldisasm.py so that all symbols
+# and labels in the output asm only use alphanumerics and '$'
+SUBSTITUTIONS: Tuple[Tuple[str, str], ...] = (
+    ("<", "$$0"),
+    (">", "$$1"),
+    ("@", "$$2"),
+    ("\\", "$$3"),
+    (",", "$$4"),
+    ("-", "$$5"),
+)
+
+
+def symbol_name(sym: ElfSymbol) -> str:
+    name = sym.name
+    for sub in SUBSTITUTIONS:
+        name = name.replace(*sub)
+    return name
+
+
 # Returns true if the instruction is a load or store with the given register as a base
 def is_load_store_reg_offset(insn: CsInsn, reg: Optional[CsRegister]) -> bool:
     return insn.id in LOAD_STORE_MNEMONICS and (
@@ -96,17 +115,21 @@ def is_load_store_reg_offset(insn: CsInsn, reg: Optional[CsRegister]) -> bool:
 
 # Converts the instruction to a string, fixing various issues with Capstone
 def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional[str]:
+    # Look up the relocation for this address, which is either at offset+0 or offset+2
+    # (It should be possible to determine which offset to use from either the reolcation
+    # type or the instruction mnemonic, but for now just check both since they should
+    # be mutually exclusive.)
     reloc = section.relocations.get(insn.address - section.address)
     if reloc is None:
         reloc = section.relocations.get(insn.address - section.address + 2)
 
     label: Optional[str] = None
     if reloc is not None:
-        label = reloc.symbol.name
+        label = symbol_name(reloc.symbol)
     elif insn.operands:
         symbol = section.symbols.get(insn.operands[0].imm - section.address)
         if symbol is not None:
-            label = symbol.name
+            label = symbol_name(symbol)
 
     # Probably data, not a real instruction
     if insn.id == cs.ppc.PPC_INS_BDNZ and (insn.bytes[0] & 1):
@@ -152,13 +175,13 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].reg),
                 insn.reg_name(insn.operands[1].reg),
-                reloc.symbol.name,
+                label,
             )
         if is_load_store_reg_offset(insn, cs.ppc.PPC_REG_R13):
             return "%s %s, %s@sda21(%s)" % (
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].value.reg),
-                reloc.symbol.name,
+                label,
                 insn.reg_name(insn.operands[1].mem.base),
             )
 
@@ -168,13 +191,13 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].reg),
                 insn.reg_name(insn.operands[1].reg),
-                reloc.symbol.name,
+                label,
             )
         if is_load_store_reg_offset(insn, cs.ppc.PPC_REG_R2):
             return "%s %s, %s@sda2(%s)" % (
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].value.reg),
-                reloc.symbol.name,
+                label,
                 insn.reg_name(insn.operands[1].mem.base),
             )
 
@@ -184,7 +207,7 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
             return "%s %s, %s@%s" % (
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].reg),
-                reloc.symbol.name,
+                label,
                 suffix,
             )
         # Handle split loads (low part)
@@ -193,13 +216,13 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].reg),
                 insn.reg_name(insn.operands[1].reg),
-                reloc.symbol.name,
+                label,
             )
         if is_load_store_reg_offset(insn, None):
             return "%s %s, %s@l(%s)" % (
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].reg),
-                reloc.symbol.name,
+                label,
                 insn.reg_name(insn.operands[1].mem.base),
             )
 
@@ -387,8 +410,8 @@ def disassemble_instruction(
     symbol = section.symbols.get(offset)
     if symbol is not None:
         if not symbol.name.startswith("lbl_"):
-            output.write(f"\n.global {symbol.name}\n")
-        output.write(f"{symbol.name}:\n")
+            output.write(f"\n.global {symbol_name(symbol)}\n")
+        output.write(f"{symbol_name(symbol)}:\n")
 
     prefixComment = "/* %08X %08X  %02X %02X %02X %02X */" % (
         address,
@@ -476,7 +499,7 @@ def disassemble_data_section(section: ElfSection, output: TextIO) -> None:
             if reloc is not None:
                 assert len(word) == 4
                 suffix = f"({reloc.symbol_offset})" if reloc.symbol_offset else ""
-                output.write(f"\t.word {reloc.symbol.name}{suffix}\n")
+                output.write(f"\t.word {symbol_name(reloc.symbol)}{suffix}\n")
             elif len(word) == 4:
                 output.write(
                     "\t.word 0x" + "".join(hex(x)[2:].zfill(2) for x in word) + "\n"
@@ -490,8 +513,8 @@ def disassemble_data_section(section: ElfSection, output: TextIO) -> None:
             continue
         output_slice(offset, symbol.offset)
         offset = symbol.offset
-        output.write(f"\n.global {symbol.name}\n")
-        output.write(f"{symbol.name}:\n")
+        output.write(f"\n.global {symbol_name(symbol)}\n")
+        output.write(f"{symbol_name(symbol)}:\n")
     output_slice(offset, len(section.data))
 
 
