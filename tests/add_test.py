@@ -273,6 +273,16 @@ def add_test_from_file(
                 irix_compile(orig_file, asm_file_path, env_vars, compiler)
             elif compiler.arch == "ppc":
                 ppc_compile(orig_file, asm_file_path, compiler)
+
+                # TODO: This code was used to semi-automatically port over MIPS flags to PPC.
+                # For future tests, the author should write mwcc-o4p-flags.txt manually.
+                #
+                # mips_flags = test_dir / "irix-o2-flags.txt"
+                # ppc_flags = test_dir / (asm_filename + "-flags.txt")
+                # if mips_flags.exists():
+                #     ppc_flags.write_text(mips_flags.read_text().strip() + " --target ppc-mwcc-c\n")
+                # else:
+                #     ppc_flags.write_text("--target ppc-mwcc-c\n")
         except Exception:
             logger.exception("Failed to compile {asm_file_path}")
 

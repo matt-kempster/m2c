@@ -106,6 +106,10 @@ def symbol_name(sym: ElfSymbol) -> str:
     return name
 
 
+def address_label(addr: int) -> str:
+    return f".L{addr:08X}"
+
+
 # Returns true if the instruction is a load or store with the given register as a base
 def is_load_store_reg_offset(insn: CsInsn, reg: Optional[CsRegister]) -> bool:
     return insn.id in LOAD_STORE_MNEMONICS and (
@@ -119,17 +123,21 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
     # (It should be possible to determine which offset to use from either the reolcation
     # type or the instruction mnemonic, but for now just check both since they should
     # be mutually exclusive.)
-    reloc = section.relocations.get(insn.address - section.address)
+    offset = insn.address - section.address
+    reloc = section.relocations.get(offset)
     if reloc is None:
-        reloc = section.relocations.get(insn.address - section.address + 2)
+        reloc = section.relocations.get(offset + 2)
 
     label: Optional[str] = None
     if reloc is not None:
         label = symbol_name(reloc.symbol)
     elif insn.operands:
-        symbol = section.symbols.get(insn.operands[0].imm - section.address)
+        label_addr = insn.operands[0].imm
+        symbol = section.symbols.get(label_addr)
         if symbol is not None:
             label = symbol_name(symbol)
+        else:
+            label = address_label(label_addr)
 
     # Probably data, not a real instruction
     if insn.id == cs.ppc.PPC_INS_BDNZ and (insn.bytes[0] & 1):
@@ -141,6 +149,10 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
         cs.ppc.PPC_INS_BDNZ,
     }:
         if not label:
+            return "%s %s" % (
+                insn.mnemonic,
+                f"unk label: {(raw, insn.address - section.address)}",
+            )
             return None
         return "%s %s" % (insn.mnemonic, label)
     elif insn.id == cs.ppc.PPC_INS_BC:
@@ -226,7 +238,7 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
                 insn.reg_name(insn.operands[1].mem.base),
             )
 
-    # Sign-extend immediate values because Capstone is an idiot and doesn't do that automatically
+    # Sign-extend immediate values (Capstone doesn't do that automatically)
     if (
         insn.id
         in {
@@ -400,13 +412,13 @@ def disasm_mcrxr(inst: int) -> Optional[str]:
 # Disassemble code
 def disassemble_instruction(
     address: int,
-    offset: int,
     insn: Optional[CsInsn],
     raw_bytes: bytes,
     section: ElfSection,
     output: TextIO,
 ) -> None:
     # Output symbol label (if any)
+    offset = address - section.address
     symbol = section.symbols.get(offset)
     if symbol is not None:
         if not symbol.name.startswith("lbl_"):
@@ -450,36 +462,57 @@ def disassemble_instruction(
     output.write(f"{prefixComment}\t{asm}\n")
 
 
+def disassemble_bytes(
+    cap: cs.Cs, base_address: int, data: bytes
+) -> List[Tuple[Optional[CsInsn], int, bytes]]:
+    output: List[Tuple[Optional[CsInsn], int, bytes]] = []
+    offset = 0
+    end = len(data)
+    while offset < end:
+        code = data[offset:end]
+        for insn in cap.disasm(code, base_address + offset):
+            if insn.id in MANUAL_MNEMONICS:
+                output.append((None, insn.address, insn.bytes))
+            else:
+                output.append((insn, insn.address, insn.bytes))
+            offset += 4
+        if offset < end:
+            address = base_address + offset
+            output.append((None, address, data[offset : offset + 4]))
+            offset += 4
+    return output
+
+
 def disassemble_ppc_text_section(section: ElfSection, output: TextIO) -> None:
     cap = cs.Cs(cs.CS_ARCH_PPC, cs.CS_MODE_32 | cs.CS_MODE_BIG_ENDIAN)
     cap.detail = True
     cap.imm_unsigned = False
 
-    offset = 0
-    end = len(section.data)
-    while offset < end:
-        code = section.data[offset:end]
-        for insn in cap.disasm(code, section.address + offset):
-            address = insn.address
-            if insn.id in MANUAL_MNEMONICS:
-                disassemble_instruction(
-                    address, offset, None, insn.bytes, section, output
-                )
-            else:
-                disassemble_instruction(
-                    address, offset, insn, insn.bytes, section, output
-                )
-            offset += 4
-        if offset < end:
-            disassemble_instruction(
-                address,
-                offset,
-                None,
-                section.data[offset : offset + 4],
-                section,
-                output,
-            )
-            offset += 4
+    disassembly = disassemble_bytes(cap, section.address, section.data)
+
+    extra_labels: Set[int] = set()
+    for insn, addr, _ in disassembly:
+        offset = addr - section.address
+        if (
+            insn is not None
+            and insn.id
+            in {
+                cs.ppc.PPC_INS_B,
+                cs.ppc.PPC_INS_BL,
+                cs.ppc.PPC_INS_BDZ,
+                cs.ppc.PPC_INS_BDNZ,
+                cs.ppc.PPC_INS_BC,
+            }
+            and insn.operands[0].imm not in section.symbols
+            and offset not in section.relocations
+            and offset + 2 not in section.relocations
+        ):
+            extra_labels.add(insn.operands[0].imm)
+
+    for insn, addr, raw in disassembly:
+        if addr in extra_labels:
+            output.write(f"{address_label(addr)}:\n")
+        disassemble_instruction(addr, insn, raw, section, output)
 
 
 def disassemble_data_section(section: ElfSection, output: TextIO) -> None:
@@ -530,6 +563,7 @@ def disassemble_ppc_elf(elf_in: BinaryIO, asm_out: TextIO) -> None:
             disassemble_ppc_text_section(section, asm_out)
         else:
             disassemble_data_section(section, asm_out)
+        asm_out.write("\n")
 
 
 if __name__ == "__main__":

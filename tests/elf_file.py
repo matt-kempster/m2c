@@ -166,7 +166,9 @@ class ElfFile:
             symbol = ElfSymbol(offset=st_value, name=sym_name, section=section)
             elf.symbols[sym_name] = symbol
             symbols_by_index.append(symbol)
-            if section is not None:
+            if section is not None and (
+                st_value not in section.symbols or not sym_name.startswith("...")
+            ):
                 section.symbols[st_value] = symbol
 
         # Parse SHT_REL/SHT_RELA sections (relocations)
@@ -192,6 +194,11 @@ class ElfFile:
                         r_type = r_info & 0xFFFFFFFF
 
                     symbol = symbols_by_index[r_sym]
+
+                    # Caonicalize the symbol, in case there are multiple symbols at the same offset
+                    if symbol.section is not None:
+                        symbol = symbol.section.symbols[symbol.offset]
+
                     if s.sh_type == SHT_REL:
                         # NB: This isn't needed for PPC, but we may want to re-use this code later
                         if e_machine == 8 and r_type == 2:  # R_MIPS_32
