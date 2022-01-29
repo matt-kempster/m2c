@@ -1,6 +1,7 @@
 ? bar();                                            /* static */
+extern s32 foo;
 
 void test(void) {
     bar();
-    *NULL = 4;
+    foo = 4;
 }

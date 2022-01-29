@@ -1,11 +1,12 @@
+extern f32 a;
+extern f64 b;
+extern f64 c;
+extern ? *d;
 static ? $$25;                                      /* unable to generate initializer */
 
 void test(void) {
-    f64 temp_f0;
-
-    temp_f0 = (f64) *NULL;
-    *NULL = (f32) *NULL;
-    *NULL = (f64) *NULL;
-    *NULL = temp_f0;
-    *NULL = (bitwise f32) &$$25;
+    a = 1.2f;
+    b = 13.0;
+    c = 14000000000.0;
+    d = &$$25;
 }

@@ -1,4 +1,3 @@
-static ? $$25;                                      /* unable to generate initializer; const */
 f32 D_410154[3] = { 3.0f, 4.0f, 5.0f };
 f32 D_410160[3] = { 6.0f, 7.0f, 8.0f };
 f32 D_410170[3];
@@ -12,6 +11,6 @@ f32 test(s32 i) {
     temp_r4 = &D_410170[i];
     *temp_r4 = D_410160[i] + D_400120[i];
     temp_f3 = *temp_r4;
-    *NULL = (f32) (*NULL * ((*NULL * temp_f3) + D_40012C[i]));
-    return *NULL / temp_f3;
+    D_410150 *= (5.67f * temp_f3) + D_40012C[i];
+    return D_410150 / temp_f3;
 }

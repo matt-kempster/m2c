@@ -1,8 +1,9 @@
 ? bar();                                            /* static */
 ? foo();                                            /* static */
+extern s32 global;
 
 void test(void) {
     foo();
-    *NULL = 1;
+    global = 1;
     bar();
 }

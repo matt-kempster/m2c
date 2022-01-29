@@ -189,13 +189,6 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
                 insn.reg_name(insn.operands[1].reg),
                 label,
             )
-        if is_load_store_reg_offset(insn, cs.ppc.PPC_REG_R13):
-            return "%s %s, %s@sda21(%s)" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].value.reg),
-                label,
-                insn.reg_name(insn.operands[1].mem.base),
-            )
 
         # r2 offset loads
         if insn.id == cs.ppc.PPC_INS_ADDI and insn.operands[1].reg == cs.ppc.PPC_REG_R2:
@@ -205,12 +198,17 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
                 insn.reg_name(insn.operands[1].reg),
                 label,
             )
-        if is_load_store_reg_offset(insn, cs.ppc.PPC_REG_R2):
-            return "%s %s, %s@sda2(%s)" % (
+
+        # Reloc R_PPC_EMB_SDA21, the linker sets the register to either
+        # $r13 or $r2 based on the section name.
+        if reloc.relocation_type == 109:
+            assert reloc.symbol.section is not None
+            reg = "r13" if reloc.symbol.section.name.endswith("2") else "r2"
+            return "%s %s, %s@sda21(%s)" % (
                 insn.mnemonic,
                 insn.reg_name(insn.operands[0].value.reg),
                 label,
-                insn.reg_name(insn.operands[1].mem.base),
+                reg,
             )
 
         # Handle split loads (high part)
