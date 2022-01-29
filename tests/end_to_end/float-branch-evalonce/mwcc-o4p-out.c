@@ -1,11 +1,16 @@
 s32 test(s32 arg0) {
-    *NULL = *MIPS2C_ERROR(Read from unset register $r0);
-    if (*MIPS2C_ERROR(Read from unset register $r0) < *MIPS2C_ERROR(Read from unset register $r0)) {
-        *NULL = (f32) *MIPS2C_ERROR(Read from unset register $r0);
+    s32 temp_cr0_lt;
+    s32 temp_cr0_lt_2;
+
+    temp_cr0_lt = *NULL < *NULL;
+    *NULL = (f32) *NULL;
+    if (temp_cr0_lt != 0) {
+        *NULL = (f32) *NULL;
     }
-    *NULL = (f32) *MIPS2C_ERROR(Read from unset register $r0);
-    if (!(*MIPS2C_ERROR(Read from unset register $r0) < *MIPS2C_ERROR(Read from unset register $r0))) {
-        *NULL = (f32) *MIPS2C_ERROR(Read from unset register $r0);
+    temp_cr0_lt_2 = *NULL < *NULL;
+    *NULL = (f32) *NULL;
+    if (temp_cr0_lt_2 == 0) {
+        *NULL = (f32) *NULL;
         return arg0;
     }
     return arg0;

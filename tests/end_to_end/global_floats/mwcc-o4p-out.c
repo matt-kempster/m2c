@@ -12,6 +12,6 @@ f32 test(s32 i) {
     temp_r4 = &D_410170[i];
     *temp_r4 = D_410160[i] + D_400120[i];
     temp_f3 = *temp_r4;
-    *NULL = *D_40012C * ((*D_40012C * temp_f3) + D_40012C[i]);
-    return *D_40012C / temp_f3;
+    *NULL = (f32) (*NULL * ((*NULL * temp_f3) + D_40012C[i]));
+    return *NULL / temp_f3;
 }

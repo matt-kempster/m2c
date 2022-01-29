@@ -5,9 +5,9 @@ f32 test(f32 arg8) {
 
     spC = arg8;
     sp14 = spC;
-    sp14 = (f32 *)0x5F3759DF - ((bitwise s32) spC >> 1);
+    sp14 = 0x5F3759DF - ((bitwise s32) spC >> 1);
     temp_f2 = (bitwise f32) sp14;
     spC = temp_f2;
-    spC = temp_f2 * (*(f32 *)0x5F3759DF - (temp_f2 * (*(f32 *)0x5F3759DF * arg8 * temp_f2)));
+    spC = temp_f2 * (*NULL - (temp_f2 * (*NULL * arg8 * temp_f2)));
     return spC;
 }

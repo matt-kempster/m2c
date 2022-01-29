@@ -3,9 +3,9 @@ static ? $$25;                                      /* unable to generate initia
 void test(void) {
     f64 temp_f0;
 
-    temp_f0 = *NULL;
-    *NULL = (f32) *MIPS2C_ERROR(Read from unset register $r0);
+    temp_f0 = (f64) *NULL;
+    *NULL = (f32) *NULL;
     *NULL = (f64) *NULL;
     *NULL = temp_f0;
-    *NULL = &$$25;
+    *NULL = (bitwise f32) &$$25;
 }
