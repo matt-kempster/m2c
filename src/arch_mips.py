@@ -504,8 +504,6 @@ class MipsArch(Arch):
         return (
             instr.mnemonic
             in [
-                "j",
-                "b",
                 "beq",
                 "bne",
                 "beqz",
@@ -518,6 +516,7 @@ class MipsArch(Arch):
                 "bc1f",
             ]
             or MipsArch.is_branch_likely_instruction(instr)
+            or MipsArch.is_constant_branch_instruction(instr)
         )
 
     @staticmethod
@@ -545,6 +544,10 @@ class MipsArch(Arch):
                 f'Couldn\'t parse instruction "{instr}": invalid branch target'
             )
         return label
+
+    @staticmethod
+    def is_constant_branch_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic in ("b", "j")
 
     @staticmethod
     def is_jump_instruction(instr: Instruction) -> bool:

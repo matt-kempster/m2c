@@ -120,7 +120,7 @@ def is_load_store_reg_offset(insn: CsInsn, reg: Optional[CsRegister]) -> bool:
 # Converts the instruction to a string, fixing various issues with Capstone
 def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional[str]:
     # Look up the relocation for this address, which is either at offset+0 or offset+2
-    # (It should be possible to determine which offset to use from either the reolcation
+    # (It should be possible to determine which offset to use from either the relocation
     # type or the instruction mnemonic, but for now just check both since they should
     # be mutually exclusive.)
     offset = insn.address - section.address

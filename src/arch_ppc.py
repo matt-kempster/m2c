@@ -271,17 +271,20 @@ class PpcArch(Arch):
 
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic in [
-            "b",
-            "ble",
-            "blt",
-            "beq",
-            "bge",
-            "bgt",
-            "bne",
-            "bdnz",
-            "bdz",
-        ]
+        return (
+            instr.mnemonic
+            in [
+                "ble",
+                "blt",
+                "beq",
+                "bge",
+                "bgt",
+                "bne",
+                "bdnz",
+                "bdz",
+            ]
+            or PpcArch.is_constant_branch_instruction(instr)
+        )
 
     @staticmethod
     def is_branch_likely_instruction(instr: Instruction) -> bool:
@@ -297,6 +300,10 @@ class PpcArch(Arch):
                 f'Couldn\'t parse instruction "{instr}": invalid branch target'
             )
         return label
+
+    @staticmethod
+    def is_constant_branch_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic == "b"
 
     @staticmethod
     def is_jump_instruction(instr: Instruction) -> bool:

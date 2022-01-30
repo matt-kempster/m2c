@@ -192,6 +192,10 @@ class ArchAsm(ArchAsmParsing):
         ...
 
     @abc.abstractmethod
+    def is_constant_branch_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
     def is_conditional_return_instruction(self, instr: Instruction) -> bool:
         ...
 
@@ -350,12 +354,13 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)
-        elif tok == '"' and '"' in arg_elems[1:]:
+        elif tok == '"':
             # Quoted global symbol
-            # TODO: properly match pairs of quotes, avoid splitting on internal spaces
             expect('"')
             symbol = ""
-            while arg_elems[0] != '"':
+            while arg_elems and arg_elems[0] != '"':
+                if arg_elems[0] == "\\" and len(arg_elems) >= 2:
+                    arg_elems.pop(0)
                 symbol += arg_elems.pop(0)
             expect('"')
             return AsmGlobalSymbol(symbol)
@@ -378,7 +383,6 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                     raise DecompFailure(
                         f"Unexpected symbol {reloc_name} in subtraction expression"
                     )
-                assert value
                 macro = Macro("sda21", value)
                 if not arg_elems:
                     return macro
@@ -408,18 +412,9 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             # A relocation (e.g. (...)@ha or (...)@l).
             arg_elems.pop(0)
             reloc_name = parse_word(arg_elems)
-            if reloc_name in ("sda2", "sda21") and arg_elems:
-                expect("(")
-                rhs = parse_arg_elems(arg_elems, arch)
-                assert isinstance(rhs, Register)
-                assert rhs in [Register("r2"), Register("r13")]
-                expect(")")
-                assert value
-                return AsmAddressMode(Macro(reloc_name, value), rhs)
-            else:
-                assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
-                assert value
-                value = Macro(reloc_name, value)
+            assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
+            assert value
+            value = Macro(reloc_name, value)
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
 

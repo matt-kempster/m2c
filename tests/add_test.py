@@ -59,7 +59,7 @@ def get_environment_variables() -> PathsToBinaries:
 
 @dataclass
 class Compiler:
-    arch: str
+    name: str
     cc_command: List[str]
 
     def with_cc_flags(self, flags: List[str]) -> "Compiler":
@@ -70,7 +70,7 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     compilers: List[Tuple[str, Compiler]] = []
     if paths.IDO_CC is not None and paths.SM64_TOOLS is not None:
         ido = Compiler(
-            arch="ido",
+            name="ido",
             cc_command=[
                 str(paths.IDO_CC),
                 "-c",
@@ -110,7 +110,7 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
         if paths.MWCC_CC.suffix == ".exe" and sys.platform.startswith("linux"):
             cc_command.insert(0, "/usr/bin/wine")
         mwcc = Compiler(
-            arch="ppc",
+            name="ppc",
             cc_command=cc_command,
         )
         compilers.append(("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])))
@@ -268,9 +268,9 @@ def add_test_from_file(
     for asm_filename, compiler in compilers:
         asm_file_path = test_dir / (asm_filename + ".s")
         try:
-            if compiler.arch == "ido":
+            if compiler.name == "ido":
                 irix_compile(orig_file, asm_file_path, env_vars, compiler)
-            elif compiler.arch == "mwcc":
+            elif compiler.name == "mwcc":
                 ppc_compile(orig_file, asm_file_path, compiler)
 
                 # If the flags file doesn't exist, initialize it with the correct --target

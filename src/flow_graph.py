@@ -436,7 +436,7 @@ def build_blocks(
 
     if block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
-        # anonymous ("jr" instructions create new anonymous blocks, so if it's
+        # anonymous (jump instructions create new anonymous blocks, so if it's
         # not we must be missing a return instruction).
         label = block_builder.curr_label.name
         return_instrs = arch.missing_return()
@@ -736,9 +736,8 @@ def build_graph_from_block(
             target = branch_label.target
             raise DecompFailure(f"Cannot find branch target {target}")
 
-        is_constant_branch = jump.mnemonic in ["b", "j"]
         emit_goto = jump.meta.emit_goto
-        if is_constant_branch:
+        if arch.is_constant_branch_instruction(jump):
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, emit_goto, dummy_node)
             nodes.append(new_node)

@@ -540,7 +540,7 @@ def parse_flags(flags: List[str]) -> Options:
     )
     filenames = args.filename + args.rodata_filenames
 
-    # Backwards compatability: MIPS targets can be descibed with --compiler
+    # Backwards compatibility: MIPS targets can be described with --compiler
     if args.target_compiler == Target.CompilerEnum.IDO:
         target = Target.parse("mips-ido-c")
     elif args.target_compiler == Target.CompilerEnum.GCC:
@@ -549,7 +549,7 @@ def parse_flags(flags: List[str]) -> Options:
         target = args.target
     else:
         parser.error(
-            "--compiler is partially supported for backwards compatability, use --target instead"
+            "--compiler is partially supported for backwards compatibility, use --target instead"
         )
 
     # Backwards compatibility: giving a function index/name as a final argument, or "all"

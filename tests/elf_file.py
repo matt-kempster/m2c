@@ -163,10 +163,12 @@ class ElfFile:
             symbol = ElfSymbol(offset=st_value, name=sym_name, section=section)
             elf.symbols[sym_name] = symbol
             symbols_by_index.append(symbol)
-            # Do not overwrite existing symbols at this address, unless the existing
-            # symbol starts with "..." (such as `...bss@0`).
-            if section is not None and (
-                st_value not in section.symbols or not sym_name.startswith("...")
+            # Do not overwrite existing symbols at this address, and skip
+            # symbols starting with "..." (such as `...bss@0`).
+            if (
+                section is not None
+                and st_value not in section.symbols
+                and not sym_name.startswith("...")
             ):
                 section.symbols[st_value] = symbol
 
