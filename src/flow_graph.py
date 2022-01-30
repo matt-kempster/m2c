@@ -270,11 +270,7 @@ def prune_unreferenced_labels(
         if isinstance(label, Label) and label.name in asm_data.mentioned_labels
     }
     for item in function.body:
-        if (
-            isinstance(item, Instruction)
-            and arch.is_branch_instruction(item)
-            and not arch.is_conditional_return_instruction(item)
-        ):
+        if isinstance(item, Instruction) and arch.is_branch_instruction(item):
             labels_used.add(arch.get_branch_target(item).target)
 
     new_function = function.bodyless_copy()
@@ -309,25 +305,11 @@ def build_blocks(
     branch_likely_counts: Counter[str] = Counter()
     cond_return_target: Optional[JumpTarget] = None
 
-    def process(item: Union[Instruction, Label]) -> None:
-        nonlocal cond_return_target
-
+    def process_with_delay_slots(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
             block_builder.set_label(item)
-            return
-
-        if arch.is_conditional_return_instruction(item):
-            if cond_return_target is None:
-                cond_return_target = JumpTarget(f"_conditionalreturn_")
-            # Strip the "lr" off of the instruction
-            assert item.mnemonic[-2:] == "lr"
-            branch_instr = Instruction.derived(
-                item.mnemonic[:-2], [cond_return_target], item
-            )
-            block_builder.add_instruction(branch_instr)
-            block_builder.new_block()
             return
 
         if not arch.is_delay_slot_instruction(item):
@@ -338,7 +320,6 @@ def build_blocks(
             return
 
         process_after: List[Union[Instruction, Label]] = []
-        next_item: Optional[Union[Instruction, Label]] = None
         next_item = next(body_iter)
 
         if isinstance(next_item, Label):
@@ -373,13 +354,12 @@ def build_blocks(
                     ]
                 raise DecompFailure("\n".join(msg))
 
-        if next_item is not None and arch.is_delay_slot_instruction(next_item):
+        if arch.is_delay_slot_instruction(next_item):
             raise DecompFailure(
                 f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
             )
 
         if arch.is_branch_likely_instruction(item):
-            assert next_item is not None
             target = arch.get_branch_target(item)
             branch_likely_counts[target.target] += 1
             index = branch_likely_counts[target.target]
@@ -402,38 +382,62 @@ def build_blocks(
         elif item.mnemonic in ["jal", "jalr"]:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
-            if (
-                next_item is not None
-                and next_item.args
-                and next_item.args[0] == item.args[0]
-            ):
+            if next_item.args and next_item.args[0] == item.args[0]:
                 raise DecompFailure(
                     f"Instruction after {item.mnemonic} clobbers its source\n"
                     "register, which is currently not supported.\n\n"
                     "Try rewriting the assembly to avoid that."
                 )
-            if next_item is not None:
-                block_builder.add_instruction(next_item)
+            block_builder.add_instruction(next_item)
             block_builder.add_instruction(item)
         else:
             block_builder.add_instruction(item)
-            if next_item is not None:
-                block_builder.add_instruction(next_item)
+            block_builder.add_instruction(next_item)
 
         if arch.is_jump_instruction(item):
             # Split blocks at jumps, after the next instruction.
             block_builder.new_block()
 
         for item in process_after:
-            process(item)
+            process_with_delay_slots(item)
+
+    def process_no_delay_slots(item: Union[Instruction, Label]) -> None:
+        nonlocal cond_return_target
+
+        if isinstance(item, Label):
+            # Split blocks at labels.
+            block_builder.new_block()
+            block_builder.set_label(item)
+            return
+
+        if arch.is_conditional_return_instruction(item):
+            if cond_return_target is None:
+                cond_return_target = JumpTarget(f"_conditionalreturn_")
+            # Strip the "lr" off of the instruction
+            assert item.mnemonic[-2:] == "lr"
+            branch_instr = Instruction.derived(
+                item.mnemonic[:-2], [cond_return_target], item
+            )
+            block_builder.add_instruction(branch_instr)
+            block_builder.new_block()
+            return
+
+        block_builder.add_instruction(item)
+
+        # Split blocks at jumps, at the next instruction.
+        if arch.is_jump_instruction(item):
+            block_builder.new_block()
 
     for item in body_iter:
-        process(item)
+        if arch.uses_delay_slots:
+            process_with_delay_slots(item)
+        else:
+            process_no_delay_slots(item)
 
     if block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
         # anonymous ("jr" instructions create new anonymous blocks, so if it's
-        # not we must be missing a "jr $ra").
+        # not we must be missing a return instruction).
         label = block_builder.curr_label.name
         return_instrs = arch.missing_return()
         print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
@@ -443,14 +447,12 @@ def build_blocks(
 
     if cond_return_target is not None:
         # Add an empty return block at the end of the function
-        meta = InstructionMeta.missing()
-        return_instr = Instruction("blr", [], meta)
         block_builder.set_label(Label(cond_return_target.target))
         for instr in arch.missing_return():
             block_builder.add_instruction(instr)
         block_builder.new_block()
 
-    # Throw away whatever is past the last "jr $ra" and return what we have.
+    # Throw away whatever is past the last return instruction and return what we have.
     return block_builder.get_blocks()
 
 
@@ -662,8 +664,8 @@ def build_graph_from_block(
         )
     elif len(jumps) == 1:
         # There is a jump. This is either:
-        # - a ReturnNode, if it's "jr $ra",
-        # - a SwitchNode, if it's "jr $something_else",
+        # - a ReturnNode, if it's a return instruction ("jr $ra" in MIPS)
+        # - a SwitchNode, if it's a jumptable instruction ("jr $something_else" in MIPS)
         # - a BasicNode, if it's an unconditional branch, or
         # - a ConditionalNode.
         jump = jumps[0]

@@ -949,22 +949,26 @@ class Type:
 
     @staticmethod
     def demangled_type(sym_type: CxxType, sym_name: Optional[CxxTerm] = None) -> "Type":
-        # TODO: This function may need to depend on the ABI, so it may need to be moved out of types.py?
+        # TODO: This function may need to depend on the ABI or compiler to generate the types
+        # of class member functions. It may need to be moved out of types.py, or some of this
+        # logic could be moved into FunctionSignature?
         final_name = None
         if sym_name is not None:
             assert sym_name.kind == CxxTerm.Kind.QUALIFIED
             assert sym_name.qualified_name is not None
             assert len(sym_name.qualified_name) >= 1
-            final_name = str(sym_name.qualified_name[-1]).rpartition("@")[-1]
+            final_name = str(sym_name.qualified_name[-1]).split("@")[-1]
 
         type = None
         for term in sym_type.terms[::-1]:
+            if type is None and term.kind in CxxTerm.NONTERMINATING_KINDS:
+                type = Type.any()
             if term.kind == CxxTerm.Kind.CONST:
                 pass
             elif term.kind == CxxTerm.Kind.UNSIGNED:
                 unsigned = True
             elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
-                type = Type.ptr(type)
+                type = Type.ptr(type).weaken_void_ptr()
             elif term.kind == CxxTerm.Kind.BOOL:
                 type = Type.bool()
             elif term.kind == CxxTerm.Kind.CHAR:
@@ -989,7 +993,7 @@ class Type:
                 type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED)))
             elif term.kind == CxxTerm.Kind.ARRAY:
                 assert type is not None
-                assert term.array_dim is not None
+                assert term.array_dim is not None, "array CxxTerms must have array_dim"
                 type = Type.array(type, term.array_dim)
             elif term.kind == CxxTerm.Kind.FUNCTION:
                 assert term.function_params is not None
@@ -1037,8 +1041,9 @@ class Type:
                 # TODO: Support C++ classes/namespaces
                 type = Type.any()
             elif term.kind == CxxTerm.Kind.VOID:
-                pass
+                type = Type.void()
             elif term.kind == CxxTerm.Kind.ELLIPSIS:
+                # This should be handled by the FUNCTION iterator above
                 pass
             else:
                 assert False, term.kind

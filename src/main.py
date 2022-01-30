@@ -68,7 +68,7 @@ def run(options: Options) -> int:
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     else:
-        raise ValueError("Invalid target arch: {}", options.target.arch)
+        raise ValueError(f"Invalid target arch: {options.target.arch}")
 
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
@@ -285,50 +285,6 @@ def parse_flags(flags: List[str]) -> Options:
         help="Add search path for loading .incbin directives in the input asm",
     )
 
-    group = parser.add_argument_group("Target Options")
-    group.add_argument(
-        "-t",
-        "--target",
-        dest="target",
-        type=Target.parse,
-        default="mips-ido-c",
-        help="Target architecture, compiler, and language triple. "
-        "Supported triples: mips-ido-c, mips-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
-        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
-    )
-    group.add_argument(
-        "--target-arch",
-        dest="target_arch",
-        type=Target.ArchEnum,
-        choices=list(Target.ArchEnum),
-        help="Input assembly architecture. " "Overrides the value in --target. ",
-    )
-    group.add_argument(
-        "--target-compiler",
-        dest="target_compiler",
-        type=Target.CompilerEnum,
-        choices=list(Target.CompilerEnum),
-        help="Original compiler family that produced the input files. "
-        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
-        "Overrides the value in --target. ",
-    )
-    group.add_argument(
-        "--target-language",
-        dest="target_language",
-        type=Target.LanguageEnum,
-        choices=list(Target.LanguageEnum),
-        help="Original source language that was compiled into the input files. "
-        "`c++` enables additional features, such as demangling. "
-        "Overrides the value in --target. ",
-    )
-    group.add_argument(
-        "--compiler",
-        dest="target_compiler",
-        type=Target.CompilerEnum,
-        choices=list(Target.CompilerEnum),
-        help=argparse.SUPPRESS,  # For backwards compatibility; now use `--target-compiler`
-    )
-
     group = parser.add_argument_group("Output Options")
     group.add_argument(
         "-f",
@@ -462,6 +418,23 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
+        "-t",
+        "--target",
+        dest="target",
+        type=Target.parse,
+        default="mips-ido-c",
+        help="Target architecture, compiler, and language triple. "
+        "Supported triples: mips-ido-c, mips-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
+        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
+    )
+    group.add_argument(
+        "--compiler",
+        dest="target_compiler",
+        type=Target.CompilerEnum,
+        choices=list(Target.CompilerEnum),
+        help=argparse.SUPPRESS,  # For backwards compatibility; now use `--target`
+    )
+    group.add_argument(
         "--passes",
         "-P",
         dest="passes",
@@ -567,13 +540,17 @@ def parse_flags(flags: List[str]) -> Options:
     )
     filenames = args.filename + args.rodata_filenames
 
-    target = args.target
-    if args.target_arch:
-        target.arch = args.target_arch
-    if args.target_compiler:
-        target.compiler = args.target_compiler
-    if args.target_language:
-        target.language = args.target_language
+    # Backwards compatability: MIPS targets can be descibed with --compiler
+    if args.target_compiler == Target.CompilerEnum.IDO:
+        target = Target.parse("mips-ido-c")
+    elif args.target_compiler == Target.CompilerEnum.GCC:
+        target = Target.parse("mips-gcc-c")
+    elif args.target_compiler is None:
+        target = args.target
+    else:
+        parser.error(
+            "--compiler is partially supported for backwards compatability, use --target instead"
+        )
 
     # Backwards compatibility: giving a function index/name as a final argument, or "all"
     assert filenames, "checked by argparse, nargs='+'"

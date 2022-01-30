@@ -23,9 +23,9 @@ def set_up_logging(debug: bool) -> None:
 
 @dataclass
 class PathsToBinaries:
-    MIPS_CC: Optional[Path]
+    IDO_CC: Optional[Path]
     SM64_TOOLS: Optional[Path]
-    PPC_CC: Optional[Path]
+    MWCC_CC: Optional[Path]
 
 
 def get_environment_variables() -> PathsToBinaries:
@@ -40,9 +40,9 @@ def get_environment_variables() -> PathsToBinaries:
             return None
         return path
 
-    MIPS_CC = load(
-        "MIPS_CC",
-        "env variable MIPS_CC should point to recompiled IDO cc binary",
+    IDO_CC = load(
+        "IDO_CC",
+        "env variable IDO_CC should point to recompiled IDO cc binary",
     )
     SM64_TOOLS = load(
         "SM64_TOOLS",
@@ -51,10 +51,10 @@ def get_environment_variables() -> PathsToBinaries:
             "https://github.com/queueRAM/sm64tools/, with mipsdisasm built"
         ),
     )
-    PPC_CC = load(
-        "PPC_CC", "env variable PPC_CC should point to a PPC cc binary (mwcceppc.exe)"
+    MWCC_CC = load(
+        "MWCC_CC", "env variable MWCC_CC should point to a PPC cc binary (mwcceppc.exe)"
     )
-    return PathsToBinaries(MIPS_CC=MIPS_CC, SM64_TOOLS=SM64_TOOLS, PPC_CC=PPC_CC)
+    return PathsToBinaries(IDO_CC=IDO_CC, SM64_TOOLS=SM64_TOOLS, MWCC_CC=MWCC_CC)
 
 
 @dataclass
@@ -68,11 +68,11 @@ class Compiler:
 
 def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     compilers: List[Tuple[str, Compiler]] = []
-    if paths.MIPS_CC is not None and paths.SM64_TOOLS is not None:
-        mips = Compiler(
-            arch="mips",
+    if paths.IDO_CC is not None and paths.SM64_TOOLS is not None:
+        ido = Compiler(
+            arch="ido",
             cc_command=[
-                str(paths.MIPS_CC),
+                str(paths.IDO_CC),
                 "-c",
                 "-Wab,-r4300_mul",
                 "-non_shared",
@@ -82,22 +82,20 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
                 "-fullwarn",
                 "-wlint",
                 "-woff",
-                "819,820,852,821,827",
+                "819,820,852,821,827,826",
                 "-signed",
-                "-woff",
-                "826",
             ],
         )
-        compilers.append(("irix-g", mips.with_cc_flags(["-g", "-mips2"])))
-        compilers.append(("irix-o2", mips.with_cc_flags(["-O2", "-mips2"])))
-        # compilers.append(("irix-g-mips1", mips.with_cc_flags(["-O2", "-mips1"])))
-        # compilers.append(("irix-o2-mips1", mips.with_cc_flags(["-O2", "-mips1"])))
+        compilers.append(("irix-g", ido.with_cc_flags(["-g", "-mips2"])))
+        compilers.append(("irix-o2", ido.with_cc_flags(["-O2", "-mips2"])))
+        # compilers.append(("irix-g-mips1", ido.with_cc_flags(["-O2", "-mips1"])))
+        # compilers.append(("irix-o2-mips1", ido.with_cc_flags(["-O2", "-mips1"])))
     else:
-        logger.warning("MIPS tools not found; skipping MIPS compilers")
+        logger.warning("IDO tools not found; skipping MIPS compilers")
 
-    if paths.PPC_CC is not None:
+    if paths.MWCC_CC is not None:
         cc_command = [
-            str(paths.PPC_CC),
+            str(paths.MWCC_CC),
             "-c",
             "-Cpp_exceptions",
             "off",
@@ -109,15 +107,16 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
             "int",
             "-nodefaults",
         ]
-        if paths.PPC_CC.suffix == ".exe" and sys.platform.startswith("linux"):
+        if paths.MWCC_CC.suffix == ".exe" and sys.platform.startswith("linux"):
             cc_command.insert(0, "/usr/bin/wine")
-        ppc = Compiler(
+        mwcc = Compiler(
             arch="ppc",
             cc_command=cc_command,
         )
-        compilers.append(("mwcc-o4p", ppc.with_cc_flags(["-O4,p"])))
+        compilers.append(("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])))
+        # compilers.append(("mwcc-o4p-s0", mwcc.with_cc_flags(["-O4,p", "-sdata", "0", "-sdata2", "0"])))
     else:
-        logger.warning("PPC tools not found; skipping PPC compilers")
+        logger.warning("MWCC tools not found; skipping PPC compilers")
 
     return compilers
 
@@ -269,22 +268,17 @@ def add_test_from_file(
     for asm_filename, compiler in compilers:
         asm_file_path = test_dir / (asm_filename + ".s")
         try:
-            if compiler.arch == "mips":
+            if compiler.arch == "ido":
                 irix_compile(orig_file, asm_file_path, env_vars, compiler)
-            elif compiler.arch == "ppc":
+            elif compiler.arch == "mwcc":
                 ppc_compile(orig_file, asm_file_path, compiler)
 
-                # TODO: This code was used to semi-automatically port over MIPS flags to PPC.
-                # For future tests, the author should write mwcc-o4p-flags.txt manually.
-                #
-                # mips_flags = test_dir / "irix-o2-flags.txt"
-                # ppc_flags = test_dir / (asm_filename + "-flags.txt")
-                # if mips_flags.exists():
-                #     ppc_flags.write_text(mips_flags.read_text().strip() + " --target ppc-mwcc-c\n")
-                # else:
-                #     ppc_flags.write_text("--target ppc-mwcc-c\n")
+                # If the flags file doesn't exist, initialize it with the correct --target
+                ppc_flags = test_dir / (asm_filename + "-flags.txt")
+                if not ppc_flags.exists():
+                    ppc_flags.write_text("--target ppc-mwcc-c\n")
         except Exception:
-            logger.exception("Failed to compile {asm_file_path}")
+            logger.exception(f"Failed to compile {asm_file_path}")
 
 
 def main() -> int:

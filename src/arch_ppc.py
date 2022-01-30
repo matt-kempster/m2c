@@ -267,9 +267,11 @@ class PpcArch(Arch):
 
     aliased_regs: Dict[str, Register] = {}
 
+    uses_delay_slots = False
+
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
-        return PpcArch.is_conditional_return_instruction(instr) or instr.mnemonic in [
+        return instr.mnemonic in [
             "b",
             "ble",
             "blt",
@@ -300,7 +302,11 @@ class PpcArch(Arch):
     def is_jump_instruction(instr: Instruction) -> bool:
         # (we don't treat jal/jalr as jumps, since control flow will return
         # after the call)
-        return PpcArch.is_branch_instruction(instr) or instr.mnemonic in ("blr", "bctr")
+        return (
+            PpcArch.is_conditional_return_instruction(instr)
+            or PpcArch.is_branch_instruction(instr)
+            or instr.mnemonic in ("blr", "bctr")
+        )
 
     @staticmethod
     def is_delay_slot_instruction(instr: Instruction) -> bool:

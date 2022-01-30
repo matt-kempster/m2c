@@ -176,8 +176,11 @@ class ArchAsm(ArchAsmParsing):
 
     aliased_regs: Dict[str, Register]
 
+    uses_delay_slots: bool
+
     @abc.abstractmethod
     def is_branch_instruction(self, instr: Instruction) -> bool:
+        """Instructions with a label as a jump target (may be conditional)"""
         ...
 
     @abc.abstractmethod
