@@ -57,7 +57,6 @@ class ElfFile:
         is_little_endian = e_ident[5] == 1
         str_end = "<" if is_little_endian else ">"
         str_off = "I" if is_32bit else "Q"
-        sym_size = {"B": 1, "H": 2, "I": 4, "Q": 8}
 
         def read(spec: str, offset: int) -> Tuple[int, ...]:
             spec = spec.replace("P", str_off)
@@ -68,9 +67,7 @@ class ElfFile:
             if base == 0 or offset == 0:
                 return ""
             offset += base
-            return data[offset : data.index(b"\0", offset)].decode(
-                "latin1", errors="replace"
-            )
+            return data[offset : data.index(b"\0", offset)].decode("latin1")
 
         (
             e_type,
@@ -88,7 +85,7 @@ class ElfFile:
             e_shstrndx,
         ) = read("HHIPPPIHHHHHH", 16)
         if e_type != 1:  # relocatable
-            raise ValueError("Input elf is not relocatable (e_type = {e_type)")
+            raise ValueError(f"Input elf is not relocatable (e_type = {e_type})")
         assert e_shoff != 0
         assert e_shnum != 0  # don't support > 0xFF00 sections
         assert e_shstrndx != 0
@@ -166,6 +163,8 @@ class ElfFile:
             symbol = ElfSymbol(offset=st_value, name=sym_name, section=section)
             elf.symbols[sym_name] = symbol
             symbols_by_index.append(symbol)
+            # Do not overwrite existing symbols at this address, unless the existing
+            # symbol starts with "..." (such as `...bss@0`).
             if section is not None and (
                 st_value not in section.symbols or not sym_name.startswith("...")
             ):
@@ -200,7 +199,10 @@ class ElfFile:
                         symbol = symbol.section.symbols[symbol.offset]
 
                     if s.sh_type == SHT_REL:
-                        # NB: This isn't needed for PPC, but we may want to re-use this code later
+                        # NB: This isn't needed for PPC, but we may want to re-use this code later.
+                        # We will also need to add support for R_MIPS_{LO16,HI16,26}.
+                        # (PPC uses RELA relocations, which embed the addend in the relocation
+                        # instead of in the relocated section.)
                         if e_machine == 8 and r_type == 2:  # R_MIPS_32
                             (r_addend,) = read("I", sec_base + r_offset)
                         else:

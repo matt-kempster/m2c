@@ -401,13 +401,13 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             arg_elems.pop(0)
             reloc_name = parse_word(arg_elems)
             if reloc_name in ("sda2", "sda21") and arg_elems:
-                # The `(r2)` part of `@sda21` is optional
                 expect("(")
                 rhs = parse_arg_elems(arg_elems, arch)
+                assert isinstance(rhs, Register)
                 assert rhs in [Register("r2"), Register("r13")]
                 expect(")")
                 assert value
-                return Macro(reloc_name, value)
+                return AsmAddressMode(Macro(reloc_name, value), rhs)
             else:
                 assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
                 assert value

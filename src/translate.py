@@ -3401,6 +3401,8 @@ def strip_macros(arg: Argument) -> Argument:
             return AsmLiteral(arg.argument.value & 0xFFFF)
         return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
+        if arg.lhs.macro_name in ["sda2", "sda21"]:
+            return arg.lhs.argument
         if arg.lhs.macro_name not in ["lo", "l"]:
             raise DecompFailure(
                 f"Bad linker macro in instruction argument {arg}, expected %lo"
