@@ -226,8 +226,8 @@ def run(options: Options) -> int:
 
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(
-        description="Decompile MIPS assembly to C.",
-        usage="%(prog)s [--context C_FILE] [-f FN ...] filename [filename ...]",
+        description="Decompile assembly to C.",
+        usage="%(prog)s [-t mips-ido-c] [--context C_FILE] [-f FN ...] filename [filename ...]",
     )
 
     group = parser.add_argument_group("Input Options")

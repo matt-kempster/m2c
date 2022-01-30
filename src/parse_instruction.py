@@ -350,10 +350,15 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)
-        elif tok == '"' and arg_elems[-1] == '"':
+        elif tok == '"' and '"' in arg_elems[1:]:
             # Quoted global symbol
             # TODO: properly match pairs of quotes, avoid splitting on internal spaces
-            return AsmGlobalSymbol("".join(arg_elems[1:-1]))
+            expect('"')
+            symbol = ""
+            while arg_elems[0] != '"':
+                symbol += arg_elems.pop(0)
+            expect('"')
+            return AsmGlobalSymbol(symbol)
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
@@ -366,20 +371,23 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             else:
                 op = expect("&+-*")
 
-            # Parse `sym-_SDA_BASE_(r13)` as a Macro, equivalently to `sym@sda21`
+            # Parse `sym-_SDA_BASE_(r13)` as a Macro, equivalently to `sym@sda21(r13)`
             if tok == "-" and arg_elems[0] == "_":
                 reloc_name = parse_word(arg_elems)
                 if reloc_name not in ("_SDA_BASE_", "_SDA2_BASE_"):
                     raise DecompFailure(
                         f"Unexpected symbol {reloc_name} in subtraction expression"
                     )
-                if arg_elems:
-                    expect("(")
-                    rhs = parse_arg_elems(arg_elems, arch)
-                    assert rhs in [Register("r2"), Register("r13")]
-                    expect(")")
                 assert value
-                return Macro("sda21", value)
+                macro = Macro("sda21", value)
+                if not arg_elems:
+                    return macro
+                expect("(")
+                rhs = parse_arg_elems(arg_elems, arch)
+                assert isinstance(rhs, Register)
+                assert rhs in [Register("r2"), Register("r13")]
+                expect(")")
+                return AsmAddressMode(macro, rhs)
 
             rhs = parse_arg_elems(arg_elems, arch)
             assert rhs is not None
