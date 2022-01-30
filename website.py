@@ -201,13 +201,11 @@ label {
     color: #c0c0c0;
     box-shadow: 1px 1px 10px 0px black;
 }
-h4 { margin: 0px; color: red; }
 </style>
 </head>
 <body>
 <form action="?go" method="post">
 <div class="main">
-  <h4>experimental</h4>
   <div>
     Assembly:
   </div>
@@ -234,10 +232,10 @@ h4 { margin: 0px; color: red; }
     </label>
     <label>Target arch, compiler, &amp; language:
     <select name="target">
-    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
-    <option value="ppc-mwcc-c">PPC, MWCC, C</option>
     <option value="mips-ido-c">MIPS, IDO, C</option>
     <option value="mips-gcc-c">MIPS, GCC, C</option>
+    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
+    <option value="ppc-mwcc-c">PPC, MWCC, C</option>
     </select>
     </label>
     <label>Comment style:
