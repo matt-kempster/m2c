@@ -1034,7 +1034,7 @@ class Type:
                     )
                 )
             elif term.kind == CxxTerm.Kind.QUALIFIED:
-                # TODO
+                # TODO: Support C++ classes/namespaces
                 type = Type.any()
             elif term.kind == CxxTerm.Kind.VOID:
                 pass
@@ -1044,7 +1044,7 @@ class Type:
                 assert False, term.kind
         if type is None:
             return Type.any()
-        # TODO
+        # TODO: Support vtables
         # if final_name == "__vt":
         #    return Type.array(Type.function())
         return type

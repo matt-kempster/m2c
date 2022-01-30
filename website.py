@@ -52,30 +52,13 @@ if "source" in form:
         cmd.append("--visualize")
     if "target" in form:
         value = form.getfirst("target")
-        if value == "ppc-mwcc-c":
-            cmd.extend([
-                "--target-arch", "ppc",
-                "--target-compiler", "mwcc",
-                "--target-language", "c",
-            ])
-        elif value == "ppc-mwcc-c++":
-            cmd.extend([
-                "--target-arch", "ppc",
-                "--target-compiler", "mwcc",
-                "--target-language", "c++",
-            ])
-        elif value == "mips-ido-c":
-            cmd.extend([
-                "--target-arch", "mips",
-                "--target-compiler", "ido",
-                "--target-language", "c",
-            ])
-        elif value == "mips-gcc-c":
-            cmd.extend([
-                "--target-arch", "mips",
-                "--target-compiler", "gcc",
-                "--target-language", "c",
-            ])
+        if value in (
+            "ppc-mwcc-c",
+            "ppc-mwcc-c++",
+            "mips-ido-c",
+            "mips-gcc-c",
+        ):
+            cmd.extend(["--target", value])
     if "nounkinference" in form:
         cmd.append("--no-unk-inference")
     if "stackstructs" in form:

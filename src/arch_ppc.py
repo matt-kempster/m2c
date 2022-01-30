@@ -117,7 +117,11 @@ class TailCallPattern(AsmPattern):
         if matcher.index != len(matcher.input) - 1:
             return None
         instr = matcher.input[matcher.index]
-        if isinstance(instr, Instruction) and instr.mnemonic == "b" and isinstance(instr.args[0], AsmGlobalSymbol):
+        if (
+            isinstance(instr, Instruction)
+            and instr.mnemonic == "b"
+            and isinstance(instr.args[0], AsmGlobalSymbol)
+        ):
             return Replacement(
                 [
                     Instruction.derived("bl", instr.args, instr),
