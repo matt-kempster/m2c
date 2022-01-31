@@ -3319,6 +3319,10 @@ def handle_rlwinm(
     elif (shift, mask_begin, mask_end) == (0, 16, 31):
         return as_type(source, Type.u16(), silent=False)
 
+    # The output of the rlwinm instruction is `ROTL(source, shift) & mask`. We write this as
+    # ((source << shift) & mask) | ((source >> (32 - shift)) & mask)
+    # and compute both OR operands (upper_bits and lower_bits respectively).
+
     # Bit 0 is the MSB, Bit 31 is the LSB
     bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
     all_ones = bits_upto(0)
@@ -3346,15 +3350,11 @@ def handle_rlwinm(
         if left_mask != (all_ones << left_shift) & all_ones:
             upper_bits = BinaryOp.int(left=upper_bits, op="&", right=Literal(left_mask))
 
-    lower_bits: Optional[Expression]
+    lower_bits: Optional[BinaryOp]
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = source
-        if right_shift != 0:
-            lower_bits = BinaryOp.u32(
-                left=lower_bits, op=">>", right=Literal(right_shift)
-            )
+        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
         if right_mask != (all_ones >> right_shift) & all_ones:
             lower_bits = BinaryOp.int(
                 left=lower_bits, op="&", right=Literal(right_mask)
@@ -3363,7 +3363,7 @@ def handle_rlwinm(
     if upper_bits is None and lower_bits is None:
         return Literal(0)
     elif upper_bits is None:
-        assert isinstance(lower_bits, BinaryOp)
+        assert lower_bits is not None
         return fold_divmod(lower_bits)
     elif lower_bits is None:
         return fold_mul_chains(upper_bits)
@@ -3905,7 +3905,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 to_store = arch.instrs_store_update[mnemonic](args)
 
                 # Update the register in the second argument
-                # TODO: is it OK to do this here, or does it need to happen at the end of the fn?
                 update = args.memory_ref(1)
                 if not isinstance(update, AddressMode):
                     raise DecompFailure(
@@ -3981,11 +3980,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in arch.instrs_jumps:
-            if mnemonic == "b":
-                if isinstance(args.raw_arg(0), AsmGlobalSymbol):
-                    # Unconditional jump
-                    pass
-            elif mnemonic == "bctr":
+            if mnemonic == "bctr":
                 # Switch jump
                 assert isinstance(node, SwitchNode)
                 switch_expr = args.regs[Register("ctr")]
