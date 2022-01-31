@@ -586,7 +586,6 @@ def get_stack_info(
                         )
                 top = offset + size
                 last_size = size
-            # Expand boundaries to multiples of 8 bytes
             info.callee_save_reg_region = (bottom, top)
 
             # Subroutine arguments must be at the very bottom of the stack, so they
@@ -1363,7 +1362,7 @@ class GlobalSymbol(Expression):
     symbol_in_context: bool = False
     type_provided: bool = False
     initializer_in_typemap: bool = False
-    demangled_symbol: Optional[CxxSymbol] = None
+    demangled_str: Optional[str] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -2561,7 +2560,9 @@ def handle_addi(args: InstrArgs) -> Expression:
         and uw_source.right.value % 0x10000 == 0
         and isinstance(imm, Literal)
     ):
-        return add_imm(uw_source.left, Literal(imm.value + 0x10000), stack_info)
+        return add_imm(
+            uw_source.left, Literal(imm.value + uw_source.right.value), stack_info
+        )
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
 
@@ -3450,9 +3451,13 @@ def output_regs_for_instr(
         or mnemonic in arch.instrs_no_dest
     ):
         return []
-    if mnemonic == "jal":
-        fn_target = instr.args[0]
-        if isinstance(fn_target, AsmGlobalSymbol):
+    if mnemonic in arch.instrs_store_update:
+        return reg_at(1)
+    if mnemonic in arch.instrs_load_update:
+        return reg_at(0) + reg_at(1)
+    if mnemonic in arch.instrs_fn_call:
+        if instr.args and isinstance(instr.args[0], AsmGlobalSymbol):
+            fn_target = instr.args[0]
             if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
     if mnemonic in arch.instrs_fn_call:
@@ -4117,8 +4122,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
             if not is_known_void:
-                for reg, val in arch.function_return(call):
-                    assert reg in arch.all_return_regs
+                return_reg_vals = arch.function_return(call)
+                assert {r for r, v in return_reg_vals} == set(arch.all_return_regs)
+                for reg, val in return_reg_vals:
                     if not isinstance(val, SecondF64Half):
                         val = eval_once(
                             val,
@@ -4400,17 +4406,20 @@ class GlobalInfo:
             sym = self.global_symbol_map[sym_name]
         else:
             demangled_symbol: Optional[CxxSymbol] = None
+            demangled_str: Optional[str] = None
             if self.target.language == Target.LanguageEnum.CXX:
                 try:
                     demangled_symbol = demangle_codewarrior_parse(sym_name)
                 except ValueError:
                     pass
+                else:
+                    demangled_str = str(demangled_symbol)
 
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
                 symbol_name=sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
-                demangled_symbol=demangled_symbol,
+                demangled_str=demangled_str,
             )
 
             fn = self.typemap.functions.get(sym_name)
@@ -4432,8 +4441,8 @@ class GlobalInfo:
                 sym.type.unify(Type.function())
 
             # Do this after unifying the type in the typemap, so that it has lower precedence
-            if sym.demangled_symbol is not None:
-                sym.type.unify(Type.demangled_symbol(sym.demangled_symbol))
+            if demangled_symbol is not None:
+                sym.type.unify(Type.demangled_symbol(demangled_symbol))
 
         return AddressOf(sym, type=sym.type.reference())
 

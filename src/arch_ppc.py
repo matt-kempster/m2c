@@ -450,10 +450,10 @@ class PpcArch(Arch):
 
     instrs_ignore: InstrSet = {
         "nop",
-        # PPC: assume stmw/lmw are only used for saving/restoring saved regs
+        # Assume stmw/lmw are only used for saving/restoring saved regs
         "stmw",
         "lmw",
-        # PPC: `{crclr,crset} 6` are used as part of the ABI for floats & varargs
+        # `{crclr,crset} 6` are used as part of the ABI for floats & varargs
         # For now, we can ignore them (and later use them to help in function_abi)
         "crclr",
         "crset",

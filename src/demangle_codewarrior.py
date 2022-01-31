@@ -78,7 +78,7 @@ DOLDISASM_SUBSTITUTIONS = [
 ]
 
 
-def read(src: TextIOBase, size: int) -> str:
+def read_exact(src: TextIOBase, size: int) -> str:
     """Read exactly `n` bytes from `src`, or raise a ValueError"""
     value = src.read(size)
     if len(value) != size:
@@ -97,7 +97,7 @@ def peeking(src: TextIOBase) -> Iterator[None]:
 
 
 def peek(src: TextIOBase, n: int = 1) -> str:
-    """Read `n` bytes from `src` without advancing the offset"""
+    """Read up to `n` bytes from `src` without advancing the offset"""
     with peeking(src):
         return src.read(n)
 
@@ -124,7 +124,7 @@ class CxxName:
         # Numbers: either a template literal, or a length prefix
         number_str = ""
         while peek(src) in CxxName.NUMBER_CHARS:
-            number_str += read(src, 1)
+            number_str += read_exact(src, 1)
         if number_str == "":
             raise ValueError(
                 "Unable to parse CxxName, input did not start with a number"
@@ -138,7 +138,7 @@ class CxxName:
         # Otherwise, it is the length of the name
         if number <= 0:
             raise ValueError("length must be positive")
-        name = read(src, number)
+        name = read_exact(src, number)
 
         # Simple case: plain identifier
         if "<" not in name:
@@ -153,7 +153,7 @@ class CxxName:
             template_params = []
             while True:
                 template_params.append(CxxType.parse(buf))
-                sep = read(buf, 1)
+                sep = read_exact(buf, 1)
                 if sep == ">":
                     break
                 if sep == ",":
@@ -264,9 +264,9 @@ class CxxTerm:
                 kind=CxxTerm.Kind.QUALIFIED, qualified_name=[CxxName.parse(src)]
             )
 
-        kind = CxxTerm.Kind(read(src, 1))
+        kind = CxxTerm.Kind(read_exact(src, 1))
         if kind == CxxTerm.Kind.QUALIFIED:
-            count = int(read(src, 1))
+            count = int(read_exact(src, 1))
             qualified_name = []
             for _ in range(count):
                 qualified_name.append(CxxName.parse(src))
@@ -278,7 +278,7 @@ class CxxTerm:
             while peek(src) not in ("", "_", ",", ">"):
                 function_params.append(CxxType.parse(src))
             if peek(src, 1) == "_":
-                read(src, 1)
+                read_exact(src, 1)
                 function_return = CxxType.parse(src)
             return CxxTerm(
                 kind=kind,
@@ -289,7 +289,7 @@ class CxxTerm:
         if kind == CxxTerm.Kind.ARRAY:
             array_dim = 0
             while True:
-                c = read(src, 1)
+                c = read_exact(src, 1)
                 if c == "_":
                     break
                 array_dim = (array_dim * 10) + int(c)
@@ -410,7 +410,7 @@ class CxxSymbol:
                         continue
                 base_name = chars[:-1]
 
-        read(src, len(base_name) + strip_underscores)
+        read_exact(src, len(base_name) + strip_underscores)
 
         if base_name in CxxSymbol.STATIC_FUNCTIONS:
             # This is a special case. A function like `__sinit_AnimalBase_cpp` is the static

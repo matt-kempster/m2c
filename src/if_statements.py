@@ -1380,9 +1380,9 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
     function_lines: List[str] = []
 
-    if function_info.symbol.demangled_symbol:
+    if function_info.symbol.demangled_str is not None:
         function_lines.append(
-            fmt.with_comments("", [str(function_info.symbol.demangled_symbol)])
+            fmt.with_comments("", [function_info.symbol.demangled_str])
         )
 
     fn_name = function_info.stack_info.function.name

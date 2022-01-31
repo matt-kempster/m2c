@@ -968,9 +968,7 @@ class Type:
             elif term.kind == CxxTerm.Kind.UNSIGNED:
                 unsigned = True
             elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
-                # Use weaken_void_ptr to replace Type.ptr(Type.void()) with Type.ptr(None);
-                # to treat a `void *` as a pointer to anything
-                type = Type.ptr(type).weaken_void_ptr()
+                type = Type.ptr(type)
             elif term.kind == CxxTerm.Kind.BOOL:
                 type = Type.bool()
             elif term.kind == CxxTerm.Kind.CHAR:
@@ -1046,7 +1044,7 @@ class Type:
                 type = Type.void()
             elif term.kind == CxxTerm.Kind.ELLIPSIS:
                 # This should be handled by the FUNCTION iterator above
-                pass
+                assert False, term.kind
             else:
                 assert False, term.kind
         if type is None:
