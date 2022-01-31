@@ -56,7 +56,7 @@ from .translate import (
     as_u32,
     as_u64,
     fn_op,
-    fold_gcc_divmod,
+    fold_divmod,
     fold_mul_chains,
     handle_add,
     handle_add_double,
@@ -811,11 +811,11 @@ class MipsArch(Arch):
             BinaryOp.u64(a.reg(0), "/", a.reg(1)),
         ),
         "mult": lambda a: (
-            fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
+            fold_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
             BinaryOp.int(a.reg(0), "*", a.reg(1)),
         ),
         "multu": lambda a: (
-            fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
+            fold_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
             BinaryOp.int(a.reg(0), "*", a.reg(1)),
         ),
         "dmult": lambda a: (
@@ -842,7 +842,7 @@ class MipsArch(Arch):
         "addiu": lambda a: handle_addi(a),
         "addu": lambda a: handle_add(a),
         "subu": lambda a: (
-            fold_mul_chains(fold_gcc_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
+            fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
         "negu": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
@@ -912,7 +912,7 @@ class MipsArch(Arch):
         "sllv": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
         ),
-        "srl": lambda a: fold_gcc_divmod(
+        "srl": lambda a: fold_divmod(
             BinaryOp(
                 left=as_u32(a.reg(1)),
                 op=">>",
@@ -920,7 +920,7 @@ class MipsArch(Arch):
                 type=Type.u32(),
             )
         ),
-        "srlv": lambda a: fold_gcc_divmod(
+        "srlv": lambda a: fold_divmod(
             BinaryOp(
                 left=as_u32(a.reg(1)),
                 op=">>",
@@ -929,7 +929,7 @@ class MipsArch(Arch):
             )
         ),
         "sra": lambda a: handle_sra(a),
-        "srav": lambda a: fold_gcc_divmod(
+        "srav": lambda a: fold_divmod(
             BinaryOp(
                 left=as_s32(a.reg(1)),
                 op=">>",

@@ -7,6 +7,15 @@
 #   $ ./demangle_cw.py 'check__3FooCFUlR3Bar'
 #   Foo::check (long unsigned, Bar &) const
 #
+# CodeWarrior's symbol mangling and C++ ABI seems to be based on the Macintosh spec
+# defined in this document, section 3.4.1.2 (page 18):
+#
+#   https://mirror.informatimago.com/next/developer.apple.com/tools/mpw-tools/compilers/docs/abi_spec.pdf
+#
+# It deviates from this spec in a few key ways:
+#   - The <count> in <qualified_name> is an unterminated <int> (no '_' separator)
+#   - Parameterized types use '<', ',' and '>' characters instead of the "__PT" prefix
+#
 # This file, like the rest of this repository, is licensed under the GPL v3. It is based
 # on `demangler.cs` by arookas, which was provided under the 3-clause BSD License below:
 #
@@ -69,9 +78,17 @@ DOLDISASM_SUBSTITUTIONS = [
 ]
 
 
+def read(src: TextIOBase, size: int) -> str:
+    """Read exactly `n` bytes from `src`, or raise a ValueError"""
+    value = src.read(size)
+    if len(value) != size:
+        raise ValueError(f"Unable to read {size} bytes; got {value!r}")
+    return value
+
+
 @contextmanager
 def peeking(src: TextIOBase) -> Iterator[None]:
-    # Store the current offset in `src`, and restore it at the end of the context
+    """Store the current offset in `src`, and restore it at the end of the context"""
     ptr = src.tell()
     try:
         yield
@@ -80,14 +97,14 @@ def peeking(src: TextIOBase) -> Iterator[None]:
 
 
 def peek(src: TextIOBase, n: int = 1) -> str:
-    # Read `n` bytes from `src` without advancing the offset
+    """Read `n` bytes from `src` without advancing the offset"""
     with peeking(src):
         return src.read(n)
 
 
 @contextmanager
 def as_stringio(src: str) -> Iterator[StringIO]:
-    # Wrap `src` in a `StringIO`, and assert it was fully consumed at the end of the context
+    """Wrap `src` in a `StringIO`, and assert it was fully consumed at the end of the context"""
     buf = StringIO(src)
     yield buf
     leftover = buf.read()
@@ -107,7 +124,7 @@ class CxxName:
         # Numbers: either a template literal, or a length prefix
         number_str = ""
         while peek(src) in CxxName.NUMBER_CHARS:
-            number_str += src.read(1)
+            number_str += read(src, 1)
         if number_str == "":
             raise ValueError(
                 "Unable to parse CxxName, input did not start with a number"
@@ -119,22 +136,24 @@ class CxxName:
             return CxxName(number_str)
 
         # Otherwise, it is the length of the name
-        assert number > 0, ValueError
-        name = src.read(number)
+        if number <= 0:
+            raise ValueError("length must be positive")
+        name = read(src, number)
 
         # Simple case: plain identifier
         if "<" not in name:
             return CxxName(name)
 
         # Otherwise, parse the template parameters between the `<...>` brackets
-        assert name[-1] == ">", ValueError
+        if name[-1] != ">":
+            raise ValueError("unpaired '<'")
         base_name, sep, param_strs = name.partition("<")
 
         with as_stringio(param_strs) as buf:
             template_params = []
             while True:
                 template_params.append(CxxType.parse(buf))
-                sep = buf.read(1)
+                sep = read(buf, 1)
                 if sep == ">":
                     break
                 if sep == ",":
@@ -245,9 +264,9 @@ class CxxTerm:
                 kind=CxxTerm.Kind.QUALIFIED, qualified_name=[CxxName.parse(src)]
             )
 
-        kind = CxxTerm.Kind(src.read(1))
+        kind = CxxTerm.Kind(read(src, 1))
         if kind == CxxTerm.Kind.QUALIFIED:
-            count = int(src.read(1))
+            count = int(read(src, 1))
             qualified_name = []
             for _ in range(count):
                 qualified_name.append(CxxName.parse(src))
@@ -259,7 +278,7 @@ class CxxTerm:
             while peek(src) not in ("", "_", ",", ">"):
                 function_params.append(CxxType.parse(src))
             if peek(src, 1) == "_":
-                src.read(1)
+                read(src, 1)
                 function_return = CxxType.parse(src)
             return CxxTerm(
                 kind=kind,
@@ -270,7 +289,7 @@ class CxxTerm:
         if kind == CxxTerm.Kind.ARRAY:
             array_dim = 0
             while True:
-                c = src.read(1)
+                c = read(src, 1)
                 if c == "_":
                     break
                 array_dim = (array_dim * 10) + int(c)
@@ -391,7 +410,7 @@ class CxxSymbol:
                         continue
                 base_name = chars[:-1]
 
-        src.read(len(base_name) + strip_underscores)
+        read(src, len(base_name) + strip_underscores)
 
         if base_name in CxxSymbol.STATIC_FUNCTIONS:
             # This is a special case. A function like `__sinit_AnimalBase_cpp` is the static

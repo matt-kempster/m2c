@@ -64,7 +64,7 @@ StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
 MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
 PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
 ImplicitInstrMap = Mapping[str, Tuple[Register, Callable[["InstrArgs"], "Expression"]]]
-PPCCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
+PpcCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
 class Arch(ArchFlowGraph):
@@ -77,7 +77,7 @@ class Arch(ArchFlowGraph):
     instrs_decctr_branches: CmpInstrMap = {}
     instrs_float_branches: InstrSet = set()
     instrs_float_comp: CmpInstrMap = {}
-    instrs_ppc_compare: PPCCmpInstrMap = {}
+    instrs_ppc_compare: PpcCmpInstrMap = {}
     instrs_jumps: InstrSet = set()
     instrs_fn_call: InstrSet = set()
 
@@ -485,11 +485,11 @@ def get_stack_info(
         if inst.mnemonic == "jal":
             break
         elif inst.mnemonic == "addiu" and inst.args[0] == arch.stack_pointer_reg:
-            # Moving the stack pointer.
+            # Moving the stack pointer on MIPS
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
         elif inst.mnemonic == "stwu" and inst.args[0] == arch.stack_pointer_reg:
-            # PPC: Moving the stack pointer.
+            # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)
             assert isinstance(inst.args[1].lhs, AsmLiteral)
             info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
@@ -2456,9 +2456,9 @@ def load_upper(args: InstrArgs) -> Expression:
     if not isinstance(arg, Macro):
         assert not isinstance(
             arg, Literal
-        ), "normalize_instruction should convert lui <literal> to li"
+        ), "normalize_instruction should convert lui/lis <literal> to li"
         raise DecompFailure(
-            f"lui argument must be a literal or %hi/@ha macro, found {arg}"
+            f"lui/lis argument must be a literal or %hi/@ha macro, found {arg}"
         )
 
     hi_arg = args.hi_imm(1)
@@ -2551,15 +2551,15 @@ def handle_addi(args: InstrArgs) -> Expression:
     source = args.reg(1)
     imm = args.imm(2)
 
-    # PPC, `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
+    # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
     # i.e. as an `addis` followed by an `addi`
     uw_source = early_unwrap(source)
     if (
         isinstance(uw_source, BinaryOp)
         and uw_source.op == "+"
-        and uw_source.right == Literal(0x10000)
+        and isinstance(uw_source.right, Literal)
+        and uw_source.right.value % 0x10000 == 0
         and isinstance(imm, Literal)
-        and -0x8000 <= imm.value < 0
     ):
         return add_imm(uw_source.left, Literal(imm.value + 0x10000), stack_info)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
@@ -2805,9 +2805,7 @@ def handle_sra(args: InstrArgs) -> Expression:
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
-    return fold_gcc_divmod(
-        BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
-    )
+    return fold_divmod(BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32()))
 
 
 def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
@@ -2881,7 +2879,7 @@ def format_f64_imm(num: int) -> str:
     return str(value)
 
 
-def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
+def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     """
     Return a new BinaryOp instance if this one can be simplified to a single / or % op.
     This involves simplifying expressions using MULT_HI, MULTU_HI, +, -, <<, >>, and /.
@@ -2890,6 +2888,8 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
 
     See also https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
     for a modern writeup of a similar algorithm.
+
+    This optimization is also used by MWCC and modern compilers (but not IDO).
     """
     mult_high_ops = ("MULT_HI", "MULTU_HI")
     possible_match_ops = mult_high_ops + ("-", "+", ">>")
@@ -3271,7 +3271,7 @@ def handle_add(args: InstrArgs) -> Expression:
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)
     if isinstance(folded_expr, BinaryOp):
-        folded_expr = fold_gcc_divmod(folded_expr)
+        folded_expr = fold_divmod(folded_expr)
     if folded_expr is not expr:
         return folded_expr
     array_expr = array_access_from_add(expr, 0, stack_info, target_size=None, ptr=True)
@@ -3363,7 +3363,7 @@ def handle_rlwinm(
         return Literal(0)
     elif upper_bits is None:
         assert isinstance(lower_bits, BinaryOp)
-        return fold_gcc_divmod(lower_bits)
+        return fold_divmod(lower_bits)
     elif lower_bits is None:
         return fold_mul_chains(upper_bits)
     else:
@@ -3392,7 +3392,7 @@ def strip_macros(arg: Argument) -> Argument:
             raise DecompFailure("%hi macro outside of lui")
         if arg.macro_name not in ["lo", "l"]:
             raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
-        # PPC: This is sort of weird; for `@l(symbol)` we return 0 here and assume
+        # This is sort of weird; for `@l(symbol)` we return 0 here and assume
         # that this @l is always perfectly paired with one other @ha.
         # However, with `@l(literal)`, we return the macro value, and assume it is
         # paired with another `@ha(literal)`. This lets us reuse `@ha(literal)` values,
@@ -4035,7 +4035,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             likely_regs: Dict[Register, bool] = {}
             for reg, data in regs.contents.items():
-                # PPC: This is a much stricter filter than we use for MIPS,
+                # We use a much stricter filter for PPC than MIPS,
                 # but it seems more accurate because the same registers are used
                 # for arguments & return values. The ABI can also mix & match the
                 # rN & fN registers, which makes the "require" heuristic less powerful.
@@ -4162,7 +4162,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg(target, val)
             mn_parts = mnemonic.split(".")
             if mnemonic.endswith("."):
-                # PPC: Instructions suffixed with . set condition bits (CR0) based on the result value
+                # PPC instructions suffixed with . set condition bits (CR0) based on the result value
                 target_reg = args.reg(0)
                 set_reg(
                     Register("cr0_eq"),
@@ -4228,7 +4228,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
             if mnemonic.endswith("."):
-                # PPC: unimplemented instructions that modify CR0
+                # Unimplemented PPC instructions that modify CR0
                 set_reg(Register("cr0_eq"), expr)
                 set_reg(Register("cr0_gt"), expr)
                 set_reg(Register("cr0_lt"), expr)

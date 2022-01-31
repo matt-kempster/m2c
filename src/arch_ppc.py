@@ -40,7 +40,7 @@ from .translate import (
     ImplicitInstrMap,
     InstrMap,
     InstrSet,
-    PPCCmpInstrMap,
+    PpcCmpInstrMap,
     PairInstrMap,
     SecondF64Half,
     StmtInstrMap,
@@ -56,7 +56,7 @@ from .translate import (
     as_type,
     as_u32,
     fn_op,
-    fold_gcc_divmod,
+    fold_divmod,
     fold_mul_chains,
     handle_add,
     handle_add_double,
@@ -552,7 +552,7 @@ class PpcArch(Arch):
         "sllv": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
         ),
-        "srlv": lambda a: fold_gcc_divmod(
+        "srlv": lambda a: fold_divmod(
             BinaryOp(
                 left=as_u32(a.reg(1)),
                 op=">>",
@@ -560,7 +560,7 @@ class PpcArch(Arch):
                 type=Type.u32(),
             )
         ),
-        "srav": lambda a: fold_gcc_divmod(
+        "srav": lambda a: fold_divmod(
             BinaryOp(
                 left=as_s32(a.reg(1)),
                 op=">>",
@@ -573,17 +573,15 @@ class PpcArch(Arch):
         ## PPC
         "add": lambda a: handle_add(a),
         "addis": lambda a: handle_addis(a),
-        "subf": lambda a: fold_gcc_divmod(
+        "subf": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
         ),
         "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
         "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
         "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
         "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
-        "mulhw": lambda a: fold_gcc_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
-        "mulhwu": lambda a: fold_gcc_divmod(
-            BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))
-        ),
+        "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
+        "mulhwu": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
         "lba": lambda a: handle_load(a, type=Type.s8()),
         "lbz": lambda a: handle_load(a, type=Type.u8()),
         "lha": lambda a: handle_load(a, type=Type.s16()),
@@ -628,7 +626,7 @@ class PpcArch(Arch):
         "slw": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
         ),
-        "srw": lambda a: fold_gcc_divmod(
+        "srw": lambda a: fold_divmod(
             BinaryOp(
                 left=as_u32(a.reg(1)),
                 op=">>",
@@ -636,7 +634,7 @@ class PpcArch(Arch):
                 type=Type.u32(),
             )
         ),
-        "sraw": lambda a: fold_gcc_divmod(
+        "sraw": lambda a: fold_divmod(
             BinaryOp(
                 left=as_s32(a.reg(1)),
                 op=">>",
@@ -727,7 +725,7 @@ class PpcArch(Arch):
         "mtctr": (Register("ctr"), lambda a: a.reg(0)),
     }
 
-    instrs_ppc_compare: PPCCmpInstrMap = {
+    instrs_ppc_compare: PpcCmpInstrMap = {
         "cmpw": lambda a, op: BinaryOp.sintptr_cmp(a.reg(0), op, a.reg(1)),
         "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(0), op, a.imm(1)),
         "cmplw": lambda a, op: BinaryOp.uintptr_cmp(a.reg(0), op, a.reg(1)),
