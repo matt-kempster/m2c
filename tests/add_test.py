@@ -234,7 +234,7 @@ def main() -> int:
         return 2
 
     for orig_filename in args.files:
-        orig_file = Path(orig_filename)
+        orig_file = Path(orig_filename).resolve()
         if not orig_file.is_file():
             logging.error(f"{orig_file} does not exist. Skipping.")
             continue
