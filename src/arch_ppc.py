@@ -76,25 +76,6 @@ from .translate import (
 )
 from .types import FunctionSignature, Type
 
-LENGTH_TWO: Set[str] = {
-    "neg",
-    "not",
-}
-
-LENGTH_THREE: Set[str] = {
-    "addi",
-    "ori",
-    "and",
-    "or",
-    "nor",
-    "xor",
-    "andi",
-    "xori",
-    "sllv",
-    "srlv",
-    "srav",
-}
-
 
 class FcmpoCrorPattern(SimpleAsmPattern):
     pattern = make_pattern(
@@ -106,9 +87,13 @@ class FcmpoCrorPattern(SimpleAsmPattern):
         fcmpo = m.body[0]
         assert isinstance(fcmpo, Instruction)
         if m.literals["N"] == 0:
-            return Replacement([m.derived_instr("fcmpo.lte", fcmpo.args)], len(m.body))
+            return Replacement(
+                [m.derived_instr("fcmpo.lte.fictive", fcmpo.args)], len(m.body)
+            )
         elif m.literals["N"] == 1:
-            return Replacement([m.derived_instr("fcmpo.gte", fcmpo.args)], len(m.body))
+            return Replacement(
+                [m.derived_instr("fcmpo.gte.fictive", fcmpo.args)], len(m.body)
+            )
         return None
 
 
@@ -201,7 +186,8 @@ class PpcArch(Arch):
     saved_regs = [
         Register(r)
         for r in [
-            # TODO: Some of the bits in CR are required to be saved (but usually the whole reg is?)
+            # TODO: Some of the bits in CR are required to be saved (like cr2_gt)
+            # When those bits are implemented, they should be added here
             "lr",
             # $r2 & $r13 are used for the small-data region, and are like $gp in MIPS
             "r2",
@@ -291,17 +277,6 @@ class PpcArch(Arch):
         return False
 
     @staticmethod
-    def get_branch_target(instr: Instruction) -> JumpTarget:
-        label = instr.args[-1]
-        if isinstance(label, AsmGlobalSymbol):
-            return JumpTarget(label.symbol_name)
-        if not isinstance(label, JumpTarget):
-            raise DecompFailure(
-                f'Couldn\'t parse instruction "{instr}": invalid branch target'
-            )
-        return label
-
-    @staticmethod
     def is_constant_branch_instruction(instr: Instruction) -> bool:
         return instr.mnemonic == "b"
 
@@ -386,7 +361,7 @@ class PpcArch(Arch):
 
     @staticmethod
     def normalize_instruction(instr: Instruction) -> Instruction:
-        # Remove +/- suffix, which indicates branch-un/likely an can be ignored
+        # Remove +/- suffix, which indicates branch-(un)likely and can be ignored
         if instr.mnemonic.startswith("b") and (
             instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
         ):
@@ -431,15 +406,6 @@ class PpcArch(Arch):
                     value += 0x10000
                 lit = AsmLiteral(value & 0xFFFF0000)
                 return Instruction("li", [args[0], lit], instr.meta)
-            if instr.mnemonic in LENGTH_THREE:
-                return PpcArch.normalize_instruction(
-                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
-                )
-        if len(args) == 1:
-            if instr.mnemonic in LENGTH_TWO:
-                return PpcArch.normalize_instruction(
-                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
-                )
         return instr
 
     asm_patterns = [
@@ -487,7 +453,7 @@ class PpcArch(Arch):
     }
     instrs_branches: CmpInstrMap = {
         # Branch instructions/pseudoinstructions
-        # TODO: Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
+        # Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
         # This assumption may not hold if the bits are modified with instructions like
         # `crand` which modify individual bits in CR.
         "beq": lambda a: a.cmp_reg("cr0_eq"),
@@ -500,7 +466,6 @@ class PpcArch(Arch):
         "bso": lambda a: a.cmp_reg("cr0_so"),
     }
     instrs_decctr_branches: CmpInstrMap = {
-        # PPC
         # Decrement the CTR register, then branch
         "bdnz": lambda a: a.cmp_reg("ctr"),
         "bdz": lambda a: a.cmp_reg("ctr").negated(),
@@ -508,7 +473,6 @@ class PpcArch(Arch):
     instrs_float_branches: InstrSet = {}
     instrs_jumps: InstrSet = {
         # Unconditional jumps
-        # PPC
         "b",
         "blr",
         "bctr",
@@ -519,22 +483,26 @@ class PpcArch(Arch):
         "blrl",
     }
     instrs_no_dest: StmtInstrMap = {
-        # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
-        # output than MIPS2C_ERROR(...))
-        "break": lambda a: void_fn_op(
-            "MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
-        ),
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
-        "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
+        "isync": lambda a: void_fn_op("MIPS2C_SYNC", []),
     }
     instrs_destination_first: InstrMap = {
         # Integer arithmetic
         "addi": lambda a: handle_addi(a),
+        "add": lambda a: handle_add(a),
+        "addis": lambda a: handle_addis(a),
+        "subf": lambda a: fold_divmod(
+            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
+        ),
         "neg": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
         ),
-        "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
-        "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
+        "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
+        "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
+        "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
+        "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
+        "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
+        "mulhwu": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
         # Bit arithmetic
         "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
         "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
@@ -549,56 +517,7 @@ class PpcArch(Arch):
         "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
         "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
         "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
-        # Shifts
-        "sllv": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
-        ),
-        "srlv": lambda a: fold_divmod(
-            BinaryOp(
-                left=as_u32(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
-                type=Type.u32(),
-            )
-        ),
-        "srav": lambda a: fold_divmod(
-            BinaryOp(
-                left=as_s32(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
-                type=Type.s32(),
-            )
-        ),
-        ## Immediates
-        "li": lambda a: a.full_imm(1),
-        ## PPC
-        "add": lambda a: handle_add(a),
-        "addis": lambda a: handle_addis(a),
-        "subf": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
-        ),
-        "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
-        "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
-        "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
-        "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
-        "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
-        "mulhwu": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
-        "lba": lambda a: handle_load(a, type=Type.s8()),
-        "lbz": lambda a: handle_load(a, type=Type.u8()),
-        "lha": lambda a: handle_load(a, type=Type.s16()),
-        "lhz": lambda a: handle_load(a, type=Type.u16()),
-        "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-        "lbax": lambda a: handle_loadx(a, type=Type.s8()),
-        "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
-        "lhax": lambda a: handle_loadx(a, type=Type.s16()),
-        "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
-        "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
-        "lis": lambda a: load_upper(a),
-        "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
-        "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
-        "mflr": lambda a: a.regs[Register("lr")],
-        "mfctr": lambda a: a.regs[Register("ctr")],
-        "mr": lambda a: a.reg(1),
+        "notnot.fictive": lambda a: UnaryOp(op="!!", expr=a.reg(1), type=Type.intish()),
         "rlwinm": lambda a: handle_rlwinm(
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
@@ -644,13 +563,33 @@ class PpcArch(Arch):
             )
         ),
         "srawi": lambda a: handle_sra(a),
-        "notnot.fictive": lambda a: UnaryOp(op="!!", expr=a.reg(1), type=Type.intish()),
+        "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
+        "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
+        # Integer Loads
+        "lba": lambda a: handle_load(a, type=Type.s8()),
+        "lbz": lambda a: handle_load(a, type=Type.u8()),
+        "lha": lambda a: handle_load(a, type=Type.s16()),
+        "lhz": lambda a: handle_load(a, type=Type.u16()),
+        "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+        "lbax": lambda a: handle_loadx(a, type=Type.s8()),
+        "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
+        "lhax": lambda a: handle_loadx(a, type=Type.s16()),
+        "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
+        "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+        # Load Immediate
+        "li": lambda a: a.full_imm(1),
+        "lis": lambda a: load_upper(a),
+        # Move from Special Register
+        "mflr": lambda a: a.regs[Register("lr")],
+        "mfctr": lambda a: a.regs[Register("ctr")],
+        "mr": lambda a: a.reg(1),
+        # Floating Point Loads
         # TODO: Do we need to model the promotion from f32 to f64 here?
         "lfs": lambda a: handle_load(a, type=Type.f32()),
         "lfd": lambda a: handle_load(a, type=Type.f64()),
         "lfsx": lambda a: handle_loadx(a, type=Type.f32()),
         "lfdx": lambda a: handle_loadx(a, type=Type.f64()),
-        # PPC Floating Point
+        # Floating Point Arithmetic
         "fadd": lambda a: handle_add_double(a),
         "fadds": lambda a: handle_add_float(a),
         "fdiv": lambda a: BinaryOp.f64(a.reg(1), "/", a.reg(2)),
@@ -666,7 +605,7 @@ class PpcArch(Arch):
         # `sp100 = (bitwise f64) (s32) x; y = sp104;` instead of `y = (s32) x;`.
         # We should try to detect these idioms, along with int-to-float
         "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
-        # PPC Floating Poing Fused Multiply-{Add,Sub}
+        # Floating Poing Fused Multiply-{Add,Sub}
         "fmadd": lambda a: BinaryOp.f64(
             BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
         ),
@@ -735,10 +674,10 @@ class PpcArch(Arch):
         # TODO: Assert that the first arg is cr0
         "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
         "fcmpu": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
-        "fcmpo.lte": lambda a, op: BinaryOp.fcmp(
+        "fcmpo.lte.fictive": lambda a, op: BinaryOp.fcmp(
             a.reg(1), op if op != "==" else "<=", a.reg(2)
         ),
-        "fcmpo.gte": lambda a, op: BinaryOp.fcmp(
+        "fcmpo.gte.fictive": lambda a, op: BinaryOp.fcmp(
             a.reg(1), op if op != "==" else ">=", a.reg(2)
         ),
     }
@@ -814,7 +753,7 @@ class PpcArch(Arch):
                 # earlier registers for the first member of that subset.
                 pass
             else:
-                # PPC is simple; only r3-r10/f1-f13 can be used for arguments
+                # Only r3-r10/f1-f13 can be used for arguments
                 regname = slot.reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
                 if (

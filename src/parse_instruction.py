@@ -188,10 +188,6 @@ class ArchAsm(ArchAsmParsing):
         ...
 
     @abc.abstractmethod
-    def get_branch_target(self, instr: Instruction) -> JumpTarget:
-        ...
-
-    @abc.abstractmethod
     def is_constant_branch_instruction(self, instr: Instruction) -> bool:
         ...
 
@@ -218,6 +214,17 @@ class ArchAsm(ArchAsmParsing):
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]:
         ...
+
+    @staticmethod
+    def get_branch_target(instr: Instruction) -> JumpTarget:
+        label = instr.args[-1]
+        if isinstance(label, AsmGlobalSymbol):
+            return JumpTarget(label.symbol_name)
+        if not isinstance(label, JumpTarget):
+            raise DecompFailure(
+                f'Couldn\'t parse instruction "{instr}": invalid branch target'
+            )
+        return label
 
 
 class NaiveParsingArch(ArchAsmParsing):

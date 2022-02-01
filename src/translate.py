@@ -3456,11 +3456,6 @@ def output_regs_for_instr(
     if mnemonic in arch.instrs_load_update:
         return reg_at(0) + reg_at(1)
     if mnemonic in arch.instrs_fn_call:
-        if instr.args and isinstance(instr.args[0], AsmGlobalSymbol):
-            fn_target = instr.args[0]
-            if global_info.is_function_known_void(fn_target.symbol_name):
-                return []
-    if mnemonic in arch.instrs_fn_call:
         return arch.all_return_regs
     if mnemonic in arch.instrs_source_first:
         return reg_at(1)
@@ -4012,7 +4007,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     pass
                 else:
                     raise DecompFailure(
-                        f"The target of jal must be a label, not {fn_target}"
+                        f"Target of function call must be a symbol, not {fn_target}"
                     )
             elif mnemonic == "blrl":
                 fn_target = args.regs[Register("lr")]
@@ -4118,6 +4113,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # believe the function we're decompiling is non-void.
             if not is_known_void:
                 return_reg_vals = arch.function_return(call)
+                # function_return must return exactly the same regs as all_return_regs
+                # to match output_regs_for_instr
                 assert {r for r, v in return_reg_vals} == set(arch.all_return_regs)
                 for reg, val in return_reg_vals:
                     if not isinstance(val, SecondF64Half):

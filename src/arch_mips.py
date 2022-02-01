@@ -535,17 +535,6 @@ class MipsArch(Arch):
         ]
 
     @staticmethod
-    def get_branch_target(instr: Instruction) -> JumpTarget:
-        label = instr.args[-1]
-        if isinstance(label, AsmGlobalSymbol):
-            return JumpTarget(label.symbol_name)
-        if not isinstance(label, JumpTarget):
-            raise DecompFailure(
-                f'Couldn\'t parse instruction "{instr}": invalid branch target'
-            )
-        return label
-
-    @staticmethod
     def is_constant_branch_instruction(instr: Instruction) -> bool:
         return instr.mnemonic in ("b", "j")
 
