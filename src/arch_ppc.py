@@ -139,7 +139,7 @@ class PpcArch(Arch):
     return_address_reg = Register("lr")
 
     base_return_regs = [Register(r) for r in ["r3", "f1"]]
-    all_return_regs = [Register(r) for r in ["f1", "f2", "r3", "r4"]]
+    all_return_regs = [Register(r) for r in ["f1", "r3", "r4"]]
     argument_regs = [
         Register(r)
         for r in [
@@ -359,8 +359,8 @@ class PpcArch(Arch):
         "stwx",
     }
 
-    @staticmethod
-    def normalize_instruction(instr: Instruction) -> Instruction:
+    @classmethod
+    def normalize_instruction(cls, instr: Instruction) -> Instruction:
         # Remove +/- suffix, which indicates branch-(un)likely and can be ignored
         if instr.mnemonic.startswith("b") and (
             instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
@@ -370,7 +370,7 @@ class PpcArch(Arch):
             )
 
         args = instr.args
-        if len(args) >= 2 and instr.mnemonic in PpcArch.INSTRS_R0_AS_ZERO:
+        if len(args) >= 2 and instr.mnemonic in cls.INSTRS_R0_AS_ZERO:
             new_arg1: Optional[Argument] = None
             if args[1] == Register("r0"):
                 new_arg1 = Register("zero")
@@ -406,6 +406,10 @@ class PpcArch(Arch):
                     value += 0x10000
                 lit = AsmLiteral(value & 0xFFFF0000)
                 return Instruction("li", [args[0], lit], instr.meta)
+            if instr.mnemonic.startswith("cmp"):
+                # For the two-argument form of cmpw, the insert an implicit CR0 as the first arg
+                cr0: Argument = Register("cr0")
+                return Instruction(instr.mnemonic, [cr0] + instr.args, instr.meta)
         return instr
 
     asm_patterns = [
@@ -666,12 +670,13 @@ class PpcArch(Arch):
     }
 
     instrs_ppc_compare: PpcCmpInstrMap = {
-        "cmpw": lambda a, op: BinaryOp.sintptr_cmp(a.reg(0), op, a.reg(1)),
-        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(0), op, a.imm(1)),
-        "cmplw": lambda a, op: BinaryOp.uintptr_cmp(a.reg(0), op, a.reg(1)),
-        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(0), op, a.imm(1)),
+        # Integer (signed/unsigned)
+        "cmpw": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.reg(2)),
+        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.imm(2)),
+        "cmplw": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.reg(2)),
+        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.imm(2)),
+        # Floating point
         # TODO: There is a difference in how these two instructions handle NaN
-        # TODO: Assert that the first arg is cr0
         "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
         "fcmpu": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
         "fcmpo.lte.fictive": lambda a, op: BinaryOp.fcmp(
@@ -797,5 +802,4 @@ class PpcArch(Arch):
                 Register("r4"),
                 as_u32(Cast(expr, reinterpret=True, silent=False, type=Type.u64())),
             ),
-            (Register("f2"), SecondF64Half()),
         ]

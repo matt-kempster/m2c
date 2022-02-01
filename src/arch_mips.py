@@ -569,8 +569,8 @@ class MipsArch(Arch):
         meta = InstructionMeta.missing()
         return [Instruction("jr", [Register("ra")], meta), Instruction("nop", [], meta)]
 
-    @staticmethod
-    def normalize_instruction(instr: Instruction) -> Instruction:
+    @classmethod
+    def normalize_instruction(cls, instr: Instruction) -> Instruction:
         args = instr.args
         if len(args) == 3:
             if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
@@ -619,12 +619,12 @@ class MipsArch(Arch):
                 lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
                 return Instruction("li", [args[0], lit], instr.meta)
             if instr.mnemonic in LENGTH_THREE:
-                return MipsArch.normalize_instruction(
+                return cls.normalize_instruction(
                     Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
                 )
         if len(args) == 1:
             if instr.mnemonic in LENGTH_TWO:
-                return MipsArch.normalize_instruction(
+                return cls.normalize_instruction(
                     Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
                 )
         return instr

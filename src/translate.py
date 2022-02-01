@@ -2752,6 +2752,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
 
 
 def make_storex(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
+    # "indexed stores" like `stwx rS, rA, rB` write `rS` into `(rA + rB)`
     size = type.get_size_bytes()
     assert size is not None
 
@@ -3372,6 +3373,7 @@ def handle_rlwinm(
 
 
 def handle_loadx(args: InstrArgs, type: Type) -> Expression:
+    # "indexed loads" like `lwzx rD, rA, rB` read `(rA + rB)` into `rD`
     size = type.get_size_bytes()
     assert size is not None
 
@@ -3456,6 +3458,10 @@ def output_regs_for_instr(
     if mnemonic in arch.instrs_load_update:
         return reg_at(0) + reg_at(1)
     if mnemonic in arch.instrs_fn_call:
+        if instr.args and isinstance(instr.args[0], AsmGlobalSymbol):
+            fn_target = instr.args[0]
+            if global_info.is_function_known_void(fn_target.symbol_name):
+                return []
         return arch.all_return_regs
     if mnemonic in arch.instrs_source_first:
         return reg_at(1)
@@ -3486,6 +3492,14 @@ def output_regs_for_instr(
         ]
     if instr.args and isinstance(instr.args[0], Register):
         return reg_at(0)
+    if mnemonic.endswith("."):
+        # Unimplemented PPC instructions that modify CR0
+        return [
+            Register("cr0_lt"),
+            Register("cr0_gt"),
+            Register("cr0_eq"),
+            Register("cr0_so"),
+        ]
     return []
 
 
@@ -4142,6 +4156,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg(reg, expr_fn(args))
 
         elif mnemonic in arch.instrs_ppc_compare:
+            if instr.args[0] != Register("cr0"):
+                raise DecompFailure(
+                    f"Instruction {instr} not supported (first arg is not $cr0)"
+                )
+
             set_reg(Register("cr0_eq"), arch.instrs_ppc_compare[mnemonic](args, "=="))
             set_reg(Register("cr0_gt"), arch.instrs_ppc_compare[mnemonic](args, ">"))
             set_reg(Register("cr0_lt"), arch.instrs_ppc_compare[mnemonic](args, "<"))
@@ -4168,36 +4187,21 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 )
                 # Use manual casts for cr0_gt/cr0_lt so that the type of target_reg is not modified
                 # until the resulting bit is .use()'d.
+                target_s32 = Cast(
+                    target_reg, reinterpret=True, silent=True, type=Type.s32()
+                )
                 set_reg(
                     Register("cr0_gt"),
-                    BinaryOp(
-                        left=Cast(
-                            expr=target_reg,
-                            reinterpret=True,
-                            silent=True,
-                            type=Type.s32(),
-                        ),
-                        op=">",
-                        right=Literal(0),
-                        type=Type.s32(),
-                    ),
+                    BinaryOp(target_s32, ">", Literal(0), type=Type.s32()),
                 )
                 set_reg(
                     Register("cr0_lt"),
-                    BinaryOp(
-                        left=Cast(
-                            expr=target_reg,
-                            reinterpret=True,
-                            silent=True,
-                            type=Type.s32(),
-                        ),
-                        op="<",
-                        right=Literal(0),
-                        type=Type.s32(),
-                    ),
+                    BinaryOp(target_s32, "<", Literal(0), type=Type.s32()),
                 )
-                # TODO: Implement overflow checking
-                set_reg(Register("cr0_so"), ErrorExpr(f"overflow of {target}"))
+                set_reg(
+                    Register("cr0_so"),
+                    fn_op("MIPS2C_OVERFLOW", [target_reg], type=Type.s32()),
+                )
 
             elif (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
@@ -4208,11 +4212,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg(target, val)
 
             if mnemonic in ["lwzux", "lhzux", "lbzux"]:
-                # In `rA, rB, rC`, update `rB = rB + rC`
+                # In `rD, rA, rB`, update `rA = rA + rB`
                 update_reg = args.reg_ref(1)
                 offset = args.reg(2)
             else:
-                # In `rA, rB(N)`, update `rB = rB + N`
+                # In `rD, rA(N)`, update `rA = rA + N`
                 update = args.memory_ref(1)
                 if not isinstance(update, AddressMode):
                     raise DecompFailure(
@@ -4220,6 +4224,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     )
                 update_reg = update.rhs
                 offset = Literal(update.offset)
+
+            if update_reg == target:
+                raise DecompFailure(
+                    f"Invalid instruction, rA and rD must be different in {instr}"
+                )
 
             set_reg(update_reg, add_imm(args.regs[update_reg], offset, stack_info))
 
