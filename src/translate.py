@@ -482,7 +482,7 @@ def get_stack_info(
     callee_saved_offset_and_size: List[Tuple[int, int]] = []
     for inst in flow_graph.entry_node().block.instructions:
         arch_mnemonic = inst.arch_mnemonic(arch)
-        if arch_mnemonic == "mips:jal":
+        if inst.mnemonic in arch.instrs_fn_call:
             break
         elif arch_mnemonic == "mips:addiu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on MIPS
