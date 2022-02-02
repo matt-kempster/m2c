@@ -78,6 +78,12 @@ from .types import FunctionSignature, Type
 
 
 class FcmpoCrorPattern(SimpleAsmPattern):
+    """
+    For floating point, `x <= y` and `x >= y` use `cror` to OR together the `cr0_eq`
+    bit with either `cr0_lt` or `cr0_gt`. Instead of implementing `cror`, we detect
+    this pattern and and directly compute the two registers.
+    """
+
     pattern = make_pattern(
         "fcmpo $cr0, $x, $y",
         "cror 2, N, 2",
@@ -98,6 +104,11 @@ class FcmpoCrorPattern(SimpleAsmPattern):
 
 
 class TailCallPattern(AsmPattern):
+    """
+    If a function ends in `return fn(...);` then the compiler may perform tail-call
+    optimization. This is emitted as `b fn` instead of using `bl fn; blr`.
+    """
+
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != len(matcher.input) - 1:
             return None
@@ -117,7 +128,9 @@ class TailCallPattern(AsmPattern):
         return None
 
 
-class DoubleNotPattern(SimpleAsmPattern):
+class BoolCastPattern(SimpleAsmPattern):
+    """Cast to bool (a 1 bit type in MWCC), which also can be emitted from `!!x`."""
+
     pattern = make_pattern(
         "neg $a, $x",
         "addic $r0, $a, -1",
@@ -126,7 +139,7 @@ class DoubleNotPattern(SimpleAsmPattern):
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
         return Replacement(
-            [m.derived_instr("notnot.fictive", [Register("r0"), m.regs["x"]])],
+            [m.derived_instr("boolcast.fictive", [Register("r0"), m.regs["x"]])],
             len(m.body),
         )
 
@@ -415,7 +428,7 @@ class PpcArch(Arch):
     asm_patterns = [
         FcmpoCrorPattern(),
         TailCallPattern(),
-        DoubleNotPattern(),
+        BoolCastPattern(),
     ]
 
     instrs_ignore: InstrSet = {
@@ -521,7 +534,9 @@ class PpcArch(Arch):
         "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
         "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
         "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
-        "notnot.fictive": lambda a: UnaryOp(op="!!", expr=a.reg(1), type=Type.intish()),
+        "boolcast.fictive": lambda a: UnaryOp(
+            op="!!", expr=a.reg(1), type=Type.intish()
+        ),
         "rlwinm": lambda a: handle_rlwinm(
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
@@ -662,8 +677,6 @@ class PpcArch(Arch):
         "lfdux": lambda a: handle_loadx(a, type=Type.f64()),
     }
 
-    # TODO: Unclear if there will be many instructions like this, or if
-    # there will just be separate dicts for each implicit dest register
     instrs_implicit_destination: ImplicitInstrMap = {
         "mtlr": (Register("lr"), lambda a: a.reg(0)),
         "mtctr": (Register("ctr"), lambda a: a.reg(0)),
