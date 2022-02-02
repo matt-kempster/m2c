@@ -4019,9 +4019,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             elif arch_mnemonic == "ppc:blr":
                 assert isinstance(node, ReturnNode)
             else:
-                raise DecompFailure(
-                    f"Unhandled jump mnemonic {mnemonic} for {arch.arch}"
-                )
+                assert False, f"Unhandled jump mnemonic {arch_mnemonic}"
 
         elif mnemonic in arch.instrs_fn_call:
             is_known_void = False
@@ -4053,9 +4051,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
             else:
-                raise DecompFailure(
-                    f"Unhandled function call mnemonic {mnemonic} for {arch.arch}"
-                )
+                assert False, f"Unhandled fn call mnemonic {arch_mnemonic}"
 
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
