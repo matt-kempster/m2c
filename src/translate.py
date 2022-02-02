@@ -481,19 +481,20 @@ def get_stack_info(
     # but outside of these two regions, is considered a local variable.
     callee_saved_offset_and_size: List[Tuple[int, int]] = []
     for inst in flow_graph.entry_node().block.instructions:
-        if inst.mnemonic == "jal":
+        arch_mnemonic = inst.arch_mnemonic(arch)
+        if arch_mnemonic == "mips:jal":
             break
-        elif inst.mnemonic == "addiu" and inst.args[0] == arch.stack_pointer_reg:
+        elif arch_mnemonic == "mips:addiu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on MIPS
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
-        elif inst.mnemonic == "stwu" and inst.args[0] == arch.stack_pointer_reg:
+        elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)
             assert isinstance(inst.args[1].lhs, AsmLiteral)
             info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
         elif (
-            inst.mnemonic == "move"
+            arch_mnemonic == "mips:move"
             and inst.args[0] == arch.frame_pointer_reg
             and inst.args[1] == arch.stack_pointer_reg
         ):
@@ -501,7 +502,8 @@ def get_stack_info(
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
         elif (
-            inst.mnemonic in ["sw", "swc1", "sdc1", "stw", "stmw", "stfd"]
+            arch_mnemonic
+            in ["mips:sw", "mips:swc1", "mips:sdc1", "ppc:stw", "ppc:stmw", "ppc:stfd"]
             and isinstance(inst.args[0], Register)
             and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)
@@ -513,7 +515,7 @@ def get_stack_info(
                 # Saving the return address on the stack.
                 info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
-            if inst.mnemonic == "stmw":
+            if arch_mnemonic == "ppc:stmw":
                 assert inst.args[0].register_name[0] == "r"
                 index = int(inst.args[0].register_name[1:])
                 while index <= 31:
@@ -525,9 +527,12 @@ def get_stack_info(
             elif inst.args[0] not in info.callee_save_reg_locations:
                 info.callee_save_reg_locations[inst.args[0]] = stack_offset
                 callee_saved_offset_and_size.append(
-                    (stack_offset, 8 if inst.mnemonic in ("sdc1", "stfd") else 4)
+                    (
+                        stack_offset,
+                        8 if arch_mnemonic in ("mips:sdc1", "ppc:stfd") else 4,
+                    )
                 )
-        elif inst.mnemonic == "mflr" and inst.args[0] == Register("r0"):
+        elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
 
     if not info.is_leaf:
@@ -536,8 +541,9 @@ def get_stack_info(
         info.subroutine_arg_top = info.allocated_stack_size
         for node in flow_graph.nodes:
             for inst in node.block.instructions:
+                arch_mnemonic = inst.arch_mnemonic(arch)
                 if (
-                    inst.mnemonic in ["lw", "lwc1", "ldc1", "lwz"]
+                    arch_mnemonic in ["mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
                     and inst.args[1].rhs == arch.stack_pointer_reg
                     and inst.args[1].lhs_as_literal() >= 16
@@ -546,7 +552,7 @@ def get_stack_info(
                         info.subroutine_arg_top, inst.args[1].lhs_as_literal()
                     )
                 elif (
-                    inst.mnemonic == "addiu"
+                    arch_mnemonic == "mips:addiu"
                     and inst.args[0] != arch.stack_pointer_reg
                     and inst.args[1] == arch.stack_pointer_reg
                     and isinstance(inst.args[2], AsmLiteral)
@@ -3445,6 +3451,7 @@ def output_regs_for_instr(
 
     arch = global_info.arch
     mnemonic = instr.mnemonic
+    arch_mnemonic = instr.arch_mnemonic(arch)
     if (
         mnemonic in arch.instrs_jumps
         or mnemonic in arch.instrs_store
@@ -3468,13 +3475,21 @@ def output_regs_for_instr(
         return reg_at(1)
     if mnemonic.rstrip(".") in arch.instrs_destination_first:
         reg = reg_at(0)
-        if mnemonic.endswith("."):
+        mn_parts = arch_mnemonic.split(".")
+        if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
             return [
                 Register("cr0_lt"),
                 Register("cr0_gt"),
                 Register("cr0_eq"),
                 Register("cr0_so"),
             ] + reg
+        elif (
+            len(mn_parts) >= 2
+            and mn_parts[0].startswith("mips:")
+            and mn_parts[1] == "d"
+        ) or arch_mnemonic == "mips:ldc1":
+            assert len(reg) == 1
+            return reg + [reg[0].other_f64_reg()]
         return reg
     if mnemonic in arch.instrs_float_comp:
         return [Register("condition_bit")]
@@ -3491,7 +3506,7 @@ def output_regs_for_instr(
         ]
     if instr.args and isinstance(instr.args[0], Register):
         return reg_at(0)
-    if mnemonic.endswith("."):
+    if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
         # Unimplemented PPC instructions that modify CR0
         return [
             Register("cr0_lt"),
@@ -3896,6 +3911,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         nonlocal branch_condition, switch_expr, has_function_call
 
         mnemonic = instr.mnemonic
+        arch_mnemonic = instr.arch_mnemonic(arch)
         args = InstrArgs(instr.args, regs, stack_info)
         expr: Expression
 
@@ -3975,17 +3991,17 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             cond_bit = regs[Register("condition_bit")]
             if not isinstance(cond_bit, BinaryOp):
                 cond_bit = ExprCondition(cond_bit, type=cond_bit.type)
-            if mnemonic == "bc1t":
+            if arch_mnemonic == "mips:bc1t":
                 branch_condition = cond_bit
-            elif mnemonic == "bc1f":
+            elif arch_mnemonic == "mips:bc1f":
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in arch.instrs_jumps:
-            if mnemonic == "bctr":
+            if arch_mnemonic == "ppc:bctr":
                 # Switch jump
                 assert isinstance(node, SwitchNode)
                 switch_expr = args.regs[Register("ctr")]
-            elif mnemonic == "jr":
+            elif arch_mnemonic == "mips:jr":
                 # MIPS:
                 if args.reg_ref(0) == arch.return_address_reg:
                     # Return from the function.
@@ -3994,14 +4010,16 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     # Switch jump.
                     assert isinstance(node, SwitchNode)
                     switch_expr = args.reg(0)
-            elif mnemonic == "blr":
+            elif arch_mnemonic == "ppc:blr":
                 assert isinstance(node, ReturnNode)
             else:
-                raise DecompFailure(f"Unhandled jump mnemonic {mnemonic}")
+                raise DecompFailure(
+                    f"Unhandled jump mnemonic {mnemonic} for {arch.arch}"
+                )
 
         elif mnemonic in arch.instrs_fn_call:
             is_known_void = False
-            if mnemonic in ["jal", "bl"]:
+            if arch_mnemonic in ["mips:jal", "ppc:bl"]:
                 fn_target = args.imm(0)
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
@@ -4015,10 +4033,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     raise DecompFailure(
                         f"Target of function call must be a symbol, not {fn_target}"
                     )
-            elif mnemonic == "blrl":
+            elif arch_mnemonic == "ppc:blrl":
                 fn_target = args.regs[Register("lr")]
-            else:
-                assert mnemonic == "jalr"
+            elif arch_mnemonic == "mips:jalr":
                 if args.count() == 1:
                     fn_target = args.reg(0)
                 elif args.count() == 2:
@@ -4029,6 +4046,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     fn_target = args.reg(1)
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
+            else:
+                raise DecompFailure(
+                    f"Unhandled function call mnemonic {mnemonic} for {arch.arch}"
+                )
 
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
@@ -4169,8 +4190,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # if source = target, maybe we could overwrite that variable instead
             # of creating a new one?
             set_reg(target, val)
-            mn_parts = mnemonic.split(".")
-            if mnemonic.endswith("."):
+            mn_parts = arch_mnemonic.split(".")
+            if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
                 # PPC instructions suffixed with . set condition bits (CR0) based on the result value
                 target_reg = args.reg(0)
                 set_reg(
@@ -4195,7 +4216,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     fn_op("MIPS2C_OVERFLOW", [target_reg], type=Type.s32()),
                 )
 
-            elif (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
+            elif (
+                len(mn_parts) >= 2
+                and mn_parts[0].startswith("mips:")
+                and mn_parts[1] == "d"
+            ) or arch_mnemonic == "mips:ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
 
         elif mnemonic in arch.instrs_load_update:
@@ -4203,7 +4228,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             val = arch.instrs_load_update[mnemonic](args)
             set_reg(target, val)
 
-            if mnemonic in ["lwzux", "lhzux", "lbzux"]:
+            if arch_mnemonic in ["ppc:lwzux", "ppc:lhzux", "ppc:lbzux"]:
                 # In `rD, rA, rB`, update `rA = rA + rB`
                 update_reg = args.reg_ref(1)
                 offset = args.reg(2)
@@ -4226,7 +4251,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
-            if mnemonic.endswith("."):
+            if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
                 # Unimplemented PPC instructions that modify CR0
                 set_reg(Register("cr0_eq"), expr)
                 set_reg(Register("cr0_gt"), expr)

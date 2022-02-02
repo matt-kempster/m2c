@@ -145,6 +145,10 @@ class Instruction:
         args = ", ".join(str(arg) for arg in self.args)
         return f"{self.mnemonic} {args}"
 
+    def arch_mnemonic(self, arch: "ArchAsm") -> str:
+        """Combine architecture name with mnemonic for pattern matching"""
+        return f"{arch.arch}:{self.mnemonic}"
+
 
 class ArchAsmParsing(abc.ABC):
     """Arch-specific information needed to parse asm."""
