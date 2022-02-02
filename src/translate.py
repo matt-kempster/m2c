@@ -4057,18 +4057,23 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             likely_regs: Dict[Register, bool] = {}
             for reg, data in regs.contents.items():
-                # We use a much stricter filter for PPC than MIPS,
-                # but it seems more accurate because the same registers are used
-                # for arguments & return values. The ABI can also mix & match the
-                # rN & fN registers, which makes the "require" heuristic less powerful.
+                # We use a much stricter filter for PPC than MIPS, because the same
+                # registers can be used arguments & return values.
+                # The ABI can also mix & match the rN & fN registers, which  makes the
+                # "require" heuristic less powerful.
+                #
+                # - `meta.inherited` will only be False for registers set in *this* basic block
+                # - `meta.function_return` will only be accurate for registers set within this
+                #   basic block because we have not called `propagate_register_meta` yet.
+                #   Within this block, it will be True for registers that were return values.
                 if arch.arch == Target.ArchEnum.PPC and (
-                    data.meta.function_return or data.meta.inherited
+                    data.meta.inherited or data.meta.function_return
                 ):
-                    continue
-
-                likely_regs[reg] = (
-                    not isinstance(data.value, PassedInArg) or data.value.copied
-                )
+                    likely_regs[reg] = False
+                elif isinstance(data.value, PassedInArg) and not data.value.copied:
+                    likely_regs[reg] = False
+                else:
+                    likely_regs[reg] = True
 
             abi = arch.function_abi(fn_sig, likely_regs, for_call=True)
 
