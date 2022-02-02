@@ -114,6 +114,11 @@ def as_stringio(src: str) -> Iterator[StringIO]:
 
 @dataclass
 class CxxName:
+    """
+    Represent the name of a C++ symbol, class, or namespace.
+    This may be parameterized with `template_params`.
+    """
+
     NUMBER_CHARS: ClassVar[Set[str]] = set("-0123456789")
 
     name: str
@@ -170,6 +175,18 @@ class CxxName:
 
 @dataclass
 class CxxTerm:
+    """
+    Represent a part of a C++ type, like a token.
+
+    This mostly corresponds to a single letter in a mangled type, like 'v' or 'U',
+    but it also can represent multicharacter components of a mangled type:
+
+    - ARRAY: with dimension `array_dim`
+    - FUNCTION: with `function_params` and `function_return` types
+    - QUALIFIED name: with a list of paths in `qualified_name`
+    - SYMBOL_REFERENCE: to the `symbol_reference` symbol
+    """
+
     class Kind(Enum):
         CONST = "C"
         POINTER = "P"
@@ -204,48 +221,48 @@ class CxxTerm:
     }
 
     OPS = {
-        "nw": " new",
-        "nwa": " new[]",
-        "dl": " delete",
-        "dla": " delete[]",
-        "pl": "+",
-        "mi": "-",
-        "ml": "*",
-        "dv": "/",
-        "md": "%",
-        "er": "^",
-        "adv": "/=",
-        "ad": "&",
-        "or": "|",
-        "co": "~",
-        "nt": "!",
-        "as": "=",
-        "lt": "<",
-        "gt": ">",
-        "apl": "+=",
-        "ami": "-=",
-        "amu": "*=",
-        "amd": "%=",
-        "aer": "^=",
-        "aad": "&=",
-        "aor": "|=",
-        "ls": "<<",
-        "rs": ">>",
-        "ars": ">>=",
-        "als": "<<=",
-        "eq": "==",
-        "ne": "!=",
-        "le": "<=",
-        "ge": ">=",
-        "aa": "&&",
-        "oo": "||",
-        "pp": "++",
-        "mm": "--",
-        "cl": "()",
-        "vc": "[]",
-        "rf": "->",
-        "cm": ",",
-        "rm": "->*",
+        "__nw": " new",
+        "__nwa": " new[]",
+        "__dl": " delete",
+        "__dla": " delete[]",
+        "__pl": "+",
+        "__mi": "-",
+        "__ml": "*",
+        "__dv": "/",
+        "__md": "%",
+        "__er": "^",
+        "__adv": "/=",
+        "__ad": "&",
+        "__or": "|",
+        "__co": "~",
+        "__nt": "!",
+        "__as": "=",
+        "__lt": "<",
+        "__gt": ">",
+        "__apl": "+=",
+        "__ami": "-=",
+        "__amu": "*=",
+        "__amd": "%=",
+        "__aer": "^=",
+        "__aad": "&=",
+        "__aor": "|=",
+        "__ls": "<<",
+        "__rs": ">>",
+        "__ars": ">>=",
+        "__als": "<<=",
+        "__eq": "==",
+        "__ne": "!=",
+        "__le": "<=",
+        "__ge": ">=",
+        "__aa": "&&",
+        "__oo": "||",
+        "__pp": "++",
+        "__mm": "--",
+        "__cl": "()",
+        "__vc": "[]",
+        "__rf": "->",
+        "__cm": ",",
+        "__rm": "->*",
     }
 
     kind: Kind
@@ -350,6 +367,18 @@ class CxxTerm:
 
 @dataclass
 class CxxType:
+    """
+    Represents a complete C++ type.
+
+    The final element in `terms` is the primitive type, such as CHAR or
+    FUNCTION. Working from the end, each previous term modifies the type.
+    (This order matches the order in the mangled type)
+
+    Example:
+        `[CONST, POINTER, CHAR]` => "char * const"
+        `[POINTER, CONST, CHAR]` => "char const *"
+    """
+
     terms: List[CxxTerm] = field(default_factory=list)
 
     @staticmethod
@@ -370,6 +399,8 @@ class CxxType:
 
 @dataclass
 class CxxSymbol:
+    """Represents a C++ symbol & its type."""
+
     STATIC_FUNCTIONS = {"__sinit", "__sterm"}
 
     name: CxxTerm
@@ -377,19 +408,33 @@ class CxxSymbol:
 
     @staticmethod
     def parse(src: TextIOBase) -> "CxxSymbol":
+        # Find the `base_name`, which is the prefix of `src` which usually represents
+        # original, unmangled name of the symbol. It's typically separated from the
+        # type information by the rightmost "__", but there are many edge cases.
+
+        # The number of underscores that separate the `base_name` from the rest of the type info
+        strip_underscores = 0
+        # The nesting depth of "<...>" clauses in `base_name`
+        template_depth = 0
+
+        # By default, the `base_name` is the *entire* src string (with no trailing underscores)
         with peeking(src):
             base_name = src.read()
-
-        strip_underscores = 0
-        template_depth = 0
         with peeking(src):
+            # `chars` is a buffer of the chars we've read from `src`
             chars = ""
             while True:
+                # Try to read 1 character; if it's empty, return the `base_name` we've found so far
                 c = src.read(1)
                 if not c:
                     break
 
+                # If we hit either "," or ">" but we are not parsing a template, that means we have
+                # been called to parse a SYMBOL_REFERENCE inside a template, and we have hit a delimiter.
+                # Otherwise, track "<" and ">" counts in `template_depth`.
                 if c in (",", ">") and template_depth == 0:
+                    if strip_underscores == 0:
+                        base_name = chars
                     break
                 elif c == "<":
                     template_depth += 1
@@ -398,24 +443,28 @@ class CxxSymbol:
 
                 chars += c
                 if chars in CxxSymbol.STATIC_FUNCTIONS:
+                    # STATIC_FUNCTIONS are special prefixes which match exactly and only have 1 separating "_"
                     base_name = chars
                     strip_underscores = 1
                     break
-                elif not (c == "_" and peek(src) == "_"):
-                    continue
-                strip_underscores = 2
-                lookahead = peek(src, 2)
-                if len(lookahead) == 2:
-                    if lookahead[1] not in "QFC0123456789":
-                        continue
-                base_name = chars[:-1]
+                elif c == "_" and peek(src) == "_":
+                    # If we're in the middle of reading a "__", then this may be where `base_name` ends
+                    # Peek at the char after the "__": if it could be the start of the mangled type info,
+                    # do not advance the `base_name`.
+                    lookahead = peek(src, 2)
+                    if len(lookahead) == 2:
+                        if lookahead[1] not in "QFC0123456789":
+                            continue
+                    base_name = chars[:-1]
+                    strip_underscores = 2
 
+        # `base_name` is found, so remove it (and any separator underscores) from the input buffer
         read_exact(src, len(base_name) + strip_underscores)
 
         if base_name in CxxSymbol.STATIC_FUNCTIONS:
-            # This is a special case. A function like `__sinit_AnimalBase_cpp` is the static
-            # constructor (ctor) for "AnimalBase.cpp".
-            # "Demangle" this into `void AnimalBase_cpp::__sinit(void)`
+            # This is a special case. A function like `__sinit_Foo_cpp` is the static
+            # constructor (ctor) for "Foo.cpp".
+            # "Demangle" this into `void Foo_cpp::__sinit(void)`
             with as_stringio("Fv_v") as buf:
                 type = CxxType.parse(buf)
             return CxxSymbol(
@@ -426,6 +475,7 @@ class CxxSymbol:
                 type=type,
             )
 
+        # After the "__", the `base_name` is followed by the (optional) qualified class name, then the symbol's type.
         class_name: Optional[CxxType] = CxxType.parse(src)
         if peek(src) not in ("", ",", ">"):
             type = CxxType.parse(src)
@@ -434,6 +484,7 @@ class CxxSymbol:
             type = class_name
             class_name = None
 
+        # Combine the `base_name` with the qualified class name to build a fully qualified symbol name.
         qualified_name: List["CxxName"] = []
         if class_name is not None:
             assert len(class_name.terms) == 1
@@ -465,12 +516,70 @@ def demangle(mangled: str) -> str:
         return mangled
 
 
+def test() -> bool:
+    TEST_CASES = [
+        # Unmangled, but with underscores
+        ("__foo_bar", "__foo_bar"),
+        # Namespacing
+        ("get__6FoobarFi", "Foobar::get (int)"),
+        # Constructor / Destructor
+        (
+            "__ct__10FooBarFoosFP7ArgPtrsUsPCc",
+            "FooBarFoos::FooBarFoos (ArgPtrs *, short unsigned, char const *)",
+        ),
+        ("__dt__10FooBarFoosFv", "FooBarFoos::~FooBarFoos (void)"),
+        # Overloaded operators
+        ("__dl__FPv", "operator delete (void *)"),
+        ("__nw__FUl", "operator new (long unsigned)"),
+        ("__eq__3FooCFRC3Foo", "Foo::operator== (Foo const &) const"),
+        # Namespacing & templated arguments
+        (
+            "do__Q214GrandFooSystem8MiniFoosFUlPC3VecP3VecfUlUlPP8LateBazzUlUc",
+            "GrandFooSystem::MiniFoos::do (long unsigned, Vec const *, Vec *, float, long unsigned, long unsigned, LateBazz * *, long unsigned, char unsigned)",
+        ),
+        (
+            "spin__11ThingieBaseFRCQ29MyLibrary8FVec3$$0f$$1RCQ29MyLibrary8FVec3$$0f$$1RCQ29MyLibrary8FVec3$$0f$$1",
+            "ThingieBase::spin (MyLibrary::FVec3<float> const &, MyLibrary::FVec3<float> const &, MyLibrary::FVec3<float> const &)",
+        ),
+        # Templated function names
+        (
+            "function<&alpha,&beta,&GAMMA>__FR5Class_i",
+            "function<&alpha, &beta, &GAMMA> int (*) (Class &)",
+        ),
+        (
+            "function<&m0__5Class,&mf0__5ClassFi>__FR5Class_i",
+            "function<&m0 Class, &Class::mf0 (int)> int (*) (Class &)",
+        ),
+        # Static functions
+        ("__sinit_Foo_cpp", "Foo_cpp::__sinit void (*) (void)"),
+        ("__sterm_Foo_cpp", "Foo_cpp::__sterm void (*) (void)"),
+        # Confusing function names (check that we split on the last valid "__")
+        ("foo__3BarFv", "Bar::foo (void)"),
+        ("foo__3BarFv__3BarFv", "Bar::foo__3BarFv (void)"),
+        ("foo__Q23Bar3BarFv__3BarFv", "Bar::foo__Q23Bar3BarFv (void)"),
+    ]
+    all_pass = True
+    for mangled, demangled in TEST_CASES:
+        output = demangle(mangled)
+        if output != demangled:
+            print(f"Failed: {(mangled, output)}")
+            all_pass = False
+
+    if all_pass:
+        print(f"All {len(TEST_CASES)} test cases passed")
+
+    return all_pass
+
+
 def main() -> None:
     import sys
 
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <mangled_name>")
         sys.exit(1)
+
+    if sys.argv[1] == "--test":
+        sys.exit(0 if test() else 1)
 
     print(demangle(sys.argv[1]))
 
