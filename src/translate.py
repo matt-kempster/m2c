@@ -3443,6 +3443,12 @@ def output_regs_for_instr(
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
         if isinstance(reg, AsmAddressMode):
+            # This is used for the store/load-update PPC instructions,
+            # where the register in an AsmAddressMode is updated.
+            assert (
+                instr.mnemonic in arch.instrs_store_update
+                or instr.mnemonic in arch.instrs_load_update
+            )
             return [reg.rhs]
         if not isinstance(reg, Register):
             # We'll deal with this error later
