@@ -353,42 +353,59 @@ class PpcArch(Arch):
     def missing_return() -> List[Instruction]:
         return [Instruction("blr", [], InstructionMeta.missing())]
 
-    INSTRS_R0_AS_ZERO: ClassVar[Set[str]] = {
-        "addi",
-        "addis",
-        "lbz",
-        "lbzx",
-        "lfd",
-        "lfdx",
-        "lfs",
-        "lfsx",
-        "lha",
-        "lhax",
-        "lhbrx",
-        "lhz",
-        "lhzx",
-        "lmw",
-        "lwarx",
-        "lwbrx",
-        "lwz",
-        "lwzx",
-        "stb",
-        "stbx",
-        "stfd",
-        "stfdx",
-        "stfiwx",
-        "stfs",
-        "stfsx",
-        "sth",
-        "sthbrx",
-        "sthx",
-        "stmw",
-        "stswi",
-        "stswx",
-        "stw",
-        "stwbrx",
-        "stwcx.",
-        "stwx",
+    # List of all instructions where `$r0` as certian args is interpreted as `0`
+    # instead of the contents of `$r0`. The dict value represents the argument
+    # index that is affected.
+    INSTRS_R0_AS_ZERO: ClassVar[Dict[str, int]] = {
+        "addi": 1,
+        "addis": 1,
+        "dcbf": 0,
+        "dcbi": 0,
+        "dcbst": 0,
+        "dcbt": 0,
+        "dcbtst": 0,
+        "dcbz": 0,
+        "dcbz_l": 0,
+        "eciwx": 1,
+        "ecowx": 1,
+        "icbi": 0,
+        "lbz": 1,
+        "lbzx": 1,
+        "lfd": 1,
+        "lfdx": 1,
+        "lfs": 1,
+        "lfsx": 1,
+        "lha": 1,
+        "lhax": 1,
+        "lhbrx": 1,
+        "lhz": 1,
+        "lhzx": 1,
+        "lmw": 1,
+        "lswi": 1,
+        "lswx": 1,
+        "lwarx": 1,
+        "lwbrx": 1,
+        "lwz": 1,
+        "lwzx": 1,
+        "psq_lx": 1,
+        "psq_stx": 1,
+        "stb": 1,
+        "stbx": 1,
+        "stfd": 1,
+        "stfdx": 1,
+        "stfiwx": 1,
+        "stfs": 1,
+        "stfsx": 1,
+        "sth": 1,
+        "sthbrx": 1,
+        "sthx": 1,
+        "stmw": 1,
+        "stswi": 1,
+        "stswx": 1,
+        "stw": 1,
+        "stwbrx": 1,
+        "stwcx.": 1,
+        "stwx": 1,
     }
 
     @classmethod
@@ -402,17 +419,20 @@ class PpcArch(Arch):
             )
 
         args = instr.args
-        if len(args) >= 2 and instr.mnemonic in cls.INSTRS_R0_AS_ZERO:
-            new_arg1: Optional[Argument] = None
-            if args[1] == Register("r0"):
-                new_arg1 = Register("zero")
-            elif isinstance(args[1], AsmAddressMode) and args[1].rhs == Register("r0"):
-                new_arg1 = AsmAddressMode(lhs=args[1].lhs, rhs=Register("zero"))
-            if new_arg1 is not None:
+        r0_index = cls.INSTRS_R0_AS_ZERO.get(instr.mnemonic)
+        if r0_index is not None and len(args) > r0_index:
+            # If the argument at the given index is $r0, replace it with $zero
+            r0_arg = args[r0_index]
+            if r0_arg == Register("r0"):
+                r0_arg = Register("zero")
+            elif isinstance(r0_arg, AsmAddressMode) and r0_arg.rhs == Register("r0"):
+                r0_arg = AsmAddressMode(lhs=r0_arg.lhs, rhs=Register("zero"))
+
+            if r0_arg is not args[r0_index]:
+                new_args = args[:]
+                new_args[r0_index] = r0_arg
                 return PpcArch.normalize_instruction(
-                    Instruction(
-                        instr.mnemonic, [args[0], new_arg1] + args[2:], instr.meta
-                    )
+                    Instruction(instr.mnemonic, new_args, instr.meta)
                 )
         if len(args) == 3:
             if (
