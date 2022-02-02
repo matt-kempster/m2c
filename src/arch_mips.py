@@ -182,7 +182,9 @@ class DivuPattern(SimpleAsmPattern):
         return Replacement([], len(m.body) - 1)
 
 
-class ModP2Pattern(SimpleAsmPattern):
+class ModP2Pattern1(SimpleAsmPattern):
+    """Modulo by power of two."""
+
     pattern = make_pattern(
         "bgez $i, .A",
         "andi $o, $i, N",
@@ -192,8 +194,36 @@ class ModP2Pattern(SimpleAsmPattern):
         ".A:",
     )
 
-    def replace(self, m: AsmMatch) -> Replacement:
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
         val = (m.literals["N"] & 0xFFFF) + 1
+        if val & (val - 1):
+            return None  # not a power of two
+        mod = m.derived_instr(
+            "mod.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(val)]
+        )
+        return Replacement([mod], len(m.body) - 1)
+
+
+class ModP2Pattern2(SimpleAsmPattern):
+    """Modulo by power of two where the mask is too big to fit an andi."""
+
+    pattern = make_pattern(
+        "li $at, HI",
+        "addiu $at, $at, LO?",
+        "bgez $i, .A",
+        "and $o, $i, $at",
+        "beqz $o, .A",
+        "addiu $at, $at, 1",
+        "subu $o, $o, $at",
+        ".A:",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        val = (m.literals["HI"] & 0xFFFFFFFF) + 1
+        if "LO" in m.literals:
+            val += ((m.literals["LO"] + 0x8000) & 0xFFFF) - 0x8000
+        if not val or val & (val - 1):
+            return None  # not a power of two
         mod = m.derived_instr(
             "mod.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(val)]
         )
@@ -636,7 +666,8 @@ class MipsArch(Arch):
         DivP2Pattern2(),
         Div2S16Pattern(),
         Div2S32Pattern(),
-        ModP2Pattern(),
+        ModP2Pattern1(),
+        ModP2Pattern2(),
         UtfPattern(),
         FtuPattern(),
         Mips1DoubleLoadStorePattern(),
