@@ -448,15 +448,19 @@ class CxxSymbol:
                     strip_underscores = 1
                     break
                 elif c == "_" and peek(src) == "_":
-                    # If we're in the middle of reading a "__", then this may be where `base_name` ends
-                    # Peek at the char after the "__": if it could be the start of the mangled type info,
-                    # do not advance the `base_name`.
+                    # If we're in the middle of reading a "__", then this may be where `base_name` ends.
+                    # However, we only split here if the character after the "__" could be the start of
+                    # of the mangled type info, or a class name.
+                    #
+                    # - "C" or "F" are common starts to mangled type info for functions (CONST, FUNCTION).
+                    # - "Q" or a number indicates the start of a qualified name or a class name.
+                    #
+                    # This is a heuristic, and will fail to parse non-function unqualified symbols (such
+                    # as "foo__Ul") and some functions with internal "__" characters (such as "bar__5__FooFv")
                     lookahead = peek(src, 2)
-                    if len(lookahead) == 2:
-                        if lookahead[1] not in "QFC0123456789":
-                            continue
-                    base_name = chars[:-1]
-                    strip_underscores = 2
+                    if len(lookahead) < 2 or lookahead[1] in "CFQ0123456789":
+                        base_name = chars[:-1]
+                        strip_underscores = 2
 
         # `base_name` is found, so remove it (and any separator underscores) from the input buffer
         read_exact(src, len(base_name) + strip_underscores)
@@ -557,6 +561,18 @@ def test() -> bool:
         ("foo__3BarFv", "Bar::foo (void)"),
         ("foo__3BarFv__3BarFv", "Bar::foo__3BarFv (void)"),
         ("foo__Q23Bar3BarFv__3BarFv", "Bar::foo__Q23Bar3BarFv (void)"),
+        (
+            "copy__Q23std14__copy$$0Pv$$41$$40$$1FPPvPPvPPv",
+            "std::__copy<void *, 1, 0>::copy (void * *, void * *, void * *)",
+        ),
+        ("__init__bar__9Bar$$03Foo$$1", "__init__bar Bar<Foo>"),
+        ("bar__5__BarFv", "__Bar::bar (void)"),
+        # These examples we fail to demangle correctly
+        ("bar__5__FooFv", "bar__5__FooFv"),  # should be "__Foo::bar (void)"
+        (
+            "foo__Ul",
+            "foo__Ul",
+        ),  # should be "foo long unsigned" (or "long unsigned foo")
     ]
     all_pass = True
     for mangled, demangled in TEST_CASES:
@@ -575,12 +591,21 @@ def main() -> None:
     import sys
 
     if len(sys.argv) != 2:
+        # Print help
         print(f"usage: {sys.argv[0]} <mangled_name>")
         sys.exit(1)
 
     if sys.argv[1] == "--test":
+        # Run internal unit tests
         sys.exit(0 if test() else 1)
 
+    if sys.argv[1] == "-":
+        # Batch mode: demangle each line in the input
+        for line in sys.stdin:
+            print(demangle(line.strip()))
+        sys.exit(0)
+
+    # Default: demangle the command-line argument
     print(demangle(sys.argv[1]))
 
 
