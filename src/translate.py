@@ -74,7 +74,6 @@ class Arch(ArchFlowGraph):
     instrs_load_update: InstrMap = {}
 
     instrs_branches: CmpInstrMap = {}
-    instrs_decctr_branches: CmpInstrMap = {}
     instrs_float_branches: InstrSet = set()
     instrs_float_comp: CmpInstrMap = {}
     instrs_ppc_compare: PpcCmpInstrMap = {}
@@ -2100,10 +2099,13 @@ class InstrArgs:
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))
 
-        # Allow e.g. "lw $v0, symbol + 4", which isn't valid MIPS assembly, but is
-        # outputted by some disassemblers (like IDA).
+        # In MIPS, we want to allow "lw $v0, symbol + 4", which is outputted by
+        # some disassemblers (like IDA) even though it isn't valid assembly.
+        # For PPC, we want to allow "lwz $r1, symbol@sda21($r13)" where $r13 is
+        # assumed to point to the start of a small data area (SDA).
         if isinstance(ret, AsmGlobalSymbol):
             return RawSymbolRef(offset=0, sym=ret)
+
         if (
             isinstance(ret, BinOp)
             and ret.op in "+-"
@@ -3379,7 +3381,6 @@ def handle_loadx(args: InstrArgs, type: Type) -> Expression:
 
     ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
     expr = deref(ptr, args.regs, args.stack_info, size=size)
-    # TODO: Do we need to check for float constants here, like in `handle_load`?
     return as_type(expr, type, silent=True)
 
 
@@ -3395,13 +3396,13 @@ def strip_macros(arg: Argument) -> Argument:
             raise DecompFailure("%hi macro outside of lui")
         if arg.macro_name not in ["lo", "l"]:
             raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
-        # This is sort of weird; for `@l(symbol)` we return 0 here and assume
+        # This is sort of weird; for `symbol@l` we return 0 here and assume
         # that this @l is always perfectly paired with one other @ha.
-        # However, with `@l(literal)`, we return the macro value, and assume it is
-        # paired with another `@ha(literal)`. This lets us reuse `@ha(literal)` values,
+        # However, with `literal@l`, we return the literal value, and assume it is
+        # paired with another `literal@ha`. This lets us reuse `literal@ha` values,
         # but assumes that we never mix literals & symbols
         if isinstance(arg.argument, AsmLiteral):
-            return AsmLiteral(arg.argument.value & 0xFFFF)
+            return AsmLiteral(arg.argument.value)
         return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
         if arg.lhs.macro_name in ["sda2", "sda21"]:
@@ -3481,8 +3482,6 @@ def output_regs_for_instr(
         return [Register("hi"), Register("lo")]
     if mnemonic in arch.instrs_implicit_destination:
         return [arch.instrs_implicit_destination[mnemonic][0]]
-    if mnemonic in arch.instrs_decctr_branches:
-        return [Register("ctr")]
     if mnemonic in arch.instrs_ppc_compare:
         return [
             Register("cr0_lt"),
@@ -3970,13 +3969,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         elif mnemonic in arch.instrs_branches:
             assert branch_condition is None
             branch_condition = arch.instrs_branches[mnemonic](args)
-
-        elif mnemonic in arch.instrs_decctr_branches:
-            assert branch_condition is None
-            branch_condition = arch.instrs_decctr_branches[mnemonic](args)
-
-            ctr = Register("ctr")
-            set_reg(ctr, BinaryOp.int(args.regs[ctr], "-", Literal(1)))
 
         elif mnemonic in arch.instrs_float_branches:
             assert branch_condition is None

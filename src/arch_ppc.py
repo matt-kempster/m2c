@@ -144,6 +144,23 @@ class BoolCastPattern(SimpleAsmPattern):
         )
 
 
+class BranchCtrPattern(AsmPattern):
+    """Split decrement-$ctr-and-branch instructions into a pair of instructions."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if isinstance(instr, Instruction) and instr.mnemonic in ("bdz", "bdnz"):
+            ctr = Register("ctr")
+            return Replacement(
+                [
+                    Instruction.derived("addi", [ctr, ctr, AsmLiteral(-1)], instr),
+                    Instruction.derived(instr.mnemonic + ".fictive", instr.args, instr),
+                ],
+                1,
+            )
+        return None
+
+
 class PpcArch(Arch):
     arch = Target.ArchEnum.PPC
 
@@ -281,6 +298,8 @@ class PpcArch(Arch):
                 "bne",
                 "bdnz",
                 "bdz",
+                "bdnz.fictive",
+                "bdz.fictive",
             ]
             or PpcArch.is_constant_branch_instruction(instr)
         )
@@ -429,6 +448,7 @@ class PpcArch(Arch):
         FcmpoCrorPattern(),
         TailCallPattern(),
         BoolCastPattern(),
+        BranchCtrPattern(),
     ]
 
     instrs_ignore: InstrSet = {
@@ -481,11 +501,8 @@ class PpcArch(Arch):
         "bne": lambda a: a.cmp_reg("cr0_eq").negated(),
         "bns": lambda a: a.cmp_reg("cr0_so").negated(),
         "bso": lambda a: a.cmp_reg("cr0_so"),
-    }
-    instrs_decctr_branches: CmpInstrMap = {
-        # Decrement the CTR register, then branch
-        "bdnz": lambda a: a.cmp_reg("ctr"),
-        "bdz": lambda a: a.cmp_reg("ctr").negated(),
+        "bdnz.fictive": lambda a: a.cmp_reg("ctr"),
+        "bdz.fictive": lambda a: a.cmp_reg("ctr").negated(),
     }
     instrs_float_branches: InstrSet = {}
     instrs_jumps: InstrSet = {

@@ -1,6 +1,8 @@
 f32 test(s32 arg0, s32 arg1, f32 arg8) {
+    s32 temp_ctr_2;
     s32 temp_r5;
     s32 temp_r6;
+    u32 temp_ctr;
     void *temp_r5_2;
     s32 phi_r6;
     u32 phi_ctr;
@@ -26,10 +28,11 @@ f32 test(s32 arg0, s32 arg1, f32 arg8) {
                     temp_r5_2->unk5 = 0;
                     temp_r5_2->unk6 = 0;
                     temp_r5_2->unk7 = 0;
+                    temp_ctr = phi_ctr - 1;
                     phi_r6 = temp_r6;
-                    phi_ctr -= 1;
+                    phi_ctr = temp_ctr;
                     phi_r6_2 = temp_r6;
-                } while (phi_ctr != 0);
+                } while (temp_ctr != 0);
             }
         }
         phi_r3 = arg0 + phi_r6_2;
@@ -37,9 +40,10 @@ f32 test(s32 arg0, s32 arg1, f32 arg8) {
         if (phi_r6_2 < arg1) {
             do {
                 *phi_r3 = 0;
+                temp_ctr_2 = phi_ctr_2 - 1;
                 phi_r3 += 1;
-                phi_ctr_2 -= 1;
-            } while (phi_ctr_2 != 0);
+                phi_ctr_2 = temp_ctr_2;
+            } while (temp_ctr_2 != 0);
             return arg8;
         }
         /* Duplicate return node #7. Try simplifying control flow for better match */

@@ -383,38 +383,32 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             else:
                 op = expect("&+-*")
 
-            # Parse `sym-_SDA_BASE_(r13)` as a Macro, equivalently to `sym@sda21(r13)`
             if tok == "-" and arg_elems[0] == "_":
+                # Parse `sym-_SDA_BASE_` as a Macro, equivalently to `sym@sda21`
                 reloc_name = parse_word(arg_elems)
                 if reloc_name not in ("_SDA_BASE_", "_SDA2_BASE_"):
                     raise DecompFailure(
                         f"Unexpected symbol {reloc_name} in subtraction expression"
                     )
-                macro = Macro("sda21", value)
-                if not arg_elems:
-                    return macro
-                expect("(")
+                value = Macro("sda21", value)
+            else:
                 rhs = parse_arg_elems(arg_elems, arch)
-                assert isinstance(rhs, Register)
-                assert rhs in [Register("r2"), Register("r13")]
-                expect(")")
-                return AsmAddressMode(macro, rhs)
-
-            rhs = parse_arg_elems(arg_elems, arch)
-            assert rhs is not None
-            if isinstance(rhs, BinOp) and rhs.op == "*":
-                rhs = constant_fold(rhs)
-            if isinstance(rhs, BinOp) and isinstance(constant_fold(rhs), AsmLiteral):
-                raise DecompFailure(
-                    "Math is too complicated for mips_to_c. Try adding parentheses."
-                )
-            if isinstance(rhs, AsmLiteral) and isinstance(
-                value, AsmSectionGlobalSymbol
-            ):
-                return asm_section_global_symbol(
-                    value.section_name, value.addend + rhs.value
-                )
-            return BinOp(op, value, rhs)
+                assert rhs is not None
+                if isinstance(rhs, BinOp) and rhs.op == "*":
+                    rhs = constant_fold(rhs)
+                if isinstance(rhs, BinOp) and isinstance(
+                    constant_fold(rhs), AsmLiteral
+                ):
+                    raise DecompFailure(
+                        "Math is too complicated for mips_to_c. Try adding parentheses."
+                    )
+                if isinstance(rhs, AsmLiteral) and isinstance(
+                    value, AsmSectionGlobalSymbol
+                ):
+                    return asm_section_global_symbol(
+                        value.section_name, value.addend + rhs.value
+                    )
+                return BinOp(op, value, rhs)
         elif tok == "@":
             # A relocation (e.g. (...)@ha or (...)@l).
             arg_elems.pop(0)
