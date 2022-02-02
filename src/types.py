@@ -959,10 +959,8 @@ class Type:
             assert len(sym_name.qualified_name) >= 1
             final_name = str(sym_name.qualified_name[-1]).split("@")[-1]
 
-        type = None
+        type = Type.any()
         for term in sym_type.terms[::-1]:
-            if type is None and term.kind in CxxTerm.NONTERMINATING_KINDS:
-                type = Type.any()
             if term.kind == CxxTerm.Kind.CONST:
                 pass
             elif term.kind == CxxTerm.Kind.UNSIGNED:
@@ -986,13 +984,10 @@ class Type:
             elif term.kind == CxxTerm.Kind.LONG_DOUBLE:
                 type = Type.f128()
             elif term.kind == CxxTerm.Kind.SIGNED:
-                assert type is not None
                 type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED)))
             elif term.kind == CxxTerm.Kind.UNSIGNED:
-                assert type is not None
                 type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED)))
             elif term.kind == CxxTerm.Kind.ARRAY:
-                assert type is not None
                 assert term.array_dim is not None, "array CxxTerms must have array_dim"
                 type = Type.array(type, term.array_dim)
             elif term.kind == CxxTerm.Kind.FUNCTION:
@@ -1047,8 +1042,6 @@ class Type:
                 assert False, term.kind
             else:
                 assert False, term.kind
-        if type is None:
-            return Type.any()
         # TODO: Support vtables
         # if final_name == "__vt":
         #    return Type.array(Type.function())
