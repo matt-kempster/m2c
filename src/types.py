@@ -19,6 +19,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
+from .demangle_codewarrior import CxxSymbol, CxxTerm, CxxType
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
@@ -229,7 +230,7 @@ class Type:
         if kind == TypeData.K_PTR:
             size_bits = 32
         if sign != TypeData.ANY_SIGN:
-            assert kind == TypeData.K_INT
+            assert kind & TypeData.K_INTPTR
         if x.ptr_to is not None and y.ptr_to is not None:
             if not x.ptr_to.unify(y.ptr_to, seen=seen):
                 return False
@@ -760,6 +761,14 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INTPTR))
 
     @staticmethod
+    def uintptr() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.UNSIGNED))
+
+    @staticmethod
+    def sintptr() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.SIGNED))
+
+    @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
         return Type(TypeData(kind=TypeData.K_PTR, size_bits=32, ptr_to=type))
 
@@ -780,6 +789,10 @@ class Type:
     @staticmethod
     def f64() -> "Type":
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=64))
+
+    @staticmethod
+    def f128() -> "Type":
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=128))
 
     @staticmethod
     def s8() -> "Type":
@@ -929,6 +942,110 @@ class Type:
             sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
             return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
         static_assert_unreachable(real_ctype)
+
+    @staticmethod
+    def demangled_symbol(sym: CxxSymbol) -> "Type":
+        return Type.demangled_type(sym_type=sym.type, sym_name=sym.name)
+
+    @staticmethod
+    def demangled_type(sym_type: CxxType, sym_name: Optional[CxxTerm] = None) -> "Type":
+        # TODO: This function may need to depend on the ABI or compiler to generate the types
+        # of class member functions. It may need to be moved out of types.py, or some of this
+        # logic could be moved into FunctionSignature?
+        final_name = None
+        if sym_name is not None:
+            assert sym_name.kind == CxxTerm.Kind.QUALIFIED
+            assert sym_name.qualified_name is not None
+            assert len(sym_name.qualified_name) >= 1
+            final_name = str(sym_name.qualified_name[-1]).split("@")[-1]
+
+        type = Type.any()
+        for term in sym_type.terms[::-1]:
+            if term.kind == CxxTerm.Kind.CONST:
+                pass
+            elif term.kind == CxxTerm.Kind.UNSIGNED:
+                unsigned = True
+            elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
+                type = Type.ptr(type)
+            elif term.kind == CxxTerm.Kind.BOOL:
+                type = Type.bool()
+            elif term.kind == CxxTerm.Kind.CHAR:
+                type = Type.int_of_size(8)
+            elif term.kind in (CxxTerm.Kind.SHORT, CxxTerm.Kind.WIDE_CHAR):
+                type = Type.int_of_size(16)
+            elif term.kind in (CxxTerm.Kind.INT, CxxTerm.Kind.LONG):
+                type = Type.int_of_size(32)
+            elif term.kind == CxxTerm.Kind.LONG_LONG:
+                type = Type.int_of_size(64)
+            elif term.kind == CxxTerm.Kind.FLOAT:
+                type = Type.f32()
+            elif term.kind == CxxTerm.Kind.DOUBLE:
+                type = Type.f64()
+            elif term.kind == CxxTerm.Kind.LONG_DOUBLE:
+                type = Type.f128()
+            elif term.kind == CxxTerm.Kind.SIGNED:
+                type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED)))
+            elif term.kind == CxxTerm.Kind.UNSIGNED:
+                type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED)))
+            elif term.kind == CxxTerm.Kind.ARRAY:
+                assert term.array_dim is not None, "array CxxTerms must have array_dim"
+                type = Type.array(type, term.array_dim)
+            elif term.kind == CxxTerm.Kind.FUNCTION:
+                assert term.function_params is not None
+                params = []
+                if (
+                    sym_name is not None
+                    and sym_name.qualified_name is not None
+                    and len(sym_name.qualified_name) > 1
+                    and final_name not in CxxSymbol.STATIC_FUNCTIONS
+                ):
+                    # NB: This assumes `this` is passed as the first arg,
+                    # which may be different on other ABIs
+                    params.append(FunctionParam(type=Type.ptr(), name="this"))
+                    # TODO: Virtual methods may take a second argument here
+                if final_name == "__dt":
+                    params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
+                is_variadic = False
+                for i, param_type in enumerate(term.function_params):
+                    name = f"arg{i}"
+                    if param_type.terms[0].kind == CxxTerm.Kind.VOID:
+                        assert len(term.function_params) == 1
+                    elif param_type.terms[0].kind == CxxTerm.Kind.ELLIPSIS:
+                        assert param_type == term.function_params[:-1]
+                        is_variadic = True
+                    else:
+                        params.append(
+                            FunctionParam(
+                                type=Type.demangled_type(param_type), name=name
+                            )
+                        )
+                return_type = Type.any()
+                if term.function_return is not None:
+                    return_type = Type.demangled_type(term.function_return)
+                elif final_name in ("__ct", "__dt"):
+                    return_type = Type.ptr()
+                type = Type.function(
+                    FunctionSignature(
+                        params=params,
+                        params_known=True,
+                        is_variadic=is_variadic,
+                        return_type=return_type,
+                    )
+                )
+            elif term.kind == CxxTerm.Kind.QUALIFIED:
+                # TODO: Support C++ classes/namespaces
+                type = Type.any()
+            elif term.kind == CxxTerm.Kind.VOID:
+                type = Type.void()
+            elif term.kind == CxxTerm.Kind.ELLIPSIS:
+                # This should be handled by the FUNCTION iterator above
+                assert False, term.kind
+            else:
+                assert False, term.kind
+        # TODO: Support vtables
+        # if final_name == "__vt":
+        #    return Type.array(Type.function())
+        return type
 
 
 @dataclass(eq=False)

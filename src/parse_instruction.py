@@ -6,6 +6,7 @@ import string
 from typing import Dict, List, Optional, Set, Union
 
 from .error import DecompFailure
+from .options import Target
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,10 @@ class Instruction:
         args = ", ".join(str(arg) for arg in self.args)
         return f"{self.mnemonic} {args}"
 
+    def arch_mnemonic(self, arch: "ArchAsm") -> str:
+        """Combine architecture name with mnemonic for pattern matching"""
+        return f"{arch.arch}:{self.mnemonic}"
+
 
 class ArchAsmParsing(abc.ABC):
     """Arch-specific information needed to parse asm."""
@@ -159,6 +164,8 @@ class ArchAsmParsing(abc.ABC):
 class ArchAsm(ArchAsmParsing):
     """Arch-specific information that relates to the asm level. Extends the above."""
 
+    arch: Target.ArchEnum
+
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
     return_address_reg: Register
@@ -173,8 +180,11 @@ class ArchAsm(ArchAsmParsing):
 
     aliased_regs: Dict[str, Register]
 
+    uses_delay_slots: bool
+
     @abc.abstractmethod
     def is_branch_instruction(self, instr: Instruction) -> bool:
+        """Instructions with a label as a jump target (may be conditional)"""
         ...
 
     @abc.abstractmethod
@@ -182,7 +192,11 @@ class ArchAsm(ArchAsmParsing):
         ...
 
     @abc.abstractmethod
-    def get_branch_target(self, instr: Instruction) -> JumpTarget:
+    def is_constant_branch_instruction(self, instr: Instruction) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def is_conditional_return_instruction(self, instr: Instruction) -> bool:
         ...
 
     @abc.abstractmethod
@@ -204,6 +218,17 @@ class ArchAsm(ArchAsmParsing):
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]:
         ...
+
+    @staticmethod
+    def get_branch_target(instr: Instruction) -> JumpTarget:
+        label = instr.args[-1]
+        if isinstance(label, AsmGlobalSymbol):
+            return JumpTarget(label.symbol_name)
+        if not isinstance(label, JumpTarget):
+            raise DecompFailure(
+                f'Couldn\'t parse instruction "{instr}": invalid branch target'
+            )
+        return label
 
 
 class NaiveParsingArch(ArchAsmParsing):
@@ -334,10 +359,22 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             assert value is None
             word = parse_word(arg_elems)
             maybe_reg = Register(word)
-            if maybe_reg in arch.all_regs:
+            if word in arch.aliased_regs:
+                value = arch.aliased_regs[word]
+            elif maybe_reg in arch.all_regs:
                 value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)
+        elif tok == '"':
+            # Quoted global symbol
+            expect('"')
+            symbol = ""
+            while arg_elems and arg_elems[0] != '"':
+                if arg_elems[0] == "\\" and len(arg_elems) >= 2:
+                    arg_elems.pop(0)
+                symbol += arg_elems.pop(0)
+            expect('"')
+            return AsmGlobalSymbol(symbol)
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
@@ -350,21 +387,39 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             else:
                 op = expect("&+-*")
 
-            rhs = parse_arg_elems(arg_elems, arch)
-            assert rhs is not None
-            if isinstance(rhs, BinOp) and rhs.op == "*":
-                rhs = constant_fold(rhs)
-            if isinstance(rhs, BinOp) and isinstance(constant_fold(rhs), AsmLiteral):
-                raise DecompFailure(
-                    "Math is too complicated for mips_to_c. Try adding parentheses."
-                )
-            if isinstance(rhs, AsmLiteral) and isinstance(
-                value, AsmSectionGlobalSymbol
-            ):
-                return asm_section_global_symbol(
-                    value.section_name, value.addend + rhs.value
-                )
-            return BinOp(op, value, rhs)
+            if tok == "-" and arg_elems[0] == "_":
+                # Parse `sym-_SDA_BASE_` as a Macro, equivalently to `sym@sda21`
+                reloc_name = parse_word(arg_elems)
+                if reloc_name not in ("_SDA_BASE_", "_SDA2_BASE_"):
+                    raise DecompFailure(
+                        f"Unexpected symbol {reloc_name} in subtraction expression"
+                    )
+                value = Macro("sda21", value)
+            else:
+                rhs = parse_arg_elems(arg_elems, arch)
+                assert rhs is not None
+                if isinstance(rhs, BinOp) and rhs.op == "*":
+                    rhs = constant_fold(rhs)
+                if isinstance(rhs, BinOp) and isinstance(
+                    constant_fold(rhs), AsmLiteral
+                ):
+                    raise DecompFailure(
+                        "Math is too complicated for mips_to_c. Try adding parentheses."
+                    )
+                if isinstance(rhs, AsmLiteral) and isinstance(
+                    value, AsmSectionGlobalSymbol
+                ):
+                    return asm_section_global_symbol(
+                        value.section_name, value.addend + rhs.value
+                    )
+                return BinOp(op, value, rhs)
+        elif tok == "@":
+            # A relocation (e.g. (...)@ha or (...)@l).
+            arg_elems.pop(0)
+            reloc_name = parse_word(arg_elems)
+            assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
+            assert value
+            value = Macro(reloc_name, value)
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
 

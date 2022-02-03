@@ -23,6 +23,7 @@ from typing import (
 )
 
 from .c_types import CType, TypeMap
+from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     ArchFlowGraph,
@@ -33,7 +34,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import CodingStyle, Formatter, Options
+from .options import CodingStyle, Formatter, Options, Target
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
     ArchAsm,
@@ -62,20 +63,28 @@ CmpInstrMap = Mapping[str, Callable[["InstrArgs"], "Condition"]]
 StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
 MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
 PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
+ImplicitInstrMap = Mapping[str, Tuple[Register, Callable[["InstrArgs"], "Expression"]]]
+PpcCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
 class Arch(ArchFlowGraph):
     instrs_ignore: InstrSet = set()
     instrs_store: StoreInstrMap = {}
+    instrs_store_update: StoreInstrMap = {}
+    instrs_load_update: InstrMap = {}
+
     instrs_branches: CmpInstrMap = {}
     instrs_float_branches: InstrSet = set()
+    instrs_float_comp: CmpInstrMap = {}
+    instrs_ppc_compare: PpcCmpInstrMap = {}
     instrs_jumps: InstrSet = set()
     instrs_fn_call: InstrSet = set()
+
     instrs_no_dest: StmtInstrMap = {}
-    instrs_float_comp: CmpInstrMap = {}
     instrs_hi_lo: PairInstrMap = {}
     instrs_source_first: InstrMap = {}
     instrs_destination_first: InstrMap = {}
+    instrs_implicit_destination: ImplicitInstrMap = {}
 
     @abc.abstractmethod
     def function_abi(
@@ -233,6 +242,8 @@ class StackInfo:
         return prefix + (f"_{counter}" if counter > 1 else "")
 
     def in_subroutine_arg_region(self, location: int) -> bool:
+        if self.global_info.arch.arch == Target.ArchEnum.PPC:
+            return False
         if self.is_leaf:
             return False
         assert self.subroutine_arg_top is not None
@@ -240,7 +251,15 @@ class StackInfo:
 
     def in_callee_save_reg_region(self, location: int) -> bool:
         lower_bound, upper_bound = self.callee_save_reg_region
-        return lower_bound <= location < upper_bound
+        if lower_bound <= location < upper_bound:
+            return True
+        # PPC saves LR in the header of the previous stack frame
+        if (
+            self.global_info.arch.arch == Target.ArchEnum.PPC
+            and location == self.allocated_stack_size + 4
+        ):
+            return True
+        return False
 
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
@@ -334,7 +353,10 @@ class StackInfo:
         return GlobalSymbol(symbol_name=sym_name, type=type)
 
     def should_save(self, expr: "Expression", offset: Optional[int]) -> bool:
-        if isinstance(expr, GlobalSymbol) and expr.symbol_name.startswith("saved_reg_"):
+        expr = early_unwrap(expr)
+        if isinstance(expr, GlobalSymbol) and (
+            expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
+        ):
             return True
         if (
             isinstance(expr, PassedInArg)
@@ -346,17 +368,17 @@ class StackInfo:
 
     def get_stack_var(self, location: int, *, store: bool) -> "Expression":
         # See `get_stack_info` for explanation
-        if self.location_above_stack(location):
+        if self.in_callee_save_reg_region(location):
+            # Some annoying bookkeeping instruction. To avoid
+            # further special-casing, just return whatever - it won't matter.
+            return LocalVar(location, type=Type.any_reg(), path=None)
+        elif self.location_above_stack(location):
             ret, arg = self.get_argument(location - self.allocated_stack_size)
             if not store:
                 self.add_argument(arg)
             return ret
         elif self.in_subroutine_arg_region(location):
             return SubroutineArg(location, type=Type.any_reg())
-        elif self.in_callee_save_reg_region(location):
-            # Some annoying bookkeeping instruction. To avoid
-            # further special-casing, just return whatever - it won't matter.
-            return LocalVar(location, type=Type.any_reg(), path=None)
         else:
             # Local variable
             assert self.stack_pointer_type is not None
@@ -459,14 +481,20 @@ def get_stack_info(
     # but outside of these two regions, is considered a local variable.
     callee_saved_offset_and_size: List[Tuple[int, int]] = []
     for inst in flow_graph.entry_node().block.instructions:
-        if inst.mnemonic == "jal":
+        arch_mnemonic = inst.arch_mnemonic(arch)
+        if inst.mnemonic in arch.instrs_fn_call:
             break
-        elif inst.mnemonic == "addiu" and inst.args[0] == arch.stack_pointer_reg:
-            # Moving the stack pointer.
+        elif arch_mnemonic == "mips:addiu" and inst.args[0] == arch.stack_pointer_reg:
+            # Moving the stack pointer on MIPS
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
+        elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
+            # Moving the stack pointer on PPC
+            assert isinstance(inst.args[1], AsmAddressMode)
+            assert isinstance(inst.args[1].lhs, AsmLiteral)
+            info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
         elif (
-            inst.mnemonic == "move"
+            arch_mnemonic == "mips:move"
             and inst.args[0] == arch.frame_pointer_reg
             and inst.args[1] == arch.stack_pointer_reg
         ):
@@ -474,7 +502,8 @@ def get_stack_info(
             # pointers enabled; thus fp should be treated the same as sp.
             info.uses_framepointer = True
         elif (
-            inst.mnemonic in ["sw", "swc1", "sdc1"]
+            arch_mnemonic
+            in ["mips:sw", "mips:swc1", "mips:sdc1", "ppc:stw", "ppc:stmw", "ppc:stfd"]
             and isinstance(inst.args[0], Register)
             and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)
@@ -482,14 +511,29 @@ def get_stack_info(
             and inst.args[0] not in info.callee_save_reg_locations
         ):
             # Initial saving of callee-save register onto the stack.
-            if inst.args[0] == arch.return_address_reg:
+            if inst.args[0] in (arch.return_address_reg, Register("r0")):
                 # Saving the return address on the stack.
                 info.is_leaf = False
             stack_offset = inst.args[1].lhs_as_literal()
-            info.callee_save_reg_locations[inst.args[0]] = stack_offset
-            callee_saved_offset_and_size.append(
-                (stack_offset, 8 if inst.mnemonic == "sdc1" else 4)
-            )
+            if arch_mnemonic == "ppc:stmw":
+                assert inst.args[0].register_name[0] == "r"
+                index = int(inst.args[0].register_name[1:])
+                while index <= 31:
+                    reg = Register(f"r{index}")
+                    info.callee_save_reg_locations[reg] = stack_offset
+                    callee_saved_offset_and_size.append((stack_offset, 4))
+                    index += 1
+                    stack_offset += 4
+            elif inst.args[0] not in info.callee_save_reg_locations:
+                info.callee_save_reg_locations[inst.args[0]] = stack_offset
+                callee_saved_offset_and_size.append(
+                    (
+                        stack_offset,
+                        8 if arch_mnemonic in ("mips:sdc1", "ppc:stfd") else 4,
+                    )
+                )
+        elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
+            info.is_leaf = False
 
     if not info.is_leaf:
         # Iterate over the whole function, not just the first basic block,
@@ -497,8 +541,9 @@ def get_stack_info(
         info.subroutine_arg_top = info.allocated_stack_size
         for node in flow_graph.nodes:
             for inst in node.block.instructions:
+                arch_mnemonic = inst.arch_mnemonic(arch)
                 if (
-                    inst.mnemonic in ["lw", "lwc1", "ldc1"]
+                    arch_mnemonic in ["mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
                     and inst.args[1].rhs == arch.stack_pointer_reg
                     and inst.args[1].lhs_as_literal() >= 16
@@ -507,7 +552,7 @@ def get_stack_info(
                         info.subroutine_arg_top, inst.args[1].lhs_as_literal()
                     )
                 elif (
-                    inst.mnemonic == "addiu"
+                    arch_mnemonic == "mips:addiu"
                     and inst.args[0] != arch.stack_pointer_reg
                     and inst.args[1] == arch.stack_pointer_reg
                     and isinstance(inst.args[2], AsmLiteral)
@@ -518,39 +563,39 @@ def get_stack_info(
                     )
 
         # Compute the bounds of the callee-saved register region, including padding
-        callee_saved_offset_and_size.sort()
-        bottom, last_size = callee_saved_offset_and_size[0]
+        if callee_saved_offset_and_size:
+            callee_saved_offset_and_size.sort()
+            bottom, last_size = callee_saved_offset_and_size[0]
 
-        # Both IDO & GCC save registers in two subregions:
-        # (a) One for double-sized registers
-        # (b) One for word-sized registers, padded to a multiple of 8 bytes
-        # IDO has (a) lower than (b); GCC has (b) lower than (a)
-        # Check that there are no gaps in this region, other than a single
-        # 4-byte word between subregions.
-        top = bottom
-        internal_padding_added = False
-        for offset, size in callee_saved_offset_and_size:
-            if offset != top:
-                if (
-                    not internal_padding_added
-                    and size != last_size
-                    and offset == top + 4
-                ):
-                    internal_padding_added = True
-                else:
-                    raise DecompFailure(
-                        f"Gap in callee-saved word stack region. "
-                        f"Saved: {callee_saved_offset_and_size}, "
-                        f"gap at: {offset} != {top}."
-                    )
-            top = offset + size
-            last_size = size
-        # Expand boundaries to multiples of 8 bytes
-        info.callee_save_reg_region = (bottom, top)
+            # Both IDO & GCC save registers in two subregions:
+            # (a) One for double-sized registers
+            # (b) One for word-sized registers, padded to a multiple of 8 bytes
+            # IDO has (a) lower than (b); GCC has (b) lower than (a)
+            # Check that there are no gaps in this region, other than a single
+            # 4-byte word between subregions.
+            top = bottom
+            internal_padding_added = False
+            for offset, size in callee_saved_offset_and_size:
+                if offset != top:
+                    if (
+                        not internal_padding_added
+                        and size != last_size
+                        and offset == top + 4
+                    ):
+                        internal_padding_added = True
+                    else:
+                        raise DecompFailure(
+                            f"Gap in callee-saved word stack region. "
+                            f"Saved: {callee_saved_offset_and_size}, "
+                            f"gap at: {offset} != {top}."
+                        )
+                top = offset + size
+                last_size = size
+            info.callee_save_reg_region = (bottom, top)
 
-        # Subroutine arguments must be at the very bottom of the stack, so they
-        # must come after the callee-saved region
-        info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
+            # Subroutine arguments must be at the very bottom of the stack, so they
+            # must come after the callee-saved region
+            info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
 
     # Use a struct to represent the stack layout. If the struct is provided in the context,
     # its fields will be used for variable types & names.
@@ -776,8 +821,26 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
+    def sintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_type(left, Type.sintptr(), False),
+            op=op,
+            right=as_type(right, Type.sintptr(), False),
+            type=Type.bool(),
+        )
+
+    @staticmethod
     def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
+
+    @staticmethod
+    def uintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_type(left, Type.uintptr(), False),
+            op=op,
+            right=as_type(right, Type.uintptr(), False),
+            type=Type.bool(),
+        )
 
     @staticmethod
     def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -1304,6 +1367,7 @@ class GlobalSymbol(Expression):
     symbol_in_context: bool = False
     type_provided: bool = False
     initializer_in_typemap: bool = False
+    demangled_str: Optional[str] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1601,8 +1665,9 @@ class SwitchControl:
         These are the appropriate bounds checks before using `jump_table`.
         """
         cmp_expr = simplify_condition(cond)
-        if not isinstance(cmp_expr, BinaryOp) or cmp_expr.op != ">=":
+        if not isinstance(cmp_expr, BinaryOp) or cmp_expr.op not in (">=", ">"):
             return False
+        cmp_exclusive = cmp_expr.op == ">"
 
         # The LHS may have been wrapped in a u32 cast
         left_expr = late_unwrap(cmp_expr.left)
@@ -1625,6 +1690,7 @@ class SwitchControl:
             self.jump_table is None
             or self.jump_table.asm_data_entry is None
             or not self.jump_table.asm_data_entry.is_jtbl
+            or not isinstance(right_expr, Literal)
         ):
             return False
 
@@ -1632,7 +1698,7 @@ class SwitchControl:
         jump_table_len = sum(
             isinstance(e, str) for e in self.jump_table.asm_data_entry.data
         )
-        return right_expr == Literal(jump_table_len)
+        return right_expr.value + int(cmp_exclusive) == jump_table_len
 
     @staticmethod
     def irregular_from_expr(control_expr: Expression) -> "SwitchControl":
@@ -1958,6 +2024,11 @@ class InstrArgs:
             )
         return ret
 
+    def imm_value(self, index: int) -> int:
+        arg = self.full_imm(index)
+        assert isinstance(arg, Literal)
+        return arg.value
+
     def reg(self, index: int) -> Expression:
         return self.regs[self.reg_ref(index)]
 
@@ -1970,6 +2041,12 @@ class InstrArgs:
                 f"Expected instruction argument {reg} to be a float register"
             )
         ret = self.regs[reg]
+
+        # PPC: FPR's hold doubles (64 bits), so we don't need to do anything special
+        if self.stack_info.global_info.arch.arch == Target.ArchEnum.PPC:
+            return ret
+
+        # MIPS: Look at the paired FPR to get the full 64-bit value
         if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
             return ret
         reg_num = int(reg.register_name[1:])
@@ -1987,6 +2064,12 @@ class InstrArgs:
             )
         value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
+
+    def cmp_reg(self, key: str) -> Condition:
+        cond = self.regs[Register(key)]
+        if not isinstance(cond, Condition):
+            cond = BinaryOp.icmp(cond, "!=", Literal(0))
+        return cond
 
     def full_imm(self, index: int) -> Expression:
         arg = strip_macros(self.raw_arg(index))
@@ -2007,17 +2090,28 @@ class InstrArgs:
 
     def hi_imm(self, index: int) -> Argument:
         arg = self.raw_arg(index)
-        if not isinstance(arg, Macro) or arg.macro_name != "hi":
-            raise DecompFailure("Got lui instruction with macro other than %hi")
+        if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha", "h"):
+            raise DecompFailure(
+                f"Got lui/lis instruction with macro other than %hi/@ha/@h: {arg}"
+            )
         return arg.argument
+
+    def shifted_imm(self, index: int) -> Expression:
+        # TODO: Should this be part of hi_imm? Do we need to handle @ha?
+        raw_imm = self.unsigned_imm(index)
+        assert isinstance(raw_imm, Literal)
+        return Literal(raw_imm.value << 16)
 
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))
 
-        # Allow e.g. "lw $v0, symbol + 4", which isn't valid MIPS assembly, but is
-        # outputted by some disassemblers (like IDA).
+        # In MIPS, we want to allow "lw $v0, symbol + 4", which is outputted by
+        # some disassemblers (like IDA) even though it isn't valid assembly.
+        # For PPC, we want to allow "lwz $r1, symbol@sda21($r13)" where $r13 is
+        # assumed to point to the start of a small data area (SDA).
         if isinstance(ret, AsmGlobalSymbol):
             return RawSymbolRef(offset=0, sym=ret)
+
         if (
             isinstance(ret, BinOp)
             and ret.op in "+-"
@@ -2044,19 +2138,23 @@ class InstrArgs:
 
 
 def deref(
-    arg: Union[AddressMode, RawSymbolRef],
+    arg: Union[AddressMode, RawSymbolRef, Expression],
     regs: RegInfo,
     stack_info: StackInfo,
     *,
     size: int,
     store: bool = False,
 ) -> Expression:
-    offset = arg.offset
-    if isinstance(arg, AddressMode):
+    if isinstance(arg, Expression):
+        offset = 0
+        var = arg
+    elif isinstance(arg, AddressMode):
+        offset = arg.offset
         if stack_info.is_stack_reg(arg.rhs):
             return stack_info.get_stack_var(offset, store=store)
         var = regs[arg.rhs]
     else:
+        offset = arg.offset
         var = stack_info.global_info.address_of_gsym(arg.sym.symbol_name)
 
     # Struct member is being dereferenced.
@@ -2365,8 +2463,10 @@ def load_upper(args: InstrArgs) -> Expression:
     if not isinstance(arg, Macro):
         assert not isinstance(
             arg, Literal
-        ), "normalize_instruction should convert lui <literal> to li"
-        raise DecompFailure(f"lui argument must be a literal or %hi macro, found {arg}")
+        ), "normalize_instruction should convert lui/lis <literal> to li"
+        raise DecompFailure(
+            f"lui/lis argument must be a literal or %hi/@ha macro, found {arg}"
+        )
 
     hi_arg = args.hi_imm(1)
     if (
@@ -2381,7 +2481,7 @@ def load_upper(args: InstrArgs) -> Expression:
         sym = hi_arg
         offset = 0
     else:
-        raise DecompFailure(f"Invalid %hi argument {hi_arg}")
+        raise DecompFailure(f"Invalid %hi/@ha argument {hi_arg}")
 
     stack_info = args.stack_info
     source = stack_info.global_info.address_of_gsym(sym.symbol_name)
@@ -2412,12 +2512,11 @@ def handle_la(args: InstrArgs) -> Expression:
 
 
 def handle_or(left: Expression, right: Expression) -> Expression:
-    if (
-        isinstance(left, Literal)
-        and isinstance(right, Literal)
-        and (left.value & 0xFFFF) == 0
-    ):
-        return Literal(value=(left.value | right.value))
+    if isinstance(left, Literal) and isinstance(right, Literal):
+        if (((left.value & 0xFFFF) == 0 and (right.value & 0xFFFF0000) == 0)) or (
+            (right.value & 0xFFFF) == 0 and (left.value & 0xFFFF0000) == 0
+        ):
+            return Literal(value=(left.value | right.value))
     # Regular bitwise OR.
     return BinaryOp.int(left=left, op="|", right=right)
 
@@ -2458,6 +2557,28 @@ def handle_addi(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
+
+    # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
+    # i.e. as an `addis` followed by an `addi`
+    uw_source = early_unwrap(source)
+    if (
+        isinstance(uw_source, BinaryOp)
+        and uw_source.op == "+"
+        and isinstance(uw_source.right, Literal)
+        and uw_source.right.value % 0x10000 == 0
+        and isinstance(imm, Literal)
+    ):
+        return add_imm(
+            uw_source.left, Literal(imm.value + uw_source.right.value), stack_info
+        )
+    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
+
+
+def handle_addis(args: InstrArgs) -> Expression:
+    stack_info = args.stack_info
+    source_reg = args.reg_ref(1)
+    source = args.reg(1)
+    imm = args.shifted_imm(2)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
 
@@ -2638,6 +2759,20 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 
 
+def make_storex(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
+    # "indexed stores" like `stwx rS, rA, rB` write `rS` into `(rA + rB)`
+    size = type.get_size_bytes()
+    assert size is not None
+
+    source = args.reg(0)
+    ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
+
+    # TODO: Can we assume storex's are never used to save registers to the stack?
+    dest = deref(ptr, args.regs, args.stack_info, size=size, store=True)
+    dest.type.unify(type)
+    return StoreStmt(source=as_type(source, type, silent=False), dest=dest)
+
+
 def handle_swl(args: InstrArgs) -> Optional[StoreStmt]:
     # swl in practice only occurs together with swr, so we can treat it as a regular
     # store, with the expression wrapped in UnalignedLoad if needed.
@@ -2680,9 +2815,7 @@ def handle_sra(args: InstrArgs) -> Expression:
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
-    return fold_gcc_divmod(
-        BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32())
-    )
+    return fold_divmod(BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32()))
 
 
 def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
@@ -2756,7 +2889,7 @@ def format_f64_imm(num: int) -> str:
     return str(value)
 
 
-def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
+def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     """
     Return a new BinaryOp instance if this one can be simplified to a single / or % op.
     This involves simplifying expressions using MULT_HI, MULTU_HI, +, -, <<, >>, and /.
@@ -2765,9 +2898,11 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
 
     See also https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
     for a modern writeup of a similar algorithm.
+
+    This optimization is also used by MWCC and modern compilers (but not IDO).
     """
     mult_high_ops = ("MULT_HI", "MULTU_HI")
-    possible_match_ops = mult_high_ops + ("-", ">>")
+    possible_match_ops = mult_high_ops + ("-", "+", ">>")
 
     # Only operate on integer expressions of certain operations
     if original_expr.is_floating() or original_expr.op not in possible_match_ops:
@@ -2828,6 +2963,19 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
             left_expr,
         )
 
+    # Remove outer error term: ((x / N) + ((x / N) >> 31)) --> x / N
+    if (
+        expr.op == "+"
+        and isinstance(left_expr, BinaryOp)
+        and left_expr.op == "/"
+        and isinstance(left_expr.right, Literal)
+        and isinstance(right_expr, BinaryOp)
+        and early_unwrap_ints(right_expr.left) == left_expr
+        and right_expr.op == ">>"
+        and early_unwrap_ints(right_expr.right) == Literal(31)
+    ):
+        return left_expr
+
     # Remove outer error term: ((x / N) - (x >> 31)) --> x / N
     if (
         expr.op == "-"
@@ -2872,6 +3020,9 @@ def fold_gcc_divmod(original_expr: BinaryOp) -> BinaryOp:
         expr = left_expr
         left_expr = early_unwrap_ints(expr.left)
         right_expr = early_unwrap_ints(expr.right)
+        # Normalize MULT_HI(N, x) to MULT_HI(x, N)
+        if isinstance(left_expr, Literal) and not isinstance(right_expr, Literal):
+            left_expr, right_expr = right_expr, left_expr
 
         # Remove inner addition: (MULT_HI(x, N) + x) >> M --> MULT_HI(x, N) >> M
         # MULT_HI performs signed multiplication, so the `+ x` acts as setting the 32nd bit
@@ -3129,6 +3280,8 @@ def handle_add(args: InstrArgs) -> Expression:
 
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)
+    if isinstance(folded_expr, BinaryOp):
+        folded_expr = fold_divmod(folded_expr)
     if folded_expr is not expr:
         return folded_expr
     array_expr = array_access_from_add(expr, 0, stack_info, target_size=None, ptr=True)
@@ -3165,19 +3318,102 @@ def handle_bgez(args: InstrArgs) -> Condition:
     return BinaryOp.scmp(expr, ">=", Literal(0))
 
 
+def handle_rlwinm(
+    source: Expression, shift: int, mask_begin: int, mask_end: int
+) -> Expression:
+    # Special case truncating casts
+    # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
+    if (shift, mask_begin, mask_end) == (0, 24, 31):
+        return as_type(source, Type.u8(), silent=False)
+    elif (shift, mask_begin, mask_end) == (0, 16, 31):
+        return as_type(source, Type.u16(), silent=False)
+
+    # The output of the rlwinm instruction is `ROTL(source, shift) & mask`. We write this as
+    # ((source << shift) & mask) | ((source >> (32 - shift)) & mask)
+    # and compute both OR operands (upper_bits and lower_bits respectively).
+
+    # Bit 0 is the MSB, Bit 31 is the LSB
+    bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
+    all_ones = bits_upto(0)
+    if mask_begin <= mask_end:
+        # Set bits inside the range, fully inclusive
+        mask = bits_upto(mask_begin) - bits_upto(mask_end + 1)
+    else:
+        # Set bits from [31, mask_end] and [mask_begin, 0]
+        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ all_ones
+
+    left_shift = shift
+    right_shift = 32 - shift
+    left_mask = (all_ones << left_shift) & mask
+    right_mask = (all_ones >> right_shift) & mask
+
+    upper_bits: Optional[Expression]
+    if left_mask == 0:
+        upper_bits = None
+    else:
+        upper_bits = source
+        if left_shift != 0:
+            upper_bits = BinaryOp.int(
+                left=upper_bits, op="<<", right=Literal(left_shift)
+            )
+        if left_mask != (all_ones << left_shift) & all_ones:
+            upper_bits = BinaryOp.int(left=upper_bits, op="&", right=Literal(left_mask))
+
+    lower_bits: Optional[BinaryOp]
+    if right_mask == 0:
+        lower_bits = None
+    else:
+        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+        if right_mask != (all_ones >> right_shift) & all_ones:
+            lower_bits = BinaryOp.int(
+                left=lower_bits, op="&", right=Literal(right_mask)
+            )
+
+    if upper_bits is None and lower_bits is None:
+        return Literal(0)
+    elif upper_bits is None:
+        assert lower_bits is not None
+        return fold_divmod(lower_bits)
+    elif lower_bits is None:
+        return fold_mul_chains(upper_bits)
+    else:
+        return BinaryOp.int(left=upper_bits, op="|", right=lower_bits)
+
+
+def handle_loadx(args: InstrArgs, type: Type) -> Expression:
+    # "indexed loads" like `lwzx rD, rA, rB` read `(rA + rB)` into `rD`
+    size = type.get_size_bytes()
+    assert size is not None
+
+    ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
+    expr = deref(ptr, args.regs, args.stack_info, size=size)
+    return as_type(expr, type, silent=True)
+
+
 def strip_macros(arg: Argument) -> Argument:
     """Replace %lo(...) by 0, and assert that there are no %hi(...). We assume that
     %hi's only ever occur in lui, where we expand them to an entire value, and not
     just the upper part. This preserves semantics in most cases (though not when %hi's
     are reused for different %lo's...)"""
     if isinstance(arg, Macro):
+        if arg.macro_name in ["sda2", "sda21"]:
+            return arg.argument
         if arg.macro_name == "hi":
             raise DecompFailure("%hi macro outside of lui")
-        if arg.macro_name != "lo":
+        if arg.macro_name not in ["lo", "l"]:
             raise DecompFailure(f"Unrecognized linker macro %{arg.macro_name}")
+        # This is sort of weird; for `symbol@l` we return 0 here and assume
+        # that this @l is always perfectly paired with one other @ha.
+        # However, with `literal@l`, we return the literal value, and assume it is
+        # paired with another `literal@ha`. This lets us reuse `literal@ha` values,
+        # but assumes that we never mix literals & symbols
+        if isinstance(arg.argument, AsmLiteral):
+            return AsmLiteral(arg.argument.value)
         return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
-        if arg.lhs.macro_name != "lo":
+        if arg.lhs.macro_name in ["sda2", "sda21"]:
+            return arg.lhs.argument
+        if arg.lhs.macro_name not in ["lo", "l"]:
             raise DecompFailure(
                 f"Bad linker macro in instruction argument {arg}, expected %lo"
             )
@@ -3206,6 +3442,14 @@ def output_regs_for_instr(
 ) -> List[Register]:
     def reg_at(index: int) -> List[Register]:
         reg = instr.args[index]
+        if isinstance(reg, AsmAddressMode):
+            # This is used for the store/load-update PPC instructions,
+            # where the register in an AsmAddressMode is updated.
+            assert (
+                instr.mnemonic in arch.instrs_store_update
+                or instr.mnemonic in arch.instrs_load_update
+            )
+            return [reg.rhs]
         if not isinstance(reg, Register):
             # We'll deal with this error later
             return []
@@ -3213,6 +3457,7 @@ def output_regs_for_instr(
 
     arch = global_info.arch
     mnemonic = instr.mnemonic
+    arch_mnemonic = instr.arch_mnemonic(arch)
     if (
         mnemonic in arch.instrs_jumps
         or mnemonic in arch.instrs_store
@@ -3222,23 +3467,59 @@ def output_regs_for_instr(
         or mnemonic in arch.instrs_no_dest
     ):
         return []
-    if mnemonic == "jal":
-        fn_target = instr.args[0]
-        if isinstance(fn_target, AsmGlobalSymbol):
+    if mnemonic in arch.instrs_store_update:
+        return reg_at(1)
+    if mnemonic in arch.instrs_load_update:
+        return reg_at(0) + reg_at(1)
+    if mnemonic in arch.instrs_fn_call:
+        if instr.args and isinstance(instr.args[0], AsmGlobalSymbol):
+            fn_target = instr.args[0]
             if global_info.is_function_known_void(fn_target.symbol_name):
                 return []
-    if mnemonic in arch.instrs_fn_call:
         return arch.all_return_regs
     if mnemonic in arch.instrs_source_first:
         return reg_at(1)
-    if mnemonic in arch.instrs_destination_first:
-        return reg_at(0)
+    if mnemonic.rstrip(".") in arch.instrs_destination_first:
+        reg = reg_at(0)
+        mn_parts = arch_mnemonic.split(".")
+        if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
+            return [
+                Register("cr0_lt"),
+                Register("cr0_gt"),
+                Register("cr0_eq"),
+                Register("cr0_so"),
+            ] + reg
+        elif (
+            len(mn_parts) >= 2
+            and mn_parts[0].startswith("mips:")
+            and mn_parts[1] == "d"
+        ) or arch_mnemonic == "mips:ldc1":
+            assert len(reg) == 1
+            return reg + [reg[0].other_f64_reg()]
+        return reg
     if mnemonic in arch.instrs_float_comp:
         return [Register("condition_bit")]
     if mnemonic in arch.instrs_hi_lo:
         return [Register("hi"), Register("lo")]
+    if mnemonic in arch.instrs_implicit_destination:
+        return [arch.instrs_implicit_destination[mnemonic][0]]
+    if mnemonic in arch.instrs_ppc_compare:
+        return [
+            Register("cr0_lt"),
+            Register("cr0_gt"),
+            Register("cr0_eq"),
+            Register("cr0_so"),
+        ]
     if instr.args and isinstance(instr.args[0], Register):
         return reg_at(0)
+    if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
+        # Unimplemented PPC instructions that modify CR0
+        return [
+            Register("cr0_lt"),
+            Register("cr0_gt"),
+            Register("cr0_eq"),
+            Register("cr0_so"),
+        ]
     return []
 
 
@@ -3636,6 +3917,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         nonlocal branch_condition, switch_expr, has_function_call
 
         mnemonic = instr.mnemonic
+        arch_mnemonic = instr.arch_mnemonic(arch)
         args = InstrArgs(instr.args, regs, stack_info)
         expr: Expression
 
@@ -3643,9 +3925,26 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if mnemonic in arch.instrs_ignore:
             pass
 
-        elif mnemonic in arch.instrs_store:
+        elif mnemonic in arch.instrs_store or mnemonic in arch.instrs_store_update:
             # Store a value in a permanent place.
-            to_store = arch.instrs_store[mnemonic](args)
+            if mnemonic in arch.instrs_store:
+                to_store = arch.instrs_store[mnemonic](args)
+            else:
+                # PPC specific store-and-update instructions
+                # `stwu r3, 8(r4)` is equivalent to `$r3 = *($r4 + 8); $r4 += 8;`
+                to_store = arch.instrs_store_update[mnemonic](args)
+
+                # Update the register in the second argument
+                update = args.memory_ref(1)
+                if not isinstance(update, AddressMode):
+                    raise DecompFailure(
+                        f"Unhandled store-and-update arg in {instr}: {update!r}"
+                    )
+                set_reg(
+                    update.rhs,
+                    add_imm(args.regs[update.rhs], Literal(update.offset), stack_info),
+                )
+
             if to_store is None:
                 # Elided register preserval.
                 pass
@@ -3698,24 +3997,33 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             cond_bit = regs[Register("condition_bit")]
             if not isinstance(cond_bit, BinaryOp):
                 cond_bit = ExprCondition(cond_bit, type=cond_bit.type)
-            if mnemonic == "bc1t":
+            if arch_mnemonic == "mips:bc1t":
                 branch_condition = cond_bit
-            elif mnemonic == "bc1f":
+            elif arch_mnemonic == "mips:bc1f":
                 branch_condition = cond_bit.negated()
 
         elif mnemonic in arch.instrs_jumps:
-            assert mnemonic == "jr"
-            if args.reg_ref(0) == arch.return_address_reg:
-                # Return from the function.
+            if arch_mnemonic == "ppc:bctr":
+                # Switch jump
+                assert isinstance(node, SwitchNode)
+                switch_expr = args.regs[Register("ctr")]
+            elif arch_mnemonic == "mips:jr":
+                # MIPS:
+                if args.reg_ref(0) == arch.return_address_reg:
+                    # Return from the function.
+                    assert isinstance(node, ReturnNode)
+                else:
+                    # Switch jump.
+                    assert isinstance(node, SwitchNode)
+                    switch_expr = args.reg(0)
+            elif arch_mnemonic == "ppc:blr":
                 assert isinstance(node, ReturnNode)
             else:
-                # Switch jump.
-                assert isinstance(node, SwitchNode)
-                switch_expr = args.reg(0)
+                assert False, f"Unhandled jump mnemonic {arch_mnemonic}"
 
         elif mnemonic in arch.instrs_fn_call:
             is_known_void = False
-            if mnemonic == "jal":
+            if arch_mnemonic in ["mips:jal", "ppc:bl"]:
                 fn_target = args.imm(0)
                 if isinstance(fn_target, AddressOf) and isinstance(
                     fn_target.expr, GlobalSymbol
@@ -3726,9 +4034,12 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 elif isinstance(fn_target, Literal):
                     pass
                 else:
-                    raise DecompFailure("The target of jal must be a label, not {arg}")
-            else:
-                assert mnemonic == "jalr"
+                    raise DecompFailure(
+                        f"Target of function call must be a symbol, not {fn_target}"
+                    )
+            elif arch_mnemonic == "ppc:blrl":
+                fn_target = args.regs[Register("lr")]
+            elif arch_mnemonic == "mips:jalr":
                 if args.count() == 1:
                     fn_target = args.reg(0)
                 elif args.count() == 2:
@@ -3739,6 +4050,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     fn_target = args.reg(1)
                 else:
                     raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
+            else:
+                assert False, f"Unhandled fn call mnemonic {arch_mnemonic}"
 
             fn_target = as_function_ptr(fn_target)
             fn_sig = fn_target.type.get_function_pointer_signature()
@@ -3746,9 +4059,23 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
             likely_regs: Dict[Register, bool] = {}
             for reg, data in regs.contents.items():
-                likely_regs[reg] = (
-                    not isinstance(data.value, PassedInArg) or data.value.copied
-                )
+                # We use a much stricter filter for PPC than MIPS, because the same
+                # registers can be used arguments & return values.
+                # The ABI can also mix & match the rN & fN registers, which  makes the
+                # "require" heuristic less powerful.
+                #
+                # - `meta.inherited` will only be False for registers set in *this* basic block
+                # - `meta.function_return` will only be accurate for registers set within this
+                #   basic block because we have not called `propagate_register_meta` yet.
+                #   Within this block, it will be True for registers that were return values.
+                if arch.arch == Target.ArchEnum.PPC and (
+                    data.meta.inherited or data.meta.function_return
+                ):
+                    likely_regs[reg] = False
+                elif isinstance(data.value, PassedInArg) and not data.value.copied:
+                    likely_regs[reg] = False
+                else:
+                    likely_regs[reg] = True
 
             abi = arch.function_abi(fn_sig, likely_regs, for_call=True)
 
@@ -3819,8 +4146,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # void, then don't set any of these -- it might cause us to
             # believe the function we're decompiling is non-void.
             if not is_known_void:
-                for reg, val in arch.function_return(call):
-                    assert reg in arch.all_return_regs
+                return_reg_vals = arch.function_return(call)
+                # function_return must return exactly the same regs as all_return_regs
+                # to match output_regs_for_instr
+                assert {r for r, v in return_reg_vals} == set(arch.all_return_regs)
+                for reg, val in return_reg_vals:
                     if not isinstance(val, SecondF64Half):
                         val = eval_once(
                             val,
@@ -3841,23 +4171,99 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             set_reg(Register("hi"), hi)
             set_reg(Register("lo"), lo)
 
+        elif mnemonic in arch.instrs_implicit_destination:
+            reg, expr_fn = arch.instrs_implicit_destination[mnemonic]
+            set_reg(reg, expr_fn(args))
+
+        elif mnemonic in arch.instrs_ppc_compare:
+            if instr.args[0] != Register("cr0"):
+                raise DecompFailure(
+                    f"Instruction {instr} not supported (first arg is not $cr0)"
+                )
+
+            set_reg(Register("cr0_eq"), arch.instrs_ppc_compare[mnemonic](args, "=="))
+            set_reg(Register("cr0_gt"), arch.instrs_ppc_compare[mnemonic](args, ">"))
+            set_reg(Register("cr0_lt"), arch.instrs_ppc_compare[mnemonic](args, "<"))
+            set_reg(Register("cr0_so"), Literal(0))
+
         elif mnemonic in arch.instrs_no_dest:
             stmt = arch.instrs_no_dest[mnemonic](args)
             to_write.append(stmt)
 
-        elif mnemonic in arch.instrs_destination_first:
+        elif mnemonic.rstrip(".") in arch.instrs_destination_first:
             target = args.reg_ref(0)
-            val = arch.instrs_destination_first[mnemonic](args)
+            val = arch.instrs_destination_first[mnemonic.rstrip(".")](args)
             # TODO: IDO tends to keep variables within single registers. Thus,
             # if source = target, maybe we could overwrite that variable instead
             # of creating a new one?
             set_reg(target, val)
-            mn_parts = mnemonic.split(".")
-            if (len(mn_parts) >= 2 and mn_parts[1] == "d") or mnemonic == "ldc1":
+            mn_parts = arch_mnemonic.split(".")
+            if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
+                # PPC instructions suffixed with . set condition bits (CR0) based on the result value
+                target_reg = args.reg(0)
+                set_reg(
+                    Register("cr0_eq"),
+                    BinaryOp.icmp(target_reg, "==", Literal(0, type=target_reg.type)),
+                )
+                # Use manual casts for cr0_gt/cr0_lt so that the type of target_reg is not modified
+                # until the resulting bit is .use()'d.
+                target_s32 = Cast(
+                    target_reg, reinterpret=True, silent=True, type=Type.s32()
+                )
+                set_reg(
+                    Register("cr0_gt"),
+                    BinaryOp(target_s32, ">", Literal(0), type=Type.s32()),
+                )
+                set_reg(
+                    Register("cr0_lt"),
+                    BinaryOp(target_s32, "<", Literal(0), type=Type.s32()),
+                )
+                set_reg(
+                    Register("cr0_so"),
+                    fn_op("MIPS2C_OVERFLOW", [target_reg], type=Type.s32()),
+                )
+
+            elif (
+                len(mn_parts) >= 2
+                and mn_parts[0].startswith("mips:")
+                and mn_parts[1] == "d"
+            ) or arch_mnemonic == "mips:ldc1":
                 set_reg(target.other_f64_reg(), SecondF64Half())
+
+        elif mnemonic in arch.instrs_load_update:
+            target = args.reg_ref(0)
+            val = arch.instrs_load_update[mnemonic](args)
+            set_reg(target, val)
+
+            if arch_mnemonic in ["ppc:lwzux", "ppc:lhzux", "ppc:lbzux"]:
+                # In `rD, rA, rB`, update `rA = rA + rB`
+                update_reg = args.reg_ref(1)
+                offset = args.reg(2)
+            else:
+                # In `rD, rA(N)`, update `rA = rA + N`
+                update = args.memory_ref(1)
+                if not isinstance(update, AddressMode):
+                    raise DecompFailure(
+                        f"Unhandled store-and-update arg in {instr}: {update!r}"
+                    )
+                update_reg = update.rhs
+                offset = Literal(update.offset)
+
+            if update_reg == target:
+                raise DecompFailure(
+                    f"Invalid instruction, rA and rD must be different in {instr}"
+                )
+
+            set_reg(update_reg, add_imm(args.regs[update_reg], offset, stack_info))
 
         else:
             expr = ErrorExpr(f"unknown instruction: {instr}")
+            if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
+                # Unimplemented PPC instructions that modify CR0
+                set_reg(Register("cr0_eq"), expr)
+                set_reg(Register("cr0_gt"), expr)
+                set_reg(Register("cr0_lt"), expr)
+                set_reg(Register("cr0_so"), expr)
             if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
                 reg = args.reg_ref(0)
                 expr = eval_once(
@@ -4004,12 +4410,14 @@ class FunctionInfo:
     stack_info: StackInfo
     flow_graph: FlowGraph
     return_type: Type
+    symbol: GlobalSymbol
 
 
 @dataclass
 class GlobalInfo:
     asm_data: AsmData
     arch: Arch
+    target: Target
     local_functions: Set[str]
     typemap: TypeMap
     typepool: TypePool
@@ -4022,10 +4430,21 @@ class GlobalInfo:
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
+            demangled_symbol: Optional[CxxSymbol] = None
+            demangled_str: Optional[str] = None
+            if self.target.language == Target.LanguageEnum.CXX:
+                try:
+                    demangled_symbol = demangle_codewarrior_parse(sym_name)
+                except ValueError:
+                    pass
+                else:
+                    demangled_str = str(demangled_symbol)
+
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
                 symbol_name=sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
+                demangled_str=demangled_str,
             )
 
             fn = self.typemap.functions.get(sym_name)
@@ -4034,6 +4453,7 @@ class GlobalInfo:
                 ctype = fn.type
             else:
                 ctype = self.typemap.var_types.get(sym_name)
+
             if ctype is not None:
                 sym.symbol_in_context = True
                 sym.initializer_in_typemap = (
@@ -4044,6 +4464,10 @@ class GlobalInfo:
                     sym.type_provided = True
             elif sym_name in self.local_functions:
                 sym.type.unify(Type.function())
+
+            # Do this after unifying the type in the typemap, so that it has lower precedence
+            if demangled_symbol is not None:
+                sym.type.unify(Type.demangled_symbol(demangled_symbol))
 
         return AddressOf(sym, type=sym.type.reference())
 
@@ -4429,4 +4853,4 @@ def translate_to_ast(
             v[phi.name] = phi
         pdb.set_trace()
 
-    return FunctionInfo(stack_info, flow_graph, return_type)
+    return FunctionInfo(stack_info, flow_graph, return_type, fn_sym)

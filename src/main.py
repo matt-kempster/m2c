@@ -9,9 +9,10 @@ from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
-from .options import CodingStyle, Options
+from .options import CodingStyle, Options, Target
 from .parse_file import AsmData, Function, parse_file
 from .translate import (
+    Arch,
     FunctionInfo,
     GlobalInfo,
     InstrProcessingFailure,
@@ -19,6 +20,7 @@ from .translate import (
 )
 from .types import TypePool
 from .arch_mips import MipsArch
+from .arch_ppc import PpcArch
 
 
 def print_current_exception(sanitize: bool) -> None:
@@ -60,7 +62,14 @@ def print_exception_as_comment(
 
 
 def run(options: Options) -> int:
-    arch = MipsArch()
+    arch: Arch
+    if options.target.arch == Target.ArchEnum.MIPS:
+        arch = MipsArch()
+    elif options.target.arch == Target.ArchEnum.PPC:
+        arch = PpcArch()
+    else:
+        raise ValueError(f"Invalid target arch: {options.target.arch}")
+
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()
     try:
@@ -110,7 +119,9 @@ def run(options: Options) -> int:
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
     )
-    global_info = GlobalInfo(asm_data, arch, function_names, typemap, typepool)
+    global_info = GlobalInfo(
+        asm_data, arch, options.target, function_names, typemap, typepool
+    )
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
@@ -215,8 +226,8 @@ def run(options: Options) -> int:
 
 def parse_flags(flags: List[str]) -> Options:
     parser = argparse.ArgumentParser(
-        description="Decompile MIPS assembly to C.",
-        usage="%(prog)s [--context C_FILE] [-f FN ...] filename [filename ...]",
+        description="Decompile assembly to C.",
+        usage="%(prog)s [-t mips-ido-c] [--context C_FILE] [-f FN ...] filename [filename ...]",
     )
 
     group = parser.add_argument_group("Input Options")
@@ -407,6 +418,23 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
+        "-t",
+        "--target",
+        dest="target",
+        type=Target.parse,
+        default="mips-ido-c",
+        help="Target architecture, compiler, and language triple. "
+        "Supported triples: mips-ido-c, mips-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
+        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
+    )
+    group.add_argument(
+        "--compiler",
+        dest="target_compiler",
+        type=Target.CompilerEnum,
+        choices=list(Target.CompilerEnum),
+        help=argparse.SUPPRESS,  # For backwards compatibility; now use `--target`
+    )
+    group.add_argument(
         "--passes",
         "-P",
         dest="passes",
@@ -415,16 +443,6 @@ def parse_flags(flags: List[str]) -> Options:
         default=2,
         help="Number of translation passes to perform. Each pass may improve type resolution and produce better "
         "output, particularly when decompiling multiple functions. Default: 2",
-    )
-    group.add_argument(
-        "--compiler",
-        dest="compiler",
-        type=Options.CompilerEnum,
-        choices=list(Options.CompilerEnum),
-        default="ido",
-        help="Original compiler family that produced the input files. "
-        "Used when the compiler's behavior cannot be inferred from the input, e.g. stack ordering. "
-        "Default: ido",
     )
     group.add_argument(
         "--stop-on-error",
@@ -522,6 +540,18 @@ def parse_flags(flags: List[str]) -> Options:
     )
     filenames = args.filename + args.rodata_filenames
 
+    # Backwards compatibility: MIPS targets can be described with --compiler
+    if args.target_compiler == Target.CompilerEnum.IDO:
+        target = Target.parse("mips-ido-c")
+    elif args.target_compiler == Target.CompilerEnum.GCC:
+        target = Target.parse("mips-gcc-c")
+    elif args.target_compiler is None:
+        target = args.target
+    else:
+        parser.error(
+            "--compiler is partially supported for backwards compatibility, use --target instead"
+        )
+
     # Backwards compatibility: giving a function index/name as a final argument, or "all"
     assert filenames, "checked by argparse, nargs='+'"
     if filenames[-1] == "all":
@@ -567,7 +597,7 @@ def parse_flags(flags: List[str]) -> Options:
         sanitize_tracebacks=args.sanitize_tracebacks,
         valid_syntax=args.valid_syntax,
         global_decls=args.global_decls,
-        compiler=args.compiler,
+        target=target,
         print_stack_structs=args.print_stack_structs,
         unk_inference=args.unk_inference,
         passes=args.passes,

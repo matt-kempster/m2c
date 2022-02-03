@@ -8,7 +8,7 @@ from typing import (
 )
 
 from .error import DecompFailure
-from .types import FunctionSignature, Type
+from .options import Target
 from .parse_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -56,7 +56,7 @@ from .translate import (
     as_u32,
     as_u64,
     fn_op,
-    fold_gcc_divmod,
+    fold_divmod,
     fold_mul_chains,
     handle_add,
     handle_add_double,
@@ -80,6 +80,7 @@ from .translate import (
     make_store,
     void_fn_op,
 )
+from .types import FunctionSignature, Type
 
 
 LENGTH_TWO: Set[str] = {
@@ -433,6 +434,8 @@ class TrapuvPattern(SimpleAsmPattern):
 
 
 class MipsArch(Arch):
+    arch = Target.ArchEnum.MIPS
+
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")
     return_address_reg = Register("ra")
@@ -524,13 +527,13 @@ class MipsArch(Arch):
         "r0": Register("zero"),
     }
 
+    uses_delay_slots = True
+
     @staticmethod
     def is_branch_instruction(instr: Instruction) -> bool:
         return (
             instr.mnemonic
             in [
-                "j",
-                "b",
                 "beq",
                 "bne",
                 "beqz",
@@ -543,6 +546,7 @@ class MipsArch(Arch):
                 "bc1f",
             ]
             or MipsArch.is_branch_likely_instruction(instr)
+            or MipsArch.is_constant_branch_instruction(instr)
         )
 
     @staticmethod
@@ -561,15 +565,8 @@ class MipsArch(Arch):
         ]
 
     @staticmethod
-    def get_branch_target(instr: Instruction) -> JumpTarget:
-        label = instr.args[-1]
-        if isinstance(label, AsmGlobalSymbol):
-            return JumpTarget(label.symbol_name)
-        if not isinstance(label, JumpTarget):
-            raise DecompFailure(
-                f'Couldn\'t parse instruction "{instr}": invalid branch target'
-            )
-        return label
+    def is_constant_branch_instruction(instr: Instruction) -> bool:
+        return instr.mnemonic in ("b", "j")
 
     @staticmethod
     def is_jump_instruction(instr: Instruction) -> bool:
@@ -590,6 +587,10 @@ class MipsArch(Arch):
         return instr.mnemonic == "jr" and instr.args[0] == Register("ra")
 
     @staticmethod
+    def is_conditional_return_instruction(instr: Instruction) -> bool:
+        return False
+
+    @staticmethod
     def is_jumptable_instruction(instr: Instruction) -> bool:
         return instr.mnemonic == "jr" and instr.args[0] != Register("ra")
 
@@ -598,8 +599,8 @@ class MipsArch(Arch):
         meta = InstructionMeta.missing()
         return [Instruction("jr", [Register("ra")], meta), Instruction("nop", [], meta)]
 
-    @staticmethod
-    def normalize_instruction(instr: Instruction) -> Instruction:
+    @classmethod
+    def normalize_instruction(cls, instr: Instruction) -> Instruction:
         args = instr.args
         if len(args) == 3:
             if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
@@ -648,12 +649,12 @@ class MipsArch(Arch):
                 lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
                 return Instruction("li", [args[0], lit], instr.meta)
             if instr.mnemonic in LENGTH_THREE:
-                return MipsArch.normalize_instruction(
+                return cls.normalize_instruction(
                     Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
                 )
         if len(args) == 1:
             if instr.mnemonic in LENGTH_TWO:
-                return MipsArch.normalize_instruction(
+                return cls.normalize_instruction(
                     Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
                 )
         return instr
@@ -830,11 +831,11 @@ class MipsArch(Arch):
             BinaryOp.u64(a.reg(0), "/", a.reg(1)),
         ),
         "mult": lambda a: (
-            fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
+            fold_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
             BinaryOp.int(a.reg(0), "*", a.reg(1)),
         ),
         "multu": lambda a: (
-            fold_gcc_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
+            fold_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
             BinaryOp.int(a.reg(0), "*", a.reg(1)),
         ),
         "dmult": lambda a: (
@@ -861,7 +862,7 @@ class MipsArch(Arch):
         "addiu": lambda a: handle_addi(a),
         "addu": lambda a: handle_add(a),
         "subu": lambda a: (
-            fold_mul_chains(fold_gcc_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
+            fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
         "negu": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
@@ -931,7 +932,7 @@ class MipsArch(Arch):
         "sllv": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
         ),
-        "srl": lambda a: fold_gcc_divmod(
+        "srl": lambda a: fold_divmod(
             BinaryOp(
                 left=as_u32(a.reg(1)),
                 op=">>",
@@ -939,7 +940,7 @@ class MipsArch(Arch):
                 type=Type.u32(),
             )
         ),
-        "srlv": lambda a: fold_gcc_divmod(
+        "srlv": lambda a: fold_divmod(
             BinaryOp(
                 left=as_u32(a.reg(1)),
                 op=">>",
@@ -948,7 +949,7 @@ class MipsArch(Arch):
             )
         ),
         "sra": lambda a: handle_sra(a),
-        "srav": lambda a: fold_gcc_divmod(
+        "srav": lambda a: fold_divmod(
             BinaryOp(
                 left=as_s32(a.reg(1)),
                 op=">>",
