@@ -68,6 +68,7 @@ from .translate import (
     handle_loadx,
     handle_or,
     handle_rlwinm,
+    handle_rlwimi,
     handle_sra,
     load_upper,
     make_store,
@@ -543,6 +544,7 @@ class PpcArch(Arch):
     instrs_destination_first: InstrMap = {
         # Integer arithmetic
         "addi": lambda a: handle_addi(a),
+        "addic": lambda a: handle_addi(a),
         "add": lambda a: handle_add(a),
         "addis": lambda a: handle_addis(a),
         "subf": lambda a: fold_divmod(
@@ -573,6 +575,9 @@ class PpcArch(Arch):
         "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
         "boolcast.fictive": lambda a: UnaryOp(
             op="!!", expr=a.reg(1), type=Type.intish()
+        ),
+        "rlwimi": lambda a: handle_rlwimi(
+            a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
         "rlwinm": lambda a: handle_rlwinm(
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)

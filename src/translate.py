@@ -3318,8 +3318,26 @@ def handle_bgez(args: InstrArgs) -> Condition:
     return BinaryOp.scmp(expr, ">=", Literal(0))
 
 
+def rlwi_mask(mask_begin: int, mask_end: int) -> int:
+    # Compute the mask constant used by the rlwi* family of PPC instructions,
+    # referred to as the `MASK(MB, ME)` function in the processor manual.
+    # Bit 0 is the MSB, Bit 31 is the LSB
+    bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
+    all_ones = 0xFFFFFFFF
+    if mask_begin <= mask_end:
+        # Set bits inside the range, fully inclusive
+        mask = bits_upto(mask_begin) - bits_upto(mask_end + 1)
+    else:
+        # Set bits from [31, mask_end] and [mask_begin, 0]
+        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ all_ones
+    return mask
+
+
 def handle_rlwinm(
-    source: Expression, shift: int, mask_begin: int, mask_end: int
+    source: Expression,
+    shift: int,
+    mask_begin: int,
+    mask_end: int,
 ) -> Expression:
     # Special case truncating casts
     # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
@@ -3331,17 +3349,8 @@ def handle_rlwinm(
     # The output of the rlwinm instruction is `ROTL(source, shift) & mask`. We write this as
     # ((source << shift) & mask) | ((source >> (32 - shift)) & mask)
     # and compute both OR operands (upper_bits and lower_bits respectively).
-
-    # Bit 0 is the MSB, Bit 31 is the LSB
-    bits_upto: Callable[[int], int] = lambda m: (1 << (32 - m)) - 1
-    all_ones = bits_upto(0)
-    if mask_begin <= mask_end:
-        # Set bits inside the range, fully inclusive
-        mask = bits_upto(mask_begin) - bits_upto(mask_end + 1)
-    else:
-        # Set bits from [31, mask_end] and [mask_begin, 0]
-        mask = (bits_upto(mask_end + 1) - bits_upto(mask_begin)) ^ all_ones
-
+    all_ones = 0xFFFFFFFF
+    mask = rlwi_mask(mask_begin, mask_end)
     left_shift = shift
     right_shift = 32 - shift
     left_mask = (all_ones << left_shift) & mask
@@ -3350,6 +3359,10 @@ def handle_rlwinm(
     upper_bits: Optional[Expression]
     if left_mask == 0:
         upper_bits = None
+    elif isinstance(source, Literal) and (source.value << left_shift) & left_mask == (
+        source.value << left_shift
+    ):
+        upper_bits = Literal(source.value << left_shift)
     else:
         upper_bits = source
         if left_shift != 0:
@@ -3378,6 +3391,29 @@ def handle_rlwinm(
         return fold_mul_chains(upper_bits)
     else:
         return BinaryOp.int(left=upper_bits, op="|", right=lower_bits)
+
+
+def handle_rlwimi(
+    base: Expression, source: Expression, shift: int, mask_begin: int, mask_end: int
+) -> Expression:
+    # This instruction reads from `base`, replaces some bits with values from `source`, then
+    # writes the result back into the first register. This can be used to copy any contiguous
+    # bitfield from `source` into `base`, and is commonly used when manipulating flags, such
+    # as in `x |= 0x10` or `x &= ~0x10`.
+
+    # It's generally more readable to write the mask with `~` (instead of computing the inverse here)
+    mask_literal = Literal(rlwi_mask(mask_begin, mask_end))
+    mask = UnaryOp("~", mask_literal, type=Type.u32())
+    masked_base = BinaryOp.int(left=base, op="&", right=mask)
+    if source == Literal(0):
+        # If the source is 0, there are no bits inserted. (This may look like `x &= ~0x10`)
+        return masked_base
+    inserted = handle_rlwinm(source, shift, mask_begin, mask_end)
+    if inserted == mask_literal:
+        # If this instruction will set all the bits in the mask, we can OR the values
+        # together without masking the base. (`x |= 0xF0` instead of `x = (x & ~0xF0) | 0xF0`)
+        return BinaryOp.int(left=base, op="|", right=inserted)
+    return BinaryOp.int(left=masked_base, op="|", right=inserted)
 
 
 def handle_loadx(args: InstrArgs, type: Type) -> Expression:
