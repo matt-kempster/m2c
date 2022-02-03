@@ -550,11 +550,14 @@ class PpcArch(Arch):
         "subf": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
         ),
+        "subfic": lambda a: fold_divmod(
+            BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
+        ),
         "neg": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
         ),
         "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
-        "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
+        "divwu": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
         "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
         "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
