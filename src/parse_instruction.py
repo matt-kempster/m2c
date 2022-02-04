@@ -399,18 +399,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                     )
                 value = Macro("sda21", value)
             else:
-                # Parse binary operators with a lower precedence than `@` instead of left-to-right.
-                # This can happen with expressions like `sym+4@sda21(r2)`.
-                if "@" in arg_elems:
-                    # Split arg_elems, and only parse the characters to the left of `@` to calculate
-                    # the right hand side of the binary operator. ("rhs" is relative to tok not `@`)
-                    at_index = arg_elems.index("@")
-                    rhs_args = arg_elems[:at_index]
-                    rhs = parse_arg_elems(rhs_args, arch)
-                    # Remove the characters parsed for rhs from `arg_elems`
-                    arg_elems[: at_index - len(rhs_args)] = []
-                else:
-                    rhs = parse_arg_elems(arg_elems, arch)
+                rhs = parse_arg_elems(arg_elems, arch)
                 assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs)
