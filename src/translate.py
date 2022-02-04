@@ -4075,6 +4075,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     )
             elif arch_mnemonic == "ppc:blrl":
                 fn_target = args.regs[Register("lr")]
+            elif arch_mnemonic == "ppc:bctrl":
+                fn_target = args.regs[Register("ctr")]
             elif arch_mnemonic == "mips:jalr":
                 if args.count() == 1:
                     fn_target = args.reg(0)

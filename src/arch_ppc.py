@@ -536,6 +536,7 @@ class PpcArch(Arch):
         # Function call
         "bl",
         "blrl",
+        "bctrl",
     }
     instrs_no_dest: StmtInstrMap = {
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
