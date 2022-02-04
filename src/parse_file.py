@@ -108,7 +108,7 @@ class MIPSFile:
                 return
             else:
                 raise DecompFailure(
-                    "unsupported non-nop instruction outside of function"
+                    f"unsupported non-nop instruction outside of function ({instruction})"
                 )
         self.current_function.new_instruction(instruction)
 
@@ -274,7 +274,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
     re_local_label = re.compile("loc_|locret_|def_|lbl_")
-    re_label = re.compile(r"([a-zA-Z0-9_.$]+):")
+    re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
     T = TypeVar("T")
 
@@ -326,11 +326,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
             if not g:
                 break
 
-            label = g.group(1)
+            label = g.group(1) or g.group(2)
             if ifdef_level == 0:
                 process_label(label, glabel=False)
 
-            line = line[len(label) + 1 :].strip()
+            line = line[len(g.group(0)) :].strip()
 
         if not line:
             continue
@@ -384,6 +384,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     curr_section = ".text"
                 elif curr_section in (".rodata", ".data", ".bss"):
                     directive, _, args_str = line.partition(" ")
+                    # TODO: Do not split on commas inside quoted arguments
                     args = args_str.split(",")
                     if directive in (".word", ".4byte"):
                         for w in args:

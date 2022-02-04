@@ -297,6 +297,9 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
         if tok.isspace():
             # Ignore whitespace.
             arg_elems.pop(0)
+        elif tok == ",":
+            expect(",")
+            break
         elif tok == "$":
             # Register.
             assert value is None
@@ -374,7 +377,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                     arg_elems.pop(0)
                 symbol += arg_elems.pop(0)
             expect('"')
-            return AsmGlobalSymbol(symbol)
+            value = AsmGlobalSymbol(symbol)
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
@@ -396,7 +399,18 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                     )
                 value = Macro("sda21", value)
             else:
-                rhs = parse_arg_elems(arg_elems, arch)
+                # Parse binary operators with a lower precedence than `@` instead of left-to-right.
+                # This can happen with expressions like `sym+4@sda21(r2)`.
+                if "@" in arg_elems:
+                    # Split arg_elems, and only parse the characters to the left of `@` to calculate
+                    # the right hand side of the binary operator. ("rhs" is relative to tok not `@`)
+                    at_index = arg_elems.index("@")
+                    rhs_args = arg_elems[:at_index]
+                    rhs = parse_arg_elems(rhs_args, arch)
+                    # Remove the characters parsed for rhs from `arg_elems`
+                    arg_elems[: at_index - len(rhs_args)] = []
+                else:
+                    rhs = parse_arg_elems(arg_elems, arch)
                 assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs)
@@ -409,10 +423,11 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 if isinstance(rhs, AsmLiteral) and isinstance(
                     value, AsmSectionGlobalSymbol
                 ):
-                    return asm_section_global_symbol(
+                    value = asm_section_global_symbol(
                         value.section_name, value.addend + rhs.value
                     )
-                return BinOp(op, value, rhs)
+                else:
+                    value = BinOp(op, value, rhs)
         elif tok == "@":
             # A relocation (e.g. (...)@ha or (...)@l).
             arg_elems.pop(0)
@@ -426,13 +441,6 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
     return value
 
 
-def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
-    arg_elems: List[str] = list(arg)
-    ret = parse_arg_elems(arg_elems, arch)
-    assert ret is not None
-    return constant_fold(ret)
-
-
 def parse_instruction(
     line: str, meta: InstructionMeta, arch: ArchAsmParsing
 ) -> Instruction:
@@ -442,8 +450,11 @@ def parse_instruction(
         mnemonic, _, args_str = line.partition(" ")
         # Parse arguments.
         args: List[Argument] = []
-        if args_str.strip():
-            args = [parse_arg(arg_str.strip(), arch) for arg_str in args_str.split(",")]
+        arg_elems = list(args_str.strip())
+        while arg_elems:
+            value = parse_arg_elems(arg_elems, arch)
+            if value is not None:
+                args.append(constant_fold(value))
         instr = Instruction(mnemonic, args, meta)
         return arch.normalize_instruction(instr)
     except Exception:
