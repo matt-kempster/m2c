@@ -535,6 +535,7 @@ class PpcArch(Arch):
         # Function call
         "bl",
         "blrl",
+        "bctrl",
     }
     instrs_no_dest: StmtInstrMap = {
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
@@ -552,7 +553,7 @@ class PpcArch(Arch):
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
         ),
         "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
-        "divuw": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
+        "divwu": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
         "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
         "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),

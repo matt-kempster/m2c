@@ -1011,7 +1011,7 @@ class Type:
                     if param_type.terms[0].kind == CxxTerm.Kind.VOID:
                         assert len(term.function_params) == 1
                     elif param_type.terms[0].kind == CxxTerm.Kind.ELLIPSIS:
-                        assert param_type == term.function_params[:-1]
+                        assert i == len(term.function_params) - 1
                         is_variadic = True
                     else:
                         params.append(
