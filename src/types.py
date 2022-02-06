@@ -56,6 +56,15 @@ class TypePool:
             return self.structs_by_tag_name.get(ctype.name)
         return None
 
+    def get_or_create_struct_by_tag_name(
+        self,
+        tag_name: str,
+    ) -> "StructDeclaration":
+        struct = self.structs_by_tag_name.get(tag_name)
+        if struct is not None:
+            return struct
+        return StructDeclaration.unknown(self, tag_name, align=4)
+
     def get_struct_by_tag_name(
         self,
         tag_name: str,
@@ -113,6 +122,7 @@ class TypePool:
     def prune_structs(self) -> None:
         """Remove overlapping fields from all known structs"""
         for struct in self.structs:
+            struct.size = struct.min_size()
             struct.prune_overlapping_fields()
 
 
@@ -309,7 +319,7 @@ class Type:
         data = self.data()
         if self.is_struct():
             assert data.struct is not None
-            return data.struct.size, data.struct.align
+            return data.struct.min_size(), data.struct.align
         size = (self.get_size_bits() or 32) // 8
         return size, size
 
@@ -421,7 +431,7 @@ class Type:
         if self.is_struct():
             data = self.data()
             assert data.struct is not None
-            if offset >= data.struct.size:
+            if data.struct.size is not None and offset >= data.struct.size:
                 return NO_MATCHING_FIELD
 
             # Get a list of fields which contain the byte at offset. There may be more
@@ -577,11 +587,12 @@ class Type:
                 if data.struct.is_union:
                     break
 
-            # This struct has a field that goes outside of the bounds of the struct
-            if position > data.struct.size:
-                return None
+            if data.struct.size is not None:
+                # This struct has a field that goes outside of the bounds of the struct
+                if position > data.struct.size:
+                    return None
 
-            add_padding(data.struct.size)
+            add_padding(data.struct.min_size())
             return output
 
         return None
@@ -868,7 +879,8 @@ class Type:
 
     @staticmethod
     def struct(st: "StructDeclaration") -> "Type":
-        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size * 8, struct=st))
+        size_bits = st.size * 8 if st.size is not None else None
+        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=size_bits, struct=st))
 
     @staticmethod
     def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> "Type":
@@ -944,11 +956,13 @@ class Type:
         static_assert_unreachable(real_ctype)
 
     @staticmethod
-    def demangled_symbol(sym: CxxSymbol) -> "Type":
-        return Type.demangled_type(sym_type=sym.type, sym_name=sym.name)
+    def demangled_symbol(typepool: TypePool, sym: CxxSymbol) -> "Type":
+        return Type.demangled_type(typepool, sym_type=sym.type, sym_name=sym.name)
 
     @staticmethod
-    def demangled_type(sym_type: CxxType, sym_name: Optional[CxxTerm] = None) -> "Type":
+    def demangled_type(
+        typepool: TypePool, sym_type: CxxType, sym_name: Optional[CxxTerm] = None
+    ) -> "Type":
         # TODO: This function may need to depend on the ABI or compiler to generate the types
         # of class member functions. It may need to be moved out of types.py, or some of this
         # logic could be moved into FunctionSignature?
@@ -958,6 +972,9 @@ class Type:
             assert sym_name.qualified_name is not None
             assert len(sym_name.qualified_name) >= 1
             final_name = str(sym_name.qualified_name[-1]).split("@")[-1]
+
+        if final_name == "__vt" or final_name == "__RTTI":
+            return Type.any()
 
         type = Type.any()
         for term in sym_type.terms[::-1]:
@@ -999,9 +1016,13 @@ class Type:
                     and len(sym_name.qualified_name) > 1
                     and final_name not in CxxSymbol.STATIC_FUNCTIONS
                 ):
+                    class_name = "::".join(str(n) for n in sym_name.qualified_name[:-1])
+                    class_type = Type.struct(
+                        typepool.get_or_create_struct_by_tag_name(class_name)
+                    )
                     # NB: This assumes `this` is passed as the first arg,
                     # which may be different on other ABIs
-                    params.append(FunctionParam(type=Type.ptr(), name="this"))
+                    params.append(FunctionParam(type=Type.ptr(class_type), name="this"))
                     # TODO: Virtual methods may take a second argument here
                 if final_name == "__dt":
                     params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
@@ -1016,12 +1037,13 @@ class Type:
                     else:
                         params.append(
                             FunctionParam(
-                                type=Type.demangled_type(param_type), name=name
+                                type=Type.demangled_type(typepool, param_type),
+                                name=name,
                             )
                         )
                 return_type = Type.any()
                 if term.function_return is not None:
-                    return_type = Type.demangled_type(term.function_return)
+                    return_type = Type.demangled_type(typepool, term.function_return)
                 elif final_name in ("__ct", "__dt"):
                     return_type = Type.ptr()
                 type = Type.function(
@@ -1042,9 +1064,6 @@ class Type:
                 assert False, term.kind
             else:
                 assert False, term.kind
-        # TODO: Support vtables
-        # if final_name == "__vt":
-        #    return Type.array(Type.function())
         return type
 
 
@@ -1129,7 +1148,7 @@ class StructDeclaration:
         name: str
         known: bool
 
-    size: int
+    size: Optional[int]
     align: int
     new_field_prefix: str
     tag_name: Optional[str] = None
@@ -1138,6 +1157,15 @@ class StructDeclaration:
     has_bitfields: bool = False
     is_union: bool = False
     is_stack: bool = False
+
+    def min_size(self) -> int:
+        if self.size is not None:
+            return self.size
+        if not self.fields:
+            return 0
+        # TODO: Factor in align
+        last = self.fields[-1]
+        return last.offset + (last.type.get_size_bytes() or 1)
 
     def unify(
         self,
@@ -1177,7 +1205,7 @@ class StructDeclaration:
             return None
 
         # Check that the offset is within the struct bounds
-        if not (0 <= offset < self.size):
+        if self.size is not None and not (0 <= offset < self.size):
             return None
 
         # Do not allow the new field to overlap with any other field
@@ -1281,7 +1309,7 @@ class StructDeclaration:
         lines = []
         lines.append(fmt.indent(head))
         with fmt.indented():
-            offset_str_digits = len(fmt.format_hex(self.size))
+            offset_str_digits = len(fmt.format_hex(self.min_size()))
 
             def offset_comment(offset: int) -> str:
                 # Indicate the offset of the field (in hex), written to the *left* of the field
@@ -1333,13 +1361,41 @@ class StructDeclaration:
                 if not field.known:
                     comments.append("inferred")
                 lines.append(fmt.with_comments(field_decl, comments))
+                s = field.type.get_struct_declaration()
+                if s is not None:
+                    field.type.unify(Type.struct(s))
                 position = max(
                     position, field.offset + (field.type.get_size_bytes() or 0)
                 )
                 prev_field = field
-            pad_to(self.size, is_final=True)
-        lines.append(fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"]))
+            pad_to(self.min_size(), is_final=True)
+        if self.size is not None:
+            lines.append(
+                fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"])
+            )
+        else:
+            lines.append(
+                fmt.with_comments(
+                    tail, [f"unk size, at least 0x{fmt.format_hex(position)}"]
+                )
+            )
         return "\n".join(lines)
+
+    @staticmethod
+    def unknown(
+        typepool: TypePool, tag_name: str, align: int = 1
+    ) -> "StructDeclaration":
+        """
+        Return an StructDeclaration with an unknown size and without any fields
+        """
+        decl = StructDeclaration(
+            size=None,
+            align=align,
+            tag_name=tag_name,
+            new_field_prefix=typepool.unknown_field_prefix,
+        )
+        typepool.add_struct(decl, tag_name)
+        return decl
 
     @staticmethod
     def unknown_of_size(
