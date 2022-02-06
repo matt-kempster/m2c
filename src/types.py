@@ -999,12 +999,13 @@ class Type:
                     and len(sym_name.qualified_name) > 1
                     and final_name not in CxxSymbol.STATIC_FUNCTIONS
                 ):
-                    # NB: This assumes `this` is passed as the first arg,
-                    # which may be different on other ABIs
+                    # NB: This assumes `this` is passed as the first arg, which is true
+                    # for most thiscall methods on PPC. However, this is incorrect for
+                    # static member functions, functions returning structs, and other ABIs.
                     params.append(FunctionParam(type=Type.ptr(), name="this"))
-                    # TODO: Virtual methods may take a second argument here
                 if final_name == "__dt":
                     params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
+                # TODO: Classes with virtual bases may also have an implicit `int vbasearg` arg
                 is_variadic = False
                 for i, param_type in enumerate(term.function_params):
                     name = f"arg{i}"
