@@ -6,12 +6,11 @@ extern s32 e;
 extern s32 f;
 static ? ar;
 
-f32 test(f32 arg8) {
+void test(void) {
     ar.unk0 = (s32) (s8) a;
     ar.unk4 = (s32) b;
     ar.unk8 = (s32) c;
     ar.unkC = (s32) d;
     ar.unk10 = (s32) e;
     ar.unk14 = (s32) f;
-    return arg8;
 }
