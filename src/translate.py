@@ -3356,13 +3356,14 @@ def handle_rlwinm(
     left_mask = (all_ones << left_shift) & mask
     right_mask = (all_ones >> right_shift) & mask
 
+    if isinstance(source, Literal):
+        upper_value = (source.value << left_shift) & mask
+        lower_value = (source.value >> right_shift) & mask
+        return Literal(upper_value | lower_value)
+
     upper_bits: Optional[Expression]
     if left_mask == 0:
         upper_bits = None
-    elif isinstance(source, Literal) and (source.value << left_shift) & left_mask == (
-        source.value << left_shift
-    ):
-        upper_bits = Literal(source.value << left_shift)
     else:
         upper_bits = source
         if left_shift != 0:
