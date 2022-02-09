@@ -2512,6 +2512,10 @@ def handle_la(args: InstrArgs) -> Expression:
 
 
 def handle_or(left: Expression, right: Expression) -> Expression:
+    if left == right:
+        # `or $rD, $rS, $rS` can be used to move $rS into $rD
+        return left
+
     if isinstance(left, Literal) and isinstance(right, Literal):
         if (((left.value & 0xFFFF) == 0 and (right.value & 0xFFFF0000) == 0)) or (
             (right.value & 0xFFFF) == 0 and (left.value & 0xFFFF0000) == 0

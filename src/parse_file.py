@@ -7,7 +7,13 @@ from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, U
 
 from .error import DecompFailure
 from .options import Options
-from .parse_instruction import ArchAsm, Instruction, InstructionMeta, parse_instruction
+from .parse_instruction import (
+    ArchAsm,
+    Instruction,
+    InstructionMeta,
+    parse_instruction,
+    split_arg_list,
+)
 
 
 @dataclass(frozen=True)
@@ -384,8 +390,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     curr_section = ".text"
                 elif curr_section in (".rodata", ".data", ".bss"):
                     directive, _, args_str = line.partition(" ")
-                    # TODO: Do not split on commas inside quoted arguments
-                    args = args_str.split(",")
+                    args = split_arg_list(args_str)
                     if directive in (".word", ".4byte"):
                         for w in args:
                             w = w.strip()

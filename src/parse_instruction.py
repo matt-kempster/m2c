@@ -1,6 +1,7 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
 import abc
+import csv
 from dataclasses import dataclass, replace
 import string
 from typing import Dict, List, Optional, Set, Union
@@ -368,16 +369,6 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = maybe_reg
             else:
                 value = AsmGlobalSymbol(word)
-        elif tok == '"':
-            # Quoted global symbol
-            expect('"')
-            symbol = ""
-            while arg_elems and arg_elems[0] != '"':
-                if arg_elems[0] == "\\" and len(arg_elems) >= 2:
-                    arg_elems.pop(0)
-                symbol += arg_elems.pop(0)
-            expect('"')
-            value = AsmGlobalSymbol(symbol)
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
@@ -399,18 +390,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                     )
                 value = Macro("sda21", value)
             else:
-                # Parse binary operators with a lower precedence than `@` instead of left-to-right.
-                # This can happen with expressions like `sym+4@sda21(r2)`.
-                if "@" in arg_elems:
-                    # Split arg_elems, and only parse the characters to the left of `@` to calculate
-                    # the right hand side of the binary operator. ("rhs" is relative to tok not `@`)
-                    at_index = arg_elems.index("@")
-                    rhs_args = arg_elems[:at_index]
-                    rhs = parse_arg_elems(rhs_args, arch)
-                    # Remove the characters parsed for rhs from `arg_elems`
-                    arg_elems[: at_index - len(rhs_args)] = []
-                else:
-                    rhs = parse_arg_elems(arg_elems, arch)
+                rhs = parse_arg_elems(arg_elems, arch)
                 assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs)
@@ -441,6 +421,27 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
     return value
 
 
+def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
+    arg_elems: List[str] = list(arg.strip())
+    ret = parse_arg_elems(arg_elems, arch)
+    assert ret is not None
+    return constant_fold(ret)
+
+
+def split_arg_list(args: str) -> List[str]:
+    """Split a string of comma-separated arguments, handling quotes"""
+    return next(
+        csv.reader(
+            [args],
+            delimiter=",",
+            doublequote=False,
+            escapechar="\\",
+            quotechar='"',
+            skipinitialspace=True,
+        )
+    )
+
+
 def parse_instruction(
     line: str, meta: InstructionMeta, arch: ArchAsmParsing
 ) -> Instruction:
@@ -449,12 +450,7 @@ def parse_instruction(
         line = line.strip()
         mnemonic, _, args_str = line.partition(" ")
         # Parse arguments.
-        args: List[Argument] = []
-        arg_elems = list(args_str.strip())
-        while arg_elems:
-            value = parse_arg_elems(arg_elems, arch)
-            if value is not None:
-                args.append(constant_fold(value))
+        args = [parse_arg(arg_str, arch) for arg_str in split_arg_list(args_str)]
         instr = Instruction(mnemonic, args, meta)
         return arch.normalize_instruction(instr)
     except Exception:
