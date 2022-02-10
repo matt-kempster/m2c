@@ -1,6 +1,3 @@
-//int x = 123;
-//enum { A, B, C, D, E, F, G, H };
-
 struct foo {
     int a: 1;
     unsigned int b: 1;
