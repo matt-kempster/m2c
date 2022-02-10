@@ -117,7 +117,7 @@ class Arch(ArchFlowGraph):
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
-PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI"}
+PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI", "CLZ"}
 
 
 @dataclass
@@ -1015,6 +1015,10 @@ class UnaryOp(Condition):
         return UnaryOp("!", self, type=Type.bool())
 
     def format(self, fmt: Formatter) -> str:
+        # These aren't real operators (or functions); format them as a fn call
+        if self.op in PSEUDO_FUNCTION_OPS:
+            return f"{self.op}({self.expr.format(fmt)})"
+
         return f"{self.op}{self.expr.format(fmt)}"
 
 
@@ -2921,6 +2925,16 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     right_expr = early_unwrap_ints(expr.right)
     divisor_shift = 0
 
+    # Rewrite PPC idiom with cntlzw instruction: CLZ(x) >> 5 --> x == 0
+    if (
+        isinstance(left_expr, UnaryOp)
+        and left_expr.op == "CLZ"
+        and expr.op == ">>"
+        and isinstance(right_expr, Literal)
+        and right_expr.value == 5
+    ):
+        return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
+
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
     # NB: If x is signed, this is only correct if there is a sign-correcting subtraction term
     if (
@@ -2945,11 +2959,16 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         if (
             isinstance(div_expr, BinaryOp)
             and early_unwrap_ints(div_expr.left) == left_expr
-            and div_expr.op == "/"
-            and early_unwrap_ints(div_expr.right) == mod_base
             and isinstance(mod_base, Literal)
         ):
-            return BinaryOp.int(left=left_expr, op="%", right=right_expr.right)
+            # Accept either `(x / N) * N` or `(x >> N) * M` (where `1 << N == M`)
+            divisor = early_unwrap_ints(div_expr.right)
+            if (div_expr.op == "/" and divisor == mod_base) or (
+                div_expr.op == ">>"
+                and isinstance(divisor, Literal)
+                and (1 << divisor.value) == mod_base.value
+            ):
+                return BinaryOp.int(left=left_expr, op="%", right=right_expr.right)
 
     # Detect dividing by a negative: ((x >> 31) - (x / N)) --> x / -N
     if (
@@ -3381,7 +3400,9 @@ def handle_rlwinm(
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+        lower_bits = fold_divmod(
+            BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+        )
         if right_mask != (all_ones >> right_shift) & all_ones:
             lower_bits = BinaryOp.int(
                 left=lower_bits, op="&", right=Literal(right_mask)
@@ -3391,7 +3412,7 @@ def handle_rlwinm(
         return Literal(0)
     elif upper_bits is None:
         assert lower_bits is not None
-        return fold_divmod(lower_bits)
+        return lower_bits
     elif lower_bits is None:
         return fold_mul_chains(upper_bits)
     else:

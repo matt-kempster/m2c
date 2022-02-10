@@ -40,11 +40,13 @@ from .translate import (
     ImplicitInstrMap,
     InstrMap,
     InstrSet,
+    Literal,
     PpcCmpInstrMap,
     PairInstrMap,
     SecondF64Half,
     StmtInstrMap,
     StoreInstrMap,
+    TernaryOp,
     UnaryOp,
     as_f32,
     as_f64,
@@ -544,15 +546,28 @@ class PpcArch(Arch):
     }
     instrs_destination_first: InstrMap = {
         # Integer arithmetic
+        # TODO: Read XER_CA in extended instrs, and set it in carrying instrs
+        "add": lambda a: handle_add(a),
+        "addc": lambda a: handle_add(a),
+        "adde": lambda a: handle_add(a),
+        "addze": lambda a: a.reg(1),
         "addi": lambda a: handle_addi(a),
         "addic": lambda a: handle_addi(a),
-        "add": lambda a: handle_add(a),
         "addis": lambda a: handle_addis(a),
         "subf": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
         ),
+        "subfc": lambda a: fold_divmod(
+            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
+        ),
+        "subfe": lambda a: fold_divmod(
+            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
+        ),
         "subfic": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
+        ),
+        "subfze": lambda a: fold_mul_chains(
+            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
         ),
         "neg": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
@@ -568,11 +583,17 @@ class PpcArch(Arch):
         "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
         "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
         "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
+        "andc": lambda a: BinaryOp.int(
+            left=a.reg(1), op="&", right=UnaryOp("~", a.reg(2), type=Type.intish())
+        ),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
         "nor": lambda a: UnaryOp(
             "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
         ),
         "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
+        "eqv": lambda a: UnaryOp(
+            "~", BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)), type=Type.intish()
+        ),
         "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
         "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
         "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
@@ -630,6 +651,7 @@ class PpcArch(Arch):
         "srawi": lambda a: handle_sra(a),
         "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
         "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
+        "cntlzw": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
         # Integer Loads
         "lba": lambda a: handle_load(a, type=Type.s8()),
         "lbz": lambda a: handle_load(a, type=Type.u8()),
@@ -705,6 +727,14 @@ class PpcArch(Arch):
         ),
         # TODO: Detect if we should use fabs or fabsf
         "fabs": lambda a: fn_op("fabs", [a.reg(1)], Type.floatish()),
+        "fres": lambda a: fn_op("MIPS2C_FRES", [a.reg(1)], Type.floatish()),
+        "frsqrte": lambda a: fn_op("MIPS2C_FRSQRTE", [a.reg(1)], Type.floatish()),
+        "fsel": lambda a: TernaryOp(
+            cond=BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
+            left=a.reg(2),
+            right=a.reg(3),
+            type=Type.floatish(),
+        ),
     }
     instrs_load_update: InstrMap = {
         "lbau": lambda a: handle_load(a, type=Type.s8()),
