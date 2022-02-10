@@ -1,6 +1,6 @@
 static ? globals;
 
-f32 test(s32 arg0, f32 arg8) {
+void test(s32 arg0) {
     s32 temp_ctr;
     s32 phi_ctr;
 
@@ -11,7 +11,7 @@ loop_1:
         if ((s32) globals.unk4 == 2) {
             globals.unk8 = 3;
             globals.unk10 = 5;
-            return arg8;
+            return;
         }
         if ((s32) globals.unk8 == 2) {
             globals.unkC = 3;
@@ -20,7 +20,7 @@ loop_1:
         if ((s32) globals.unk10 == 2) {
             globals.unk14 = 3;
             globals.unk10 = 5;
-            return arg8;
+            return;
         }
         if ((s32) globals.unk14 == 2) {
             globals.unk18 = 3;
@@ -33,10 +33,9 @@ block_10:
         if (temp_ctr == 0) {
             /* Duplicate return node #11. Try simplifying control flow for better match */
             globals.unk10 = 5;
-            return arg8;
+            return;
         }
         goto loop_1;
     }
     globals.unk10 = 5;
-    return arg8;
 }

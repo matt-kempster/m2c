@@ -1,6 +1,6 @@
 extern s32 y;
 
-f32 test(s32 arg0, f32 arg8) {
+void test(s32 arg0) {
     y = arg0;
     y = arg0 * 2;
     y = arg0 * 3;
@@ -23,5 +23,4 @@ f32 test(s32 arg0, f32 arg8) {
     y = arg0 * 0x14;
     y = arg0 * 0x15;
     y = arg0 * 0x16;
-    return arg8;
 }

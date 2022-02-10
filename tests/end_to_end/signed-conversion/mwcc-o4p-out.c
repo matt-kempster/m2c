@@ -1,6 +1,6 @@
 extern s32 glob;
 
-f32 test(s8 arg0, f32 arg8) {
+void test(s8 arg0) {
     s8 temp_r5;
     s8 temp_r6;
 
@@ -12,5 +12,4 @@ f32 test(s8 arg0, f32 arg8) {
     glob = (s32) (s16) arg0;
     glob = (s32) (s16) temp_r5;
     glob = (s32) (s16) temp_r6;
-    return arg8;
 }

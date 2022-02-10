@@ -1,6 +1,6 @@
-s32 test(s32 arg0, f32 arg8) {
+f32 test(f32 arg8) {
     if (arg8 != 0.0f) {
-        return arg0;
+        return 15.0f;
     }
-    return arg0;
+    return arg8;
 }
