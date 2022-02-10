@@ -1894,8 +1894,8 @@ class RegMeta:
     # True if the value derives solely from function call return values
     function_return: bool = False
 
-    # True if the value derives solely from regdata's with is_read = True or
-    # function_return = True
+    # True if the value derives solely from regdata's with is_read = True,
+    # function_return = True, or is a passed in argument
     uninteresting: bool = False
 
     # True if the regdata must be replaced by variable if it is ever read
@@ -3739,7 +3739,7 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
                 meta.uninteresting = True
                 meta.function_return = True
             else:
-                meta.uninteresting = meta.is_read or meta.function_return
+                meta.uninteresting |= meta.is_read or meta.function_return
 
     todo = non_terminal[:]
     while todo:
@@ -4818,12 +4818,12 @@ def translate_to_ast(
         stack_info.add_known_param(slot.offset, slot.name, slot.type)
         if slot.reg is not None:
             start_regs.set_with_meta(
-                slot.reg, make_arg(slot.offset, slot.type), RegMeta(inherited=True)
+                slot.reg, make_arg(slot.offset, slot.type), RegMeta(uninteresting=True)
             )
     for slot in abi.possible_slots:
         if slot.reg is not None:
             start_regs.set_with_meta(
-                slot.reg, make_arg(slot.offset, slot.type), RegMeta(inherited=True)
+                slot.reg, make_arg(slot.offset, slot.type), RegMeta(uninteresting=True)
             )
 
     if options.reg_vars == ["saved"]:
