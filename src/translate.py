@@ -3150,12 +3150,13 @@ def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
     return BinaryOp.icmp(sub_expr.left, "==", sub_expr.right)
 
 
-def replace_bitand(expr: Expression) -> Expression:
-    if isinstance(expr, BinaryOp) and not expr.is_floating() and expr.op == "&":
+def replace_bitand(expr: BinaryOp) -> Expression:
+    """Detect expressions using `&` for trunacting integer casts"""
+    if not expr.is_floating() and expr.op == "&":
         if expr.right == Literal(0xFF):
-            return as_type(expr, Type.int_of_size(8), silent=False)
+            return as_type(expr.left, Type.int_of_size(8), silent=False)
         if expr.right == Literal(0xFFFF):
-            return as_type(expr, Type.int_of_size(16), silent=False)
+            return as_type(expr.left, Type.int_of_size(16), silent=False)
     return expr
 
 
@@ -3429,12 +3430,7 @@ def handle_rlwinm(
     mask_end: int,
     simplify: bool = True,
 ) -> Expression:
-    # Special case truncating casts
     # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
-    if (shift, mask_begin, mask_end) == (0, 24, 31):
-        return as_type(source, Type.u8(), silent=False)
-    elif (shift, mask_begin, mask_end) == (0, 16, 31):
-        return as_type(source, Type.u16(), silent=False)
 
     # The output of the rlwinm instruction is `ROTL(source, shift) & mask`. We write this as
     # ((source << shift) & mask) | ((source >> (32 - shift)) & mask)
