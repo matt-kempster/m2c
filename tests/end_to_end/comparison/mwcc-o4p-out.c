@@ -1,6 +1,6 @@
 extern s32 global;
 
-f32 test(s32 arg0, s32 arg1, s32 arg2, f32 arg8) {
+void test(s32 arg0, s32 arg1, s32 arg2) {
     s32 temp_r3;
     s32 temp_r5;
 
@@ -12,5 +12,4 @@ f32 test(s32 arg0, s32 arg1, s32 arg2, f32 arg8) {
     global = (arg1 >> 0x1F) + ((u32) arg0 >> 0x1FU) + MIPS2C_CARRY;
     global = -arg0 == 0;
     global = (temp_r3 - (temp_r3 - 1)) - !MIPS2C_CARRY;
-    return arg8;
 }

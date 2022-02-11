@@ -1917,8 +1917,8 @@ class RegMeta:
     # True if the value derives solely from function call return values
     function_return: bool = False
 
-    # True if the value derives solely from regdata's with is_read = True or
-    # function_return = True
+    # True if the value derives solely from regdata's with is_read = True,
+    # function_return = True, or is a passed in argument
     uninteresting: bool = False
 
     # True if the regdata must be replaced by variable if it is ever read
@@ -3842,7 +3842,7 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
                 meta.uninteresting = True
                 meta.function_return = True
             else:
-                meta.uninteresting = meta.is_read or meta.function_return
+                meta.uninteresting |= meta.is_read or meta.function_return
 
     todo = non_terminal[:]
     while todo:
@@ -3870,8 +3870,8 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
 def determine_return_register(
     return_blocks: List[BlockInfo], fn_decl_provided: bool, arch: Arch
 ) -> Optional[Register]:
-    """Determine which of v0 and f0 is the most likely to contain the return
-    value, or if the function is likely void."""
+    """Determine which of the arch's base_return_regs (i.e. v0, f0) is the most
+    likely to contain the return value, or if the function is likely void."""
 
     def priority(block_info: BlockInfo, reg: Register) -> int:
         meta = block_info.final_register_states.get_meta(reg)
@@ -4920,10 +4920,14 @@ def translate_to_ast(
     for slot in abi.arg_slots:
         stack_info.add_known_param(slot.offset, slot.name, slot.type)
         if slot.reg is not None:
-            start_regs[slot.reg] = make_arg(slot.offset, slot.type)
+            start_regs.set_with_meta(
+                slot.reg, make_arg(slot.offset, slot.type), RegMeta(uninteresting=True)
+            )
     for slot in abi.possible_slots:
         if slot.reg is not None:
-            start_regs[slot.reg] = make_arg(slot.offset, slot.type)
+            start_regs.set_with_meta(
+                slot.reg, make_arg(slot.offset, slot.type), RegMeta(uninteresting=True)
+            )
 
     if options.reg_vars == ["saved"]:
         reg_vars = arch.saved_regs
