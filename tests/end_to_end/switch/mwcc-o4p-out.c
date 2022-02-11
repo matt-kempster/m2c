@@ -27,7 +27,7 @@ s32 test(s32 arg0) {
             return 2;
         }
 block_14:
-        glob = arg0 >> 1;
+        glob = arg0 / 2;
         return 2;
     }
     glob = arg0 + 1;

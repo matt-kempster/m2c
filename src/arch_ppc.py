@@ -32,6 +32,7 @@ from .translate import (
     AbiArgSlot,
     Arch,
     BinaryOp,
+    CarryBit,
     Cast,
     CmpInstrMap,
     CommentStmt,
@@ -546,11 +547,11 @@ class PpcArch(Arch):
     }
     instrs_destination_first: InstrMap = {
         # Integer arithmetic
-        # TODO: Read XER_CA in extended instrs, and set it in carrying instrs
+        # TODO: Read XER_CA in extended instrs, instead of using CarryBit
         "add": lambda a: handle_add(a),
         "addc": lambda a: handle_add(a),
-        "adde": lambda a: handle_add(a),
-        "addze": lambda a: a.reg(1),
+        "adde": lambda a: CarryBit.add_to(handle_add(a)),
+        "addze": lambda a: CarryBit.add_to(a.reg(1)),
         "addi": lambda a: handle_addi(a),
         "addic": lambda a: handle_addi(a),
         "addis": lambda a: handle_addis(a),
@@ -560,14 +561,14 @@ class PpcArch(Arch):
         "subfc": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
         ),
-        "subfe": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
+        "subfe": lambda a: CarryBit.sub_from(
+            fold_divmod(BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)))
         ),
         "subfic": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
         ),
-        "subfze": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+        "subfze": lambda a: CarryBit.sub_from(
+            fold_mul_chains(UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32()))
         ),
         "neg": lambda a: fold_mul_chains(
             UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
@@ -727,8 +728,8 @@ class PpcArch(Arch):
         ),
         # TODO: Detect if we should use fabs or fabsf
         "fabs": lambda a: fn_op("fabs", [a.reg(1)], Type.floatish()),
-        "fres": lambda a: fn_op("MIPS2C_FRES", [a.reg(1)], Type.floatish()),
-        "frsqrte": lambda a: fn_op("MIPS2C_FRSQRTE", [a.reg(1)], Type.floatish()),
+        "fres": lambda a: fn_op("__fres", [a.reg(1)], Type.floatish()),
+        "frsqrte": lambda a: fn_op("__frsqrte", [a.reg(1)], Type.floatish()),
         "fsel": lambda a: TernaryOp(
             cond=BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
             left=a.reg(2),

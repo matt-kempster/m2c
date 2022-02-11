@@ -33,8 +33,7 @@ typedef s64 MIPS2C_UNK64;
 #define MIPS2C_BREAK() (0)
 #define MIPS2C_SYNC() (0)
 
-/* Floating-point intrinisics */
-#define MIPS2C_FRES(x) (1.0 / x)            /* PPC reciprocal estimator (fres) */
-#define MIPS2C_FRSQRTE(x) (1.0 / sqrtf(x)   /* PPC inverse square root estimator (frsqrte) */
+/* Carry bit from partially-implemented instructions */
+#define MIPS2C_CARRY 0
 
 #endif

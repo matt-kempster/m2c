@@ -42,7 +42,7 @@ block_28:
                 phi_r3_5 = phi_r3_3;
                 if ((s32) glob == 0) {
                     phi_r3_4 = phi_r3_5 - 1;
-                    phi_r3 = phi_r3_4 >> 1;
+                    phi_r3 = phi_r3_4 / 2;
                 }
                 glob = phi_r3;
                 return 2;

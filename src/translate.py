@@ -781,6 +781,25 @@ class SecondF64Half(Expression):
 
 
 @dataclass(frozen=True, eq=False)
+class CarryBit(Expression):
+    type: Type = field(default_factory=Type.intish)
+
+    def dependencies(self) -> List[Expression]:
+        return []
+
+    def format(self, fmt: Formatter) -> str:
+        return "MIPS2C_CARRY"
+
+    @staticmethod
+    def add_to(expr: Expression) -> "BinaryOp":
+        return fold_divmod(BinaryOp.intptr(expr, "+", CarryBit()))
+
+    @staticmethod
+    def sub_from(expr: Expression) -> "BinaryOp":
+        return BinaryOp.intptr(expr, "-", UnaryOp("!", CarryBit(), type=Type.intish()))
+
+
+@dataclass(frozen=True, eq=False)
 class BinaryOp(Condition):
     left: Expression
     op: str
@@ -2925,15 +2944,20 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     right_expr = early_unwrap_ints(expr.right)
     divisor_shift = 0
 
-    # Rewrite PPC idiom with cntlzw instruction: CLZ(x) >> 5 --> x == 0
+    # Detect signed power-of-two division: (x >> N) + MIPS2C_CARRY --> x / (1 << N)
     if (
-        isinstance(left_expr, UnaryOp)
-        and left_expr.op == "CLZ"
-        and expr.op == ">>"
-        and isinstance(right_expr, Literal)
-        and right_expr.value == 5
+        isinstance(left_expr, BinaryOp)
+        and left_expr.op == ">>"
+        and isinstance(left_expr.right, Literal)
+        and expr.op == "+"
+        and isinstance(right_expr, CarryBit)
     ):
-        return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
+        new_denom = 1 << left_expr.right.value
+        return BinaryOp.int(
+            left=left_expr.left,
+            op="/",
+            right=Literal(new_denom),
+        )
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
     # NB: If x is signed, this is only correct if there is a sign-correcting subtraction term
@@ -3091,6 +3115,48 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
             )
 
     return original_expr
+
+
+def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
+    """
+    Simplify an expression matching `CLZ(x) >> 5` into `x == 0`,
+    and further simplify `(a - b) == 0` into `a == b`.
+    """
+    # Check that the outer expression is `>>`
+    if expr.is_floating() or expr.op != ">>":
+        return expr
+
+    # Match `CLZ(x) >> 5`, or return the original expr
+    left_expr = early_unwrap_ints(expr.left)
+    right_expr = early_unwrap_ints(expr.right)
+    if not (
+        isinstance(left_expr, UnaryOp)
+        and left_expr.op == "CLZ"
+        and isinstance(right_expr, Literal)
+        and right_expr.value == 5
+    ):
+        return expr
+
+    # If the inner `x` is not `(a - b)`, return `x == 0`
+    sub_expr = early_unwrap(left_expr.expr)
+    if not (
+        isinstance(sub_expr, BinaryOp)
+        and not sub_expr.is_floating()
+        and sub_expr.op == "-"
+    ):
+        return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
+
+    # ...otherwise return `a == b`
+    return BinaryOp.icmp(sub_expr.left, "==", sub_expr.right)
+
+
+def replace_bitand(expr: Expression) -> Expression:
+    if isinstance(expr, BinaryOp) and not expr.is_floating() and expr.op == "&":
+        if expr.right == Literal(0xFF):
+            return as_type(expr, Type.int_of_size(8), silent=False)
+        if expr.right == Literal(0xFFFF):
+            return as_type(expr, Type.int_of_size(16), silent=False)
+    return expr
 
 
 def fold_mul_chains(expr: Expression) -> Expression:
@@ -3361,6 +3427,7 @@ def handle_rlwinm(
     shift: int,
     mask_begin: int,
     mask_end: int,
+    simplify: bool = True,
 ) -> Expression:
     # Special case truncating casts
     # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
@@ -3379,6 +3446,10 @@ def handle_rlwinm(
     left_mask = (all_ones << left_shift) & mask
     right_mask = (all_ones >> right_shift) & mask
 
+    # We only simplify if the `simplify` argument is True, and there will be no `|` in the
+    # resulting expression. If there is an `|`, the expression is best left as bitwise math
+    simplify = simplify and sum([left_mask != 0, right_mask != 0]) == 1
+
     if isinstance(source, Literal):
         upper_value = (source.value << left_shift) & mask
         lower_value = (source.value >> right_shift) & mask
@@ -3393,20 +3464,30 @@ def handle_rlwinm(
             upper_bits = BinaryOp.int(
                 left=upper_bits, op="<<", right=Literal(left_shift)
             )
+
+        if simplify:
+            upper_bits = fold_mul_chains(upper_bits)
+
         if left_mask != (all_ones << left_shift) & all_ones:
             upper_bits = BinaryOp.int(left=upper_bits, op="&", right=Literal(left_mask))
+            if simplify:
+                upper_bits = replace_bitand(upper_bits)
 
-    lower_bits: Optional[BinaryOp]
+    lower_bits: Optional[Expression]
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = fold_divmod(
-            BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
-        )
+        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+
+        if simplify:
+            lower_bits = replace_clz_shift(fold_divmod(lower_bits))
+
         if right_mask != (all_ones >> right_shift) & all_ones:
             lower_bits = BinaryOp.int(
                 left=lower_bits, op="&", right=Literal(right_mask)
             )
+            if simplify:
+                lower_bits = replace_bitand(lower_bits)
 
     if upper_bits is None and lower_bits is None:
         return Literal(0)
@@ -3414,7 +3495,7 @@ def handle_rlwinm(
         assert lower_bits is not None
         return lower_bits
     elif lower_bits is None:
-        return fold_mul_chains(upper_bits)
+        return upper_bits
     else:
         return BinaryOp.int(left=upper_bits, op="|", right=lower_bits)
 
@@ -3434,7 +3515,8 @@ def handle_rlwimi(
     if source == Literal(0):
         # If the source is 0, there are no bits inserted. (This may look like `x &= ~0x10`)
         return masked_base
-    inserted = handle_rlwinm(source, shift, mask_begin, mask_end)
+    # Set `simplify=False` to keep the `inserted` expression as bitwise math instead of `*` or `/`
+    inserted = handle_rlwinm(source, shift, mask_begin, mask_end, simplify=False)
     if inserted == mask_literal:
         # If this instruction will set all the bits in the mask, we can OR the values
         # together without masking the base. (`x |= 0xF0` instead of `x = (x & ~0xF0) | 0xF0`)
