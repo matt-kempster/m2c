@@ -3482,7 +3482,7 @@ def handle_rlwinm(
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = BinaryOp.int(left=source, op=">>", right=Literal(right_shift))
+        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
 
         if simplify:
             lower_bits = replace_clz_shift(fold_divmod(lower_bits))

@@ -1,11 +1,11 @@
 void test(s32 arg0, s32 arg1) {
-    s32 temp_ctr;
     s32 temp_ctr_2;
     s32 temp_r5;
     s32 temp_r6;
+    u32 temp_ctr;
     void *temp_r5_2;
     s32 phi_r6;
-    s32 phi_ctr;
+    u32 phi_ctr;
     s32 phi_r6_2;
     s8 *phi_r3;
     s32 phi_ctr_2;
@@ -15,7 +15,7 @@ void test(s32 arg0, s32 arg1) {
     if (arg1 > 0) {
         temp_r5 = arg1 - 8;
         if (arg1 > 8) {
-            phi_ctr = (temp_r5 + 7) >> 3;
+            phi_ctr = (u32) (temp_r5 + 7) >> 3U;
             if (temp_r5 > 0) {
                 do {
                     temp_r5_2 = arg0 + phi_r6;
