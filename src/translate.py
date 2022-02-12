@@ -880,8 +880,15 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def s32(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(left=as_s32(left), op=op, right=as_s32(right), type=Type.s32())
+    def s32(
+        left: Expression, op: str, right: Expression, silent: bool = False
+    ) -> "BinaryOp":
+        return BinaryOp(
+            left=as_s32(left, silent=silent),
+            op=op,
+            right=as_s32(right, silent=silent),
+            type=Type.s32(),
+        )
 
     @staticmethod
     def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -2953,10 +2960,11 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         and isinstance(right_expr, CarryBit)
     ):
         new_denom = 1 << left_expr.right.value
-        return BinaryOp.int(
+        return BinaryOp.s32(
             left=left_expr.left,
             op="/",
             right=Literal(new_denom),
+            silent=True,
         )
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
@@ -3011,11 +3019,13 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         )
 
     # Remove outer error term: ((x / N) + ((x / N) >> 31)) --> x / N
+    # As N gets close to (1 << 30), this is no longer a negligible error term
     if (
         expr.op == "+"
         and isinstance(left_expr, BinaryOp)
         and left_expr.op == "/"
         and isinstance(left_expr.right, Literal)
+        and left_expr.right.value <= (1 << 29)
         and isinstance(right_expr, BinaryOp)
         and early_unwrap_ints(right_expr.left) == left_expr
         and right_expr.op == ">>"
@@ -3137,21 +3147,20 @@ def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
     ):
         return expr
 
-    # If the inner `x` is not `(a - b)`, return `x == 0`
+    # If the inner `x` is `(a - b)`, return `a == b`
     sub_expr = early_unwrap(left_expr.expr)
-    if not (
+    if (
         isinstance(sub_expr, BinaryOp)
         and not sub_expr.is_floating()
         and sub_expr.op == "-"
     ):
-        return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
+        return BinaryOp.icmp(sub_expr.left, "==", sub_expr.right)
 
-    # ...otherwise return `a == b`
-    return BinaryOp.icmp(sub_expr.left, "==", sub_expr.right)
+    return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
 
 
 def replace_bitand(expr: BinaryOp) -> Expression:
-    """Detect expressions using `&` for trunacting integer casts"""
+    """Detect expressions using `&` for truncating integer casts"""
     if not expr.is_floating() and expr.op == "&":
         if expr.right == Literal(0xFF):
             return as_type(expr.left, Type.int_of_size(8), silent=False)
@@ -3444,7 +3453,7 @@ def handle_rlwinm(
 
     # We only simplify if the `simplify` argument is True, and there will be no `|` in the
     # resulting expression. If there is an `|`, the expression is best left as bitwise math
-    simplify = simplify and sum([left_mask != 0, right_mask != 0]) == 1
+    simplify = simplify and not (left_mask and right_mask)
 
     if isinstance(source, Literal):
         upper_value = (source.value << left_shift) & mask
@@ -3473,7 +3482,7 @@ def handle_rlwinm(
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+        lower_bits = BinaryOp.int(left=source, op=">>", right=Literal(right_shift))
 
         if simplify:
             lower_bits = replace_clz_shift(fold_divmod(lower_bits))

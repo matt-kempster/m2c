@@ -1,12 +1,12 @@
 s32 test(s32 arg0) {
+    s32 temp_ctr;
     s32 temp_ctr_2;
     s32 temp_r10;
     s32 temp_r29;
     s32 temp_r30;
     s32 temp_r30_2;
-    u32 temp_ctr;
     s32 phi_r31;
-    u32 phi_ctr;
+    s32 phi_ctr;
     s32 phi_r29;
     s32 phi_ctr_2;
     s32 phi_r30;
@@ -30,7 +30,7 @@ loop_9:
         phi_r29_2 = 0;
         if (arg0 > 0) {
             if (arg0 > 8) {
-                phi_ctr = (u32) (temp_r10 + 7) >> 3U;
+                phi_ctr = (temp_r10 + 7) >> 3;
                 phi_r11 = 0;
                 if (temp_r10 > 0) {
                     do {

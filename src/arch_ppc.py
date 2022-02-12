@@ -568,10 +568,12 @@ class PpcArch(Arch):
             BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
         ),
         "subfze": lambda a: CarryBit.sub_from(
-            fold_mul_chains(UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32()))
+            fold_mul_chains(
+                UnaryOp(op="-", expr=as_s32(a.reg(1), silent=True), type=Type.s32())
+            )
         ),
         "neg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+            UnaryOp(op="-", expr=as_s32(a.reg(1), silent=True), type=Type.s32())
         ),
         "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
         "divwu": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
