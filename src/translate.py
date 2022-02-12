@@ -117,7 +117,7 @@ class Arch(ArchFlowGraph):
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
-PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI"}
+PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI", "CLZ"}
 
 
 @dataclass
@@ -781,6 +781,25 @@ class SecondF64Half(Expression):
 
 
 @dataclass(frozen=True, eq=False)
+class CarryBit(Expression):
+    type: Type = field(default_factory=Type.intish)
+
+    def dependencies(self) -> List[Expression]:
+        return []
+
+    def format(self, fmt: Formatter) -> str:
+        return "MIPS2C_CARRY"
+
+    @staticmethod
+    def add_to(expr: Expression) -> "BinaryOp":
+        return fold_divmod(BinaryOp.intptr(expr, "+", CarryBit()))
+
+    @staticmethod
+    def sub_from(expr: Expression) -> "BinaryOp":
+        return BinaryOp.intptr(expr, "-", UnaryOp("!", CarryBit(), type=Type.intish()))
+
+
+@dataclass(frozen=True, eq=False)
 class BinaryOp(Condition):
     left: Expression
     op: str
@@ -861,8 +880,15 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def s32(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(left=as_s32(left), op=op, right=as_s32(right), type=Type.s32())
+    def s32(
+        left: Expression, op: str, right: Expression, silent: bool = False
+    ) -> "BinaryOp":
+        return BinaryOp(
+            left=as_s32(left, silent=silent),
+            op=op,
+            right=as_s32(right, silent=silent),
+            type=Type.s32(),
+        )
 
     @staticmethod
     def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -1015,6 +1041,10 @@ class UnaryOp(Condition):
         return UnaryOp("!", self, type=Type.bool())
 
     def format(self, fmt: Formatter) -> str:
+        # These aren't real operators (or functions); format them as a fn call
+        if self.op in PSEUDO_FUNCTION_OPS:
+            return f"{self.op}({self.expr.format(fmt)})"
+
         return f"{self.op}{self.expr.format(fmt)}"
 
 
@@ -2921,6 +2951,22 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     right_expr = early_unwrap_ints(expr.right)
     divisor_shift = 0
 
+    # Detect signed power-of-two division: (x >> N) + MIPS2C_CARRY --> x / (1 << N)
+    if (
+        isinstance(left_expr, BinaryOp)
+        and left_expr.op == ">>"
+        and isinstance(left_expr.right, Literal)
+        and expr.op == "+"
+        and isinstance(right_expr, CarryBit)
+    ):
+        new_denom = 1 << left_expr.right.value
+        return BinaryOp.s32(
+            left=left_expr.left,
+            op="/",
+            right=Literal(new_denom),
+            silent=True,
+        )
+
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
     # NB: If x is signed, this is only correct if there is a sign-correcting subtraction term
     if (
@@ -2945,11 +2991,16 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         if (
             isinstance(div_expr, BinaryOp)
             and early_unwrap_ints(div_expr.left) == left_expr
-            and div_expr.op == "/"
-            and early_unwrap_ints(div_expr.right) == mod_base
             and isinstance(mod_base, Literal)
         ):
-            return BinaryOp.int(left=left_expr, op="%", right=right_expr.right)
+            # Accept either `(x / N) * N` or `(x >> N) * M` (where `1 << N == M`)
+            divisor = early_unwrap_ints(div_expr.right)
+            if (div_expr.op == "/" and divisor == mod_base) or (
+                div_expr.op == ">>"
+                and isinstance(divisor, Literal)
+                and (1 << divisor.value) == mod_base.value
+            ):
+                return BinaryOp.int(left=left_expr, op="%", right=right_expr.right)
 
     # Detect dividing by a negative: ((x >> 31) - (x / N)) --> x / -N
     if (
@@ -2968,11 +3019,13 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         )
 
     # Remove outer error term: ((x / N) + ((x / N) >> 31)) --> x / N
+    # As N gets close to (1 << 30), this is no longer a negligible error term
     if (
         expr.op == "+"
         and isinstance(left_expr, BinaryOp)
         and left_expr.op == "/"
         and isinstance(left_expr.right, Literal)
+        and left_expr.right.value <= (1 << 29)
         and isinstance(right_expr, BinaryOp)
         and early_unwrap_ints(right_expr.left) == left_expr
         and right_expr.op == ">>"
@@ -3072,6 +3125,48 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
             )
 
     return original_expr
+
+
+def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
+    """
+    Simplify an expression matching `CLZ(x) >> 5` into `x == 0`,
+    and further simplify `(a - b) == 0` into `a == b`.
+    """
+    # Check that the outer expression is `>>`
+    if expr.is_floating() or expr.op != ">>":
+        return expr
+
+    # Match `CLZ(x) >> 5`, or return the original expr
+    left_expr = early_unwrap_ints(expr.left)
+    right_expr = early_unwrap_ints(expr.right)
+    if not (
+        isinstance(left_expr, UnaryOp)
+        and left_expr.op == "CLZ"
+        and isinstance(right_expr, Literal)
+        and right_expr.value == 5
+    ):
+        return expr
+
+    # If the inner `x` is `(a - b)`, return `a == b`
+    sub_expr = early_unwrap(left_expr.expr)
+    if (
+        isinstance(sub_expr, BinaryOp)
+        and not sub_expr.is_floating()
+        and sub_expr.op == "-"
+    ):
+        return BinaryOp.icmp(sub_expr.left, "==", sub_expr.right)
+
+    return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
+
+
+def replace_bitand(expr: BinaryOp) -> Expression:
+    """Detect expressions using `&` for truncating integer casts"""
+    if not expr.is_floating() and expr.op == "&":
+        if expr.right == Literal(0xFF):
+            return as_type(expr.left, Type.int_of_size(8), silent=False)
+        if expr.right == Literal(0xFFFF):
+            return as_type(expr.left, Type.int_of_size(16), silent=False)
+    return expr
 
 
 def fold_mul_chains(expr: Expression) -> Expression:
@@ -3342,13 +3437,9 @@ def handle_rlwinm(
     shift: int,
     mask_begin: int,
     mask_end: int,
+    simplify: bool = True,
 ) -> Expression:
-    # Special case truncating casts
     # TODO: Detect shift + truncate, like `(x << 2) & 0xFFF3` or `(x >> 2) & 0x3FFF`
-    if (shift, mask_begin, mask_end) == (0, 24, 31):
-        return as_type(source, Type.u8(), silent=False)
-    elif (shift, mask_begin, mask_end) == (0, 16, 31):
-        return as_type(source, Type.u16(), silent=False)
 
     # The output of the rlwinm instruction is `ROTL(source, shift) & mask`. We write this as
     # ((source << shift) & mask) | ((source >> (32 - shift)) & mask)
@@ -3359,6 +3450,10 @@ def handle_rlwinm(
     right_shift = 32 - shift
     left_mask = (all_ones << left_shift) & mask
     right_mask = (all_ones >> right_shift) & mask
+
+    # We only simplify if the `simplify` argument is True, and there will be no `|` in the
+    # resulting expression. If there is an `|`, the expression is best left as bitwise math
+    simplify = simplify and not (left_mask and right_mask)
 
     if isinstance(source, Literal):
         upper_value = (source.value << left_shift) & mask
@@ -3374,26 +3469,38 @@ def handle_rlwinm(
             upper_bits = BinaryOp.int(
                 left=upper_bits, op="<<", right=Literal(left_shift)
             )
+
+        if simplify:
+            upper_bits = fold_mul_chains(upper_bits)
+
         if left_mask != (all_ones << left_shift) & all_ones:
             upper_bits = BinaryOp.int(left=upper_bits, op="&", right=Literal(left_mask))
+            if simplify:
+                upper_bits = replace_bitand(upper_bits)
 
-    lower_bits: Optional[BinaryOp]
+    lower_bits: Optional[Expression]
     if right_mask == 0:
         lower_bits = None
     else:
         lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+
+        if simplify:
+            lower_bits = replace_clz_shift(fold_divmod(lower_bits))
+
         if right_mask != (all_ones >> right_shift) & all_ones:
             lower_bits = BinaryOp.int(
                 left=lower_bits, op="&", right=Literal(right_mask)
             )
+            if simplify:
+                lower_bits = replace_bitand(lower_bits)
 
     if upper_bits is None and lower_bits is None:
         return Literal(0)
     elif upper_bits is None:
         assert lower_bits is not None
-        return fold_divmod(lower_bits)
+        return lower_bits
     elif lower_bits is None:
-        return fold_mul_chains(upper_bits)
+        return upper_bits
     else:
         return BinaryOp.int(left=upper_bits, op="|", right=lower_bits)
 
@@ -3413,7 +3520,8 @@ def handle_rlwimi(
     if source == Literal(0):
         # If the source is 0, there are no bits inserted. (This may look like `x &= ~0x10`)
         return masked_base
-    inserted = handle_rlwinm(source, shift, mask_begin, mask_end)
+    # Set `simplify=False` to keep the `inserted` expression as bitwise math instead of `*` or `/`
+    inserted = handle_rlwinm(source, shift, mask_begin, mask_end, simplify=False)
     if inserted == mask_literal:
         # If this instruction will set all the bits in the mask, we can OR the values
         # together without masking the base. (`x |= 0xF0` instead of `x = (x & ~0xF0) | 0xF0`)

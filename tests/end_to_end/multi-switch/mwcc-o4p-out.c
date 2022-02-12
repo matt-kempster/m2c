@@ -3,9 +3,14 @@ extern s32 glob;
 s32 test(s32 arg0) {
     s32 phi_r3;
     s32 phi_r3_2;
+    s32 phi_r3_3;
+    s32 phi_r3_4;
+    s32 phi_r3_5;
 
     phi_r3_2 = arg0;
-    phi_r3 = arg0;
+    phi_r3_3 = arg0;
+    phi_r3_4 = arg0;
+    phi_r3_5 = arg0;
     if (arg0 != 0x32) {
         if (arg0 < 0x32) {
             switch (arg0) { // switch 1; irregular
@@ -19,7 +24,7 @@ s32 test(s32 arg0) {
                 glob = arg0 - 1;
                 return 2;
             default: // switch 1
-                phi_r3 = arg0 * 2;
+                phi_r3_3 = arg0 * 2;
                 goto block_28;
             }
         } else {
@@ -33,8 +38,11 @@ s32 test(s32 arg0) {
                 return 2;
             case 0x66:
 block_28:
+                phi_r3 = phi_r3_3;
+                phi_r3_5 = phi_r3_3;
                 if ((s32) glob == 0) {
-                    phi_r3 = MIPS2C_ERROR(unknown instruction: addze $r3, $r3);
+                    phi_r3_4 = phi_r3_5 - 1;
+                    phi_r3 = phi_r3_4 / 2;
                 }
                 glob = phi_r3;
                 return 2;
