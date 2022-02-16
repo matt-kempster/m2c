@@ -193,6 +193,8 @@ class AsmMatcher:
         return InstructionMeta.missing()
 
     def apply(self, repl: Replacement, arch: ArchAsm) -> None:
+        # TODO: It is possible to check the output registers of the replaced input
+        # instructions to determine a set of clobbered registers.
         for part in repl.new_body:
             if isinstance(part, AsmInstruction):
                 # Parse any AsmInstructions into Instructions before substituting

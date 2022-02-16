@@ -21,6 +21,7 @@ from .parse_instruction import (
     JumpTarget,
     Register,
     get_jump_target,
+    filter_ir_arguments,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -606,6 +607,9 @@ class MipsArch(Arch):
     def parse(
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
+        inputs: List[Argument] = []
+        outputs: List[Argument] = []
+        clobbers: List[Argument] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
@@ -615,22 +619,31 @@ class MipsArch(Arch):
 
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
+            inputs = [Register("ra")]
             is_return = True
             has_delay_slot = True
         elif mnemonic == "jr":
             # Jump table (switch)
             assert isinstance(args[0], Register)
+            inputs.append(args[0])
             jump_target = args[0]
             is_conditional = True
             has_delay_slot = True
         elif mnemonic == "jal":
             # Function call to label
+            inputs = [r for r in cls.argument_regs]
+            outputs = [r for r in cls.all_return_regs]
+            clobbers = [r for r in cls.temp_regs]
             assert isinstance(args[0], AsmGlobalSymbol)
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
             # Function call to pointer
             assert isinstance(args[0], Register)
+            inputs = [r for r in cls.argument_regs]
+            inputs.append(args[0])
+            outputs = [r for r in cls.all_return_regs]
+            clobbers = [r for r in cls.temp_regs]
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
@@ -650,6 +663,13 @@ class MipsArch(Arch):
             "bc1fl",
         ):
             # Branch-likely
+            if mnemonic in ("beql", "bnel"):
+                inputs.append(args[0])
+                inputs.append(args[1])
+            elif mnemonic in ("bc1tl", "bc1fl"):
+                inputs.append(Register("condition_bit"))
+            else:
+                inputs.append(args[0])
             jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_branch_likely = True
@@ -667,14 +687,93 @@ class MipsArch(Arch):
             "bc1f",
         ):
             # Normal branch
+            if mnemonic in ("beq", "bne"):
+                inputs = [args[0], args[1]]
+            elif mnemonic in ("bc1t", "bc1f"):
+                inputs = [Register("condition_bit")]
+            else:
+                inputs = [args[0]]
             jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_conditional = True
+        elif mnemonic in cls.instrs_no_dest:
+            inputs = args[:]
+        elif mnemonic in cls.instrs_store:
+            inputs = [args[0]]
+            outputs = [args[1]]
+        elif mnemonic in cls.instrs_source_first:
+            inputs = [args[0]]
+            outputs = [args[1]]
+        elif mnemonic in cls.instrs_destination_first:
+            mn_parts = mnemonic.split(".")
+            regs = [r for r in args if isinstance(r, Register)]
+            if mnemonic in (
+                "add.d",
+                "sub.d",
+                "neg.d",
+                "abs.d",
+                "sqrt.d",
+                "div.d",
+                "mul.d",
+            ):
+                # f64 arithmetic operations; all registers are f64's
+                assert len(regs) == len(args), (args, regs)
+                for reg in regs[1:]:
+                    inputs.extend([reg, reg.other_f64_reg()])
+                outputs = [regs[0], regs[0].other_f64_reg()]
+            elif mn_parts[0] in ("cvt", "trunc"):
+                # f64 conversion; either the input or output will be an f64
+                assert len(regs) == len(args), (args, regs)
+                if mn_parts[2] == "d":
+                    inputs = [regs[1], regs[1].other_f64_reg()]
+                else:
+                    inputs = [regs[1]]
+                if mn_parts[1] == "d":
+                    outputs = [regs[0], regs[0].other_f64_reg()]
+                else:
+                    outputs = [regs[0]]
+            else:
+                inputs = args[1:]
+                outputs = [args[0]]
+        elif mnemonic in cls.instrs_float_comp:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            if mnemonic.endswith(".d"):
+                inputs = [
+                    args[0],
+                    args[0].other_f64_reg(),
+                    args[1],
+                    args[1].other_f64_reg(),
+                ]
+            else:
+                inputs = [args[0], args[1]]
+            outputs = [Register("condition_bit")]
+        elif mnemonic in cls.instrs_hi_lo:
+            inputs = args[:]
+            outputs = [Register("hi"), Register("lo")]
+        elif mnemonic in cls.instrs_ignore:
+            # TODO: There might be some instrs to handle here
+            pass
+        elif args and isinstance(args[0], Register):
+            # If the mnemonic is unsupported, guess
+            inputs = args[1:]
+            outputs = [args[0]]
+
+        # Any AsmAddressMode read or write will also depend on its RHS register
+        for arg in inputs[:] + outputs:
+            if isinstance(arg, AsmAddressMode) and arg.rhs not in inputs:
+                inputs.append(arg)
 
         return Instruction(
             mnemonic=mnemonic,
             args=args,
             meta=meta,
+            inputs=filter_ir_arguments(inputs),
+            outputs=filter_ir_arguments(outputs),
+            clobbers=filter_ir_arguments(clobbers),
             jump_target=jump_target,
             function_target=function_target,
             has_delay_slot=has_delay_slot,

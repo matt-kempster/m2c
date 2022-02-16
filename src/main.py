@@ -17,6 +17,7 @@ from .translate import (
     GlobalInfo,
     InstrProcessingFailure,
     translate_to_ast,
+    narrow_func_call_outputs,
 )
 from .types import TypePool
 from .arch_mips import MipsArch
@@ -126,6 +127,7 @@ def run(options: Options) -> int:
     flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
         try:
+            narrow_func_call_outputs(function, global_info)
             flow_graphs.append(build_flowgraph(function, global_info.asm_data, arch))
         except Exception as e:
             # Store the exception for later, to preserve the order in the output

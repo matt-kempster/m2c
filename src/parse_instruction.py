@@ -143,6 +143,11 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
+    # TODO: Need a way to indicate that an instruction can clobber arbitrary memory
+    inputs: List[Argument]
+    outputs: List[Argument]
+    clobbers: List[Argument]
+
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
     is_conditional: bool = False
@@ -153,6 +158,9 @@ class Instruction:
     # bools should be merged into a 3-valued enum?)
     has_delay_slot: bool = False
     is_branch_likely: bool = False
+
+    # TODO
+    # evaluator: object
 
     def is_jump(self) -> bool:
         return self.jump_target is not None or self.is_return
@@ -166,6 +174,18 @@ class Instruction:
     def arch_mnemonic(self, arch: "ArchAsm") -> str:
         """Combine architecture name with mnemonic for pattern matching"""
         return f"{arch.arch}:{self.mnemonic}"
+
+
+def filter_ir_arguments(args: List[Argument]) -> List[Argument]:
+    """
+    Filter a list of Arguments that may be used as Instruction inputs, outputs,
+    or clobbers. Removes duplicates and constant values (like AsmLiterals).
+    """
+    output: List[Argument] = []
+    for arg in args:
+        if isinstance(arg, (Register, AsmAddressMode)) and arg not in output:
+            output.append(arg)
+    return output
 
 
 class ArchAsmParsing(abc.ABC):
@@ -441,4 +461,5 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         base = parse_asm_instruction(line, arch)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
+        raise
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")

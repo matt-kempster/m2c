@@ -21,6 +21,7 @@ from .parse_instruction import (
     Macro,
     Register,
     get_jump_target,
+    filter_ir_arguments,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -409,13 +410,24 @@ class PpcArch(Arch):
     def parse(
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
+        inputs: List[Argument] = []
+        outputs: List[Argument] = []
+        clobbers: List[Argument] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
         is_return = False
 
+        cr0_bits: List[Argument] = [
+            Register("cr0_lt"),
+            Register("cr0_gt"),
+            Register("cr0_eq"),
+            Register("cr0_so"),
+        ]
+
         if mnemonic == "blr":
             # Return
+            inputs = [Register("lr")]
             is_return = True
         elif mnemonic in (
             "beqlr",
@@ -430,21 +442,34 @@ class PpcArch(Arch):
             "bsolr",
         ):
             # Conditional return
+            inputs = cr0_bits + [Register("lr")]
             is_return = True
             is_conditional = True
         elif mnemonic == "bctr":
             # Jump table (switch)
+            inputs = [Register("ctr")]
             jump_target = Register("ctr")
             is_conditional = True
         elif mnemonic == "bl":
             # Function call to label
+            inputs = [r for r in cls.argument_regs]
+            outputs = [r for r in cls.all_return_regs]
+            clobbers = [r for r in cls.temp_regs]
             assert isinstance(args[0], AsmGlobalSymbol)
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
+            inputs = [r for r in cls.argument_regs]
+            inputs.append(Register("clr"))
+            outputs = [r for r in cls.all_return_regs]
+            clobbers = [r for r in cls.temp_regs]
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
+            inputs = [r for r in cls.argument_regs]
+            inputs.append(Register("lr"))
+            outputs = [r for r in cls.all_return_regs]
+            clobbers = [r for r in cls.temp_regs]
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
@@ -462,13 +487,57 @@ class PpcArch(Arch):
             "bdz.fictive",
         ):
             # Normal branch
+            inputs = cr0_bits[:]
             jump_target = get_jump_target(args[-1])
             is_conditional = True
+        elif mnemonic in cls.instrs_store:
+            inputs = [args[0]]
+            outputs = [args[1]]
+        elif mnemonic in cls.instrs_store_update:
+            inputs = args[:]
+            outputs = [args[1]]
+        elif mnemonic in cls.instrs_load_update:
+            inputs = args[1:]
+            if isinstance(args[1], AsmAddressMode):
+                outputs = [args[0], args[1].rhs]
+            else:
+                outputs = [args[0], args[1]]
+        elif mnemonic in cls.instrs_no_dest:
+            inputs = args[:]
+        elif mnemonic.rstrip(".") in cls.instrs_destination_first:
+            inputs = args[1:]
+            outputs = [args[0]]
+        elif mnemonic in cls.instrs_implicit_destination:
+            inputs = args[:]
+            outputs = [cls.instrs_implicit_destination[mnemonic][0]]
+        elif mnemonic in cls.instrs_ppc_compare:
+            inputs = args[:]
+            outputs = cr0_bits[:]
+        elif mnemonic in cls.instrs_ignore:
+            # TODO: There might be some instrs to handle here
+            # TODO: Implement stmw/lmw? (Only used in prologue/epilogue)
+            pass
+        elif args and isinstance(args[0], Register):
+            # If the mnemonic is unsupported, guess
+            inputs = args[1:]
+            outputs = [args[0]]
+
+        if mnemonic.endswith("."):
+            # PPC instructions ending in `.` update the condition reg
+            outputs.extend(cr0_bits)
+
+        # Any AsmAddressMode read or write will also depend on its RHS register
+        for arg in inputs[:] + outputs:
+            if isinstance(arg, AsmAddressMode) and arg.rhs not in inputs:
+                inputs.append(arg)
 
         return Instruction(
             mnemonic=mnemonic,
             args=args,
             meta=meta,
+            inputs=filter_ir_arguments(inputs),
+            outputs=filter_ir_arguments(outputs),
+            clobbers=filter_ir_arguments(clobbers),
             jump_target=jump_target,
             function_target=function_target,
             is_conditional=is_conditional,
