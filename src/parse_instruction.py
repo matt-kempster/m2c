@@ -143,14 +143,8 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
-    # TODO
-    # inputs: List[Argument]
-    # outputs: List[Argument]
-    # clobbers: List[Argument]
-    # evaluator: object
-
     jump_target: Optional[Union[JumpTarget, Register]] = None
-    function_target: Optional[Union[JumpTarget, Register]] = None
+    function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
     is_conditional: bool = False
     is_return: bool = False
 
@@ -210,15 +204,6 @@ class ArchAsm(ArchAsmParsing):
     def missing_return(self) -> List[Instruction]:
         ...
 
-    @staticmethod
-    def get_branch_target(args: List[Argument]) -> JumpTarget:
-        label = args[-1]
-        if isinstance(label, AsmGlobalSymbol):
-            return JumpTarget(label.symbol_name)
-        if not isinstance(label, JumpTarget):
-            raise DecompFailure(f"Couldn't parse instruction: invalid branch target")
-        return label
-
     @abc.abstractmethod
     def parse(
         self, mnemonic: str, args: List[Argument], meta: InstructionMeta
@@ -275,6 +260,14 @@ def constant_fold(arg: Argument) -> Argument:
         if arg.op == "&":
             return AsmLiteral(lhs.value & rhs.value)
     return arg
+
+
+def get_jump_target(label: Argument) -> JumpTarget:
+    if isinstance(label, AsmGlobalSymbol):
+        return JumpTarget(label.symbol_name)
+    if not isinstance(label, JumpTarget):
+        raise DecompFailure(f"Couldn't parse instruction: invalid branch target")
+    return label
 
 
 # Main parser.

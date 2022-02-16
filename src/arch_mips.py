@@ -20,6 +20,7 @@ from .parse_instruction import (
     InstructionMeta,
     JumpTarget,
     Register,
+    get_jump_target,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -603,7 +604,7 @@ class MipsArch(Arch):
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
         jump_target: Optional[Union[JumpTarget, Register]] = None
-        function_target: Optional[Union[JumpTarget, Register]] = None
+        function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
         is_branch_likely = False
         is_conditional = False
@@ -621,7 +622,8 @@ class MipsArch(Arch):
             has_delay_slot = True
         elif mnemonic == "jal":
             # Function call to label
-            function_target = cls.get_branch_target(args)
+            assert isinstance(args[0], AsmGlobalSymbol)
+            function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
             # Function call to pointer
@@ -630,7 +632,7 @@ class MipsArch(Arch):
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
             # Unconditional jump
-            jump_target = cls.get_branch_target(args)
+            jump_target = get_jump_target(args[0])
             has_delay_slot = True
         elif mnemonic in (
             "beql",
@@ -645,7 +647,7 @@ class MipsArch(Arch):
             "bc1fl",
         ):
             # Branch-likely
-            jump_target = cls.get_branch_target(args)
+            jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_branch_likely = True
             is_conditional = True
@@ -662,7 +664,7 @@ class MipsArch(Arch):
             "bc1f",
         ):
             # Normal branch
-            jump_target = cls.get_branch_target(args)
+            jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_conditional = True
 

@@ -20,6 +20,7 @@ from .parse_instruction import (
     JumpTarget,
     Macro,
     Register,
+    get_jump_target,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -409,7 +410,7 @@ class PpcArch(Arch):
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
         jump_target: Optional[Union[JumpTarget, Register]] = None
-        function_target: Optional[Union[JumpTarget, Register]] = None
+        function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
         is_return = False
 
@@ -437,7 +438,8 @@ class PpcArch(Arch):
             is_conditional = True
         elif mnemonic == "bl":
             # Function call to label
-            function_target = cls.get_branch_target(args)
+            assert isinstance(args[0], AsmGlobalSymbol)
+            function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
             function_target = Register("ctr")
@@ -446,7 +448,7 @@ class PpcArch(Arch):
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
-            jump_target = cls.get_branch_target(args)
+            jump_target = get_jump_target(args[0])
         elif mnemonic in (
             "ble",
             "blt",
@@ -460,7 +462,7 @@ class PpcArch(Arch):
             "bdz.fictive",
         ):
             # Normal branch
-            jump_target = cls.get_branch_target(args)
+            jump_target = get_jump_target(args[-1])
             is_conditional = True
 
         return Instruction(
