@@ -4191,16 +4191,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             elif arch_mnemonic == "ppc:bctrl":
                 fn_target = args.regs[Register("ctr")]
             elif arch_mnemonic == "mips:jalr":
-                if args.count() == 1:
-                    fn_target = args.reg(0)
-                elif args.count() == 2:
-                    if args.reg_ref(0) != arch.return_address_reg:
-                        raise DecompFailure(
-                            "Two-argument form of jalr is not supported."
-                        )
-                    fn_target = args.reg(1)
-                else:
-                    raise DecompFailure(f"jalr takes 2 arguments, {args.count()} given")
+                fn_target = args.reg(1)
             else:
                 assert False, f"Unhandled fn call mnemonic {arch_mnemonic}"
 

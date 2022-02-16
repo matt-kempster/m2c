@@ -5,18 +5,22 @@ from typing import (
     Optional,
     Set,
     Tuple,
+    Union,
 )
 
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
+    Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
+    AsmInstruction,
     AsmLiteral,
     Instruction,
     InstructionMeta,
     JumpTarget,
     Register,
+    get_jump_target,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -198,9 +202,7 @@ class ModP2Pattern1(SimpleAsmPattern):
         val = (m.literals["N"] & 0xFFFF) + 1
         if val & (val - 1):
             return None  # not a power of two
-        mod = m.derived_instr(
-            "mod.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(val)]
-        )
+        mod = AsmInstruction("mod.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(val)])
         return Replacement([mod], len(m.body) - 1)
 
 
@@ -224,8 +226,9 @@ class ModP2Pattern2(SimpleAsmPattern):
             val += ((m.literals["LO"] + 0x8000) & 0xFFFF) - 0x8000
         if not val or val & (val - 1):
             return None  # not a power of two
-        mod = m.derived_instr(
-            "mod.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(val)]
+        mod = AsmInstruction(
+            "mod.fictive",
+            [m.regs["o"], m.regs["i"], AsmLiteral(val)],
         )
         return Replacement([mod], len(m.body) - 1)
 
@@ -243,7 +246,7 @@ class DivP2Pattern1(SimpleAsmPattern):
 
     def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
-        div = m.derived_instr(
+        div = AsmInstruction(
             "div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2 ** shift)]
         )
         return Replacement([div], len(m.body) - 1)
@@ -262,7 +265,7 @@ class DivP2Pattern2(SimpleAsmPattern):
 
     def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
-        div = m.derived_instr(
+        div = AsmInstruction(
             "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2 ** shift)]
         )
         return Replacement([div], len(m.body))
@@ -279,8 +282,8 @@ class Div2S16Pattern(SimpleAsmPattern):
 
     def replace(self, m: AsmMatch) -> Replacement:
         # Keep 32->16 conversion from $i to $o, just add a division
-        div = m.derived_instr("div.fictive", [m.regs["o"], m.regs["o"], AsmLiteral(2)])
-        return Replacement(m.body[:2] + [div], len(m.body))
+        div = AsmInstruction("div.fictive", [m.regs["o"], m.regs["o"], AsmLiteral(2)])
+        return Replacement([m.body[0], m.body[1], div], len(m.body))
 
 
 class Div2S32Pattern(SimpleAsmPattern):
@@ -291,7 +294,7 @@ class Div2S32Pattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Replacement:
-        div = m.derived_instr("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
+        div = AsmInstruction("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
         return Replacement([div], len(m.body))
 
 
@@ -307,7 +310,7 @@ class UtfPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Replacement:
-        new_instr = m.derived_instr("cvt.s.u.fictive", [m.regs["o"], m.regs["i"]])
+        new_instr = AsmInstruction("cvt.s.u.fictive", [m.regs["o"], m.regs["i"]])
         return Replacement([new_instr], len(m.body) - 1)
 
 
@@ -356,9 +359,9 @@ class FtuPattern(SimpleAsmPattern):
         fmt = sub.mnemonic.split(".")[-1]
         args = [m.regs["o"], sub.args[1]]
         if fmt == "s":
-            new_instr = m.derived_instr("cvt.u.s.fictive", args)
+            new_instr = AsmInstruction("cvt.u.s.fictive", args)
         else:
-            new_instr = m.derived_instr("cvt.u.d.fictive", args)
+            new_instr = AsmInstruction("cvt.u.d.fictive", args)
         return Replacement([new_instr], len(m.body))
 
 
@@ -395,7 +398,7 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         # Store the even-numbered register (ra) into the low address (mb).
         new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
-        new_instr = m.derived_instr(new_mn, new_args)
+        new_instr = AsmInstruction(new_mn, new_args)
         return Replacement([new_instr], len(m.body))
 
 
@@ -429,7 +432,7 @@ class TrapuvPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Replacement:
-        new_instr = m.derived_instr("trapuv.fictive", [])
+        new_instr = AsmInstruction("trapuv.fictive", [])
         return Replacement([m.body[2], new_instr], len(m.body))
 
 
@@ -527,31 +530,114 @@ class MipsArch(Arch):
         "r0": Register("zero"),
     }
 
-    uses_delay_slots = True
+    @classmethod
+    def missing_return(cls) -> List[Instruction]:
+        meta = InstructionMeta.missing()
+        return [
+            cls.parse("jr", [Register("ra")], meta),
+            cls.parse("nop", [], meta),
+        ]
 
-    @staticmethod
-    def is_branch_instruction(instr: Instruction) -> bool:
-        return (
-            instr.mnemonic
-            in [
-                "beq",
-                "bne",
-                "beqz",
-                "bnez",
-                "bgez",
-                "bgtz",
-                "blez",
-                "bltz",
-                "bc1t",
-                "bc1f",
-            ]
-            or MipsArch.is_branch_likely_instruction(instr)
-            or MipsArch.is_constant_branch_instruction(instr)
-        )
+    @classmethod
+    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+        args = instr.args
+        if len(args) == 3:
+            if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
+                return AsmInstruction("nop", [])
+            if instr.mnemonic == "or" and args[2] == Register("zero"):
+                return AsmInstruction("move", args[:2])
+            if instr.mnemonic == "addu" and args[2] == Register("zero"):
+                return AsmInstruction("move", args[:2])
+            if instr.mnemonic == "daddu" and args[2] == Register("zero"):
+                return AsmInstruction("move", args[:2])
+            if instr.mnemonic == "nor" and args[1] == Register("zero"):
+                return AsmInstruction("not", [args[0], args[2]])
+            if instr.mnemonic == "nor" and args[2] == Register("zero"):
+                return AsmInstruction("not", [args[0], args[1]])
+            if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
+                return AsmInstruction("move", args[:2])
+            if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
+                if args[0] != Register("zero"):
+                    raise DecompFailure("first argument to div/mult must be $zero")
+                return AsmInstruction(instr.mnemonic, args[1:])
+            if (
+                instr.mnemonic == "ori"
+                and args[1] == Register("zero")
+                and isinstance(args[2], AsmLiteral)
+            ):
+                lit = AsmLiteral(args[2].value & 0xFFFF)
+                return AsmInstruction("li", [args[0], lit])
+            if (
+                instr.mnemonic == "addiu"
+                and args[1] == Register("zero")
+                and isinstance(args[2], AsmLiteral)
+            ):
+                lit = AsmLiteral(((args[2].value + 0x8000) & 0xFFFF) - 0x8000)
+                return AsmInstruction("li", [args[0], lit])
+            if instr.mnemonic == "beq" and args[0] == args[1] == Register("zero"):
+                return AsmInstruction("b", [args[2]])
+            if instr.mnemonic in ["bne", "beq", "beql", "bnel"] and args[1] == Register(
+                "zero"
+            ):
+                mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
+                return AsmInstruction(mn, [args[0], args[2]])
+        if len(args) == 2:
+            if instr.mnemonic == "beqz" and args[0] == Register("zero"):
+                return AsmInstruction("b", [args[1]])
+            if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
+                lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
+                return AsmInstruction("li", [args[0], lit])
+            if instr.mnemonic == "jalr" and args[0] != Register("ra"):
+                raise DecompFailure("Two-argument form of jalr is not supported.")
+            if instr.mnemonic in LENGTH_THREE:
+                return cls.normalize_instruction(
+                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                )
+        if len(args) == 1:
+            if instr.mnemonic == "jalr":
+                return AsmInstruction("jalr", [Register("ra"), args[0]])
+            if instr.mnemonic in LENGTH_TWO:
+                return cls.normalize_instruction(
+                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                )
+        return instr
 
-    @staticmethod
-    def is_branch_likely_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic in [
+    @classmethod
+    def parse(
+        cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
+    ) -> Instruction:
+        jump_target: Optional[Union[JumpTarget, Register]] = None
+        function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
+        has_delay_slot = False
+        is_branch_likely = False
+        is_conditional = False
+        is_return = False
+
+        if mnemonic == "jr" and args[0] == Register("ra"):
+            # Return
+            is_return = True
+            has_delay_slot = True
+        elif mnemonic == "jr":
+            # Jump table (switch)
+            assert isinstance(args[0], Register)
+            jump_target = args[0]
+            is_conditional = True
+            has_delay_slot = True
+        elif mnemonic == "jal":
+            # Function call to label
+            assert isinstance(args[0], AsmGlobalSymbol)
+            function_target = args[0]
+            has_delay_slot = True
+        elif mnemonic == "jalr":
+            # Function call to pointer
+            assert isinstance(args[0], Register)
+            function_target = args[0]
+            has_delay_slot = True
+        elif mnemonic in ("b", "j"):
+            # Unconditional jump
+            jump_target = get_jump_target(args[0])
+            has_delay_slot = True
+        elif mnemonic in (
             "beql",
             "bnel",
             "beqzl",
@@ -562,102 +648,40 @@ class MipsArch(Arch):
             "bltzl",
             "bc1tl",
             "bc1fl",
-        ]
+        ):
+            # Branch-likely
+            jump_target = get_jump_target(args[-1])
+            has_delay_slot = True
+            is_branch_likely = True
+            is_conditional = True
+        elif mnemonic in (
+            "beq",
+            "bne",
+            "beqz",
+            "bnez",
+            "bgez",
+            "bgtz",
+            "blez",
+            "bltz",
+            "bc1t",
+            "bc1f",
+        ):
+            # Normal branch
+            jump_target = get_jump_target(args[-1])
+            has_delay_slot = True
+            is_conditional = True
 
-    @staticmethod
-    def is_constant_branch_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic in ("b", "j")
-
-    @staticmethod
-    def is_jump_instruction(instr: Instruction) -> bool:
-        # (we don't treat jal/jalr as jumps, since control flow will return
-        # after the call)
-        return MipsArch.is_branch_instruction(instr) or instr.mnemonic == "jr"
-
-    @staticmethod
-    def is_delay_slot_instruction(instr: Instruction) -> bool:
-        return MipsArch.is_branch_instruction(instr) or instr.mnemonic in [
-            "jr",
-            "jal",
-            "jalr",
-        ]
-
-    @staticmethod
-    def is_return_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic == "jr" and instr.args[0] == Register("ra")
-
-    @staticmethod
-    def is_conditional_return_instruction(instr: Instruction) -> bool:
-        return False
-
-    @staticmethod
-    def is_jumptable_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic == "jr" and instr.args[0] != Register("ra")
-
-    @staticmethod
-    def missing_return() -> List[Instruction]:
-        meta = InstructionMeta.missing()
-        return [Instruction("jr", [Register("ra")], meta), Instruction("nop", [], meta)]
-
-    @classmethod
-    def normalize_instruction(cls, instr: Instruction) -> Instruction:
-        args = instr.args
-        if len(args) == 3:
-            if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
-                return Instruction("nop", [], instr.meta)
-            if instr.mnemonic == "or" and args[2] == Register("zero"):
-                return Instruction("move", args[:2], instr.meta)
-            if instr.mnemonic == "addu" and args[2] == Register("zero"):
-                return Instruction("move", args[:2], instr.meta)
-            if instr.mnemonic == "daddu" and args[2] == Register("zero"):
-                return Instruction("move", args[:2], instr.meta)
-            if instr.mnemonic == "nor" and args[1] == Register("zero"):
-                return Instruction("not", [args[0], args[2]], instr.meta)
-            if instr.mnemonic == "nor" and args[2] == Register("zero"):
-                return Instruction("not", [args[0], args[1]], instr.meta)
-            if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
-                return Instruction("move", args[:2], instr.meta)
-            if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
-                if args[0] != Register("zero"):
-                    raise DecompFailure("first argument to div/mult must be $zero")
-                return Instruction(instr.mnemonic, args[1:], instr.meta)
-            if (
-                instr.mnemonic == "ori"
-                and args[1] == Register("zero")
-                and isinstance(args[2], AsmLiteral)
-            ):
-                lit = AsmLiteral(args[2].value & 0xFFFF)
-                return Instruction("li", [args[0], lit], instr.meta)
-            if (
-                instr.mnemonic == "addiu"
-                and args[1] == Register("zero")
-                and isinstance(args[2], AsmLiteral)
-            ):
-                lit = AsmLiteral(((args[2].value + 0x8000) & 0xFFFF) - 0x8000)
-                return Instruction("li", [args[0], lit], instr.meta)
-            if instr.mnemonic == "beq" and args[0] == args[1] == Register("zero"):
-                return Instruction("b", [args[2]], instr.meta)
-            if instr.mnemonic in ["bne", "beq", "beql", "bnel"] and args[1] == Register(
-                "zero"
-            ):
-                mn = instr.mnemonic[:3] + "z" + instr.mnemonic[3:]
-                return Instruction(mn, [args[0], args[2]], instr.meta)
-        if len(args) == 2:
-            if instr.mnemonic == "beqz" and args[0] == Register("zero"):
-                return Instruction("b", [args[1]], instr.meta)
-            if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
-                lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
-                return Instruction("li", [args[0], lit], instr.meta)
-            if instr.mnemonic in LENGTH_THREE:
-                return cls.normalize_instruction(
-                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
-                )
-        if len(args) == 1:
-            if instr.mnemonic in LENGTH_TWO:
-                return cls.normalize_instruction(
-                    Instruction(instr.mnemonic, [args[0]] + args, instr.meta)
-                )
-        return instr
+        return Instruction(
+            mnemonic=mnemonic,
+            args=args,
+            meta=meta,
+            jump_target=jump_target,
+            function_target=function_target,
+            has_delay_slot=has_delay_slot,
+            is_branch_likely=is_branch_likely,
+            is_conditional=is_conditional,
+            is_return=is_return,
+        )
 
     asm_patterns = [
         DivPattern(),

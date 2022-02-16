@@ -111,6 +111,12 @@ Argument = Union[
 
 
 @dataclass(frozen=True)
+class AsmInstruction:
+    mnemonic: str
+    args: List[Argument]
+
+
+@dataclass(frozen=True)
 class InstructionMeta:
     emit_goto: bool
     filename: str
@@ -123,6 +129,9 @@ class InstructionMeta:
             emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
         )
 
+    def derived(self) -> "InstructionMeta":
+        return replace(self, synthetic=True)
+
     def loc_str(self) -> str:
         adj = "near" if self.synthetic else "at"
         return f"{adj} {self.filename} line {self.lineno}"
@@ -134,11 +143,19 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
-    @staticmethod
-    def derived(
-        mnemonic: str, args: List[Argument], old: "Instruction"
-    ) -> "Instruction":
-        return Instruction(mnemonic, args, replace(old.meta, synthetic=True))
+    jump_target: Optional[Union[JumpTarget, Register]] = None
+    function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
+    is_conditional: bool = False
+    is_return: bool = False
+
+    # These are for MIPS. `is_branch_likely` refers to branch instructions which
+    # execute their delay slot only if the branch *is* taken. (Maybe these two
+    # bools should be merged into a 3-valued enum?)
+    has_delay_slot: bool = False
+    is_branch_likely: bool = False
+
+    def is_jump(self) -> bool:
+        return self.jump_target is not None or self.is_return
 
     def __str__(self) -> str:
         if not self.args:
@@ -158,7 +175,7 @@ class ArchAsmParsing(abc.ABC):
     aliased_regs: Dict[str, Register]
 
     @abc.abstractmethod
-    def normalize_instruction(self, instr: Instruction) -> Instruction:
+    def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         ...
 
 
@@ -181,55 +198,15 @@ class ArchAsm(ArchAsmParsing):
 
     aliased_regs: Dict[str, Register]
 
-    uses_delay_slots: bool
-
-    @abc.abstractmethod
-    def is_branch_instruction(self, instr: Instruction) -> bool:
-        """Instructions with a label as a jump target (may be conditional)"""
-        ...
-
-    @abc.abstractmethod
-    def is_branch_likely_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_constant_branch_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_conditional_return_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_jump_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_delay_slot_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_return_instruction(self, instr: Instruction) -> bool:
-        ...
-
-    @abc.abstractmethod
-    def is_jumptable_instruction(self, instr: Instruction) -> bool:
-        ...
-
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]:
         ...
 
-    @staticmethod
-    def get_branch_target(instr: Instruction) -> JumpTarget:
-        label = instr.args[-1]
-        if isinstance(label, AsmGlobalSymbol):
-            return JumpTarget(label.symbol_name)
-        if not isinstance(label, JumpTarget):
-            raise DecompFailure(
-                f'Couldn\'t parse instruction "{instr}": invalid branch target'
-            )
-        return label
+    @abc.abstractmethod
+    def parse(
+        self, mnemonic: str, args: List[Argument], meta: InstructionMeta
+    ) -> Instruction:
+        ...
 
 
 class NaiveParsingArch(ArchAsmParsing):
@@ -239,7 +216,7 @@ class NaiveParsingArch(ArchAsmParsing):
     all_regs: List[Register] = []
     aliased_regs: Dict[str, Register] = {}
 
-    def normalize_instruction(self, instr: Instruction) -> Instruction:
+    def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
 
 
@@ -281,6 +258,13 @@ def constant_fold(arg: Argument) -> Argument:
         if arg.op == "&":
             return AsmLiteral(lhs.value & rhs.value)
     return arg
+
+
+def get_jump_target(label: Argument) -> JumpTarget:
+    if isinstance(label, AsmGlobalSymbol):
+        return JumpTarget(label.symbol_name)
+    assert isinstance(label, JumpTarget), "invalid branch target"
+    return label
 
 
 # Main parser.
@@ -442,16 +426,19 @@ def split_arg_list(args: str) -> List[str]:
     )
 
 
-def parse_instruction(
-    line: str, meta: InstructionMeta, arch: ArchAsmParsing
-) -> Instruction:
+def parse_asm_instruction(line: str, arch: ArchAsmParsing) -> AsmInstruction:
+    # First token is instruction name, rest is args.
+    line = line.strip()
+    mnemonic, _, args_str = line.partition(" ")
+    # Parse arguments.
+    args = [parse_arg(arg_str, arch) for arg_str in split_arg_list(args_str)]
+    instr = AsmInstruction(mnemonic, args)
+    return arch.normalize_instruction(instr)
+
+
+def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instruction:
     try:
-        # First token is instruction name, rest is args.
-        line = line.strip()
-        mnemonic, _, args_str = line.partition(" ")
-        # Parse arguments.
-        args = [parse_arg(arg_str, arch) for arg_str in split_arg_list(args_str)]
-        instr = Instruction(mnemonic, args, meta)
-        return arch.normalize_instruction(instr)
+        base = parse_asm_instruction(line, arch)
+        return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
