@@ -27,7 +27,6 @@ from .asm_pattern import (
     AsmMatcher,
     AsmPattern,
     Replacement,
-    ReplacementPart,
     SimpleAsmPattern,
     make_pattern,
 )
@@ -588,11 +587,15 @@ class MipsArch(Arch):
             if instr.mnemonic == "lui" and isinstance(args[1], AsmLiteral):
                 lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
                 return AsmInstruction("li", [args[0], lit])
+            if instr.mnemonic == "jalr" and args[0] != Register("ra"):
+                raise DecompFailure("Two-argument form of jalr is not supported.")
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
                 )
         if len(args) == 1:
+            if instr.mnemonic == "jalr":
+                return AsmInstruction("jalr", [Register("ra"), args[0]])
             if instr.mnemonic in LENGTH_TWO:
                 return cls.normalize_instruction(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)

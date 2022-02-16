@@ -304,7 +304,7 @@ def build_blocks(
     branch_likely_counts: Counter[str] = Counter()
     cond_return_target: Optional[JumpTarget] = None
 
-    def process_with_delay_slots(item: Union[Instruction, Label]) -> None:
+    def process_mips(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
@@ -313,9 +313,7 @@ def build_blocks(
 
         if not item.has_delay_slot:
             block_builder.add_instruction(item)
-            # Split blocks at jumps, at the next instruction.
-            if item.is_jump():
-                block_builder.new_block()
+            assert not item.is_jump(), "all MIPS jumps have a delay slot"
             return
 
         process_after: List[Union[Instruction, Label]] = []
@@ -331,8 +329,8 @@ def build_blocks(
 
             assert isinstance(next_item, Instruction), "Cannot have two labels in a row"
 
-            # (Best-effort check for whether the instruction can be
-            # executed twice in a row.)
+            # Best-effort check for whether the instruction can be executed twice in a row.
+            # TODO: This may be able to be improved to use the other fields in Instruction?
             r = next_item.args[0] if next_item.args else None
             if all(a != r for a in next_item.args[1:]):
                 process_after.append(label)
@@ -401,7 +399,7 @@ def build_blocks(
             block_builder.new_block()
 
         for item in process_after:
-            process_with_delay_slots(item)
+            process_mips(item)
 
     def process_no_delay_slots(item: Union[Instruction, Label]) -> None:
         nonlocal cond_return_target
@@ -432,7 +430,7 @@ def build_blocks(
 
     for item in body_iter:
         if arch.arch == Target.ArchEnum.MIPS:
-            process_with_delay_slots(item)
+            process_mips(item)
         else:
             process_no_delay_slots(item)
 

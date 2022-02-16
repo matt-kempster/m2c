@@ -198,8 +198,6 @@ class ArchAsm(ArchAsmParsing):
 
     aliased_regs: Dict[str, Register]
 
-    uses_delay_slots: bool
-
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]:
         ...
@@ -265,8 +263,7 @@ def constant_fold(arg: Argument) -> Argument:
 def get_jump_target(label: Argument) -> JumpTarget:
     if isinstance(label, AsmGlobalSymbol):
         return JumpTarget(label.symbol_name)
-    if not isinstance(label, JumpTarget):
-        raise DecompFailure(f"Couldn't parse instruction: invalid branch target")
+    assert isinstance(label, JumpTarget), "invalid branch target"
     return label
 
 
