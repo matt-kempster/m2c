@@ -193,15 +193,30 @@ class AsmMatcher:
         return InstructionMeta.missing()
 
     def apply(self, repl: Replacement, arch: ArchAsm) -> None:
-        # TODO: It is possible to check the output registers of the replaced input
-        # instructions to determine a set of clobbered registers.
+        # Track which registers are overwritten/clobbered in the replacement asm
+        repl_writes = []
+        final_instr: Optional[Instruction] = None
         for part in repl.new_body:
             if isinstance(part, AsmInstruction):
                 # Parse any AsmInstructions into Instructions before substituting
-                instr = arch.parse(part.mnemonic, part.args, self.derived_meta())
-                self.output.append(instr)
-            else:
-                self.output.append(part)
+                part = arch.parse(part.mnemonic, part.args, self.derived_meta())
+            if isinstance(part, Instruction):
+                # Update list of written registers
+                repl_writes.extend(part.outputs)
+                repl_writes.extend(part.clobbers)
+                final_instr = part
+            self.output.append(part)
+
+        # Calculate which regs are *not* written by the repl asm, but were in the input asm
+        # Denote the replacement asm as "clobbering" these regs by marking the final instr
+        for part in self.input[self.index : self.index + repl.num_consumed]:
+            if isinstance(part, Instruction):
+                for arg in part.outputs + part.clobbers:
+                    assert final_instr is not None
+                    if arg not in repl_writes and arg not in final_instr.clobbers:
+                        final_instr.clobbers.append(arg)
+
+        # Advance the input
         self.index += repl.num_consumed
 
 

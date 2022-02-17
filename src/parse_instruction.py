@@ -143,7 +143,7 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
-    # TODO: Need a way to indicate that an instruction can clobber arbitrary memory
+    # TODO: Need a way to indicate that an function call could clobber arbitrary memory
     inputs: List[Argument]
     outputs: List[Argument]
     clobbers: List[Argument]
@@ -158,9 +158,6 @@ class Instruction:
     # bools should be merged into a 3-valued enum?)
     has_delay_slot: bool = False
     is_branch_likely: bool = False
-
-    # TODO
-    # evaluator: object
 
     def is_jump(self) -> bool:
         return self.jump_target is not None or self.is_return
@@ -461,5 +458,4 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         base = parse_asm_instruction(line, arch)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
-        raise
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")

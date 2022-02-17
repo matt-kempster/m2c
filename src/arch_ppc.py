@@ -147,7 +147,11 @@ class BoolCastPattern(SimpleAsmPattern):
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
         return Replacement(
-            [AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]])],
+            [
+                AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]]),
+                # Preserve `neg $a, $x` in case $a is accessed later
+                m.body[0],
+            ],
             len(m.body),
         )
 
@@ -492,15 +496,30 @@ class PpcArch(Arch):
             is_conditional = True
         elif mnemonic in cls.instrs_store:
             inputs = [args[0]]
-            outputs = [args[1]]
+            if isinstance(args[1], AsmAddressMode):
+                assert len(args) == 2
+                outputs = [args[1]]
+            else:
+                # TODO: The memory at `args[1] + args[2]` is written to
+                assert len(args) == 3
+                outputs = []
         elif mnemonic in cls.instrs_store_update:
             inputs = args[:]
-            outputs = [args[1]]
+            if isinstance(args[1], AsmAddressMode):
+                assert len(args) == 2
+                outputs = [args[1], args[1].rhs]
+            else:
+                # TODO: The memory at `args[1] + args[2]` is written to
+                assert len(args) == 3
+                outputs = [args[1]]
         elif mnemonic in cls.instrs_load_update:
             inputs = args[1:]
             if isinstance(args[1], AsmAddressMode):
+                assert len(args) == 2
                 outputs = [args[0], args[1].rhs]
             else:
+                # TODO: The memory at `args[1] + args[2]` is read from
+                assert len(args) == 3
                 outputs = [args[0], args[1]]
         elif mnemonic in cls.instrs_no_dest:
             inputs = args[:]
