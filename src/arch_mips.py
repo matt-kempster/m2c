@@ -637,7 +637,6 @@ class MipsArch(Arch):
                 )
             elif arg.rhs == cls.stack_pointer_reg:
                 return StackAccess(
-                    stack_reg=arg.rhs,
                     offset=arg.lhs_as_literal(),
                     size=size,
                 )

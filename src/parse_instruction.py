@@ -107,12 +107,8 @@ class JumpTarget:
 
 @dataclass(frozen=True)
 class StackAccess:
-    stack_reg: Register
     offset: int
     size: int
-
-    def __str__(self) -> str:
-        return f"{self.offset}({self.stack_reg})"
 
 
 @dataclass(frozen=True)
@@ -125,9 +121,6 @@ class MemoryAccess:
     def arbitrary() -> "MemoryAccess":
         """Placeholder value used to mark that some arbitrary memory may be clobbered"""
         return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
-
-    def __str__(self) -> str:
-        return f"{self.offset}({self.base_reg})"
 
 
 Argument = Union[
