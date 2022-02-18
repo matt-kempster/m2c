@@ -28,6 +28,7 @@ from .asm_pattern import (
     AsmMatcher,
     AsmPattern,
     Replacement,
+    ReplacementPart,
     SimpleAsmPattern,
     make_pattern,
 )
@@ -146,14 +147,13 @@ class BoolCastPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        return Replacement(
-            [
-                AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]]),
-                # Preserve `neg $a, $x` in case $a is accessed later
-                m.body[0],
-            ],
-            len(m.body),
-        )
+        body: List[ReplacementPart] = [
+            AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]])
+        ]
+        if m.regs["a"] != Register("r0"):
+            # Preserve `neg $a, $x` in case $a is accessed later, unless $a is $r0
+            body.append(m.body[0])
+        return Replacement(body, len(m.body))
 
 
 class BranchCtrPattern(AsmPattern):
@@ -456,24 +456,24 @@ class PpcArch(Arch):
             is_conditional = True
         elif mnemonic == "bl":
             # Function call to label
-            inputs = [r for r in cls.argument_regs]
-            outputs = [r for r in cls.all_return_regs]
-            clobbers = [r for r in cls.temp_regs]
+            inputs = list(cls.argument_regs)
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
             assert isinstance(args[0], AsmGlobalSymbol)
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
-            inputs = [r for r in cls.argument_regs]
+            inputs = list(cls.argument_regs)
             inputs.append(Register("clr"))
-            outputs = [r for r in cls.all_return_regs]
-            clobbers = [r for r in cls.temp_regs]
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
-            inputs = [r for r in cls.argument_regs]
+            inputs = list(cls.argument_regs)
             inputs.append(Register("lr"))
-            outputs = [r for r in cls.all_return_regs]
-            clobbers = [r for r in cls.temp_regs]
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
@@ -496,31 +496,31 @@ class PpcArch(Arch):
             is_conditional = True
         elif mnemonic in cls.instrs_store:
             inputs = [args[0]]
-            if isinstance(args[1], AsmAddressMode):
-                assert len(args) == 2
-                outputs = [args[1]]
-            else:
+            if mnemonic.endswith("x"):
                 # TODO: The memory at `args[1] + args[2]` is written to
-                assert len(args) == 3
+                assert len(args) == 3 and isinstance(args[1], Register)
                 outputs = []
+            else:
+                assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
+                outputs = [args[1]]
         elif mnemonic in cls.instrs_store_update:
             inputs = args[:]
-            if isinstance(args[1], AsmAddressMode):
-                assert len(args) == 2
-                outputs = [args[1], args[1].rhs]
-            else:
+            if mnemonic.endswith("x"):
                 # TODO: The memory at `args[1] + args[2]` is written to
-                assert len(args) == 3
+                assert len(args) == 3 and isinstance(args[1], Register)
                 outputs = [args[1]]
+            else:
+                assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
+                outputs = [args[1], args[1].rhs]
         elif mnemonic in cls.instrs_load_update:
             inputs = args[1:]
-            if isinstance(args[1], AsmAddressMode):
-                assert len(args) == 2
-                outputs = [args[0], args[1].rhs]
-            else:
+            if mnemonic.endswith("x"):
                 # TODO: The memory at `args[1] + args[2]` is read from
-                assert len(args) == 3
+                assert len(args) == 3 and isinstance(args[1], Register)
                 outputs = [args[0], args[1]]
+            else:
+                assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
+                outputs = [args[0], args[1].rhs]
         elif mnemonic in cls.instrs_no_dest:
             inputs = args[:]
         elif mnemonic.rstrip(".") in cls.instrs_destination_first:
@@ -975,18 +975,15 @@ class PpcArch(Arch):
         )
 
     @staticmethod
-    def function_return(expr: Expression) -> List[Tuple[Register, Expression]]:
-        return [
-            (
-                Register("f1"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.floatish()),
+    def function_return(expr: Expression) -> Dict[Register, Expression]:
+        return {
+            Register("f1"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.floatish()
             ),
-            (
-                Register("r3"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.intptr()),
+            Register("r3"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.intptr()
             ),
-            (
-                Register("r4"),
-                as_u32(Cast(expr, reinterpret=True, silent=False, type=Type.u64())),
+            Register("r4"): as_u32(
+                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
             ),
-        ]
+        }

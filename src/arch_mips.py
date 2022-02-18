@@ -631,19 +631,19 @@ class MipsArch(Arch):
             has_delay_slot = True
         elif mnemonic == "jal":
             # Function call to label
-            inputs = [r for r in cls.argument_regs]
-            outputs = [r for r in cls.all_return_regs]
-            clobbers = [r for r in cls.temp_regs]
+            inputs = list(cls.argument_regs)
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
             assert isinstance(args[0], AsmGlobalSymbol)
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
             # Function call to pointer
             assert isinstance(args[0], Register)
-            inputs = [r for r in cls.argument_regs]
+            inputs = list(cls.argument_regs)
             inputs.append(args[0])
-            outputs = [r for r in cls.all_return_regs]
-            clobbers = [r for r in cls.temp_regs]
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
@@ -1300,23 +1300,20 @@ class MipsArch(Arch):
         )
 
     @staticmethod
-    def function_return(expr: Expression) -> List[Tuple[Register, Expression]]:
+    def function_return(expr: Expression) -> Dict[Register, Expression]:
         # We may not know what this function's return registers are --
         # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
         # it's fine to be liberal here and put the return value in all
         # of them. (It's not perfect for u64's, but that's rare anyway.)
-        return [
-            (
-                Register("f0"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.floatish()),
+        return {
+            Register("f0"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.floatish()
             ),
-            (
-                Register("v0"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.intptr()),
+            Register("v0"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.intptr()
             ),
-            (
-                Register("v1"),
-                as_u32(Cast(expr, reinterpret=True, silent=False, type=Type.u64())),
+            Register("v1"): as_u32(
+                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
             ),
-            (Register("f1"), SecondF64Half()),
-        ]
+            Register("f1"): SecondF64Half(),
+        }

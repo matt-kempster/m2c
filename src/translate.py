@@ -102,13 +102,11 @@ class Arch(ArchFlowGraph):
         ...
 
     @abc.abstractmethod
-    def function_return(
-        self, expr: "Expression"
-    ) -> List[Tuple[Register, "Expression"]]:
+    def function_return(self, expr: "Expression") -> Dict[Register, "Expression"]:
         """
         Compute register location(s) & values that will hold the return value
         of the function call `expr`.
-        This must use all of the registers in `all_return_regs` in order to stay
+        This must have a value for each register in `all_return_regs` in order to stay
         consistent with `Instruction.outputs`. This is why we can't use the
         function's return type, even though it may be more accurate.
         """
@@ -4188,17 +4186,18 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             prevent_later_reads()
 
             return_reg_vals = arch.function_return(call)
-            for reg, val in return_reg_vals:
-                if reg not in instr.outputs:
+            for out in instr.outputs:
+                if not isinstance(out, Register):
                     continue
+                val = return_reg_vals[out]
                 if not isinstance(val, SecondF64Half):
                     val = eval_once(
                         val,
                         emit_exactly_once=False,
                         trivial=False,
-                        prefix=reg.register_name,
+                        prefix=out.register_name,
                     )
-                regs.set_with_meta(reg, val, RegMeta(function_return=True))
+                regs.set_with_meta(out, val, RegMeta(function_return=True))
 
             has_function_call = True
 
