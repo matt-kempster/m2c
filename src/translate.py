@@ -45,6 +45,7 @@ from .parse_instruction import (
     BinOp,
     Instruction,
     Macro,
+    StackAccess,
     Register,
 )
 from .types import (
@@ -512,24 +513,11 @@ def get_stack_info(
             if inst.args[0] in (arch.return_address_reg, Register("r0")):
                 # Saving the return address on the stack.
                 info.is_leaf = False
-            stack_offset = inst.args[1].lhs_as_literal()
-            if arch_mnemonic == "ppc:stmw":
-                assert inst.args[0].register_name[0] == "r"
-                index = int(inst.args[0].register_name[1:])
-                while index <= 31:
-                    reg = Register(f"r{index}")
-                    info.callee_save_reg_locations[reg] = stack_offset
-                    callee_saved_offset_and_size.append((stack_offset, 4))
-                    index += 1
-                    stack_offset += 4
-            elif inst.args[0] not in info.callee_save_reg_locations:
-                info.callee_save_reg_locations[inst.args[0]] = stack_offset
-                callee_saved_offset_and_size.append(
-                    (
-                        stack_offset,
-                        8 if arch_mnemonic in ("mips:sdc1", "ppc:stfd") else 4,
-                    )
-                )
+            # The registers & their stack accesses must be matched up in ArchAsm.parse
+            for reg, mem in zip(inst.inputs, inst.outputs):
+                if isinstance(reg, Register) and isinstance(mem, StackAccess):
+                    info.callee_save_reg_locations[reg] = mem.offset
+                    callee_saved_offset_and_size.append((mem.offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
 

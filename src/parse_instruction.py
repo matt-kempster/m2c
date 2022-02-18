@@ -105,8 +105,38 @@ class JumpTarget:
         return f".{self.target}"
 
 
+@dataclass(frozen=True)
+class StackAccess:
+    stack_reg: Register
+    offset: int
+    size: int
+
+    def __str__(self) -> str:
+        return f"{self.offset}({self.stack_reg})"
+
+
+@dataclass(frozen=True)
+class MemoryAccess:
+    base_reg: Register
+    offset: "Argument"
+    size: int
+
+    @staticmethod
+    def arbitrary() -> "MemoryAccess":
+        """Placeholder value used to mark that some arbitrary memory may be clobbered"""
+        return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
+
+    def __str__(self) -> str:
+        return f"{self.offset}({self.base_reg})"
+
+
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
+]
+Access = Union[
+    Register,
+    StackAccess,
+    MemoryAccess,
 ]
 
 
@@ -143,10 +173,9 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
-    # TODO: Need a way to indicate that an function call could clobber arbitrary memory
-    inputs: List[Argument]
-    outputs: List[Argument]
-    clobbers: List[Argument]
+    inputs: List[Access]
+    outputs: List[Access]
+    clobbers: List[Access]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
@@ -171,18 +200,6 @@ class Instruction:
     def arch_mnemonic(self, arch: "ArchAsm") -> str:
         """Combine architecture name with mnemonic for pattern matching"""
         return f"{arch.arch}:{self.mnemonic}"
-
-
-def filter_ir_arguments(args: List[Argument]) -> List[Argument]:
-    """
-    Filter a list of Arguments that may be used as Instruction inputs, outputs,
-    or clobbers. Removes duplicates and constant values (like AsmLiterals).
-    """
-    output: List[Argument] = []
-    for arg in args:
-        if isinstance(arg, (Register, AsmAddressMode)) and arg not in output:
-            output.append(arg)
-    return output
 
 
 class ArchAsmParsing(abc.ABC):
