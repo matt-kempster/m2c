@@ -44,8 +44,8 @@ from .parse_instruction import (
     AsmLiteral,
     BinOp,
     Instruction,
+    MemoryAccess,
     Macro,
-    StackAccess,
     Register,
 )
 from .types import (
@@ -515,9 +515,11 @@ def get_stack_info(
                 info.is_leaf = False
             # The registers & their stack accesses must be matched up in ArchAsm.parse
             for reg, mem in zip(inst.inputs, inst.outputs):
-                if isinstance(reg, Register) and isinstance(mem, StackAccess):
-                    info.callee_save_reg_locations[reg] = mem.offset
-                    callee_saved_offset_and_size.append((mem.offset, mem.size))
+                if isinstance(reg, Register) and isinstance(mem, MemoryAccess):
+                    stack_offset = mem.get_stack_offset(arch)
+                    if stack_offset is not None:
+                        info.callee_save_reg_locations[reg] = stack_offset
+                        callee_saved_offset_and_size.append((stack_offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
 

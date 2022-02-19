@@ -22,7 +22,6 @@ from .parse_instruction import (
     Macro,
     MemoryAccess,
     Register,
-    StackAccess,
     get_jump_target,
 )
 from .asm_pattern import (
@@ -440,22 +439,26 @@ class PpcArch(Arch):
         }
         size = memory_sizes.get(mnemonic.lstrip("stl").rstrip("azux"))
 
-        def make_memory_access(arg: AsmAddressMode) -> Access:
-            assert isinstance(arg, AsmAddressMode)
+        def make_memory_access(arg: Argument) -> Access:
             assert size is not None
-            if arg.rhs == cls.stack_pointer_reg:
-                return StackAccess(
-                    offset=arg.lhs_as_literal(),
+            if isinstance(arg, AsmAddressMode):
+                return MemoryAccess(
+                    base_reg=arg.rhs,
+                    offset=arg.lhs,
                     size=size,
                 )
-            return MemoryAccess(
-                base_reg=arg.rhs,
-                offset=arg.lhs,
-                size=size,
-            )
+            elif isinstance(arg, AsmGlobalSymbol):
+                return MemoryAccess(
+                    base_reg=Register("zero"),
+                    offset=arg,
+                    size=size,
+                )
+            else:
+                assert False
 
         if mnemonic == "blr":
             # Return
+            assert len(args) == 0
             inputs = [Register("lr")]
             is_return = True
         elif mnemonic in (
@@ -471,24 +474,28 @@ class PpcArch(Arch):
             "bsolr",
         ):
             # Conditional return
+            # TODO: Support crN argument
+            assert len(args) <= 1
             inputs = cr0_bits + [Register("lr")]
             is_return = True
             is_conditional = True
         elif mnemonic == "bctr":
             # Jump table (switch)
+            assert len(args) == 0
             inputs = [Register("ctr")]
             jump_target = Register("ctr")
             is_conditional = True
         elif mnemonic == "bl":
             # Function call to label
+            assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             clobbers.append(MemoryAccess.arbitrary())
-            assert isinstance(args[0], AsmGlobalSymbol)
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
+            assert len(args) == 0
             inputs = list(cls.argument_regs)
             inputs.append(Register("clr"))
             outputs = list(cls.all_return_regs)
@@ -497,6 +504,7 @@ class PpcArch(Arch):
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
+            assert len(args) == 0
             inputs = list(cls.argument_regs)
             inputs.append(Register("lr"))
             outputs = list(cls.all_return_regs)
@@ -505,26 +513,17 @@ class PpcArch(Arch):
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
+            assert len(args) == 1
             jump_target = get_jump_target(args[0])
-        elif mnemonic in (
-            "ble",
-            "blt",
-            "beq",
-            "bge",
-            "bgt",
-            "bne",
-            "bdnz",
-            "bdz",
-            "bdnz.fictive",
-            "bdz.fictive",
-        ):
+        elif mnemonic in cls.instrs_branches or mnemonic in ("bdnz", "bdz"):
             # Normal branch
+            # TODO: Support crN argument
+            assert 1 <= len(args) <= 2
             inputs = list(cr0_bits)
             jump_target = get_jump_target(args[-1])
             is_conditional = True
         elif mnemonic in cls.instrs_store:
-            assert isinstance(args[0], Register)
-            assert size is not None
+            assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
                 assert (
                     len(args) == 3
@@ -538,8 +537,7 @@ class PpcArch(Arch):
                 inputs = [args[0], args[1].rhs]
                 outputs = [make_memory_access(args[1])]
         elif mnemonic in cls.instrs_store_update:
-            assert isinstance(args[0], Register)
-            assert size is not None
+            assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
                 assert (
                     len(args) == 3
@@ -553,8 +551,7 @@ class PpcArch(Arch):
                 inputs = [args[0], args[1].rhs]
                 outputs = [make_memory_access(args[1]), args[1].rhs]
         elif mnemonic in cls.instrs_load_update:
-            assert isinstance(args[0], Register)
-            assert size is not None
+            assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
                 assert (
                     len(args) == 3
@@ -572,8 +569,8 @@ class PpcArch(Arch):
                 len(args) == 2
                 and isinstance(args[0], Register)
                 and isinstance(args[1], AsmAddressMode)
+                and args[0].register_name[0] == "r"
             )
-            assert args[0].register_name[0] == "r"
             index = int(args[0].register_name[1:])
             offset = args[1].lhs_as_literal()
             while index <= 31:
@@ -611,10 +608,7 @@ class PpcArch(Arch):
                 assert len(args) == 2
                 inputs = [args[1].rhs]
             else:
-                assert not any(isinstance(a, AsmAddressMode) for a in args), (
-                    mnemonic,
-                    args,
-                )
+                assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
         elif mnemonic in cls.instrs_implicit_destination:
             assert len(args) == 1 and isinstance(args[0], Register)
@@ -625,10 +619,9 @@ class PpcArch(Arch):
             inputs = [r for r in args[1:] if isinstance(r, Register)]
             outputs = list(cr0_bits)
         elif mnemonic in cls.instrs_ignore:
-            # TODO: There might be some instrs to handle here
             pass
         elif args and isinstance(args[0], Register):
-            # If the mnemonic is unsupported, guess
+            # If the mnemonic is unsupported, guess it is destination-first
             inputs = [r for r in args[1:] if isinstance(r, Register)]
             outputs = [args[0]]
 

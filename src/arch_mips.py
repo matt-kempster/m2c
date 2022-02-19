@@ -22,7 +22,6 @@ from .parse_instruction import (
     JumpTarget,
     MemoryAccess,
     Register,
-    StackAccess,
     get_jump_target,
 )
 from .asm_pattern import (
@@ -629,57 +628,59 @@ class MipsArch(Arch):
 
         def make_memory_access(arg: Argument) -> Access:
             assert size is not None
-            if not isinstance(arg, AsmAddressMode):
-                return MemoryAccess(
-                    base_reg=Register("zero"),
-                    offset=arg,
-                    size=size,
-                )
-            elif arg.rhs == cls.stack_pointer_reg:
-                return StackAccess(
-                    offset=arg.lhs_as_literal(),
-                    size=size,
-                )
-            else:
+            assert not isinstance(arg, Register)
+            if isinstance(arg, AsmAddressMode):
                 return MemoryAccess(
                     base_reg=arg.rhs,
                     offset=arg.lhs,
                     size=size,
                 )
+            return MemoryAccess(
+                base_reg=Register("zero"),
+                offset=arg,
+                size=size,
+            )
 
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
+            assert len(args) == 1
             inputs = [Register("ra")]
             is_return = True
             has_delay_slot = True
         elif mnemonic == "jr":
             # Jump table (switch)
-            assert isinstance(args[0], Register)
+            assert len(args) == 1 and isinstance(args[0], Register)
             inputs.append(args[0])
             jump_target = args[0]
             is_conditional = True
             has_delay_slot = True
         elif mnemonic == "jal":
             # Function call to label
+            assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             clobbers.append(MemoryAccess.arbitrary())
-            assert isinstance(args[0], AsmGlobalSymbol)
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
             # Function call to pointer
-            assert isinstance(args[0], Register)
+            assert (
+                len(args) == 2
+                and args[0] == Register("ra")
+                and isinstance(args[1], Register)
+            )
             inputs = list(cls.argument_regs)
-            inputs.append(args[0])
+            inputs.append(Register("ra"))
+            inputs.append(args[1])
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             clobbers.append(MemoryAccess.arbitrary())
-            function_target = args[0]
+            function_target = args[1]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
             # Unconditional jump
+            assert len(args) == 1
             jump_target = get_jump_target(args[0])
             has_delay_slot = True
         elif mnemonic in (
@@ -743,6 +744,7 @@ class MipsArch(Arch):
             has_delay_slot = True
             is_conditional = True
         elif mnemonic in cls.instrs_no_dest:
+            assert not any(isinstance(a, AsmAddressMode) for a in args)
             inputs = [r for r in args if isinstance(r, Register)]
         elif mnemonic in cls.instrs_store:
             assert isinstance(args[0], Register)
@@ -751,15 +753,17 @@ class MipsArch(Arch):
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].rhs)
         elif mnemonic in cls.instrs_source_first:
-            assert isinstance(args[0], Register)
-            assert isinstance(args[1], Register)
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
             inputs = [args[0]]
             outputs = [args[1]]
         elif mnemonic in cls.instrs_destination_first:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             mn_parts = mnemonic.split(".")
-            regs = [r for r in args if isinstance(r, Register)]
             if mnemonic in (
                 "add.d",
                 "sub.d",
@@ -770,17 +774,18 @@ class MipsArch(Arch):
                 "mul.d",
             ):
                 # f64 arithmetic operations; all registers are f64's
-                assert len(regs) == len(args), (args, regs)
-                for reg in regs[1:]:
+                assert 2 <= len(args) <= 3
+                for reg in args[1:]:
+                    assert isinstance(reg, Register)
                     inputs.extend([reg, reg.other_f64_reg()])
                 outputs.append(args[0].other_f64_reg())
             elif mn_parts[0] in ("cvt", "trunc"):
                 # f64 conversion; either the input or output will be an f64
-                assert len(regs) == len(args), (args, regs)
+                assert len(args) == 2 and isinstance(args[1], Register)
                 if mn_parts[2] == "d":
-                    inputs = [regs[1], regs[1].other_f64_reg()]
+                    inputs = [args[1], args[1].other_f64_reg()]
                 else:
-                    inputs = [regs[1]]
+                    inputs = [args[1]]
                 if mn_parts[1] == "d":
                     outputs.append(args[0].other_f64_reg())
             elif mnemonic.startswith("l") and size is not None:
