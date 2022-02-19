@@ -474,11 +474,7 @@ class Type:
                 return zero_offset_results[0]
             elif exact:
                 # Try to insert a new field into the struct at the given offset
-                # TODO Loosen this to Type.any_field(), even for stack structs
-                if data.struct.is_stack:
-                    field_type = Type.any_reg()
-                else:
-                    field_type = Type.any_field()
+                field_type = Type.any_field()
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
                 new_field = data.struct.try_add_field(
                     field_type, offset, field_name, size=target_size

@@ -408,7 +408,7 @@ class StackInfo:
 
                 if store:
                     # If there's already been a store to `location`, then return a fresh type
-                    field_type = Type.any_reg()
+                    field_type = Type.any_field()
                 else:
                     # Use the type of the last store instead of the one from `get_deref_field()`
                     field_type = previous_stored_type
