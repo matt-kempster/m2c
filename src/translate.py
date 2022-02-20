@@ -496,7 +496,9 @@ def get_stack_info(
             and inst.args[2] == Register("at")
             and at_value is not None
         ):
-            # Moving the stack pointer more than 0xFFFF on MIPS
+            # Moving the stack pointer more than 0x7FFF on MIPS
+            # TODO: This instruction needs to be ignored later in translation, in the
+            # same way that `addiu $sp, $sp, N` is ignored in handle_addi_real
             info.allocated_stack_size = at_value
         elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on PPC
