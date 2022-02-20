@@ -480,6 +480,7 @@ def get_stack_info(
     # a local variable *and* a subroutine argument.) Anything within the stack frame,
     # but outside of these two regions, is considered a local variable.
     callee_saved_offset_and_size: List[Tuple[int, int]] = []
+    at_value: Optional[int] = None
     for inst in flow_graph.entry_node().block.instructions:
         arch_mnemonic = inst.arch_mnemonic(arch)
         if inst.mnemonic in arch.instrs_fn_call:
@@ -488,6 +489,15 @@ def get_stack_info(
             # Moving the stack pointer on MIPS
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
+        elif (
+            arch_mnemonic == "mips:subu"
+            and inst.args[0] == arch.stack_pointer_reg
+            and inst.args[1] == arch.stack_pointer_reg
+            and inst.args[2] == Register("at")
+            and at_value is not None
+        ):
+            # Moving the stack pointer more than 0xFFFF on MIPS
+            info.allocated_stack_size = at_value
         elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)
@@ -534,6 +544,17 @@ def get_stack_info(
                 )
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
+        elif arch_mnemonic == "mips:li" and inst.args[0] == Register("at"):
+            assert isinstance(inst.args[1], AsmLiteral)
+            at_value = inst.args[1].value
+        elif (
+            arch_mnemonic == "mips:ori"
+            and inst.args[0] == Register("at")
+            and inst.args[1] == Register("at")
+            and at_value is not None
+        ):
+            assert isinstance(inst.args[2], AsmLiteral)
+            at_value |= inst.args[2].value
 
     if not info.is_leaf:
         # Iterate over the whole function, not just the first basic block,
