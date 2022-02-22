@@ -630,7 +630,7 @@ class PpcArch(Arch):
             elif mnemonic == "mfctr":
                 assert len(args) == 1
                 inputs = [Register("ctr")]
-            elif mnemonic == "rlwimi":
+            elif mnemonic.rstrip(".") == "rlwimi":
                 assert (
                     len(args) == 5
                     and isinstance(args[1], Register)
