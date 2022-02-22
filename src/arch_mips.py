@@ -752,6 +752,8 @@ class MipsArch(Arch):
             outputs = [make_memory_access(args[1])]
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].rhs)
+            if mnemonic == "sdc1":
+                inputs.append(args[0].other_f64_reg())
         elif mnemonic in cls.instrs_source_first:
             assert (
                 len(args) == 2
@@ -772,6 +774,7 @@ class MipsArch(Arch):
                 "sqrt.d",
                 "div.d",
                 "mul.d",
+                "mov.d",
             ):
                 # f64 arithmetic operations; all registers are f64's
                 assert 2 <= len(args) <= 3
@@ -794,12 +797,25 @@ class MipsArch(Arch):
                 inputs = [make_memory_access(args[1])]
                 if isinstance(args[1], AsmAddressMode):
                     inputs.append(args[1].rhs)
+                if mnemonic in ("lwr", "lwl"):
+                    inputs.append(args[0])
+                elif mnemonic == "ldc1":
+                    outputs.append(args[0].other_f64_reg())
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
                 inputs = [args[1].rhs]
             elif mnemonic == "mfhi":
+                assert len(args) == 1
                 inputs = [Register("hi")]
             elif mnemonic == "mflo":
+                assert len(args) == 1
                 inputs = [Register("lo")]
+            elif mnemonic in ("movn", "movz"):
+                assert (
+                    len(args) == 3
+                    and isinstance(args[1], Register)
+                    and isinstance(args[2], Register)
+                )
+                inputs = [args[0], args[1], args[2]]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]

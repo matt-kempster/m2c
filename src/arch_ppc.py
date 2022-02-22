@@ -519,7 +519,24 @@ class PpcArch(Arch):
             # Normal branch
             # TODO: Support crN argument
             assert 1 <= len(args) <= 2
-            inputs = list(cr0_bits)
+            inputs = [
+                Register(
+                    {
+                        "beq": "cr0_eq",
+                        "bge": "cr0_lt",
+                        "bgt": "cr0_gt",
+                        "ble": "cr0_gt",
+                        "blt": "cr0_lt",
+                        "bne": "cr0_eq",
+                        "bns": "cr0_so",
+                        "bso": "cr0_so",
+                        "bdnz": "ctr",
+                        "bdz": "ctr",
+                        "bdnz.fictive": "ctr",
+                        "bdz.fictive": "ctr",
+                    }[mnemonic]
+                )
+            ]
             jump_target = get_jump_target(args[-1])
             is_conditional = True
         elif mnemonic in cls.instrs_store:
@@ -607,6 +624,21 @@ class PpcArch(Arch):
                 # `li $rD, sym@sda21(r2)` is equivalent to `addi $rD, $r2, sym@sda21`
                 assert len(args) == 2
                 inputs = [args[1].rhs]
+            elif mnemonic == "mflr":
+                assert len(args) == 1
+                inputs = [Register("lr")]
+            elif mnemonic == "mfctr":
+                assert len(args) == 1
+                inputs = [Register("ctr")]
+            elif mnemonic == "rlwimi":
+                assert (
+                    len(args) == 5
+                    and isinstance(args[1], Register)
+                    and not isinstance(args[2], (Register, AsmAddressMode))
+                    and not isinstance(args[3], (Register, AsmAddressMode))
+                    and not isinstance(args[4], (Register, AsmAddressMode))
+                )
+                inputs = [args[0], args[1]]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]

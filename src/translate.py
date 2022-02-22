@@ -1957,8 +1957,11 @@ class RegInfo:
     stack_info: StackInfo = field(repr=False)
     contents: Dict[Register, RegData] = field(default_factory=dict)
     read_inherited: Set[Register] = field(default_factory=set)
+    active_instr: Optional[Instruction] = None
 
     def __getitem__(self, key: Register) -> Expression:
+        if self.active_instr is not None and key not in self.active_instr.inputs:
+            raise DecompFailure(f"Undeclared read from {key} in {self.active_instr}")
         if key == Register("zero"):
             return Literal(0)
         data = self.contents.get(key)
@@ -1985,10 +1988,16 @@ class RegInfo:
         return key in self.contents
 
     def __setitem__(self, key: Register, value: Expression) -> None:
-        assert key != Register("zero")
-        self.contents[key] = RegData(value, RegMeta())
+        self.set_with_meta(key, value, RegMeta())
 
     def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
+        if self.active_instr is not None and key not in self.active_instr.outputs:
+            raise DecompFailure(f"Undeclared write from {key} in {self.active_instr}")
+        self.unchecked_set_with_meta(key, value, meta)
+
+    def unchecked_set_with_meta(
+        self, key: Register, value: Expression, meta: RegMeta
+    ) -> None:
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
 
@@ -2003,6 +2012,16 @@ class RegInfo:
     def get_meta(self, key: Register) -> Optional[RegMeta]:
         data = self.contents.get(key)
         return data.meta if data is not None else None
+
+    @contextmanager
+    def current_instr(self, instr: Instruction) -> Iterator[None]:
+        self.active_instr = instr
+        try:
+            yield
+        except Exception as e:
+            raise InstrProcessingFailure(instr) from e
+        finally:
+            self.active_instr = None
 
     def __str__(self) -> str:
         return ", ".join(
@@ -3890,7 +3909,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs.set_with_meta(r, expr, replace(data.meta, force=True))
+
+                # This write isn't changing the value of the register; it didn't need
+                # to be declared as part of the current instruction's inputs/outputs.
+                regs.unchecked_set_with_meta(r, expr, replace(data.meta, force=True))
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -3917,11 +3939,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         regs[reg] = expr
 
-    def set_reg(reg: Register, expr: Optional[Expression]) -> None:
+    def set_reg(reg: Register, expr: Optional[Expression]) -> Optional[Expression]:
         if expr is None:
             if reg in regs:
                 del regs[reg]
-            return
+            return None
 
         if isinstance(expr, LocalVar):
             if (
@@ -3931,7 +3953,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
-                return
+                return None
             if expr in local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
@@ -3963,6 +3985,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     to_write.append(StoreStmt(source=source, dest=dest))
                 expr = dest
             set_reg_maybe_return(reg, expr)
+        return expr
 
     def clear_caller_save_regs() -> None:
         for reg in arch.temp_regs:
@@ -4251,19 +4274,20 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # TODO: IDO tends to keep variables within single registers. Thus,
             # if source = target, maybe we could overwrite that variable instead
             # of creating a new one?
-            set_reg(target, val)
+            target_val = set_reg(target, val)
             mn_parts = arch_mnemonic.split(".")
             if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
                 # PPC instructions suffixed with . set condition bits (CR0) based on the result value
-                target_reg = args.reg(0)
+                if target_val is None:
+                    target_val = val
                 set_reg(
                     Register("cr0_eq"),
-                    BinaryOp.icmp(target_reg, "==", Literal(0, type=target_reg.type)),
+                    BinaryOp.icmp(target_val, "==", Literal(0, type=target_val.type)),
                 )
-                # Use manual casts for cr0_gt/cr0_lt so that the type of target_reg is not modified
+                # Use manual casts for cr0_gt/cr0_lt so that the type of target_val is not modified
                 # until the resulting bit is .use()'d.
                 target_s32 = Cast(
-                    target_reg, reinterpret=True, silent=True, type=Type.s32()
+                    target_val, reinterpret=True, silent=True, type=Type.s32()
                 )
                 set_reg(
                     Register("cr0_gt"),
@@ -4275,7 +4299,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 )
                 set_reg(
                     Register("cr0_so"),
-                    fn_op("MIPS2C_OVERFLOW", [target_reg], type=Type.s32()),
+                    fn_op("MIPS2C_OVERFLOW", [target_val], type=Type.s32()),
                 )
 
             elif (
@@ -4333,7 +4357,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 to_write.append(ExprStmt(expr))
 
     for instr in node.block.instructions:
-        with current_instr(instr):
+        with regs.current_instr(instr):
             process_instr(instr)
 
     if branch_condition is not None:
