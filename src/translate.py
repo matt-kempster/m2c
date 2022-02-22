@@ -407,7 +407,7 @@ class StackInfo:
 
                 if store:
                     # If there's already been a store to `location`, then return a fresh type
-                    field_type = Type.any_reg()
+                    field_type = Type.any_field()
                 else:
                     # Use the type of the last store instead of the one from `get_deref_field()`
                     field_type = previous_stored_type
@@ -479,6 +479,9 @@ def get_stack_info(
     # a local variable *and* a subroutine argument.) Anything within the stack frame,
     # but outside of these two regions, is considered a local variable.
     callee_saved_offset_and_size: List[Tuple[int, int]] = []
+    # Track simple literal values stored into registers: MIPS compilers need a temp
+    # reg to move the stack pointer more than 0x7FFF bytes.
+    temp_reg_values: Dict[Register, int] = {}
     for inst in flow_graph.entry_node().block.instructions:
         arch_mnemonic = inst.arch_mnemonic(arch)
         if inst.mnemonic in arch.instrs_fn_call:
@@ -487,6 +490,17 @@ def get_stack_info(
             # Moving the stack pointer on MIPS
             assert isinstance(inst.args[2], AsmLiteral)
             info.allocated_stack_size = abs(inst.args[2].signed_value())
+        elif (
+            arch_mnemonic == "mips:subu"
+            and inst.args[0] == arch.stack_pointer_reg
+            and inst.args[1] == arch.stack_pointer_reg
+            and inst.args[2] in temp_reg_values
+        ):
+            # Moving the stack pointer more than 0x7FFF on MIPS
+            # TODO: This instruction needs to be ignored later in translation, in the
+            # same way that `addiu $sp, $sp, N` is ignored in handle_addi_real
+            assert isinstance(inst.args[2], Register)
+            info.allocated_stack_size = temp_reg_values[inst.args[2]]
         elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)
@@ -522,6 +536,18 @@ def get_stack_info(
                         callee_saved_offset_and_size.append((stack_offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
+        elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
+            assert isinstance(inst.args[0], Register)
+            assert isinstance(inst.args[1], AsmLiteral)
+            temp_reg_values[inst.args[0]] = inst.args[1].value
+        elif (
+            arch_mnemonic == "mips:ori"
+            and inst.args[0] == inst.args[1]
+            and inst.args[0] in temp_reg_values
+        ):
+            assert isinstance(inst.args[0], Register)
+            assert isinstance(inst.args[2], AsmLiteral)
+            temp_reg_values[inst.args[0]] |= inst.args[2].value
 
     if not info.is_leaf:
         # Iterate over the whole function, not just the first basic block,
