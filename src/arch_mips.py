@@ -796,6 +796,10 @@ class MipsArch(Arch):
                     inputs.append(args[1].rhs)
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
                 inputs = [args[1].rhs]
+            elif mnemonic == "mfhi":
+                inputs = [Register("hi")]
+            elif mnemonic == "mflo":
+                inputs = [Register("lo")]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
