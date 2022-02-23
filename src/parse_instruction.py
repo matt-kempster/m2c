@@ -116,13 +116,6 @@ class MemoryAccess:
         """Placeholder value used to mark that some arbitrary memory may be clobbered"""
         return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
 
-    def get_stack_offset(self, arch: "ArchAsm") -> Optional[int]:
-        if self.base_reg == arch.stack_pointer_reg and isinstance(
-            self.offset, AsmLiteral
-        ):
-            return self.offset.value
-        return None
-
 
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget

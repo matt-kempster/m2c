@@ -148,13 +148,13 @@ class BoolCastPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        body: List[ReplacementPart] = [
-            AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]])
-        ]
-        if m.regs["a"] != Register("r0"):
-            # Preserve `neg $a, $x` in case $a is accessed later, unless $a is $r0
-            body.append(m.body[0])
-        return Replacement(body, len(m.body))
+        boolcast = AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]])
+        if m.regs["a"] == Register("r0"):
+            return None
+        elif m.regs["x"] == m.regs["a"]:
+            return Replacement([boolcast, m.body[0]], len(m.body))
+        else:
+            return Replacement([m.body[0], boolcast], len(m.body))
 
 
 class BranchCtrPattern(AsmPattern):

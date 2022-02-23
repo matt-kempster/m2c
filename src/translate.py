@@ -529,11 +529,15 @@ def get_stack_info(
                 info.is_leaf = False
             # The registers & their stack accesses must be matched up in ArchAsm.parse
             for reg, mem in zip(inst.inputs, inst.outputs):
-                if isinstance(reg, Register) and isinstance(mem, MemoryAccess):
-                    stack_offset = mem.get_stack_offset(arch)
-                    if stack_offset is not None:
-                        info.callee_save_reg_locations[reg] = stack_offset
-                        callee_saved_offset_and_size.append((stack_offset, mem.size))
+                if (
+                    isinstance(reg, Register)
+                    and isinstance(mem, MemoryAccess)
+                    and mem.base_reg == arch.stack_pointer_reg
+                    and isinstance(mem.offset, AsmLiteral)
+                ):
+                    stack_offset = mem.offset.value
+                    info.callee_save_reg_locations[reg] = stack_offset
+                    callee_saved_offset_and_size.append((stack_offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
@@ -1957,11 +1961,11 @@ class RegInfo:
     stack_info: StackInfo = field(repr=False)
     contents: Dict[Register, RegData] = field(default_factory=dict)
     read_inherited: Set[Register] = field(default_factory=set)
-    active_instr: Optional[Instruction] = None
+    _active_instr: Optional[Instruction] = None
 
     def __getitem__(self, key: Register) -> Expression:
-        if self.active_instr is not None and key not in self.active_instr.inputs:
-            raise DecompFailure(f"Undeclared read from {key} in {self.active_instr}")
+        if self._active_instr is not None and key not in self._active_instr.inputs:
+            raise DecompFailure(f"Undeclared read from {key} in {self._active_instr}")
         if key == Register("zero"):
             return Literal(0)
         data = self.contents.get(key)
@@ -1991,8 +1995,8 @@ class RegInfo:
         self.set_with_meta(key, value, RegMeta())
 
     def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
-        if self.active_instr is not None and key not in self.active_instr.outputs:
-            raise DecompFailure(f"Undeclared write from {key} in {self.active_instr}")
+        if self._active_instr is not None and key not in self._active_instr.outputs:
+            raise DecompFailure(f"Undeclared write to {key} in {self._active_instr}")
         self.unchecked_set_with_meta(key, value, meta)
 
     def unchecked_set_with_meta(
@@ -2015,13 +2019,12 @@ class RegInfo:
 
     @contextmanager
     def current_instr(self, instr: Instruction) -> Iterator[None]:
-        self.active_instr = instr
+        self._active_instr = instr
         try:
-            yield
-        except Exception as e:
-            raise InstrProcessingFailure(instr) from e
+            with current_instr(instr):
+                yield
         finally:
-            self.active_instr = None
+            self._active_instr = None
 
     def __str__(self) -> str:
         return ", ".join(
@@ -3231,7 +3234,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
                     return (lbase, lnum + rnum)
                 if expr.op == "-":
                     return (lbase, lnum - rnum)
-        if isinstance(expr, UnaryOp) and not toplevel:
+        if isinstance(expr, UnaryOp) and expr.op == "-" and not toplevel:
             base, num = fold(expr.expr, False, True)
             return (base, -num)
         if (
