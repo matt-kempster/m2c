@@ -204,12 +204,19 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
         if reloc.relocation_type == 109:
             assert reloc.symbol.section is not None
             reg = "r13" if reloc.symbol.section.name.endswith("2") else "r2"
-            return "%s %s, %s@sda21(%s)" % (
-                insn.mnemonic,
-                insn.reg_name(insn.operands[0].value.reg),
-                label,
-                reg,
-            )
+            if insn.id == cs.ppc.PPC_INS_LI:
+                return "addi %s, %s, %s@sda21" % (
+                    insn.reg_name(insn.operands[0].value.reg),
+                    reg,
+                    label,
+                )
+            else:
+                return "%s %s, %s@sda21(%s)" % (
+                    insn.mnemonic,
+                    insn.reg_name(insn.operands[0].value.reg),
+                    label,
+                    reg,
+                )
 
         # Handle split loads (high part)
         if insn.id == cs.ppc.PPC_INS_LIS:

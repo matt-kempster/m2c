@@ -29,7 +29,6 @@ from .asm_pattern import (
     AsmMatcher,
     AsmPattern,
     Replacement,
-    ReplacementPart,
     SimpleAsmPattern,
     make_pattern,
 )
@@ -416,8 +415,8 @@ class PpcArch(Arch):
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
         inputs: List[Access] = []
-        outputs: List[Access] = []
         clobbers: List[Access] = []
+        outputs: List[Access] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
@@ -441,20 +440,18 @@ class PpcArch(Arch):
 
         def make_memory_access(arg: Argument) -> Access:
             assert size is not None
+            assert not isinstance(arg, Register)
             if isinstance(arg, AsmAddressMode):
                 return MemoryAccess(
                     base_reg=arg.rhs,
                     offset=arg.lhs,
                     size=size,
                 )
-            elif isinstance(arg, AsmGlobalSymbol):
-                return MemoryAccess(
-                    base_reg=Register("zero"),
-                    offset=arg,
-                    size=size,
-                )
-            else:
-                assert False
+            return MemoryAccess(
+                base_reg=Register("zero"),
+                offset=arg,
+                size=size,
+            )
 
         if mnemonic == "blr":
             # Return
@@ -620,10 +617,6 @@ class PpcArch(Arch):
                 else:
                     assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
                     inputs = [args[1].rhs, make_memory_access(args[1])]
-            elif mnemonic == "li" and isinstance(args[1], AsmAddressMode):
-                # `li $rD, sym@sda21(r2)` is equivalent to `addi $rD, $r2, sym@sda21`
-                assert len(args) == 2
-                inputs = [args[1].rhs]
             elif mnemonic == "mflr":
                 assert len(args) == 1
                 inputs = [Register("lr")]
@@ -666,8 +659,8 @@ class PpcArch(Arch):
             args=args,
             meta=meta,
             inputs=inputs,
-            outputs=outputs,
             clobbers=clobbers,
+            outputs=outputs,
             jump_target=jump_target,
             function_target=function_target,
             is_conditional=is_conditional,

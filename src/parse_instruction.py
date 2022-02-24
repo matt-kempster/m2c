@@ -156,9 +156,12 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
+    # Track register and memory dependencies
+    # An Instruction evaluates by reading from `inputs`, invalidating `clobbers`,
+    # then writing to `outputs` (in that order)
     inputs: List[Access]
-    outputs: List[Access]
     clobbers: List[Access]
+    outputs: List[Access]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None

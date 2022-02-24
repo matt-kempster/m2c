@@ -609,8 +609,8 @@ class MipsArch(Arch):
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
         inputs: List[Access] = []
-        outputs: List[Access] = []
         clobbers: List[Access] = []
+        outputs: List[Access] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
@@ -857,8 +857,8 @@ class MipsArch(Arch):
             args=args,
             meta=meta,
             inputs=inputs,
-            outputs=outputs,
             clobbers=clobbers,
+            outputs=outputs,
             jump_target=jump_target,
             function_target=function_target,
             has_delay_slot=has_delay_slot,
