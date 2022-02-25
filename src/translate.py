@@ -44,6 +44,7 @@ from .parse_instruction import (
     AsmLiteral,
     BinOp,
     Instruction,
+    MemoryAccess,
     Macro,
     Register,
 )
@@ -102,14 +103,12 @@ class Arch(ArchFlowGraph):
         ...
 
     @abc.abstractmethod
-    def function_return(
-        self, expr: "Expression"
-    ) -> List[Tuple[Register, "Expression"]]:
+    def function_return(self, expr: "Expression") -> Dict[Register, "Expression"]:
         """
         Compute register location(s) & values that will hold the return value
         of the function call `expr`.
-        This must use all of the registers in `all_return_regs` in order to stay
-        consistent with `output_regs_for_instr()`. This is why we can't use the
+        This must have a value for each register in `all_return_regs` in order to stay
+        consistent with `Instruction.outputs`. This is why we can't use the
         function's return type, even though it may be more accurate.
         """
         ...
@@ -528,24 +527,17 @@ def get_stack_info(
             if inst.args[0] in (arch.return_address_reg, Register("r0")):
                 # Saving the return address on the stack.
                 info.is_leaf = False
-            stack_offset = inst.args[1].lhs_as_literal()
-            if arch_mnemonic == "ppc:stmw":
-                assert inst.args[0].register_name[0] == "r"
-                index = int(inst.args[0].register_name[1:])
-                while index <= 31:
-                    reg = Register(f"r{index}")
+            # The registers & their stack accesses must be matched up in ArchAsm.parse
+            for reg, mem in zip(inst.inputs, inst.outputs):
+                if (
+                    isinstance(reg, Register)
+                    and isinstance(mem, MemoryAccess)
+                    and mem.base_reg == arch.stack_pointer_reg
+                    and isinstance(mem.offset, AsmLiteral)
+                ):
+                    stack_offset = mem.offset.value
                     info.callee_save_reg_locations[reg] = stack_offset
-                    callee_saved_offset_and_size.append((stack_offset, 4))
-                    index += 1
-                    stack_offset += 4
-            elif inst.args[0] not in info.callee_save_reg_locations:
-                info.callee_save_reg_locations[inst.args[0]] = stack_offset
-                callee_saved_offset_and_size.append(
-                    (
-                        stack_offset,
-                        8 if arch_mnemonic in ("mips:sdc1", "ppc:stfd") else 4,
-                    )
-                )
+                    callee_saved_offset_and_size.append((stack_offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
@@ -1969,8 +1961,11 @@ class RegInfo:
     stack_info: StackInfo = field(repr=False)
     contents: Dict[Register, RegData] = field(default_factory=dict)
     read_inherited: Set[Register] = field(default_factory=set)
+    _active_instr: Optional[Instruction] = None
 
     def __getitem__(self, key: Register) -> Expression:
+        if self._active_instr is not None and key not in self._active_instr.inputs:
+            raise DecompFailure(f"Undeclared read from {key} in {self._active_instr}")
         if key == Register("zero"):
             return Literal(0)
         data = self.contents.get(key)
@@ -1997,10 +1992,16 @@ class RegInfo:
         return key in self.contents
 
     def __setitem__(self, key: Register, value: Expression) -> None:
-        assert key != Register("zero")
-        self.contents[key] = RegData(value, RegMeta())
+        self.set_with_meta(key, value, RegMeta())
 
     def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
+        if self._active_instr is not None and key not in self._active_instr.outputs:
+            raise DecompFailure(f"Undeclared write to {key} in {self._active_instr}")
+        self.unchecked_set_with_meta(key, value, meta)
+
+    def unchecked_set_with_meta(
+        self, key: Register, value: Expression, meta: RegMeta
+    ) -> None:
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
 
@@ -2015,6 +2016,15 @@ class RegInfo:
     def get_meta(self, key: Register) -> Optional[RegMeta]:
         data = self.contents.get(key)
         return data.meta if data is not None else None
+
+    @contextmanager
+    def current_instr(self, instr: Instruction) -> Iterator[None]:
+        self._active_instr = instr
+        try:
+            with current_instr(instr):
+                yield
+        finally:
+            self._active_instr = None
 
     def __str__(self) -> str:
         return ", ".join(
@@ -3224,7 +3234,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
                     return (lbase, lnum + rnum)
                 if expr.op == "-":
                     return (lbase, lnum - rnum)
-        if isinstance(expr, UnaryOp) and not toplevel:
+        if isinstance(expr, UnaryOp) and expr.op == "-" and not toplevel:
             base, num = fold(expr.expr, False, True)
             return (base, -num)
         if (
@@ -3612,95 +3622,7 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
-def output_regs_for_instr(
-    instr: Instruction, global_info: "GlobalInfo"
-) -> List[Register]:
-    def reg_at(index: int) -> List[Register]:
-        reg = instr.args[index]
-        if isinstance(reg, AsmAddressMode):
-            # This is used for the store/load-update PPC instructions,
-            # where the register in an AsmAddressMode is updated.
-            assert (
-                instr.mnemonic in arch.instrs_store_update
-                or instr.mnemonic in arch.instrs_load_update
-            )
-            return [reg.rhs]
-        if not isinstance(reg, Register):
-            # We'll deal with this error later
-            return []
-        return [reg]
-
-    arch = global_info.arch
-    mnemonic = instr.mnemonic
-    arch_mnemonic = instr.arch_mnemonic(arch)
-    if (
-        mnemonic in arch.instrs_jumps
-        or mnemonic in arch.instrs_store
-        or mnemonic in arch.instrs_branches
-        or mnemonic in arch.instrs_float_branches
-        or mnemonic in arch.instrs_ignore
-        or mnemonic in arch.instrs_no_dest
-    ):
-        return []
-    if mnemonic in arch.instrs_store_update:
-        return reg_at(1)
-    if mnemonic in arch.instrs_load_update:
-        return reg_at(0) + reg_at(1)
-    if mnemonic in arch.instrs_fn_call:
-        if instr.args and isinstance(instr.args[0], AsmGlobalSymbol):
-            fn_target = instr.args[0]
-            if global_info.is_function_known_void(fn_target.symbol_name):
-                return []
-        return arch.all_return_regs
-    if mnemonic in arch.instrs_source_first:
-        return reg_at(1)
-    if mnemonic.rstrip(".") in arch.instrs_destination_first:
-        reg = reg_at(0)
-        mn_parts = arch_mnemonic.split(".")
-        if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
-            return [
-                Register("cr0_lt"),
-                Register("cr0_gt"),
-                Register("cr0_eq"),
-                Register("cr0_so"),
-            ] + reg
-        elif (
-            len(mn_parts) >= 2
-            and mn_parts[0].startswith("mips:")
-            and mn_parts[1] == "d"
-        ) or arch_mnemonic == "mips:ldc1":
-            assert len(reg) == 1
-            return reg + [reg[0].other_f64_reg()]
-        return reg
-    if mnemonic in arch.instrs_float_comp:
-        return [Register("condition_bit")]
-    if mnemonic in arch.instrs_hi_lo:
-        return [Register("hi"), Register("lo")]
-    if mnemonic in arch.instrs_implicit_destination:
-        return [arch.instrs_implicit_destination[mnemonic][0]]
-    if mnemonic in arch.instrs_ppc_compare:
-        return [
-            Register("cr0_lt"),
-            Register("cr0_gt"),
-            Register("cr0_eq"),
-            Register("cr0_so"),
-        ]
-    if instr.args and isinstance(instr.args[0], Register):
-        return reg_at(0)
-    if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
-        # Unimplemented PPC instructions that modify CR0
-        return [
-            Register("cr0_lt"),
-            Register("cr0_gt"),
-            Register("cr0_eq"),
-            Register("cr0_so"),
-        ]
-    return []
-
-
-def regs_clobbered_until_dominator(
-    node: Node, global_info: "GlobalInfo"
-) -> Set[Register]:
+def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
     if node.immediate_dominator is None:
         return set()
     seen = {node.immediate_dominator}
@@ -3712,17 +3634,14 @@ def regs_clobbered_until_dominator(
             continue
         seen.add(n)
         for instr in n.block.instructions:
-            with current_instr(instr):
-                clobbered.update(output_regs_for_instr(instr, global_info))
-                if instr.mnemonic in global_info.arch.instrs_fn_call:
-                    clobbered.update(global_info.arch.temp_regs)
+            for r in instr.outputs + instr.clobbers:
+                if isinstance(r, Register):
+                    clobbered.add(r)
         stack.extend(n.parents)
     return clobbered
 
 
-def reg_always_set(
-    node: Node, reg: Register, global_info: "GlobalInfo", *, dom_set: bool
-) -> bool:
+def reg_always_set(node: Node, reg: Register, *, dom_set: bool) -> bool:
     if node.immediate_dominator is None:
         return False
     seen = {node.immediate_dominator}
@@ -3737,13 +3656,10 @@ def reg_always_set(
         clobbered: Optional[bool] = None
         for instr in n.block.instructions:
             with current_instr(instr):
-                if (
-                    instr.mnemonic in global_info.arch.instrs_fn_call
-                    and reg in global_info.arch.temp_regs
-                ):
-                    clobbered = True
-                if reg in output_regs_for_instr(instr, global_info):
+                if reg in instr.outputs:
                     clobbered = False
+                elif reg in instr.clobbers:
+                    clobbered = True
         if clobbered == True:
             return False
         if clobbered is None:
@@ -3996,7 +3912,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         trivial=False,
                         prefix=r.register_name,
                     )
-                regs.set_with_meta(r, expr, replace(data.meta, force=True))
+
+                # This write isn't changing the value of the register; it didn't need
+                # to be declared as part of the current instruction's inputs/outputs.
+                regs.unchecked_set_with_meta(r, expr, replace(data.meta, force=True))
 
     def prevent_later_value_uses(sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -4023,11 +3942,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
         regs[reg] = expr
 
-    def set_reg(reg: Register, expr: Optional[Expression]) -> None:
+    def set_reg(reg: Register, expr: Optional[Expression]) -> Optional[Expression]:
         if expr is None:
             if reg in regs:
                 del regs[reg]
-            return
+            return None
 
         if isinstance(expr, LocalVar):
             if (
@@ -4037,7 +3956,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
-                return
+                return None
             if expr in local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
@@ -4069,6 +3988,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     to_write.append(StoreStmt(source=source, dest=dest))
                 expr = dest
             set_reg_maybe_return(reg, expr)
+        return expr
 
     def clear_caller_save_regs() -> None:
         for reg in arch.temp_regs:
@@ -4197,18 +4117,15 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 assert False, f"Unhandled jump mnemonic {arch_mnemonic}"
 
         elif mnemonic in arch.instrs_fn_call:
-            is_known_void = False
             if arch_mnemonic in ["mips:jal", "ppc:bl"]:
                 fn_target = args.imm(0)
-                if isinstance(fn_target, AddressOf) and isinstance(
-                    fn_target.expr, GlobalSymbol
-                ):
-                    is_known_void = stack_info.global_info.is_function_known_void(
-                        fn_target.expr.symbol_name
+                if not (
+                    (
+                        isinstance(fn_target, AddressOf)
+                        and isinstance(fn_target.expr, GlobalSymbol)
                     )
-                elif isinstance(fn_target, Literal):
-                    pass
-                else:
+                    or isinstance(fn_target, Literal)
+                ):
                     raise DecompFailure(
                         f"Target of function call must be a symbol, not {fn_target}"
                     )
@@ -4310,23 +4227,19 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             prevent_later_function_calls()
             prevent_later_reads()
 
-            # If we have type information that says the function is
-            # void, then don't set any of these -- it might cause us to
-            # believe the function we're decompiling is non-void.
-            if not is_known_void:
-                return_reg_vals = arch.function_return(call)
-                # function_return must return exactly the same regs as all_return_regs
-                # to match output_regs_for_instr
-                assert {r for r, v in return_reg_vals} == set(arch.all_return_regs)
-                for reg, val in return_reg_vals:
-                    if not isinstance(val, SecondF64Half):
-                        val = eval_once(
-                            val,
-                            emit_exactly_once=False,
-                            trivial=False,
-                            prefix=reg.register_name,
-                        )
-                    regs.set_with_meta(reg, val, RegMeta(function_return=True))
+            return_reg_vals = arch.function_return(call)
+            for out in instr.outputs:
+                if not isinstance(out, Register):
+                    continue
+                val = return_reg_vals[out]
+                if not isinstance(val, SecondF64Half):
+                    val = eval_once(
+                        val,
+                        emit_exactly_once=False,
+                        trivial=False,
+                        prefix=out.register_name,
+                    )
+                regs.set_with_meta(out, val, RegMeta(function_return=True))
 
             has_function_call = True
 
@@ -4364,19 +4277,20 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             # TODO: IDO tends to keep variables within single registers. Thus,
             # if source = target, maybe we could overwrite that variable instead
             # of creating a new one?
-            set_reg(target, val)
+            target_val = set_reg(target, val)
             mn_parts = arch_mnemonic.split(".")
             if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
                 # PPC instructions suffixed with . set condition bits (CR0) based on the result value
-                target_reg = args.reg(0)
+                if target_val is None:
+                    target_val = val
                 set_reg(
                     Register("cr0_eq"),
-                    BinaryOp.icmp(target_reg, "==", Literal(0, type=target_reg.type)),
+                    BinaryOp.icmp(target_val, "==", Literal(0, type=target_val.type)),
                 )
-                # Use manual casts for cr0_gt/cr0_lt so that the type of target_reg is not modified
+                # Use manual casts for cr0_gt/cr0_lt so that the type of target_val is not modified
                 # until the resulting bit is .use()'d.
                 target_s32 = Cast(
-                    target_reg, reinterpret=True, silent=True, type=Type.s32()
+                    target_val, reinterpret=True, silent=True, type=Type.s32()
                 )
                 set_reg(
                     Register("cr0_gt"),
@@ -4388,7 +4302,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 )
                 set_reg(
                     Register("cr0_so"),
-                    fn_op("MIPS2C_OVERFLOW", [target_reg], type=Type.s32()),
+                    fn_op("MIPS2C_OVERFLOW", [target_val], type=Type.s32()),
                 )
 
             elif (
@@ -4446,7 +4360,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 to_write.append(ExprStmt(expr))
 
     for instr in node.block.instructions:
-        with current_instr(instr):
+        with regs.current_instr(instr):
             process_instr(instr)
 
     if branch_condition is not None:
@@ -4535,11 +4449,9 @@ def translate_graph_from_block(
                 reg, data.value, RegMeta(inherited=True, force=data.meta.force)
             )
 
-        phi_regs = regs_clobbered_until_dominator(child, stack_info.global_info)
+        phi_regs = regs_clobbered_until_dominator(child)
         for reg in phi_regs:
-            if reg_always_set(
-                child, reg, stack_info.global_info, dom_set=(reg in regs)
-            ):
+            if reg_always_set(child, reg, dom_set=(reg in regs)):
                 expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
                 if expr is None:
                     expr = PhiExpr(
@@ -4898,6 +4810,24 @@ class GlobalInfo:
                 )
         lines.sort()
         return "".join(line for _, line in lines)
+
+
+def narrow_func_call_outputs(
+    function: Function,
+    global_info: GlobalInfo,
+) -> None:
+    """
+    Modify the `outputs` list of function call Instructions using the context file.
+    For now, this only handles known-void functions, but in the future it could
+    be extended to select a specific register subset based on type.
+    """
+    for instr in function.body:
+        if (
+            isinstance(instr, Instruction)
+            and isinstance(instr.function_target, AsmGlobalSymbol)
+            and global_info.is_function_known_void(instr.function_target.symbol_name)
+        ):
+            instr.outputs.clear()
 
 
 def translate_to_ast(

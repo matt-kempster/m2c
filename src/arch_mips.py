@@ -11,6 +11,7 @@ from typing import (
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
+    Access,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -19,6 +20,7 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    MemoryAccess,
     Register,
     get_jump_target,
 )
@@ -606,6 +608,9 @@ class MipsArch(Arch):
     def parse(
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
+        inputs: List[Access] = []
+        clobbers: List[Access] = []
+        outputs: List[Access] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
@@ -613,28 +618,68 @@ class MipsArch(Arch):
         is_conditional = False
         is_return = False
 
+        memory_sizes = {
+            "b": 1,
+            "h": 2,
+            "w": 4,
+            "d": 8,
+        }
+        size = memory_sizes.get(mnemonic[1:2])
+
+        def make_memory_access(arg: Argument) -> Access:
+            assert size is not None
+            assert not isinstance(arg, Register)
+            if isinstance(arg, AsmAddressMode):
+                return MemoryAccess(
+                    base_reg=arg.rhs,
+                    offset=arg.lhs,
+                    size=size,
+                )
+            return MemoryAccess(
+                base_reg=Register("zero"),
+                offset=arg,
+                size=size,
+            )
+
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
+            assert len(args) == 1
+            inputs = [Register("ra")]
             is_return = True
             has_delay_slot = True
         elif mnemonic == "jr":
             # Jump table (switch)
-            assert isinstance(args[0], Register)
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs.append(args[0])
             jump_target = args[0]
             is_conditional = True
             has_delay_slot = True
         elif mnemonic == "jal":
             # Function call to label
-            assert isinstance(args[0], AsmGlobalSymbol)
+            assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
+            inputs = list(cls.argument_regs)
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            clobbers.append(MemoryAccess.arbitrary())
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
             # Function call to pointer
-            assert isinstance(args[0], Register)
-            function_target = args[0]
+            assert (
+                len(args) == 2
+                and args[0] == Register("ra")
+                and isinstance(args[1], Register)
+            )
+            inputs = list(cls.argument_regs)
+            inputs.append(args[1])
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            clobbers.append(MemoryAccess.arbitrary())
+            function_target = args[1]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
             # Unconditional jump
+            assert len(args) == 1
             jump_target = get_jump_target(args[0])
             has_delay_slot = True
         elif mnemonic in (
@@ -650,6 +695,20 @@ class MipsArch(Arch):
             "bc1fl",
         ):
             # Branch-likely
+            if mnemonic in ("beql", "bnel"):
+                assert (
+                    len(args) == 3
+                    and isinstance(args[0], Register)
+                    and isinstance(args[1], Register)
+                )
+                inputs.append(args[0])
+                inputs.append(args[1])
+            elif mnemonic in ("bc1tl", "bc1fl"):
+                assert len(args) == 1
+                inputs.append(Register("condition_bit"))
+            else:
+                assert len(args) == 2 and isinstance(args[0], Register)
+                inputs.append(args[0])
             jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_branch_likely = True
@@ -667,14 +726,138 @@ class MipsArch(Arch):
             "bc1f",
         ):
             # Normal branch
+            if mnemonic in ("beq", "bne"):
+                assert (
+                    len(args) == 3
+                    and isinstance(args[0], Register)
+                    and isinstance(args[1], Register)
+                )
+                inputs = [args[0], args[1]]
+            elif mnemonic in ("bc1t", "bc1f"):
+                assert len(args) == 1
+                inputs = [Register("condition_bit")]
+            else:
+                assert len(args) == 2 and isinstance(args[0], Register)
+                inputs = [args[0]]
             jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_conditional = True
+        elif mnemonic in cls.instrs_no_dest:
+            assert not any(isinstance(a, AsmAddressMode) for a in args)
+            inputs = [r for r in args if isinstance(r, Register)]
+        elif mnemonic in cls.instrs_store:
+            assert isinstance(args[0], Register)
+            inputs = [args[0]]
+            outputs = [make_memory_access(args[1])]
+            if isinstance(args[1], AsmAddressMode):
+                inputs.append(args[1].rhs)
+            if mnemonic == "sdc1":
+                inputs.append(args[0].other_f64_reg())
+        elif mnemonic in cls.instrs_source_first:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0]]
+            outputs = [args[1]]
+        elif mnemonic in cls.instrs_destination_first:
+            assert isinstance(args[0], Register)
+            outputs = [args[0]]
+            mn_parts = mnemonic.split(".")
+            if mnemonic in (
+                "add.d",
+                "sub.d",
+                "neg.d",
+                "abs.d",
+                "sqrt.d",
+                "div.d",
+                "mul.d",
+                "mov.d",
+            ):
+                # f64 arithmetic operations; all registers are f64's
+                assert 2 <= len(args) <= 3
+                for reg in args[1:]:
+                    assert isinstance(reg, Register)
+                    inputs.extend([reg, reg.other_f64_reg()])
+                outputs.append(args[0].other_f64_reg())
+            elif mn_parts[0] in ("cvt", "trunc"):
+                # f64 conversion; either the input or output will be an f64
+                assert len(args) == 2 and isinstance(args[1], Register)
+                if mn_parts[2] == "d":
+                    inputs = [args[1], args[1].other_f64_reg()]
+                else:
+                    inputs = [args[1]]
+                if mn_parts[1] == "d":
+                    outputs.append(args[0].other_f64_reg())
+            elif mnemonic.startswith("l") and size is not None:
+                # Load instructions
+                assert len(args) == 2
+                inputs = [make_memory_access(args[1])]
+                if isinstance(args[1], AsmAddressMode):
+                    inputs.append(args[1].rhs)
+                if mnemonic in ("lwr", "lwl"):
+                    inputs.append(args[0])
+                elif mnemonic == "ldc1":
+                    outputs.append(args[0].other_f64_reg())
+            elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
+                inputs = [args[1].rhs]
+            elif mnemonic == "mfhi":
+                assert len(args) == 1
+                inputs = [Register("hi")]
+            elif mnemonic == "mflo":
+                assert len(args) == 1
+                inputs = [Register("lo")]
+            elif mnemonic in ("movn", "movz"):
+                assert (
+                    len(args) == 3
+                    and isinstance(args[1], Register)
+                    and isinstance(args[2], Register)
+                )
+                inputs = [args[0], args[1], args[2]]
+            else:
+                assert not any(isinstance(a, AsmAddressMode) for a in args)
+                inputs = [r for r in args[1:] if isinstance(r, Register)]
+        elif mnemonic in cls.instrs_float_comp:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            if mnemonic.endswith(".d"):
+                inputs = [
+                    args[0],
+                    args[0].other_f64_reg(),
+                    args[1],
+                    args[1].other_f64_reg(),
+                ]
+            else:
+                inputs = [args[0], args[1]]
+            outputs = [Register("condition_bit")]
+        elif mnemonic in cls.instrs_hi_lo:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0], args[1]]
+            outputs = [Register("hi"), Register("lo")]
+        elif mnemonic in cls.instrs_ignore:
+            # TODO: There might be some instrs to handle here
+            pass
+        elif args and isinstance(args[0], Register):
+            # If the mnemonic is unsupported, guess
+            assert not any(isinstance(a, AsmAddressMode) for a in args)
+            inputs = [r for r in args[1:] if isinstance(r, Register)]
+            outputs = [args[0]]
 
         return Instruction(
             mnemonic=mnemonic,
             args=args,
             meta=meta,
+            inputs=inputs,
+            clobbers=clobbers,
+            outputs=outputs,
             jump_target=jump_target,
             function_target=function_target,
             has_delay_slot=has_delay_slot,
@@ -1201,23 +1384,20 @@ class MipsArch(Arch):
         )
 
     @staticmethod
-    def function_return(expr: Expression) -> List[Tuple[Register, Expression]]:
+    def function_return(expr: Expression) -> Dict[Register, Expression]:
         # We may not know what this function's return registers are --
         # $f0, $v0 or ($v0,$v1) or $f0 -- but we don't really care,
         # it's fine to be liberal here and put the return value in all
         # of them. (It's not perfect for u64's, but that's rare anyway.)
-        return [
-            (
-                Register("f0"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.floatish()),
+        return {
+            Register("f0"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.floatish()
             ),
-            (
-                Register("v0"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.intptr()),
+            Register("v0"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.intptr()
             ),
-            (
-                Register("v1"),
-                as_u32(Cast(expr, reinterpret=True, silent=False, type=Type.u64())),
+            Register("v1"): as_u32(
+                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
             ),
-            (Register("f1"), SecondF64Half()),
-        ]
+            Register("f1"): SecondF64Half(),
+        }

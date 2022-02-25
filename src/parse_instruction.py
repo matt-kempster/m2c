@@ -105,9 +105,22 @@ class JumpTarget:
         return f".{self.target}"
 
 
+@dataclass(frozen=True)
+class MemoryAccess:
+    base_reg: Register
+    offset: "Argument"
+    size: int
+
+    @staticmethod
+    def arbitrary() -> "MemoryAccess":
+        """Placeholder value used to mark that some arbitrary memory may be clobbered"""
+        return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
+
+
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
+Access = Union[Register, MemoryAccess]
 
 
 @dataclass(frozen=True)
@@ -142,6 +155,13 @@ class Instruction:
     mnemonic: str
     args: List[Argument]
     meta: InstructionMeta
+
+    # Track register and memory dependencies
+    # An Instruction evaluates by reading from `inputs`, invalidating `clobbers`,
+    # then writing to `outputs` (in that order)
+    inputs: List[Access]
+    clobbers: List[Access]
+    outputs: List[Access]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
