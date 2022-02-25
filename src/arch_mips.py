@@ -671,7 +671,6 @@ class MipsArch(Arch):
                 and isinstance(args[1], Register)
             )
             inputs = list(cls.argument_regs)
-            inputs.append(Register("ra"))
             inputs.append(args[1])
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
