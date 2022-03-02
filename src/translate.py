@@ -3292,7 +3292,7 @@ def array_access_from_add(
 
     if scale < 0:
         scale = -scale
-        index = UnaryOp("-", as_s32(index), type=Type.s32())
+        index = UnaryOp("-", as_s32(index, silent=True), type=Type.s32())
 
     target_type = base.type.get_pointer_target()
     if target_type is None:
