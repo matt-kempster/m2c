@@ -796,7 +796,9 @@ class MipsArch(Arch):
                 inputs = [make_memory_access(args[1])]
                 if isinstance(args[1], AsmAddressMode):
                     inputs.append(args[1].rhs)
-                if mnemonic in ("lwr", "lwl"):
+                if mnemonic == "lwr":
+                    # lwl, lwr sometimes read from their destination registers,
+                    # though we treat lwl as not doing so -- see handle_lwl.
                     inputs.append(args[0])
                 elif mnemonic == "ldc1":
                     outputs.append(args[0].other_f64_reg())
