@@ -44,6 +44,9 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
+    def simplify_ir(self, flow_graph: "FlowGraph") -> None:
+        ...
+
 
 @dataclass(eq=False)
 class Block:
@@ -295,7 +298,7 @@ def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Funct
 
 
 def build_blocks(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
 ) -> List[Block]:
     if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
@@ -440,6 +443,12 @@ def build_blocks(
             process_mips(item)
         else:
             process_no_delay_slots(item)
+
+    if fragment:
+        # If we're parsing an asm fragment instead of a full function,
+        # then it does not need to end in a return or jump
+        block_builder.new_block()
+        return block_builder.get_blocks()
 
     if block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
@@ -663,10 +672,13 @@ def build_graph_from_block(
         nodes.append(new_node)
 
         # Recursively analyze.
-        next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(
-            next_block, blocks, nodes, asm_data, arch
-        )
+        if block.index + 1 < len(blocks):
+            next_block = blocks[block.index + 1]
+            new_node.successor = build_graph_from_block(
+                next_block, blocks, nodes, asm_data, arch
+            )
+        else:
+            new_node.successor = terminal_node
     elif len(jumps) == 1:
         # There is a jump. This is either:
         # - a ReturnNode, if it's a return instruction ("jr $ra" in MIPS)
@@ -1394,16 +1406,22 @@ def nodes_to_flowgraph(
 
 
 def build_flowgraph(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
 ) -> FlowGraph:
-    blocks = build_blocks(function, asm_data, arch)
+    blocks = build_blocks(function, asm_data, arch, fragment=fragment)
     nodes = build_nodes(function, blocks, asm_data, arch)
-    nodes = duplicate_premature_returns(nodes)
+    if not fragment:
+        nodes = duplicate_premature_returns(nodes)
 
     compute_relations(nodes)
-    terminate_infinite_loops(nodes)
+    if not fragment:
+        terminate_infinite_loops(nodes)
 
-    return nodes_to_flowgraph(nodes, function, arch)
+    flow_graph = nodes_to_flowgraph(nodes, function, arch)
+    if not fragment:
+        arch.simplify_ir(flow_graph)
+
+    return flow_graph
 
 
 def visualize_flowgraph(flow_graph: FlowGraph) -> str:

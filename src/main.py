@@ -128,7 +128,9 @@ def run(options: Options) -> int:
     for function in functions:
         try:
             narrow_ir_with_context(function, global_info)
-            graph = build_flowgraph(function, global_info.asm_data, arch)
+            graph = build_flowgraph(
+                function, global_info.asm_data, arch, fragment=False
+            )
             flow_graphs.append(graph)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output

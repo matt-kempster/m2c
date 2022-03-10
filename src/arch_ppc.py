@@ -1,3 +1,4 @@
+import typing
 from typing import (
     ClassVar,
     Dict,
@@ -9,6 +10,8 @@ from typing import (
 )
 
 from .error import DecompFailure
+from .flow_graph import FlowGraph
+from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import Target
 from .parse_instruction import (
     Access,
@@ -172,6 +175,56 @@ class BranchCtrPattern(AsmPattern):
                 1,
             )
         return None
+
+
+class DoubleToIntIrPattern(IrPattern):
+    """
+    /* 00000004 00000004  FC 80 08 1E */    fctiwz f4, f1
+    /* 00000034 00000034  D8 81 00 28 */    stfd f4, 0x28(r1)
+    /* 00000044 00000044  80 01 00 2C */    lwz r0, 0x2c(r1)
+    """
+
+    replacement = "cvt.i.d.ficitve $i, $f"
+    parts = [
+        "fctiwz $t, $f",
+        "stfd $t, N($r1)",
+        "lwz $i, (N+4)($r1)",
+    ]
+
+
+class IntToDoubleIrPattern(IrPattern):
+    """
+    /* 0000000C 0000000C  6C 63 80 00 */    xoris r3, r3, 0x8000
+    /* 00000014 00000014  3C 00 43 30 */    lis r0, 0x4330
+    /* 00000018 00000018  90 61 00 24 */    stw r3, 0x24(r1)
+    /* 0000002C 0000002C  90 01 00 20 */    stw r0, 0x20(r1)
+    /* 0000003C 0000003C  C8 60 00 00 */    lfd f3, $$25@sda21(r13)
+    /* 00000040 00000040  C8 41 00 20 */    lfd f2, 0x20(r1)
+    /* 0000004C 0000004C  EC 42 18 28 */    fsubs f2, f2, f3
+    """
+
+    replacement = "cvt.d.i.fictive $f, $i"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "xoris $b, $i, 0x8000",
+        "stw $b, (N+4)($r1)",
+        "lfd $c, K($r13)",
+        "lfd $f, N($r1)",
+        "fsubs $f, $f, $c",
+    ]
+
+
+class IntToFloatIrPattern(IrPattern):
+    replacement = "cvt.s.i.fictive $f, $i"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "stw $i, (N+4)($r1)",
+        "lfd $c, K($r13)",
+        "lfd $f, N($r1)",
+        "fsubs $f, $f, $c",
+    ]
 
 
 class PpcArch(Arch):
@@ -669,6 +722,15 @@ class PpcArch(Arch):
             is_return=is_return,
         )
 
+    def simplify_ir(self, flow_graph: FlowGraph) -> None:
+        simplify_ir_patterns(self, flow_graph, self.ir_patterns)
+
+    ir_patterns: List[typing.Type[IrPattern]] = [
+        DoubleToIntIrPattern,
+        IntToDoubleIrPattern,
+        IntToFloatIrPattern,
+    ]
+
     asm_patterns = [
         FcmpoCrorPattern(),
         TailCallPattern(),
@@ -896,6 +958,13 @@ class PpcArch(Arch):
         # `sp100 = (bitwise f64) (s32) x; y = sp104;` instead of `y = (s32) x;`.
         # We should try to detect these idioms, along with int-to-float
         "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
+        "cvt.i.d.ficitve": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f64()),
+        "cvt.d.i.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f64(), Type.intish()
+        ),
+        "cvt.s.i.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f32(), Type.intish()
+        ),
         # Floating Poing Fused Multiply-{Add,Sub}
         "fmadd": lambda a: BinaryOp.f64(
             BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
