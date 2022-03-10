@@ -5,10 +5,10 @@
 # to return a float value from $f1 (i.e. `f32 foo(s32, f32)`)
 
 glabel test
-mflr r0
+mflr r14
 cmpwi r3, 0
 bne .end
 bl foo
 .end:
-mtlr r0
+mtlr r14
 blr

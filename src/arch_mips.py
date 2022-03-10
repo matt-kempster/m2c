@@ -447,7 +447,9 @@ class MipsArch(Arch):
 
     base_return_regs = [Register(r) for r in ["v0", "f0"]]
     all_return_regs = [Register(r) for r in ["v0", "v1", "f0", "f1"]]
-    argument_regs = [Register(r) for r in ["a0", "a1", "a2", "a3", "f12", "f14"]]
+    argument_regs = [
+        Register(r) for r in ["a0", "a1", "a2", "a3", "f12", "f13", "f14", "f15"]
+    ]
     simple_temp_regs = [
         Register(r)
         for r in [
@@ -475,8 +477,6 @@ class MipsArch(Arch):
             "f9",
             "f10",
             "f11",
-            "f13",
-            "f15",
             "f16",
             "f17",
             "f18",
@@ -527,6 +527,7 @@ class MipsArch(Arch):
     ]
     all_regs = saved_regs + temp_regs
 
+    constant_regs = [Register(r) for r in ["gp", "zero"]]
     aliased_regs = {
         "s8": Register("fp"),
         "r0": Register("zero"),
@@ -742,6 +743,12 @@ class MipsArch(Arch):
             jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_conditional = True
+        elif mnemonic == "mfc0":
+            assert len(args) == 2 and isinstance(args[0], Register)
+            outputs = [args[0]]
+        elif mnemonic == "mtc0":
+            assert len(args) == 2 and isinstance(args[0], Register)
+            inputs = [args[0]]
         elif mnemonic in cls.instrs_no_dest:
             assert not any(isinstance(a, AsmAddressMode) for a in args)
             inputs = [r for r in args if isinstance(r, Register)]
@@ -973,6 +980,7 @@ class MipsArch(Arch):
             "MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
         ),
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
+        "mtc0": lambda a: CommentStmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}"),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
     }
     instrs_float_comp: CmpInstrMap = {
@@ -1359,7 +1367,7 @@ class MipsArch(Arch):
 
             valid_extra_regs.add(slot.reg)
 
-            if slot.reg == Register("f13"):
+            if slot.reg == Register("f13") and for_call:
                 # We don't pass in f13 or f15 because they will often only
                 # contain SecondF64Half(), and otherwise would need to be
                 # merged with f12/f14 which we don't have logic for right

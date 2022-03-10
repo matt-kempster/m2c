@@ -1,12 +1,13 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
 import abc
+from contextlib import contextmanager
 import csv
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import string
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, Iterator, List, Optional, Set, Union
 
-from .error import DecompFailure
+from .error import DecompFailure, static_assert_unreachable
 from .options import Target
 
 
@@ -123,10 +124,68 @@ Argument = Union[
 Access = Union[Register, MemoryAccess]
 
 
+def access_depends_on(base: Access, dep: Access) -> bool:
+    if isinstance(base, Register):
+        return False
+    elif isinstance(base, MemoryAccess):
+        if isinstance(dep, MemoryAccess):
+            return False
+        if base.base_reg == dep:
+            return True
+        if isinstance(base.offset, AsmAddressMode) and base.offset.rhs == dep:
+            return True
+        if isinstance(base.offset, Macro) and base.offset.argument == dep:
+            return True
+        if isinstance(base.offset, BinOp) and (
+            base.offset.lhs == dep or base.offset.rhs == dep
+        ):
+            return True
+        return False
+    else:
+        static_assert_unreachable(base)
+
+
+def access_may_overlap(left: Access, right: Access) -> bool:
+    if isinstance(left, Register):
+        return left == right
+    elif isinstance(left, MemoryAccess):
+        # TODO: For now, this assumes that *any* two memory accesses can overlap
+        return isinstance(right, MemoryAccess)
+    else:
+        static_assert_unreachable(left)
+
+
+def access_must_overlap(left: Access, right: Access) -> bool:
+    if isinstance(left, Register):
+        return left == right
+    elif isinstance(left, MemoryAccess):
+        if not (
+            isinstance(right, MemoryAccess)
+            and left.base_reg == right.base_reg
+            and isinstance(left.offset, AsmLiteral)
+            and isinstance(right.offset, AsmLiteral)
+        ):
+            return False
+        left_start = left.offset.value
+        right_start = right.offset.value
+        return (
+            left_start < right_start + right.size
+            and right_start < left_start + left.size
+        )
+    else:
+        static_assert_unreachable(left)
+
+
 @dataclass(frozen=True)
 class AsmInstruction:
     mnemonic: str
     args: List[Argument]
+
+    def __str__(self) -> str:
+        if not self.args:
+            return self.mnemonic
+        args = ", ".join(str(arg) for arg in self.args)
+        return f"{self.mnemonic} {args}"
 
 
 @dataclass(frozen=True)
@@ -214,6 +273,7 @@ class ArchAsm(ArchAsmParsing):
     simple_temp_regs: List[Register]
     temp_regs: List[Register]
     saved_regs: List[Register]
+    constant_regs: List[Register]
     all_regs: List[Register]
 
     aliased_regs: Dict[str, Register]
@@ -462,3 +522,21 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
+
+
+@dataclass
+class InstrProcessingFailure(Exception):
+    instr: Instruction
+
+    def __str__(self) -> str:
+        return f"Error while processing instruction:\n{self.instr}"
+
+
+@contextmanager
+def current_instr(instr: Instruction) -> Iterator[None]:
+    """Mark an instruction as being the one currently processed, for the
+    purposes of error messages. Use like |with current_instr(instr): ...|"""
+    try:
+        yield
+    except Exception as e:
+        raise InstrProcessingFailure(instr) from e

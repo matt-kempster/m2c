@@ -44,9 +44,11 @@ from .parse_instruction import (
     AsmLiteral,
     BinOp,
     Instruction,
+    InstrProcessingFailure,
     MemoryAccess,
     Macro,
     Register,
+    current_instr,
 )
 from .types import (
     AccessPath,
@@ -117,24 +119,6 @@ class Arch(ArchFlowGraph):
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
 PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI", "CLZ"}
-
-
-@dataclass
-class InstrProcessingFailure(Exception):
-    instr: Instruction
-
-    def __str__(self) -> str:
-        return f"Error while processing instruction:\n{self.instr}"
-
-
-@contextmanager
-def current_instr(instr: Instruction) -> Iterator[None]:
-    """Mark an instruction as being the one currently processed, for the
-    purposes of error messages. Use like |with current_instr(instr): ...|"""
-    try:
-        yield
-    except Exception as e:
-        raise InstrProcessingFailure(instr) from e
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
@@ -213,6 +197,7 @@ def as_function_ptr(expr: "Expression") -> "Expression":
 class StackInfo:
     function: Function
     global_info: "GlobalInfo"
+    flow_graph: FlowGraph
     allocated_stack_size: int = 0
     is_leaf: bool = True
     is_variadic: bool = False
@@ -464,8 +449,8 @@ def get_stack_info(
     global_info: "GlobalInfo",
     flow_graph: FlowGraph,
 ) -> StackInfo:
-    info = StackInfo(function, global_info)
     arch = global_info.arch
+    info = StackInfo(function, global_info, flow_graph)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -1965,7 +1950,8 @@ class RegInfo:
 
     def __getitem__(self, key: Register) -> Expression:
         if self._active_instr is not None and key not in self._active_instr.inputs:
-            raise DecompFailure(f"Undeclared read from {key} in {self._active_instr}")
+            lineno = self._active_instr.meta.lineno
+            return ErrorExpr(f"Read from unset register {key} on line {lineno}")
         if key == Register("zero"):
             return Literal(0)
         data = self.contents.get(key)
@@ -3622,51 +3608,6 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
-def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
-    if node.immediate_dominator is None:
-        return set()
-    seen = {node.immediate_dominator}
-    stack = node.parents[:]
-    clobbered = set()
-    while stack:
-        n = stack.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-        for instr in n.block.instructions:
-            for r in instr.outputs + instr.clobbers:
-                if isinstance(r, Register):
-                    clobbered.add(r)
-        stack.extend(n.parents)
-    return clobbered
-
-
-def reg_always_set(node: Node, reg: Register, *, dom_set: bool) -> bool:
-    if node.immediate_dominator is None:
-        return False
-    seen = {node.immediate_dominator}
-    stack = node.parents[:]
-    while stack:
-        n = stack.pop()
-        if n == node.immediate_dominator and not dom_set:
-            return False
-        if n in seen:
-            continue
-        seen.add(n)
-        clobbered: Optional[bool] = None
-        for instr in n.block.instructions:
-            with current_instr(instr):
-                if reg in instr.outputs:
-                    clobbered = False
-                elif reg in instr.clobbers:
-                    clobbered = True
-        if clobbered == True:
-            return False
-        if clobbered is None:
-            stack.extend(n.parents)
-    return True
-
-
 def pick_phi_assignment_nodes(
     reg: Register, nodes: List[Node], expr: Expression
 ) -> List[Node]:
@@ -4449,17 +4390,21 @@ def translate_graph_from_block(
                 reg, data.value, RegMeta(inherited=True, force=data.meta.force)
             )
 
-        phi_regs = regs_clobbered_until_dominator(child)
-        for reg in phi_regs:
-            if reg_always_set(child, reg, dom_set=(reg in regs)):
-                expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
+        for phi_arg, addrs in stack_info.flow_graph.node_phis[child].items():
+            if not isinstance(phi_arg, Register):
+                continue
+            if addrs.is_valid():
+                expr: Optional[Expression] = stack_info.maybe_get_register_var(phi_arg)
                 if expr is None:
                     expr = PhiExpr(
-                        reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
+                        reg=phi_arg,
+                        node=child,
+                        used_phis=used_phis,
+                        type=Type.any_reg(),
                     )
-                new_regs.set_with_meta(reg, expr, RegMeta(inherited=True))
-            elif reg in new_regs:
-                del new_regs[reg]
+                new_regs.set_with_meta(phi_arg, expr, RegMeta(inherited=True))
+            elif phi_arg in new_regs:
+                del new_regs[phi_arg]
         translate_graph_from_block(
             child, new_regs, stack_info, used_phis, return_blocks, options
         )
@@ -4812,15 +4757,29 @@ class GlobalInfo:
         return "".join(line for _, line in lines)
 
 
-def narrow_func_call_outputs(
+def narrow_ir_with_context(
     function: Function,
     global_info: GlobalInfo,
 ) -> None:
     """
-    Modify the `outputs` list of function call Instructions using the context file.
-    For now, this only handles known-void functions, but in the future it could
-    be extended to select a specific register subset based on type.
+    Modify the `outputs` list of function call Instructions and the function's
+    `arguments` list using the context file.
     """
+    fn_ref = global_info.address_of_gsym(function.name)
+    fn_sig = fn_ref.type.get_function_pointer_signature()
+    if fn_sig is not None:
+        abi = global_info.arch.function_abi(
+            fn_sig,
+            likely_regs={reg: True for reg in global_info.arch.argument_regs},
+            for_call=False,
+        )
+
+        possible_regs = {slot.reg for slot in abi.arg_slots + abi.possible_slots}
+        function.arguments = [arg for arg in function.arguments if arg in possible_regs]
+
+    # For now, this only handles known-void functions, but in the future it could
+    # be extended to select a specific register subset based on type or use the
+    # inferred signature above.
     for instr in function.body:
         if (
             isinstance(instr, Instruction)

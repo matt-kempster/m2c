@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, U
 from .error import DecompFailure
 from .options import Options
 from .parse_instruction import (
+    Access,
     ArchAsm,
     Instruction,
     InstructionMeta,
@@ -27,6 +28,7 @@ class Label:
 @dataclass
 class Function:
     name: str
+    arguments: List[Access]
     body: List[Union[Instruction, Label]] = field(default_factory=list)
 
     def new_label(self, name: str) -> None:
@@ -40,7 +42,7 @@ class Function:
         self.body.append(instruction)
 
     def bodyless_copy(self) -> "Function":
-        return Function(name=self.name)
+        return Function(name=self.name, arguments=self.arguments[:])
 
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
@@ -102,8 +104,8 @@ class MIPSFile:
     current_function: Optional[Function] = field(default=None, repr=False)
     current_data: AsmDataEntry = field(default_factory=AsmDataEntry)
 
-    def new_function(self, name: str) -> None:
-        self.current_function = Function(name=name)
+    def new_function(self, name: str, arch: ArchAsm) -> None:
+        self.current_function = Function(name=name, arguments=list(arch.argument_regs))
         self.functions.append(self.current_function)
 
     def new_instruction(self, instruction: Instruction) -> None:
@@ -324,7 +326,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     # glabel that has a branch that goes across?)
                     mips_file.new_label(label)
                 else:
-                    mips_file.new_function(label)
+                    mips_file.new_function(label, arch)
 
         # Check for labels
         while True:
