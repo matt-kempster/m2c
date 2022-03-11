@@ -192,7 +192,7 @@ class DoubleToIntIrPattern(IrPattern):
     ]
 
 
-class IntToDoubleIrPattern(IrPattern):
+class SintToDoubleIrPattern(IrPattern):
     """
     /* 0000000C 0000000C  6C 63 80 00 */    xoris r3, r3, 0x8000
     /* 00000014 00000014  3C 00 43 30 */    lis r0, 0x4330
@@ -211,12 +211,37 @@ class IntToDoubleIrPattern(IrPattern):
         "stw $b, (N+4)($r1)",
         "lfd $c, K($r13)",
         "lfd $f, N($r1)",
+        "fsub $f, $f, $c",
+    ]
+
+
+class UintToDoubleIrPattern(IrPattern):
+    replacement = "cvt.d.u.fictive $f, $i"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "stw $i, (N+4)($r1)",
+        "lfd $c, K($r13)",
+        "lfd $f, N($r1)",
+        "fsub $f, $f, $c",
+    ]
+
+
+class SintToFloatIrPattern(IrPattern):
+    replacement = "cvt.s.i.fictive $f, $i"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "xoris $b, $i, 0x8000",
+        "stw $b, (N+4)($r1)",
+        "lfd $c, K($r13)",
+        "lfd $f, N($r1)",
         "fsubs $f, $f, $c",
     ]
 
 
-class IntToFloatIrPattern(IrPattern):
-    replacement = "cvt.s.i.fictive $f, $i"
+class UintToFloatIrPattern(IrPattern):
+    replacement = "cvt.s.u.fictive $f, $i"
     parts = [
         "lis $a, 0x4330",
         "stw $a, N($r1)",
@@ -727,8 +752,10 @@ class PpcArch(Arch):
 
     ir_patterns: List[typing.Type[IrPattern]] = [
         DoubleToIntIrPattern,
-        IntToDoubleIrPattern,
-        IntToFloatIrPattern,
+        SintToDoubleIrPattern,
+        UintToDoubleIrPattern,
+        SintToFloatIrPattern,
+        UintToFloatIrPattern,
     ]
 
     asm_patterns = [
@@ -959,12 +986,10 @@ class PpcArch(Arch):
         # We should try to detect these idioms, along with int-to-float
         "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
         "cvt.i.d.ficitve": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f64()),
-        "cvt.d.i.fictive": lambda a: handle_convert(
-            a.reg(1), Type.f64(), Type.intish()
-        ),
-        "cvt.s.i.fictive": lambda a: handle_convert(
-            a.reg(1), Type.f32(), Type.intish()
-        ),
+        "cvt.d.i.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.s32()),
+        "cvt.d.u.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.u32()),
+        "cvt.s.i.fictive": lambda a: handle_convert(a.reg(1), Type.f32(), Type.s32()),
+        "cvt.s.u.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.u32()),
         # Floating Poing Fused Multiply-{Add,Sub}
         "fmadd": lambda a: BinaryOp.f64(
             BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)

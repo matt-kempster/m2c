@@ -287,6 +287,7 @@ class TryMatchState:
 def simplify_ir_patterns(
     arch: ArchFlowGraph, flow_graph: FlowGraph, pattern_classes: List[Type[IrPattern]]
 ) -> None:
+    debug = False
     # Precompute a RefSet for each mnemonic
     refs_by_mnemonic = defaultdict(list)
     for node in flow_graph.nodes:
@@ -360,7 +361,8 @@ def simplify_ir_patterns(
                 pattern.replacement_instr.mnemonic,
                 [state.map_arg(a) for a in pattern.replacement_instr.args],
             )
-            print(f">>> Match #{n}  --> {new_instr}")
+            if debug:
+                print(f">>> Match #{n}  --> {new_instr}")
             pat_in = InstrRef(pattern.flow_graph.nodes[0], 0)
             pat_out = InstrRef(
                 pattern.flow_graph.nodes[0],
@@ -411,11 +413,12 @@ def simplify_ir_patterns(
                 pat_instr = pat_ref.instruction()
                 ins_ref = state.map_ref(pat_ref)
                 rfs = flow_graph.instr_references[ins_ref]
-                print(
-                    f"> map {str(ins_ref):12} {str(pat_ref.instruction()):>20}  <>  {str(ins_ref.instruction()):30} {' ' if ins_ref in refs_to_replace else '*'} refs: {rfs}"
-                )
+                if debug:
+                    print(
+                        f"> map {str(ins_ref):16} {str(pat_ref.instruction()):>20}  <>  {str(ins_ref.instruction()):30} {' ' if ins_ref in refs_to_replace else '*'} refs: {rfs}"
+                    )
                 if ins_ref not in refs_to_replace:
                     continue
                 nop_instr = AsmInstruction("nop", [])
-                repl_instr = new_instr if last else nop_instr
+                repl_instr = new_instr if ins_ref == refs_to_replace[0] else nop_instr
                 replace_instr(ins_ref, repl_instr)
