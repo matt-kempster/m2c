@@ -11,7 +11,7 @@ from typing import (
 
 from .error import DecompFailure
 from .flow_graph import FlowGraph
-from .ir_pattern import IrPattern, simplify_ir_patterns
+from .ir_pattern import IrPattern, TryMatchState, simplify_ir_patterns
 from .options import Target
 from .parse_instruction import (
     Access,
@@ -192,7 +192,13 @@ class DoubleToIntIrPattern(IrPattern):
     ]
 
 
-class SintToDoubleIrPattern(IrPattern):
+class CheckConstantMixin:
+    def check(self, m: TryMatchState) -> bool:
+        # TODO: Also validate that `K($k)` is the expected constant in rodata
+        return m.symbolic_registers["k"] in m.arch.constant_regs
+
+
+class SintToDoubleIrPattern(IrPattern, CheckConstantMixin):
     """
     /* 0000000C 0000000C  6C 63 80 00 */    xoris r3, r3, 0x8000
     /* 00000014 00000014  3C 00 43 30 */    lis r0, 0x4330
@@ -203,52 +209,52 @@ class SintToDoubleIrPattern(IrPattern):
     /* 0000004C 0000004C  EC 42 18 28 */    fsubs f2, f2, f3
     """
 
-    replacement = "cvt.d.i.fictive $f, $i"
+    replacement = "cvt.d.i.fictive $f, $i, K($k)"
     parts = [
         "lis $a, 0x4330",
         "stw $a, N($r1)",
         "xoris $b, $i, 0x8000",
         "stw $b, (N+4)($r1)",
-        "lfd $c, K($r13)",
-        "lfd $f, N($r1)",
-        "fsub $f, $f, $c",
+        "lfd $c, K($k)",
+        "lfd $d, N($r1)",
+        "fsub $f, $d, $c",
     ]
 
 
-class UintToDoubleIrPattern(IrPattern):
-    replacement = "cvt.d.u.fictive $f, $i"
+class UintToDoubleIrPattern(IrPattern, CheckConstantMixin):
+    replacement = "cvt.d.u.fictive $f, $i, K($k)"
     parts = [
         "lis $a, 0x4330",
         "stw $a, N($r1)",
         "stw $i, (N+4)($r1)",
-        "lfd $c, K($r13)",
-        "lfd $f, N($r1)",
-        "fsub $f, $f, $c",
+        "lfd $c, K($k)",
+        "lfd $d, N($r1)",
+        "fsub $f, $d, $c",
     ]
 
 
-class SintToFloatIrPattern(IrPattern):
-    replacement = "cvt.s.i.fictive $f, $i"
+class SintToFloatIrPattern(IrPattern, CheckConstantMixin):
+    replacement = "cvt.s.i.fictive $f, $i, K($k)"
     parts = [
         "lis $a, 0x4330",
         "stw $a, N($r1)",
         "xoris $b, $i, 0x8000",
         "stw $b, (N+4)($r1)",
-        "lfd $c, K($r13)",
-        "lfd $f, N($r1)",
-        "fsubs $f, $f, $c",
+        "lfd $c, K($k)",
+        "lfd $d, N($r1)",
+        "fsubs $f, $d, $c",
     ]
 
 
-class UintToFloatIrPattern(IrPattern):
-    replacement = "cvt.s.u.fictive $f, $i"
+class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
+    replacement = "cvt.s.u.fictive $f, $i, K($k)"
     parts = [
         "lis $a, 0x4330",
         "stw $a, N($r1)",
         "stw $i, (N+4)($r1)",
-        "lfd $c, K($r13)",
-        "lfd $f, N($r1)",
-        "fsubs $f, $f, $c",
+        "lfd $c, K($k)",
+        "lfd $d, N($r1)",
+        "fsubs $f, $d, $c",
     ]
 
 
@@ -712,6 +718,14 @@ class PpcArch(Arch):
                     and not isinstance(args[4], (Register, AsmAddressMode))
                 )
                 inputs = [args[0], args[1]]
+            elif mnemonic.startswith("cvt."):
+                assert isinstance(args[1], Register)
+                if len(args) == 2:
+                    inputs = [args[1]]
+                else:
+                    assert isinstance(args[2], AsmAddressMode)
+                    size = 8
+                    inputs = [args[1], args[2].rhs, make_memory_access(args[2])]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]

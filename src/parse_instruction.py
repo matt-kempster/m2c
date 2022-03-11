@@ -150,7 +150,16 @@ def access_may_overlap(left: Access, right: Access) -> bool:
         return left == right
     elif isinstance(left, MemoryAccess):
         # TODO: For now, this assumes that *any* two memory accesses can overlap
-        return isinstance(right, MemoryAccess)
+        if not isinstance(right, MemoryAccess):
+            return False
+        if left.base_reg == right.base_reg:
+            return access_must_overlap(left, right)
+        if (
+            len(left.base_reg.register_name) == 1
+            or len(right.base_reg.register_name) == 1
+        ):
+            return False
+        return True
     else:
         static_assert_unreachable(left)
 
@@ -159,19 +168,28 @@ def access_must_overlap(left: Access, right: Access) -> bool:
     if isinstance(left, Register):
         return left == right
     elif isinstance(left, MemoryAccess):
-        if not (
-            isinstance(right, MemoryAccess)
-            and left.base_reg == right.base_reg
-            and isinstance(left.offset, AsmLiteral)
-            and isinstance(right.offset, AsmLiteral)
-        ):
+        if not isinstance(right, MemoryAccess) or left.base_reg != right.base_reg:
             return False
-        left_start = left.offset.value
-        right_start = right.offset.value
-        return (
-            left_start < right_start + right.size
-            and right_start < left_start + left.size
-        )
+        if left.offset == right.offset:
+            return True
+        if isinstance(left.offset, AsmLiteral) and isinstance(right.offset, AsmLiteral):
+            left_start = left.offset.value
+            right_start = right.offset.value
+            return (
+                left_start < right_start + right.size
+                and right_start < left_start + left.size
+            )
+
+        if isinstance(left.offset, BinOp) and not isinstance(right.offset, BinOp):
+            left, right = right, left
+        if (
+            isinstance(right.offset, BinOp)
+            and right.offset.lhs == left.offset
+            and isinstance(right.offset.rhs, AsmLiteral)
+            and right.offset.op == "+"
+        ):
+            return right.offset.rhs.value < left.size
+        return False
     else:
         static_assert_unreachable(left)
 
@@ -521,6 +539,7 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         base = parse_asm_instruction(line, arch)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
+        raise
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
 
 

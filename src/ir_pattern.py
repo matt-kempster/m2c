@@ -15,6 +15,7 @@ from typing import (
     Union,
 )
 
+from .error import static_assert_unreachable
 from .flow_graph import (
     AccessRefs,
     ArchFlowGraph,
@@ -58,33 +59,37 @@ class IrPattern(abc.ABC):
     def compile(cls, arch: ArchFlowGraph) -> "IrPattern":
         missing_meta = InstructionMeta.missing()
         replacement_instr = parse_instruction(cls.replacement, missing_meta, arch)
-        prologue = Instruction(
-            "nop",
-            [],
-            meta=missing_meta,
-            inputs=[],
-            clobbers=[],
-            outputs=replacement_instr.inputs,
-        )
-        epilogue = Instruction(
-            "nop",
-            [],
-            meta=missing_meta,
-            inputs=replacement_instr.outputs,
-            clobbers=[],
-            outputs=[],
-        )
 
         name = f"__pattern_{cls.__name__}"
         func = Function(name=name, arguments=[])
-        func.new_instruction(prologue)
+        for inp in replacement_instr.inputs:
+            func.new_instruction(
+                Instruction(
+                    "nop",
+                    [],
+                    meta=missing_meta,
+                    inputs=[],
+                    clobbers=[],
+                    outputs=[inp],
+                )
+            )
         for part in cls.parts:
             func.new_instruction(parse_instruction(part, missing_meta, arch))
-        func.new_instruction(epilogue)
+        for out in replacement_instr.outputs:
+            func.new_instruction(
+                Instruction(
+                    "nop",
+                    [],
+                    meta=missing_meta,
+                    outputs=[out],
+                    clobbers=[],
+                    inputs=[],
+                )
+            )
 
         asm_data = AsmData()
         flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)
-        return IrPattern(
+        return cls(
             flow_graph=flow_graph,
             replacement_instr=replacement_instr,
         )
@@ -96,9 +101,10 @@ class IrPattern(abc.ABC):
 
 @dataclass
 class TryMatchState:
+    arch: ArchFlowGraph
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
-    symbolic_literals: Dict[str, int] = field(default_factory=dict)
+    symbolic_args: Dict[str, Argument] = field(default_factory=dict)
     ref_map: Dict[Union[InstrRef, str], Union[InstrRef, str]] = field(
         default_factory=dict
     )
@@ -107,9 +113,10 @@ class TryMatchState:
 
     def copy(self) -> "TryMatchState":
         return TryMatchState(
+            arch=self.arch,
             symbolic_registers=self.symbolic_registers.copy(),
             symbolic_labels=self.symbolic_labels.copy(),
-            symbolic_literals=self.symbolic_literals.copy(),
+            symbolic_args=self.symbolic_args.copy(),
             ref_map=self.ref_map.copy(),
         )
 
@@ -140,9 +147,11 @@ class TryMatchState:
             assert False, f"bad binop in math pattern: {e}"
         elif isinstance(e, AsmGlobalSymbol):
             assert (
-                e.symbol_name in self.symbolic_literals
+                e.symbol_name in self.symbolic_args
             ), f"undefined variable in math pattern: {e.symbol_name}"
-            return self.symbolic_literals[e.symbol_name]
+            lit = self.symbolic_args[e.symbol_name]
+            assert isinstance(lit, AsmLiteral)
+            return lit.value
         else:
             assert False, f"bad pattern part in math pattern: {e}"
 
@@ -158,7 +167,7 @@ class TryMatchState:
             return self.map_reg(key)
         if isinstance(key, AsmGlobalSymbol):
             if key.symbol_name.isupper():
-                return AsmLiteral(self.symbolic_literals[key.symbol_name])
+                return self.symbolic_args[key.symbol_name]
             return key
         if isinstance(key, AsmAddressMode):
             rhs = self.map_arg(key.rhs)
@@ -193,14 +202,7 @@ class TryMatchState:
             return isinstance(a, Register) and self.match_reg(a, e)
         if isinstance(e, AsmGlobalSymbol):
             if e.symbol_name.isupper():
-                if isinstance(a, AsmLiteral):
-                    return self.match_var(
-                        self.symbolic_literals, e.symbol_name, a.value
-                    )
-                elif isinstance(a, Macro):
-                    # TODO: This is a weird shortcut/hack (stringifying the Macro)
-                    return self.match_var(self.symbolic_labels, e.symbol_name, str(a))
-                return False
+                return self.match_var(self.symbolic_args, e.symbol_name, a)
             else:
                 return isinstance(a, AsmGlobalSymbol) and a.symbol_name == e.symbol_name
         if isinstance(e, AsmAddressMode):
@@ -271,14 +273,15 @@ class TryMatchState:
     def match_accesses(self, exp: AccessRefs, act: AccessRefs) -> bool:
         # TODO: This is backwards
         for exp_reg, exp_refs in exp.items():
-            if not isinstance(exp_reg, Register):
+            if isinstance(exp_reg, MemoryAccess) and not exp_refs.is_unique():
                 continue
             assert (
                 exp_refs.is_unique()
             ), f"pattern {exp_reg} does not have a unique source ref ({exp_refs})"
-            mapped_reg = self.map_arg(exp_reg)
-            assert isinstance(mapped_reg, Register)
+            mapped_reg = self.map_access(exp_reg)
             act_refs = act.get(mapped_reg)
+            if isinstance(mapped_reg, MemoryAccess) and not act_refs.is_valid():
+                continue
             if not self.match_refs(exp_refs, act_refs):
                 return False
         return True
@@ -325,7 +328,7 @@ def simplify_ir_patterns(
         assert isinstance(pattern.flow_graph.nodes[1], TerminalNode)
         pattern_node = pattern.flow_graph.nodes[0]
 
-        partial_matches = [TryMatchState()]
+        partial_matches = [TryMatchState(arch=arch)]
         for i, pat in enumerate(pattern_node.block.instructions):
             if pat.mnemonic == "nop":
                 continue
@@ -368,14 +371,6 @@ def simplify_ir_patterns(
                 pattern.flow_graph.nodes[0],
                 len(pattern.flow_graph.nodes[0].block.instructions) - 1,
             )
-            # for k, v in pattern.flow_graph.instr_outputs[pat_in].refs.items():
-            #    print(
-            #        f">>  in: {k} => {state.map_arg(k)}; {v} => {[state.map_ref(g) for g in v.refs]}"
-            #    )
-            # for k, v in pattern.flow_graph.instr_inputs[pat_out].refs.items():
-            #    print(
-            #        f">> out: {k} => {state.map_arg(k)}; {v} => {[state.map_ref(g) for g in v.refs]}"
-            #    )
             refs_to_replace = []
             last = True
             invalid = False

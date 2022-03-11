@@ -1106,6 +1106,9 @@ class RefSet:
     def __iter__(self) -> Iterator[Reference]:
         return iter(self.refs)
 
+    def __len__(self) -> int:
+        return len(self.refs)
+
 
 @dataclass
 class AccessRefs:
