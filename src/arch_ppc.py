@@ -11,7 +11,7 @@ from typing import (
 
 from .error import DecompFailure
 from .flow_graph import FlowGraph
-from .ir_pattern import IrPattern, TryMatchState, simplify_ir_patterns
+from .ir_pattern import IrMatch, IrPattern, simplify_ir_patterns
 from .options import Target
 from .parse_instruction import (
     Access,
@@ -187,7 +187,7 @@ class DoubleToIntIrPattern(IrPattern):
 
 
 class CheckConstantMixin:
-    def check(self, m: TryMatchState) -> bool:
+    def check(self, m: IrMatch) -> bool:
         # TODO: Also validate that `K($k)` is the expected constant in rodata
         return m.symbolic_registers["k"] in m.arch.constant_regs
 

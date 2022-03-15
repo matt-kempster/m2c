@@ -2,20 +2,13 @@ import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import (
-    Callable,
     ClassVar,
-    DefaultDict,
     Dict,
     List,
-    Optional,
-    Set,
-    Tuple,
     Type,
     TypeVar,
-    Union,
 )
 
-from .error import static_assert_unreachable
 from .flow_graph import (
     AccessRefs,
     ArchFlowGraph,
@@ -25,7 +18,6 @@ from .flow_graph import (
     InstrRef,
     RefSet,
     Reference,
-    Node,
     TerminalNode,
     build_flowgraph,
 )
@@ -50,11 +42,28 @@ from .parse_instruction import (
 
 @dataclass(eq=False, frozen=True)
 class IrPattern(abc.ABC):
+    """
+    Template for defining "IR" patterns that can match against input asm.
+    The matching process uses the FlowGraph and register analysis to compute
+    inter-instruction dependencies, so these patterns can match even when
+    they have been interleaved/reordered by the compiler in the input asm.
+
+    IrPattern subclasses *must* define `parts` and `replacement`, and can
+    optionally implement `check()`.
+
+    For now, the pattern cannot contain any branches, and the replacement
+    must be a single instruction (though, it can be fictive).
+    """
+
     parts: ClassVar[List[str]]
     replacement: ClassVar[str]
 
     flow_graph: FlowGraph
     replacement_instr: Instruction
+
+    def check(self, m: "IrMatch") -> bool:
+        """Override to perform additional checks/calculations before replacement."""
+        return True
 
     @classmethod
     def compile(cls, arch: ArchFlowGraph) -> "IrPattern":
@@ -98,46 +107,25 @@ class IrPattern(abc.ABC):
             replacement_instr=replacement_instr,
         )
 
-    def check(self, m: "TryMatchState") -> bool:
-        """Override to perform additional checks/calculations before replacement."""
-        return True
-
 
 @dataclass
-class TryMatchState:
+class IrMatch:
+    """
+    IrMatch represents the matched state of an IrPattern.
+    This object is considered read-only; none of its methods modify its state.
+    Its `map_*` methods take a pattern part and return the matched instruction part.
+    """
+
     arch: ArchFlowGraph
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
     ref_map: Dict[Reference, Reference] = field(default_factory=dict)
 
-    K = TypeVar("K")
-    V = TypeVar("V")
-
-    def copy(self) -> "TryMatchState":
-        return TryMatchState(
-            arch=self.arch,
-            symbolic_registers=self.symbolic_registers.copy(),
-            symbolic_labels=self.symbolic_labels.copy(),
-            symbolic_args=self.symbolic_args.copy(),
-            ref_map=self.ref_map.copy(),
-        )
-
-    def match_var(self, var_map: Dict[K, V], key: K, value: V) -> bool:
-        if key in var_map:
-            if var_map[key] != value:
-                return False
-        else:
-            var_map[key] = value
-        return True
-
-    def match_reg(self, pat: Register, cand: Register) -> bool:
-        # Single-letter registers are symbolic, and not matched exactly
-        if len(pat.register_name) > 1:
-            return pat == cand
-        return self.match_var(self.symbolic_registers, pat.register_name, cand)
-
     def eval_math(self, pat: Argument) -> int:
+        # This function can only evaluate math in *patterns*, not candidate
+        # instructions. It does not need to support arbitrary math, only
+        # math used by IR patterns.
         if isinstance(pat, AsmLiteral):
             return pat.value
         if isinstance(pat, BinOp):
@@ -158,6 +146,80 @@ class TryMatchState:
         else:
             assert False, f"bad pattern expr: {pat}"
 
+    def map_reg(self, key: Register) -> Register:
+        if len(key.register_name) <= 1:
+            return self.symbolic_registers[key.register_name]
+        return key
+
+    def map_arg(self, key: Argument) -> Argument:
+        if isinstance(key, AsmLiteral):
+            return key
+        if isinstance(key, Register):
+            return self.map_reg(key)
+        if isinstance(key, AsmGlobalSymbol):
+            if key.symbol_name.isupper():
+                return self.symbolic_args[key.symbol_name]
+            return key
+        if isinstance(key, AsmAddressMode):
+            rhs = self.map_arg(key.rhs)
+            assert isinstance(rhs, Register)
+            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=rhs)
+        if isinstance(key, JumpTarget):
+            return JumpTarget(self.symbolic_labels[key.target])
+        if isinstance(key, BinOp):
+            return AsmLiteral(self.eval_math(key))
+        assert False, f"bad pattern part: {key}"
+
+    def map_ref(self, key: InstrRef) -> InstrRef:
+        value = self.ref_map[key]
+        assert isinstance(value, InstrRef)
+        return value
+
+    def map_access(self, key: Access) -> Access:
+        if isinstance(key, Register):
+            return self.map_reg(key)
+        elif isinstance(key, MemoryAccess):
+            return MemoryAccess(
+                base_reg=self.map_reg(key.base_reg),
+                offset=self.map_arg(key.offset),
+                size=key.size,
+            )
+        assert False, f"bad access: {key}"
+
+
+class TryIrMatch(IrMatch):
+    """
+    TryIrMatch represents the partial (in-progress) match state of an IrPattern.
+    Unlike IrMatch, all of its `match_*` methods may modify its internal state.
+    These all take a pair of arguments: pattern part, and candidate part.
+    """
+
+    K = TypeVar("K")
+    V = TypeVar("V")
+
+    def copy(self) -> "TryIrMatch":
+        return TryIrMatch(
+            arch=self.arch,
+            symbolic_registers=self.symbolic_registers.copy(),
+            symbolic_labels=self.symbolic_labels.copy(),
+            symbolic_args=self.symbolic_args.copy(),
+            ref_map=self.ref_map.copy(),
+        )
+
+    def _match_var(self, var_map: Dict[K, V], key: K, value: V) -> bool:
+        if key in var_map:
+            if var_map[key] != value:
+                return False
+        else:
+            var_map[key] = value
+        return True
+
+    def match_reg(self, pat: Register, cand: Register) -> bool:
+        # Single-letter registers are symbolic, and not matched exactly
+        if len(pat.register_name) > 1:
+            return pat == cand
+        return self._match_var(self.symbolic_registers, pat.register_name, cand)
+
     def match_arg(self, pat: Argument, cand: Argument) -> bool:
         if isinstance(pat, AsmLiteral):
             return pat == cand
@@ -165,7 +227,7 @@ class TryMatchState:
             return isinstance(cand, Register) and self.match_reg(pat, cand)
         if isinstance(pat, AsmGlobalSymbol):
             if pat.symbol_name.isupper():
-                return self.match_var(self.symbolic_args, pat.symbol_name, cand)
+                return self._match_var(self.symbolic_args, pat.symbol_name, cand)
             else:
                 return pat == cand
         if isinstance(pat, AsmAddressMode):
@@ -175,7 +237,7 @@ class TryMatchState:
                 and self.match_reg(pat.rhs, cand.rhs)
             )
         if isinstance(pat, JumpTarget):
-            return isinstance(cand, JumpTarget) and self.match_var(
+            return isinstance(cand, JumpTarget) and self._match_var(
                 self.symbolic_labels, pat.target, cand.target
             )
         if isinstance(pat, BinOp):
@@ -217,7 +279,7 @@ class TryMatchState:
     def match_ref(self, pat: Reference, cand: Reference) -> bool:
         if isinstance(pat, str) and isinstance(cand, str):
             return pat == cand
-        return self.match_var(self.ref_map, pat, cand)
+        return self._match_var(self.ref_map, pat, cand)
 
     def match_refset(self, pat: RefSet, cand: RefSet) -> bool:
         if len(pat) > len(cand):
@@ -250,46 +312,6 @@ class TryMatchState:
             if not self.match_refset(pat_refs, cand_refs):
                 return False
         return True
-
-    def map_reg(self, key: Register) -> Register:
-        if len(key.register_name) <= 1:
-            return self.symbolic_registers[key.register_name]
-        return key
-
-    def map_arg(self, key: Argument) -> Argument:
-        if isinstance(key, AsmLiteral):
-            return key
-        if isinstance(key, Register):
-            return self.map_reg(key)
-        if isinstance(key, AsmGlobalSymbol):
-            if key.symbol_name.isupper():
-                return self.symbolic_args[key.symbol_name]
-            return key
-        if isinstance(key, AsmAddressMode):
-            rhs = self.map_arg(key.rhs)
-            assert isinstance(rhs, Register)
-            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=rhs)
-        if isinstance(key, JumpTarget):
-            return JumpTarget(self.symbolic_labels[key.target])
-        if isinstance(key, BinOp):
-            return AsmLiteral(self.eval_math(key))
-        assert False, f"bad pattern part: {key}"
-
-    def map_ref(self, key: InstrRef) -> InstrRef:
-        value = self.ref_map[key]
-        assert isinstance(value, InstrRef)
-        return value
-
-    def map_access(self, key: Access) -> Access:
-        if isinstance(key, Register):
-            return self.map_reg(key)
-        elif isinstance(key, MemoryAccess):
-            return MemoryAccess(
-                base_reg=self.map_reg(key.base_reg),
-                offset=self.map_arg(key.offset),
-                size=key.size,
-            )
-        assert False, f"bad access: {key}"
 
 
 def simplify_ir_patterns(
@@ -333,7 +355,7 @@ def simplify_ir_patterns(
         assert isinstance(pattern.flow_graph.nodes[1], TerminalNode)
         pattern_node = pattern.flow_graph.nodes[0]
 
-        partial_matches = [TryMatchState(arch=arch)]
+        partial_matches = [TryIrMatch(arch=arch)]
         for i, pat in enumerate(pattern_node.block.instructions):
             if pat.mnemonic == "nop":
                 continue
