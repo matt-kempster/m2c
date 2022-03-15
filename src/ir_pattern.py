@@ -24,6 +24,7 @@ from .flow_graph import (
     Instruction,
     InstrRef,
     RefSet,
+    Reference,
     Node,
     TerminalNode,
     build_flowgraph,
@@ -62,6 +63,8 @@ class IrPattern(abc.ABC):
 
         name = f"__pattern_{cls.__name__}"
         func = Function(name=name, arguments=[])
+        # Add a fictive nop instruction for each input to the replacement_instr
+        # This acts as a placeholder Reference to represent where the input was set
         for inp in replacement_instr.inputs:
             func.new_instruction(
                 Instruction(
@@ -75,6 +78,7 @@ class IrPattern(abc.ABC):
             )
         for part in cls.parts:
             func.new_instruction(parse_instruction(part, missing_meta, arch))
+        # Add a fictive nop instruction for each output from the replacement_instr
         for out in replacement_instr.outputs:
             func.new_instruction(
                 Instruction(
@@ -129,6 +133,7 @@ class TryMatchState:
         return True
 
     def match_reg(self, actual: Register, exp: Register) -> bool:
+        # Single-letter registers are symbolic, and not matched exactly
         if len(exp.register_name) <= 1:
             return self.match_var(self.symbolic_registers, exp.register_name, actual)
         else:
@@ -155,46 +160,6 @@ class TryMatchState:
         else:
             assert False, f"bad pattern part in math pattern: {e}"
 
-    def map_reg(self, key: Register) -> Register:
-        if len(key.register_name) <= 1:
-            return self.symbolic_registers[key.register_name]
-        return key
-
-    def map_arg(self, key: Argument) -> Argument:
-        if isinstance(key, AsmLiteral):
-            return key
-        if isinstance(key, Register):
-            return self.map_reg(key)
-        if isinstance(key, AsmGlobalSymbol):
-            if key.symbol_name.isupper():
-                return self.symbolic_args[key.symbol_name]
-            return key
-        if isinstance(key, AsmAddressMode):
-            rhs = self.map_arg(key.rhs)
-            assert isinstance(rhs, Register)
-            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=rhs)
-        if isinstance(key, JumpTarget):
-            return JumpTarget(self.symbolic_labels[key.target])
-        if isinstance(key, BinOp):
-            return AsmLiteral(self.eval_math(key))
-        assert False, f"bad pattern part: {key}"
-
-    def map_access(self, key: Access) -> Access:
-        if isinstance(key, Register):
-            return self.map_reg(key)
-        elif isinstance(key, MemoryAccess):
-            return MemoryAccess(
-                base_reg=self.map_reg(key.base_reg),
-                offset=self.map_arg(key.offset),
-                size=key.size,
-            )
-        assert False, f"bad access: {key}"
-
-    def map_ref(self, key: InstrRef) -> InstrRef:
-        value = self.ref_map[key]
-        assert isinstance(value, InstrRef)
-        return value
-
     def match_arg(self, a: Argument, e: Argument) -> bool:
         if isinstance(e, AsmLiteral):
             return isinstance(a, AsmLiteral) and a.value == e.value
@@ -219,6 +184,7 @@ class TryMatchState:
             return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
         assert False, f"bad pattern part: {e}"
 
+
     def match_access(self, a: Access, e: Access) -> bool:
         if isinstance(e, Register):
             return isinstance(a, Register) and self.match_reg(a, e)
@@ -231,7 +197,7 @@ class TryMatchState:
             )
         assert False, f"bad access: {e}"
 
-    def match_one(self, ins: Instruction, exp: Instruction) -> bool:
+    def match_instr(self, ins: Instruction, exp: Instruction) -> bool:
         if (
             ins.mnemonic != exp.mnemonic
             or len(ins.args) != len(ins.args)
@@ -251,7 +217,7 @@ class TryMatchState:
         # TODO: What about clobbers?
         return True
 
-    def match_ref(self, key: Union[InstrRef, str], value: Union[InstrRef, str]) -> bool:
+    def match_ref(self, key: Reference, value: Reference) -> bool:
         # TODO: This is backwards
         if isinstance(key, str) and isinstance(value, str):
             return key == value
@@ -261,30 +227,76 @@ class TryMatchState:
         self.ref_map[key] = value
         return True
 
-    def match_refs(self, key: RefSet, value: RefSet) -> bool:
+    def match_refset(self, exp: RefSet, act: RefSet) -> bool:
         # TODO: This is backwards
-        # TODO: Do full Cartesian product if they are not unique?
-        actual = key.get_unique()
-        expected = value.get_unique()
-        if actual is None or expected is None:
+        if len(exp) > len(act):
             return False
-        return self.match_ref(actual, expected)
-
-    def match_accesses(self, exp: AccessRefs, act: AccessRefs) -> bool:
-        # TODO: This is backwards
-        for exp_reg, exp_refs in exp.items():
-            if isinstance(exp_reg, MemoryAccess) and not exp_refs.is_unique():
-                continue
-            assert (
-                exp_refs.is_unique()
-            ), f"pattern {exp_reg} does not have a unique source ref ({exp_refs})"
-            mapped_reg = self.map_access(exp_reg)
-            act_refs = act.get(mapped_reg)
-            if isinstance(mapped_reg, MemoryAccess) and not act_refs.is_valid():
-                continue
-            if not self.match_refs(exp_refs, act_refs):
+        # TODO: This may need backtracking?
+        act = act.copy()
+        for e in exp:
+            assert len(act) >= 1
+            for a in act:
+                if self.match_ref(e, a):
+                    act.remove(a)
+                    break
+            else:
                 return False
         return True
+
+    def match_accessrefs(self, exp: AccessRefs, act: AccessRefs) -> bool:
+        # TODO: This is backwards
+        for exp_reg, exp_refs in exp.items():
+            if (
+                isinstance(exp_reg, MemoryAccess)
+                and exp_reg.base_reg != self.arch.stack_pointer_reg
+            ):
+                continue
+            mapped_reg = self.map_access(exp_reg)
+            act_refs = act.get(mapped_reg)
+            if not self.match_refset(exp_refs, act_refs):
+                return False
+        return True
+
+    def map_reg(self, key: Register) -> Register:
+        if len(key.register_name) <= 1:
+            return self.symbolic_registers[key.register_name]
+        return key
+
+    def map_arg(self, key: Argument) -> Argument:
+        if isinstance(key, AsmLiteral):
+            return key
+        if isinstance(key, Register):
+            return self.map_reg(key)
+        if isinstance(key, AsmGlobalSymbol):
+            if key.symbol_name.isupper():
+                return self.symbolic_args[key.symbol_name]
+            return key
+        if isinstance(key, AsmAddressMode):
+            rhs = self.map_arg(key.rhs)
+            assert isinstance(rhs, Register)
+            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=rhs)
+        if isinstance(key, JumpTarget):
+            return JumpTarget(self.symbolic_labels[key.target])
+        if isinstance(key, BinOp):
+            return AsmLiteral(self.eval_math(key))
+        assert False, f"bad pattern part: {key}"
+
+    def map_ref(self, key: InstrRef) -> InstrRef:
+        value = self.ref_map[key]
+        assert isinstance(value, InstrRef)
+        return value
+
+    def map_access(self, key: Access) -> Access:
+        if isinstance(key, Register):
+            return self.map_reg(key)
+        elif isinstance(key, MemoryAccess):
+            return MemoryAccess(
+                base_reg=self.map_reg(key.base_reg),
+                offset=self.map_arg(key.offset),
+                size=key.size,
+            )
+        assert False, f"bad access: {key}"
+
 
 
 def simplify_ir_patterns(
@@ -339,6 +351,7 @@ def simplify_ir_patterns(
             pat_ref = InstrRef(pattern_node, i)
             pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
             candidate_refs = refs_by_mnemonic[pat.mnemonic]
+            # if debug: print(f"pat {pat_ref} {pat} inputs {pat_inputs}")
 
             next_partial_matches = []
             for prev_state in partial_matches:
@@ -348,9 +361,9 @@ def simplify_ir_patterns(
                     state = prev_state.copy()
                     if not state.match_ref(pat_ref, ref):
                         continue
-                    if not state.match_one(instr, pat):
+                    if not state.match_instr(instr, pat):
                         continue
-                    if not state.match_accesses(
+                    if not state.match_accessrefs(
                         pat_inputs, flow_graph.instr_inputs[ref]
                     ):
                         continue
@@ -383,14 +396,12 @@ def simplify_ir_patterns(
                 pat_ref = InstrRef(pattern_node, i)
                 ins_ref = state.map_ref(pat_ref)
                 instr = ins_ref.instruction()
-                deps = flow_graph.instr_references[ins_ref]
-                is_unrefd = True
-                for refs in deps.values():
-                    if not all(r in refs_to_replace for r in refs):
-                        is_unrefd = False
-                        break
+
                 clobbers_inputs = any(r in matched_inputs for r in instr.clobbers)
                 clobbers_inputs |= any(r in matched_inputs for r in instr.outputs)
+
+                deps = flow_graph.instr_references[ins_ref].values()
+                is_unrefd = all(r in refs_to_replace for rs in deps for r in rs)
                 if last or is_unrefd:
                     refs_to_replace.append(ins_ref)
                 elif clobbers_inputs:
@@ -400,7 +411,6 @@ def simplify_ir_patterns(
             if invalid:
                 continue
 
-            # for i, pat in reversed(list(enumerate(pattern_node.block.instructions))):
             for i, pat in enumerate(pattern_node.block.instructions):
                 if pat.mnemonic == "nop":
                     continue
