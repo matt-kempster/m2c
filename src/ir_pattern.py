@@ -109,11 +109,10 @@ class TryMatchState:
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
-    ref_map: Dict[Union[InstrRef, str], Union[InstrRef, str]] = field(
-        default_factory=dict
-    )
+    ref_map: Dict[Reference, Reference] = field(default_factory=dict)
 
-    T = TypeVar("T")
+    K = TypeVar("K")
+    V = TypeVar("V")
 
     def copy(self) -> "TryMatchState":
         return TryMatchState(
@@ -124,7 +123,7 @@ class TryMatchState:
             ref_map=self.ref_map.copy(),
         )
 
-    def match_var(self, var_map: Dict[str, T], key: str, value: T) -> bool:
+    def match_var(self, var_map: Dict[K, V], key: K, value: V) -> bool:
         if key in var_map:
             if var_map[key] != value:
                 return False
@@ -132,128 +131,123 @@ class TryMatchState:
             var_map[key] = value
         return True
 
-    def match_reg(self, actual: Register, exp: Register) -> bool:
+    def match_reg(self, pat: Register, cand: Register) -> bool:
         # Single-letter registers are symbolic, and not matched exactly
-        if len(exp.register_name) <= 1:
-            return self.match_var(self.symbolic_registers, exp.register_name, actual)
-        else:
-            return exp.register_name == actual.register_name
+        if len(pat.register_name) > 1:
+            return pat == cand
+        return self.match_var(self.symbolic_registers, pat.register_name, cand)
 
-    def eval_math(self, e: Argument) -> int:
-        if isinstance(e, AsmLiteral):
-            return e.value
-        if isinstance(e, BinOp):
-            if e.op == "+":
-                return self.eval_math(e.lhs) + self.eval_math(e.rhs)
-            if e.op == "-":
-                return self.eval_math(e.lhs) - self.eval_math(e.rhs)
-            if e.op == "<<":
-                return self.eval_math(e.lhs) << self.eval_math(e.rhs)
-            assert False, f"bad binop in math pattern: {e}"
-        elif isinstance(e, AsmGlobalSymbol):
+    def eval_math(self, pat: Argument) -> int:
+        if isinstance(pat, AsmLiteral):
+            return pat.value
+        if isinstance(pat, BinOp):
+            if pat.op == "+":
+                return self.eval_math(pat.lhs) + self.eval_math(pat.rhs)
+            if pat.op == "-":
+                return self.eval_math(pat.lhs) - self.eval_math(pat.rhs)
+            if pat.op == "<<":
+                return self.eval_math(pat.lhs) << self.eval_math(pat.rhs)
+            assert False, f"bad pattern binop: {pat}"
+        elif isinstance(pat, AsmGlobalSymbol):
             assert (
-                e.symbol_name in self.symbolic_args
-            ), f"undefined variable in math pattern: {e.symbol_name}"
-            lit = self.symbolic_args[e.symbol_name]
+                pat.symbol_name in self.symbolic_args
+            ), f"undefined variable in math pattern: {pat.symbol_name}"
+            lit = self.symbolic_args[pat.symbol_name]
             assert isinstance(lit, AsmLiteral)
             return lit.value
         else:
-            assert False, f"bad pattern part in math pattern: {e}"
+            assert False, f"bad pattern expr: {pat}"
 
-    def match_arg(self, a: Argument, e: Argument) -> bool:
-        if isinstance(e, AsmLiteral):
-            return isinstance(a, AsmLiteral) and a.value == e.value
-        if isinstance(e, Register):
-            return isinstance(a, Register) and self.match_reg(a, e)
-        if isinstance(e, AsmGlobalSymbol):
-            if e.symbol_name.isupper():
-                return self.match_var(self.symbolic_args, e.symbol_name, a)
+    def match_arg(self, pat: Argument, cand: Argument) -> bool:
+        if isinstance(pat, AsmLiteral):
+            return pat == cand
+        if isinstance(pat, Register):
+            return isinstance(cand, Register) and self.match_reg(pat, cand)
+        if isinstance(pat, AsmGlobalSymbol):
+            if pat.symbol_name.isupper():
+                return self.match_var(self.symbolic_args, pat.symbol_name, cand)
             else:
-                return isinstance(a, AsmGlobalSymbol) and a.symbol_name == e.symbol_name
-        if isinstance(e, AsmAddressMode):
+                return pat == cand
+        if isinstance(pat, AsmAddressMode):
             return (
-                isinstance(a, AsmAddressMode)
-                and self.match_arg(a.lhs, e.lhs)
-                and self.match_reg(a.rhs, e.rhs)
+                isinstance(cand, AsmAddressMode)
+                and self.match_arg(pat.lhs, cand.lhs)
+                and self.match_reg(pat.rhs, cand.rhs)
             )
-        if isinstance(e, JumpTarget):
-            return isinstance(a, JumpTarget) and self.match_var(
-                self.symbolic_labels, e.target, a.target
+        if isinstance(pat, JumpTarget):
+            return isinstance(cand, JumpTarget) and self.match_var(
+                self.symbolic_labels, pat.target, cand.target
             )
-        if isinstance(e, BinOp):
-            return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
-        assert False, f"bad pattern part: {e}"
+        if isinstance(pat, BinOp):
+            return isinstance(cand, AsmLiteral) and self.eval_math(pat) == cand.value
+        assert False, f"bad pattern arg: {pat}"
 
-
-    def match_access(self, a: Access, e: Access) -> bool:
-        if isinstance(e, Register):
-            return isinstance(a, Register) and self.match_reg(a, e)
-        if isinstance(e, MemoryAccess):
+    def match_access(self, pat: Access, cand: Access) -> bool:
+        if isinstance(pat, Register):
+            return isinstance(cand, Register) and self.match_reg(pat, cand)
+        if isinstance(pat, MemoryAccess):
             return (
-                isinstance(a, MemoryAccess)
-                and a.size == e.size
-                and self.match_reg(a.base_reg, e.base_reg)
-                and self.match_arg(a.offset, e.offset)
+                isinstance(cand, MemoryAccess)
+                and pat.size == cand.size
+                and self.match_reg(pat.base_reg, cand.base_reg)
+                and self.match_arg(pat.offset, cand.offset)
             )
-        assert False, f"bad access: {e}"
+        assert False, f"bad pattern access: {pat}"
 
-    def match_instr(self, ins: Instruction, exp: Instruction) -> bool:
+    def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
         if (
-            ins.mnemonic != exp.mnemonic
-            or len(ins.args) != len(ins.args)
-            or len(ins.inputs) != len(ins.inputs)
-            or len(ins.outputs) != len(ins.outputs)
+            pat.mnemonic != cand.mnemonic
+            or len(pat.args) != len(cand.args)
+            or len(pat.inputs) != len(cand.inputs)
+            or len(pat.outputs) != len(cand.outputs)
         ):
             return False
-        for (a_arg, e_arg) in zip(ins.args, exp.args):
-            if not self.match_arg(a_arg, e_arg):
+        for (p_arg, c_arg) in zip(pat.args, cand.args):
+            if not self.match_arg(p_arg, c_arg):
                 return False
-        for (a_acc, e_acc) in zip(ins.inputs, exp.inputs):
-            if not self.match_access(a_acc, e_acc):
+        for (p_acc, c_acc) in zip(pat.inputs, cand.inputs):
+            if not self.match_access(p_acc, c_acc):
                 return False
-        for (a_acc, e_acc) in zip(ins.outputs, exp.outputs):
-            if not self.match_access(a_acc, e_acc):
+        for (p_acc, c_acc) in zip(pat.outputs, cand.outputs):
+            if not self.match_access(p_acc, c_acc):
                 return False
-        # TODO: What about clobbers?
+        # TODO: Do clobbers also need to be matched?
         return True
 
-    def match_ref(self, key: Reference, value: Reference) -> bool:
-        # TODO: This is backwards
-        if isinstance(key, str) and isinstance(value, str):
-            return key == value
-        existing_value = self.ref_map.get(key)
-        if existing_value is not None:
-            return existing_value == value
-        self.ref_map[key] = value
-        return True
+    def match_ref(self, pat: Reference, cand: Reference) -> bool:
+        if isinstance(pat, str) and isinstance(cand, str):
+            return pat == cand
+        return self.match_var(self.ref_map, pat, cand)
 
-    def match_refset(self, exp: RefSet, act: RefSet) -> bool:
-        # TODO: This is backwards
-        if len(exp) > len(act):
+    def match_refset(self, pat: RefSet, cand: RefSet) -> bool:
+        if len(pat) > len(cand):
             return False
         # TODO: This may need backtracking?
-        act = act.copy()
-        for e in exp:
-            assert len(act) >= 1
-            for a in act:
+        cand = cand.copy()
+        for e in pat:
+            assert len(cand) >= 1
+            for a in cand:
                 if self.match_ref(e, a):
-                    act.remove(a)
+                    cand.remove(a)
                     break
             else:
                 return False
         return True
 
-    def match_accessrefs(self, exp: AccessRefs, act: AccessRefs) -> bool:
-        # TODO: This is backwards
-        for exp_reg, exp_refs in exp.items():
+    def match_accessrefs(self, pat: AccessRefs, cand: AccessRefs) -> bool:
+        for pat_reg, pat_refs in pat.items():
+            # For now, skip mapping any memory accesses outside of the stack.
+            # Usually, these accesses are not intended to be part of the matched pattern,
+            # but in the future the pattern syntax could be extended to explicitly mark
+            # which accesses must be matched.
             if (
-                isinstance(exp_reg, MemoryAccess)
-                and exp_reg.base_reg != self.arch.stack_pointer_reg
+                isinstance(pat_reg, MemoryAccess)
+                and pat_reg.base_reg != self.arch.stack_pointer_reg
             ):
                 continue
-            mapped_reg = self.map_access(exp_reg)
-            act_refs = act.get(mapped_reg)
-            if not self.match_refset(exp_refs, act_refs):
+            cand_reg = self.map_access(pat_reg)
+            cand_refs = cand.get(cand_reg)
+            if not self.match_refset(pat_refs, cand_refs):
                 return False
         return True
 
@@ -296,7 +290,6 @@ class TryMatchState:
                 size=key.size,
             )
         assert False, f"bad access: {key}"
-
 
 
 def simplify_ir_patterns(
@@ -361,7 +354,7 @@ def simplify_ir_patterns(
                     state = prev_state.copy()
                     if not state.match_ref(pat_ref, ref):
                         continue
-                    if not state.match_instr(instr, pat):
+                    if not state.match_instr(pat, instr):
                         continue
                     if not state.match_accessrefs(
                         pat_inputs, flow_graph.instr_inputs[ref]
