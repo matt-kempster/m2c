@@ -1,13 +1,7 @@
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import (
-    ClassVar,
-    Dict,
-    List,
-    Type,
-    TypeVar,
-)
+from typing import ClassVar, Dict, List, Type, TypeVar
 
 from .flow_graph import (
     AccessRefs,
@@ -94,9 +88,9 @@ class IrPattern(abc.ABC):
                     "nop",
                     [],
                     meta=missing_meta,
-                    outputs=[out],
+                    inputs=[out],
                     clobbers=[],
-                    inputs=[],
+                    outputs=[],
                 )
             )
 
@@ -264,15 +258,12 @@ class TryIrMatch(IrMatch):
             or len(pat.outputs) != len(cand.outputs)
         ):
             return False
-        for (p_arg, c_arg) in zip(pat.args, cand.args):
-            if not self.match_arg(p_arg, c_arg):
-                return False
-        for (p_acc, c_acc) in zip(pat.inputs, cand.inputs):
-            if not self.match_access(p_acc, c_acc):
-                return False
-        for (p_acc, c_acc) in zip(pat.outputs, cand.outputs):
-            if not self.match_access(p_acc, c_acc):
-                return False
+        if not all(self.match_arg(*args) for args in zip(pat.args, cand.args)):
+            return False
+        if not all(self.match_access(*accs) for accs in zip(pat.inputs, cand.inputs)):
+            return False
+        if not all(self.match_access(*accs) for accs in zip(pat.outputs, cand.outputs)):
+            return False
         # TODO: Do clobbers also need to be matched?
         return True
 
@@ -285,12 +276,12 @@ class TryIrMatch(IrMatch):
         if len(pat) > len(cand):
             return False
         # TODO: This may need backtracking?
-        cand = cand.copy()
+        refs = cand.copy()
         for e in pat:
-            assert len(cand) >= 1
-            for a in cand:
+            assert len(refs) >= 1
+            for a in refs:
                 if self.match_ref(e, a):
-                    cand.remove(a)
+                    refs.remove(a)
                     break
             else:
                 return False
@@ -317,7 +308,6 @@ class TryIrMatch(IrMatch):
 def simplify_ir_patterns(
     arch: ArchFlowGraph, flow_graph: FlowGraph, pattern_classes: List[Type[IrPattern]]
 ) -> None:
-    debug = False
     # Precompute a RefSet for each mnemonic
     refs_by_mnemonic = defaultdict(list)
     for node in flow_graph.nodes:
@@ -327,7 +317,6 @@ def simplify_ir_patterns(
 
     def replace_instr(ref: InstrRef, new_asm: AsmInstruction) -> None:
         # Remove ref from all instr_references
-        # TODO: should the data structures be changed to better accommodate this?
         instr = ref.instruction()
         for rs in flow_graph.instr_inputs[ref].values():
             for r in rs:
@@ -348,6 +337,9 @@ def simplify_ir_patterns(
 
     for pattern_class in pattern_classes:
         pattern = pattern_class.compile(arch)
+
+        # For now, patterns can't have branches: they should only have 2 Nodes,
+        # a BaseNode and an (empty) TerminalNode
         assert (
             len(pattern.flow_graph.nodes) == 2
         ), "branching patterns not yet supported"
@@ -355,90 +347,97 @@ def simplify_ir_patterns(
         assert isinstance(pattern.flow_graph.nodes[1], TerminalNode)
         pattern_node = pattern.flow_graph.nodes[0]
 
+        # Perform a brute force-ish graph search to find candidate sets of instructions
+        # that match the pattern with the correct dependencies & arguments. This will
+        # have poor performance with large patterns that use common mnemonics.
         partial_matches = [TryIrMatch(arch=arch)]
-        for i, pat in enumerate(pattern_node.block.instructions):
-            if pat.mnemonic == "nop":
+        for i, pat_instr in enumerate(pattern_node.block.instructions):
+            if pat_instr.mnemonic == "nop":
                 continue
-            if pat.mnemonic not in refs_by_mnemonic:
-                partial_matches = []
-                break
 
             pat_ref = InstrRef(pattern_node, i)
             pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
-            candidate_refs = refs_by_mnemonic[pat.mnemonic]
-            # if debug: print(f"pat {pat_ref} {pat} inputs {pat_inputs}")
 
             next_partial_matches = []
             for prev_state in partial_matches:
-                for ref in candidate_refs:
-                    instr = ref.instruction()
-                    assert instr is not None
+                for cand_ref in refs_by_mnemonic.get(pat_instr.mnemonic, []):
+                    cand_instr = cand_ref.instruction()
+                    assert cand_instr is not None
                     state = prev_state.copy()
-                    if not state.match_ref(pat_ref, ref):
+                    if not state.match_ref(pat_ref, cand_ref):
                         continue
-                    if not state.match_instr(pat, instr):
+                    if not state.match_instr(pat_instr, cand_instr):
                         continue
                     if not state.match_accessrefs(
-                        pat_inputs, flow_graph.instr_inputs[ref]
+                        pat_inputs, flow_graph.instr_inputs[cand_ref]
                     ):
                         continue
                     next_partial_matches.append(state)
+
             partial_matches = next_partial_matches
-        last = True
+            if not partial_matches:
+                break
+
         for n, state in enumerate(partial_matches):
+            # Perform any additional pattern-specific validation or compuation
             if not pattern.check(state):
                 continue
+
+            pattern_inputs = {
+                state.map_access(p) for p in pattern.replacement_instr.inputs
+            }
+            pattern_outputs = AccessRefs()
+            for i, out in enumerate(reversed(pattern.replacement_instr.outputs)):
+                out_ref = InstrRef(
+                    pattern_node, len(pattern_node.block.instructions) - 1 - i
+                )
+                out_instr = out_ref.instruction()
+                assert out_instr.mnemonic == "nop" and out_instr.inputs == [out]
+                pattern_outputs.extend(
+                    state.map_access(out),
+                    pattern.flow_graph.instr_inputs[out_ref].get(out),
+                )
+
+            refs_to_replace: List[InstrRef] = []
+            for i, pat_instr in reversed(
+                list(enumerate(pattern_node.block.instructions))
+            ):
+                if pat_instr.mnemonic == "nop":
+                    continue
+                pat_ref = InstrRef(pattern_node, i)
+                cand_ref = state.map_ref(pat_ref)
+                instr = cand_ref.instruction()
+
+                # Only add this instruction to refs_to_replace if its outputs are one of
+                # the replacement instruction's outputs, or if they are not used by by
+                # any instruction outside this pattern.
+                is_unreferenced = True
+                for reg, refs in flow_graph.instr_references[cand_ref].items():
+                    if pat_ref in pattern_outputs.get(reg):
+                        continue
+                    if not all(r in refs_to_replace for r in refs):
+                        is_unreferenced = False
+                        break
+
+                if is_unreferenced:
+                    refs_to_replace.append(cand_ref)
+                elif any(r in pattern_inputs for r in instr.clobbers + instr.outputs):
+                    # If this instruction can't be replaced, but it clobbers a needed
+                    # input register, then we can't perform the rewrite
+                    # TODO: It may be possible to do the rewrite by introducing
+                    # additional temporary registers?
+                    refs_to_replace = []
+                    break
+            if not refs_to_replace:
+                continue
+
+            # Replace unreferenced instructions. The last instruction in the source is
+            # rewritten with the replacement instruction (refs_to_replace is in reverse
+            # order), and the others are replaced with a nop.
             new_instr = AsmInstruction(
                 pattern.replacement_instr.mnemonic,
                 [state.map_arg(a) for a in pattern.replacement_instr.args],
             )
-            if debug:
-                print(f">>> Match #{n}  --> {new_instr}")
-            pat_in = InstrRef(pattern.flow_graph.nodes[0], 0)
-            pat_out = InstrRef(
-                pattern.flow_graph.nodes[0],
-                len(pattern.flow_graph.nodes[0].block.instructions) - 1,
-            )
-            refs_to_replace = []
-            last = True
-            invalid = False
-            matched_inputs = [
-                state.map_access(p) for p in pattern.replacement_instr.inputs
-            ]
-            for i, pat in reversed(list(enumerate(pattern_node.block.instructions))):
-                if pat.mnemonic == "nop":
-                    continue
-                pat_ref = InstrRef(pattern_node, i)
-                ins_ref = state.map_ref(pat_ref)
-                instr = ins_ref.instruction()
-
-                clobbers_inputs = any(r in matched_inputs for r in instr.clobbers)
-                clobbers_inputs |= any(r in matched_inputs for r in instr.outputs)
-
-                deps = flow_graph.instr_references[ins_ref].values()
-                is_unrefd = all(r in refs_to_replace for rs in deps for r in rs)
-                if last or is_unrefd:
-                    refs_to_replace.append(ins_ref)
-                elif clobbers_inputs:
-                    invalid = True
-                    break
-                last = False
-            if invalid:
-                continue
-
-            for i, pat in enumerate(pattern_node.block.instructions):
-                if pat.mnemonic == "nop":
-                    continue
-                pat_ref = InstrRef(pattern_node, i)
-                pat_instr = pat_ref.instruction()
-                ins_ref = state.map_ref(pat_ref)
-                rfs = flow_graph.instr_references[ins_ref]
-                if debug:
-                    print(
-                        f"> map {str(ins_ref):16} {str(pat_ref.instruction()):>20}  <>  {str(ins_ref.instruction()):30} {' ' if ins_ref in refs_to_replace else '*'} refs: {rfs}"
-                    )
-                if ins_ref not in refs_to_replace:
-                    continue
-                nop_instr = AsmInstruction("nop", [])
-                repl_instr = new_instr if ins_ref == refs_to_replace[0] else nop_instr
-                replace_instr(ins_ref, repl_instr)
+            replace_instr(refs_to_replace[0], new_instr)
+            for ref in refs_to_replace[1:]:
+                replace_instr(ref, AsmInstruction("nop", []))

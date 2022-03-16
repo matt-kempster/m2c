@@ -1139,6 +1139,12 @@ class AccessRefs:
         else:
             self.refs[reg].add(ref)
 
+    def extend(self, reg: Access, refs: RefSet) -> None:
+        if reg not in self:
+            self.refs[reg] = refs.copy()
+        else:
+            self.refs[reg].update(refs)
+
     def remove(self, reg: Access) -> None:
         self.refs.pop(reg)
 

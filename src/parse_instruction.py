@@ -539,7 +539,6 @@ def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instru
         base = parse_asm_instruction(line, arch)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
-        raise
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
 
 
