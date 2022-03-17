@@ -1892,6 +1892,10 @@ class CommentStmt(Statement):
         return f"// {self.contents}"
 
 
+def error_stmt(msg: str) -> ExprStmt:
+    return ExprStmt(ErrorExpr(msg))
+
+
 @dataclass(frozen=True)
 class AddressMode:
     offset: int

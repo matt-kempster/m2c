@@ -61,6 +61,7 @@ from .translate import (
     as_type,
     as_u32,
     as_u64,
+    error_stmt,
     fn_op,
     fold_divmod,
     fold_mul_chains,
@@ -980,7 +981,7 @@ class MipsArch(Arch):
             "MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
         ),
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
-        "mtc0": lambda a: CommentStmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}"),
+        "mtc0": lambda a: error_stmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}"),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
     }
     instrs_float_comp: CmpInstrMap = {
