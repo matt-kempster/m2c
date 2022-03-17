@@ -152,8 +152,12 @@ def access_may_overlap(left: Access, right: Access) -> bool:
     if isinstance(left, Register):
         return left == right
     elif isinstance(left, MemoryAccess):
-        # TODO: For now, this assumes that *any* two memory accesses can overlap
-        return isinstance(right, MemoryAccess)
+        if not isinstance(right, MemoryAccess):
+            return False
+        if left.base_reg == right.base_reg:
+            return access_must_overlap(left, right)
+        # TODO: For now, assume any two accesses via different base regs may overlap
+        return True
     else:
         static_assert_unreachable(left)
 

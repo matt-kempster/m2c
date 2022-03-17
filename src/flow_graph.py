@@ -1094,6 +1094,9 @@ class RefSet:
     def __iter__(self) -> Iterator[Reference]:
         return iter(self.refs)
 
+    def __len__(self) -> int:
+        return len(self.refs)
+
 
 @dataclass
 class AccessRefs:
@@ -1123,6 +1126,12 @@ class AccessRefs:
             self.refs[reg] = RefSet([ref])
         else:
             self.refs[reg].add(ref)
+
+    def extend(self, reg: Access, refs: RefSet) -> None:
+        if reg not in self:
+            self.refs[reg] = refs.copy()
+        else:
+            self.refs[reg].update(refs)
 
     def remove(self, reg: Access) -> None:
         self.refs.pop(reg)
