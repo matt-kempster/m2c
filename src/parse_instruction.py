@@ -163,18 +163,19 @@ def access_must_overlap(left: Access, right: Access) -> bool:
     if isinstance(left, Register):
         return left == right
     elif isinstance(left, MemoryAccess):
-        if not isinstance(right, MemoryAccess) or left.base_reg != right.base_reg:
+        if not (
+            isinstance(right, MemoryAccess)
+            and left.base_reg == right.base_reg
+            and isinstance(left.offset, AsmLiteral)
+            and isinstance(right.offset, AsmLiteral)
+        ):
             return False
-        if left.offset == right.offset:
-            return True
-        if isinstance(left.offset, AsmLiteral) and isinstance(right.offset, AsmLiteral):
-            left_start = left.offset.value
-            right_start = right.offset.value
-            return (
-                left_start < right_start + right.size
-                and right_start < left_start + left.size
-            )
-        return False
+        left_start = left.offset.value
+        right_start = right.offset.value
+        return (
+            left_start < right_start + right.size
+            and right_start < left_start + left.size
+        )
     else:
         static_assert_unreachable(left)
 
