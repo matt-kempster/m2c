@@ -724,8 +724,8 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
         if use_cache:
             try:
-                with cache_path.open("wb") as f:
-                    pickle.dump(typemap, f)
+                with cache_path.open("wb") as f2:
+                    pickle.dump(typemap, f2)
             except Exception as e:
                 print(
                     f"Warning: Unable to write cache file {cache_path}, skipping ({e})"
