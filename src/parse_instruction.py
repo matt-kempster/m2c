@@ -117,6 +117,9 @@ class MemoryAccess:
         """Placeholder value used to mark that some arbitrary memory may be clobbered"""
         return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
 
+    def __str__(self) -> str:
+        return f"{self.offset}({self.base_reg}):{self.size}"
+
 
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
