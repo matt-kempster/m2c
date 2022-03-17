@@ -631,7 +631,7 @@ def parse_c(
 
 def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
     # Wrapper to convert `source_paths` into a hashable type
-    return _build_typemap(tuple(source_paths), True)
+    return _build_typemap(tuple(source_paths), use_cache)
 
 
 @functools.lru_cache(maxsize=16)
