@@ -631,7 +631,7 @@ def parse_c(
 
 def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
     # Wrapper to convert `source_paths` into a hashable type
-    return _build_typemap(tuple(source_paths), True)
+    return _build_typemap(tuple(source_paths), use_cache)
 
 
 @functools.lru_cache(maxsize=16)
@@ -724,8 +724,8 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
         if use_cache:
             try:
-                with cache_path.open("wb") as f:
-                    pickle.dump(typemap, f)
+                with cache_path.open("wb") as f2:
+                    pickle.dump(typemap, f2)
             except Exception as e:
                 print(
                     f"Warning: Unable to write cache file {cache_path}, skipping ({e})"
