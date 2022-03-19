@@ -192,7 +192,7 @@ class ArchAsmParsing(abc.ABC):
     """Arch-specific information needed to parse asm."""
 
     all_regs: List[Register]
-    aliased_regs: Dict[str, Register]
+    aliased_regs: Dict[Register, Register]
 
     @abc.abstractmethod
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
@@ -216,8 +216,6 @@ class ArchAsm(ArchAsmParsing):
     saved_regs: List[Register]
     all_regs: List[Register]
 
-    aliased_regs: Dict[str, Register]
-
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]:
         ...
@@ -234,7 +232,7 @@ class NaiveParsingArch(ArchAsmParsing):
     machinery to reduce arch dependence."""
 
     all_regs: List[Register] = []
-    aliased_regs: Dict[str, Register] = {}
+    aliased_regs: Dict[Register, Register] = {}
 
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
@@ -280,6 +278,17 @@ def constant_fold(arg: Argument) -> Argument:
     return arg
 
 
+def detect_bare_reg(arg: Argument, arch: ArchAsmParsing) -> Argument:
+    """Check if `arg` is an AsmGlobalSymbol whose name matches a known Register"""
+    if isinstance(arg, AsmGlobalSymbol):
+        maybe_reg = Register(arg.symbol_name)
+        if maybe_reg in arch.aliased_regs:
+            return arch.aliased_regs[maybe_reg]
+        if maybe_reg in arch.all_regs:
+            return maybe_reg
+    return arg
+
+
 def get_jump_target(label: Argument) -> JumpTarget:
     if isinstance(label, AsmGlobalSymbol):
         return JumpTarget(label.symbol_name)
@@ -313,8 +322,6 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             if "$" in reg:
                 # If there is a second $ in the word, it's a symbol
                 value = AsmGlobalSymbol(word)
-            elif reg in arch.aliased_regs:
-                value = arch.aliased_regs[reg]
             else:
                 value = Register(reg)
         elif tok == ".":
@@ -360,19 +367,14 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = constant_fold(rhs)
             else:
                 # Address mode.
+                rhs = detect_bare_reg(rhs, arch)
                 assert isinstance(rhs, Register)
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok in valid_word:
             # Global symbol.
             assert value is None
             word = parse_word(arg_elems)
-            maybe_reg = Register(word)
-            if word in arch.aliased_regs:
-                value = arch.aliased_regs[word]
-            elif maybe_reg in arch.all_regs:
-                value = maybe_reg
-            else:
-                value = AsmGlobalSymbol(word)
+            value = AsmGlobalSymbol(word)
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
@@ -429,7 +431,7 @@ def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
     arg_elems: List[str] = list(arg.strip())
     ret = parse_arg_elems(arg_elems, arch)
     assert ret is not None
-    return constant_fold(ret)
+    return detect_bare_reg(constant_fold(ret), arch)
 
 
 def split_arg_list(args: str) -> List[str]:

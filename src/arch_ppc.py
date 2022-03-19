@@ -293,7 +293,7 @@ class PpcArch(Arch):
         ]
     )
 
-    aliased_regs: Dict[str, Register] = {}
+    aliased_regs: Dict[Register, Register] = {}
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:
