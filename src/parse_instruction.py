@@ -278,8 +278,9 @@ def constant_fold(arg: Argument) -> Argument:
     return arg
 
 
-def detect_bare_reg(arg: Argument, arch: ArchAsmParsing) -> Argument:
-    """Check if `arg` is an AsmGlobalSymbol whose name matches a known Register"""
+def replace_bare_reg(arg: Argument, arch: ArchAsmParsing) -> Argument:
+    """If `arg` is an AsmGlobalSymbol whose name matches a known or aliased register,
+    convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
         maybe_reg = Register(arg.symbol_name)
         if maybe_reg in arch.aliased_regs:
@@ -324,6 +325,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = AsmGlobalSymbol(word)
             else:
                 value = Register(reg)
+                value = arch.aliased_regs.get(value, value)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None
@@ -367,7 +369,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = constant_fold(rhs)
             else:
                 # Address mode.
-                rhs = detect_bare_reg(rhs, arch)
+                rhs = replace_bare_reg(rhs, arch)
                 assert isinstance(rhs, Register)
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok in valid_word:
@@ -431,7 +433,7 @@ def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
     arg_elems: List[str] = list(arg.strip())
     ret = parse_arg_elems(arg_elems, arch)
     assert ret is not None
-    return detect_bare_reg(constant_fold(ret), arch)
+    return replace_bare_reg(constant_fold(ret), arch)
 
 
 def split_arg_list(args: str) -> List[str]:
