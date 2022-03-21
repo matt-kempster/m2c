@@ -528,8 +528,8 @@ class MipsArch(Arch):
     all_regs = saved_regs + temp_regs
 
     aliased_regs = {
-        "s8": Register("fp"),
-        "r0": Register("zero"),
+        Register("s8"): Register("fp"),
+        Register("r0"): Register("zero"),
     }
 
     @classmethod
