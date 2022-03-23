@@ -530,8 +530,8 @@ class MipsArch(Arch):
 
     constant_regs = [Register(r) for r in ["gp", "zero"]]
     aliased_regs = {
-        "s8": Register("fp"),
-        "r0": Register("zero"),
+        Register("s8"): Register("fp"),
+        Register("r0"): Register("zero"),
     }
 
     @classmethod
