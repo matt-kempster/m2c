@@ -1359,6 +1359,8 @@ class MipsArch(Arch):
                 pass
             elif slot.reg == Register("f13") or slot.reg == Register("f14"):
                 require = ["f12"]
+            elif slot.reg == Register("f15"):
+                require = ["f14"]
             elif slot.reg == Register("a1"):
                 require = ["a0", "f12"]
             elif slot.reg == Register("a2"):
@@ -1370,7 +1372,9 @@ class MipsArch(Arch):
 
             valid_extra_regs.add(slot.reg)
 
-            if slot.reg == Register("f13") and for_call:
+            if (
+                slot.reg == Register("f13") or slot.reg == Register("f15")
+            ) and for_call:
                 # We don't pass in f13 or f15 because they will often only
                 # contain SecondF64Half(), and otherwise would need to be
                 # merged with f12/f14 which we don't have logic for right
