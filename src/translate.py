@@ -421,9 +421,9 @@ class StackInfo:
     def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
         return self.reg_vars.get(reg)
 
-    def add_register_var(self, reg: Register) -> None:
+    def add_register_var(self, reg: Register, name: str) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        self.reg_vars[reg] = RegisterVar(reg=reg, type=type)
+        self.reg_vars[reg] = RegisterVar(reg=reg, type=type, name=name)
 
     def use_register_var(self, var: "RegisterVar") -> None:
         self.used_reg_vars.add(var.reg)
@@ -1220,6 +1220,7 @@ class LocalVar(Expression):
 @dataclass(frozen=True, eq=False)
 class RegisterVar(Expression):
     reg: Register
+    name: str
     type: Type
 
     def dependencies(self) -> List[Expression]:
@@ -3749,7 +3750,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
         if not phi.replacement_expr and phi.propagates_to() == phi:
             counter = name_counter.get(phi.reg, 0) + 1
             name_counter[phi.reg] = counter
-            prefix = f"phi_{phi.reg.register_name}"
+            prefix = f"phi_{stack_info.function.used_reg_names.internal_to_output(phi.reg).register_name}"
             phi.name = f"{prefix}_{counter}" if counter > 1 else prefix
             stack_info.phi_vars.append(phi)
 
@@ -3881,6 +3882,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         assert reuse_var or prefix
         if prefix == "condition_bit":
             prefix = "cond"
+
+        # HERE
         var = reuse_var or Var(stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
             wrapped_expr=expr,
@@ -3910,7 +3913,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         expr,
                         emit_exactly_once=False,
                         trivial=False,
-                        prefix=r.register_name,
+                        prefix=stack_info.function.used_reg_names.internal_to_output(r).register_name,
                     )
 
                 # This write isn't changing the value of the register; it didn't need
@@ -3970,7 +3973,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 expr,
                 emit_exactly_once=False,
                 trivial=is_trivial_expression(expr),
-                prefix=reg.register_name,
+                prefix=stack_info.function.used_reg_names.internal_to_output(reg).register_name,
             )
 
         if reg == Register("zero"):
@@ -4237,7 +4240,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         val,
                         emit_exactly_once=False,
                         trivial=False,
-                        prefix=out.register_name,
+                        prefix=stack_info.function.used_reg_names.internal_to_output(out).register_name,
                     )
                 regs.set_with_meta(out, val, RegMeta(function_return=True))
 
@@ -4352,7 +4355,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     expr,
                     emit_exactly_once=True,
                     trivial=False,
-                    prefix=reg.register_name,
+                    prefix=stack_info.function.used_reg_names.internal_to_output(reg).register_name,
                 )
                 if reg != Register("zero"):
                     set_reg_maybe_return(reg, expr)
@@ -4890,7 +4893,9 @@ def translate_to_ast(
     else:
         reg_vars = list(map(Register, options.reg_vars))
     for reg in reg_vars:
-        stack_info.add_register_var(reg)
+        converted_reg = stack_info.function.used_reg_names.input_to_internal(reg, arch)
+        stack_info.add_register_var(converted_reg, reg.register_name)
+        print(reg)
 
     if options.debug:
         print(stack_info)

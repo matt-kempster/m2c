@@ -11,6 +11,7 @@ from .parse_instruction import (
     ArchAsm,
     Instruction,
     InstructionMeta,
+    UsedRegNames,
     parse_instruction,
     split_arg_list,
 )
@@ -28,6 +29,7 @@ class Label:
 class Function:
     name: str
     body: List[Union[Instruction, Label]] = field(default_factory=list)
+    used_reg_names: UsedRegNames = UsedRegNames()
 
     def new_label(self, name: str) -> None:
         label = Label(name)
@@ -458,7 +460,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                instr: Instruction = parse_instruction(line, meta, arch)
+                instr: Instruction
+                if mips_file.current_function is not None:
+                    instr = parse_instruction(line, meta, arch, mips_file.current_function.used_reg_names)
+                else:
+                    instr = parse_instruction(line, meta, arch, UsedRegNames())
                 mips_file.new_instruction(instr)
 
     if warnings:

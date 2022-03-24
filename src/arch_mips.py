@@ -527,10 +527,31 @@ class MipsArch(Arch):
     ]
     all_regs = saved_regs + temp_regs
 
-    aliased_regs = {
+    aliased_gp_regs = {
         Register("s8"): Register("fp"),
         Register("r0"): Register("zero"),
     }
+
+    o32abi_float_regs = {
+        Register("fv0"): Register("f0"),
+        Register("fv1"): Register("f2"),
+        Register("ft0"): Register("f4"),
+        Register("ft1"): Register("f6"),
+        Register("ft2"): Register("f8"),
+        Register("ft3"): Register("f10"),
+        Register("fa0"): Register("f12"),
+        Register("fa1"): Register("f14"),
+        Register("ft4"): Register("f16"),
+        Register("ft5"): Register("f18"),
+        Register("fs0"): Register("f20"),
+        Register("fs1"): Register("f22"),
+        Register("fs2"): Register("f24"),
+        Register("fs3"): Register("f26"),
+        Register("fs4"): Register("f28"),
+        Register("fs5"): Register("f30"),
+    }
+
+    aliased_regs = { **o32abi_float_regs, **aliased_gp_regs }
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:

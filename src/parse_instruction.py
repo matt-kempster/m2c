@@ -2,7 +2,7 @@
 """
 import abc
 import csv
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 import string
 from typing import Dict, List, Optional, Set, Union
 
@@ -237,6 +237,24 @@ class NaiveParsingArch(ArchAsmParsing):
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
 
+@dataclass
+class UsedRegNames:
+    used_names: Dict[Register, Register] = field(default_factory=dict)
+
+    def input_to_internal(self, reg: Register, arch: ArchAsmParsing) -> Register:
+        if reg in arch.aliased_regs:    
+            if reg not in self.used_names:
+                self.used_names[arch.aliased_regs[reg]] = reg
+            return arch.aliased_regs[reg]
+        else:
+            return reg
+
+    def internal_to_output(self, reg: Register) -> Register:
+        if reg in self.used_names:
+            return self.used_names[reg]
+        else:
+            return reg
+
 
 valid_word = string.ascii_letters + string.digits + "_$"
 valid_number = "-xX" + string.hexdigits
@@ -278,15 +296,13 @@ def constant_fold(arg: Argument) -> Argument:
     return arg
 
 
-def replace_bare_reg(arg: Argument, arch: ArchAsmParsing) -> Argument:
+def replace_bare_reg(arg: Argument, arch: ArchAsmParsing, used_reg_names: UsedRegNames) -> Argument:
     """If `arg` is an AsmGlobalSymbol whose name matches a known or aliased register,
     convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
         maybe_reg = Register(arg.symbol_name)
-        if maybe_reg in arch.aliased_regs:
-            return arch.aliased_regs[maybe_reg]
         if maybe_reg in arch.all_regs:
-            return maybe_reg
+            return used_reg_names.input_to_internal(maybe_reg, arch)
     return arg
 
 
@@ -298,7 +314,7 @@ def get_jump_target(label: Argument) -> JumpTarget:
 
 
 # Main parser.
-def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argument]:
+def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing, used_reg_names: UsedRegNames) -> Optional[Argument]:
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
@@ -325,7 +341,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = AsmGlobalSymbol(word)
             else:
                 value = Register(reg)
-                value = arch.aliased_regs.get(value, value)
+                value = used_reg_names.input_to_internal(value, arch)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None
@@ -343,7 +359,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             assert macro_name in ("hi", "lo")
             expect("(")
             # Get the argument of the macro (which must exist).
-            m = parse_arg_elems(arg_elems, arch)
+            m = parse_arg_elems(arg_elems, arch, used_reg_names)
             assert m is not None
             m = constant_fold(m)
             expect(")")
@@ -360,7 +376,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
             # Address mode or binary operation.
             expect("(")
             # Get what is being dereferenced.
-            rhs = parse_arg_elems(arg_elems, arch)
+            rhs = parse_arg_elems(arg_elems, arch, used_reg_names)
             assert rhs is not None
             expect(")")
             if isinstance(rhs, BinOp):
@@ -369,7 +385,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                 value = constant_fold(rhs)
             else:
                 # Address mode.
-                rhs = replace_bare_reg(rhs, arch)
+                rhs = replace_bare_reg(rhs, arch, used_reg_names)
                 assert isinstance(rhs, Register)
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok in valid_word:
@@ -398,7 +414,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
                     )
                 value = Macro("sda21", value)
             else:
-                rhs = parse_arg_elems(arg_elems, arch)
+                rhs = parse_arg_elems(arg_elems, arch, used_reg_names)
                 assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs)
@@ -429,11 +445,11 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing) -> Optional[Argu
     return value
 
 
-def parse_arg(arg: str, arch: ArchAsmParsing) -> Argument:
+def parse_arg(arg: str, arch: ArchAsmParsing, used_reg_names: UsedRegNames) -> Argument:
     arg_elems: List[str] = list(arg.strip())
-    ret = parse_arg_elems(arg_elems, arch)
+    ret = parse_arg_elems(arg_elems, arch, used_reg_names)
     assert ret is not None
-    return replace_bare_reg(constant_fold(ret), arch)
+    return replace_bare_reg(constant_fold(ret), arch, used_reg_names)
 
 
 def split_arg_list(args: str) -> List[str]:
@@ -450,19 +466,19 @@ def split_arg_list(args: str) -> List[str]:
     )
 
 
-def parse_asm_instruction(line: str, arch: ArchAsmParsing) -> AsmInstruction:
+def parse_asm_instruction(line: str, arch: ArchAsmParsing, used_reg_names: UsedRegNames) -> AsmInstruction:
     # First token is instruction name, rest is args.
     line = line.strip()
     mnemonic, _, args_str = line.partition(" ")
     # Parse arguments.
-    args = [parse_arg(arg_str, arch) for arg_str in split_arg_list(args_str)]
+    args = [parse_arg(arg_str, arch, used_reg_names) for arg_str in split_arg_list(args_str)]
     instr = AsmInstruction(mnemonic, args)
     return arch.normalize_instruction(instr)
 
 
-def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm) -> Instruction:
+def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm, used_reg_names: UsedRegNames) -> Instruction:
     try:
-        base = parse_asm_instruction(line, arch)
+        base = parse_asm_instruction(line, arch, used_reg_names)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
