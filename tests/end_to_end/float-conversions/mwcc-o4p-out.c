@@ -7,5 +7,5 @@ void test(void) {
     u = __cvt_fp2unsigned(flt);
     u = __cvt_fp2unsigned((f32) dbl);
     dbl = (f64) u;
-    flt = (f32) (f64) u;
+    flt = (f32) u;
 }

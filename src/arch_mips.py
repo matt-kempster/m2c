@@ -1214,6 +1214,8 @@ class MipsArch(Arch):
         "movz": lambda a: handle_conditional_move(a, False),
         # FCSR get
         "cfc1": lambda a: ErrorExpr("cfc1"),
+        # Read from coprocessor 0
+        "mfc0": lambda a: ErrorExpr(f"mfc0 {a.raw_arg(1)}"),
         # Immediates
         "li": lambda a: a.full_imm(1),
         "lui": lambda a: load_upper(a),

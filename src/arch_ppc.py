@@ -177,8 +177,11 @@ class BranchCtrPattern(AsmPattern):
         return None
 
 
-class DoubleToIntIrPattern(IrPattern):
-    replacement = "cvt.i.d.ficitve $i, $f"
+class FloatishToIntIrPattern(IrPattern):
+    # This pattern handles converting either f32 or f64 into a signed int
+    # The `fctiwz` instruction does all the work; this pattern is just to
+    # elide the stack store/load pair.
+    replacement = "fctiwz.fictive $i, $f"
     parts = [
         "fctiwz $t, $f",
         "stfd $t, N($r1)",
@@ -749,7 +752,7 @@ class PpcArch(Arch):
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
     ir_patterns: List[typing.Type[IrPattern]] = [
-        DoubleToIntIrPattern,
+        FloatishToIntIrPattern,
         SintToDoubleIrPattern,
         UintToDoubleIrPattern,
         SintToFloatIrPattern,
@@ -979,15 +982,22 @@ class PpcArch(Arch):
         "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
         "fmr": lambda a: a.reg(1),
         "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
-        # TODO: This yields some awkward-looking C code, often in the form:
-        # `sp100 = (bitwise f64) (s32) x; y = sp104;` instead of `y = (s32) x;`.
-        # We should try to detect these idioms, along with int-to-float
-        "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
-        "cvt.i.d.ficitve": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f64()),
-        "cvt.d.i.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.s32()),
-        "cvt.d.u.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.u32()),
-        "cvt.s.i.fictive": lambda a: handle_convert(a.reg(1), Type.f32(), Type.s32()),
-        "cvt.s.u.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.u32()),
+        "fctiwz": lambda a: handle_convert(a.reg(1), Type.sintish(), Type.floatish()),
+        "fctiwz.fictive": lambda a: handle_convert(
+            a.reg(1), Type.sintish(), Type.floatish()
+        ),
+        "cvt.d.i.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f64(), Type.sintish()
+        ),
+        "cvt.d.u.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f64(), Type.uintish()
+        ),
+        "cvt.s.i.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f32(), Type.sintish()
+        ),
+        "cvt.s.u.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f32(), Type.uintish()
+        ),
         # Floating Poing Fused Multiply-{Add,Sub}
         "fmadd": lambda a: BinaryOp.f64(
             BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
