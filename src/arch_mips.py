@@ -1331,6 +1331,7 @@ class MipsArch(Arch):
                 AbiArgSlot(0, Register("f12"), Type.floatish()),
                 AbiArgSlot(4, Register("f13"), Type.floatish()),
                 AbiArgSlot(4, Register("f14"), Type.floatish()),
+                AbiArgSlot(12, Register("f15"), Type.floatish()),
                 AbiArgSlot(0, Register("a0"), Type.intptr()),
                 AbiArgSlot(4, Register("a1"), Type.any_reg()),
                 AbiArgSlot(8, Register("a2"), Type.any_reg()),
