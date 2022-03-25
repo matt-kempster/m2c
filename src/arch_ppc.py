@@ -177,7 +177,17 @@ class BranchCtrPattern(AsmPattern):
         return None
 
 
-class FloatishToIntIrPattern(IrPattern):
+class FloatishToUintPattern(SimpleAsmPattern):
+    pattern = make_pattern("bl __cvt_fp2unsigned")
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        return Replacement(
+            [AsmInstruction("cvt.u.d.fictive", [Register("r3"), Register("f1")])],
+            len(m.body),
+        )
+
+
+class FloatishToSintIrPattern(IrPattern):
     # This pattern handles converting either f32 or f64 into a signed int
     # The `fctiwz` instruction does all the work; this pattern is just to
     # elide the stack store/load pair.
@@ -752,7 +762,7 @@ class PpcArch(Arch):
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
     ir_patterns: List[typing.Type[IrPattern]] = [
-        FloatishToIntIrPattern,
+        FloatishToSintIrPattern,
         SintToDoubleIrPattern,
         UintToDoubleIrPattern,
         SintToFloatIrPattern,
@@ -764,6 +774,7 @@ class PpcArch(Arch):
         TailCallPattern(),
         BoolCastPattern(),
         BranchCtrPattern(),
+        FloatishToUintPattern(),
     ]
 
     instrs_ignore: InstrSet = {
@@ -985,6 +996,9 @@ class PpcArch(Arch):
         "fctiwz": lambda a: handle_convert(a.reg(1), Type.sintish(), Type.floatish()),
         "fctiwz.fictive": lambda a: handle_convert(
             a.reg(1), Type.sintish(), Type.floatish()
+        ),
+        "cvt.u.d.fictive": lambda a: handle_convert(
+            a.reg(1), Type.uintish(), Type.floatish()
         ),
         "cvt.d.i.fictive": lambda a: handle_convert(
             a.reg(1), Type.f64(), Type.sintish()
