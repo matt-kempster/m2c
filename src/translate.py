@@ -3750,7 +3750,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
         if not phi.replacement_expr and phi.propagates_to() == phi:
             counter = name_counter.get(phi.reg, 0) + 1
             name_counter[phi.reg] = counter
-            output_reg_name = stack_info.function.used_reg_names.internal_to_output(phi.reg)
+            output_reg_name = stack_info.function.reg_formatter.format(phi.reg)
             prefix = f"phi_{output_reg_name}"
             phi.name = f"{prefix}_{counter}" if counter > 1 else prefix
             stack_info.phi_vars.append(phi)
@@ -3913,7 +3913,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         expr,
                         emit_exactly_once=False,
                         trivial=False,
-                        prefix=stack_info.function.used_reg_names.internal_to_output(r),
+                        prefix=stack_info.function.reg_formatter.format(r),
                     )
 
                 # This write isn't changing the value of the register; it didn't need
@@ -3973,7 +3973,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 expr,
                 emit_exactly_once=False,
                 trivial=is_trivial_expression(expr),
-                prefix=stack_info.function.used_reg_names.internal_to_output(reg),
+                prefix=stack_info.function.reg_formatter.format(reg),
             )
 
         if reg == Register("zero"):
@@ -4240,7 +4240,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                         val,
                         emit_exactly_once=False,
                         trivial=False,
-                        prefix=stack_info.function.used_reg_names.internal_to_output(out),
+                        prefix=stack_info.function.reg_formatter.format(out),
                     )
                 regs.set_with_meta(out, val, RegMeta(function_return=True))
 
@@ -4355,7 +4355,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                     expr,
                     emit_exactly_once=True,
                     trivial=False,
-                    prefix=stack_info.function.used_reg_names.internal_to_output(reg),
+                    prefix=stack_info.function.reg_formatter.format(reg),
                 )
                 if reg != Register("zero"):
                     set_reg_maybe_return(reg, expr)
@@ -4893,7 +4893,7 @@ def translate_to_ast(
     else:
         reg_vars = list(map(Register, options.reg_vars))
     for reg in reg_vars:
-        reg_name = stack_info.function.used_reg_names.internal_to_output(reg)
+        reg_name = stack_info.function.reg_formatter.format(reg)
         stack_info.add_register_var(reg, reg_name)
 
 
