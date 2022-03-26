@@ -192,7 +192,7 @@ class ArchAsmParsing(abc.ABC):
     """Arch-specific information needed to parse asm."""
 
     all_regs: List[Register]
-    aliased_regs: Dict[Register, Register]
+    aliased_regs: Dict[str, Register]
 
     @abc.abstractmethod
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
@@ -232,28 +232,28 @@ class NaiveParsingArch(ArchAsmParsing):
     machinery to reduce arch dependence."""
 
     all_regs: List[Register] = []
-    aliased_regs: Dict[Register, Register] = {}
+    aliased_regs: Dict[str, Register] = {}
 
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
 
 @dataclass
 class UsedRegNames:
-    used_names: Dict[Register, Register] = field(default_factory=dict)
+    used_names: Dict[Register, str] = field(default_factory=dict)
 
-    def input_to_internal(self, reg: Register, arch: ArchAsmParsing) -> Register:
-        if reg in arch.aliased_regs:    
-            if reg not in self.used_names.values():
-                self.used_names[arch.aliased_regs[reg]] = reg
-            return arch.aliased_regs[reg]
-        else:
-            return reg
+    def input_to_internal(self, reg_name: str, arch: ArchAsmParsing) -> Register:
+        internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
+        existing_reg_name = self.used_names.get(internal_reg)
+        if existing_reg_name is None:
+            self.used_names[internal_reg] = reg_name
+        elif existing_reg_name != reg_name:
+            raise DecompFailure(
+                f"Source uses multiple names for {internal_reg} ({existing_reg_name}, {reg_name})"
+            )
+        return internal_reg
 
-    def internal_to_output(self, reg: Register) -> Register:
-        if reg in self.used_names:
-            return self.used_names[reg]
-        else:
-            return reg
+    def internal_to_output(self, reg: Register) -> str:
+        return self.used_names.get(reg, reg.register_name)
 
 
 valid_word = string.ascii_letters + string.digits + "_$"
@@ -301,8 +301,8 @@ def replace_bare_reg(arg: Argument, arch: ArchAsmParsing, used_reg_names: UsedRe
     convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
         maybe_reg = Register(arg.symbol_name)
-        if maybe_reg in arch.all_regs:
-            return used_reg_names.input_to_internal(maybe_reg, arch)
+        if maybe_reg in arch.all_regs or maybe_reg.register_name in arch.aliased_regs:
+            return used_reg_names.input_to_internal(maybe_reg.register_name, arch)
     return arg
 
 
@@ -341,7 +341,7 @@ def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing, used_reg_names: 
                 value = AsmGlobalSymbol(word)
             else:
                 value = Register(reg)
-                value = used_reg_names.input_to_internal(value, arch)
+                value = used_reg_names.input_to_internal(value.register_name, arch)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None

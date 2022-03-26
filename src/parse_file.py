@@ -460,11 +460,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                instr: Instruction
                 if mips_file.current_function is not None:
-                    instr = parse_instruction(line, meta, arch, mips_file.current_function.used_reg_names)
+                    used_reg_names = mips_file.current_function.used_reg_names
                 else:
-                    instr = parse_instruction(line, meta, arch, UsedRegNames())
+                    used_reg_names = UsedRegNames()
+                instr = parse_instruction(line, meta, arch, used_reg_names)
                 mips_file.new_instruction(instr)
 
     if warnings:
