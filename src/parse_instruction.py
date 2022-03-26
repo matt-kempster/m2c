@@ -237,10 +237,12 @@ class NaiveParsingArch(ArchAsmParsing):
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
 
+
 @dataclass
 class RegFormatter:
-    """Converts register names used in input assembly to the internal register representation, 
+    """Converts register names used in input assembly to the internal register representation,
     saving the original names for use in the output"""
+
     used_names: Dict[Register, str] = field(default_factory=dict)
 
     def parse(self, reg_name: str, arch: ArchAsmParsing) -> Register:
@@ -256,7 +258,6 @@ class RegFormatter:
 
     def format(self, reg: Register) -> str:
         return self.used_names.get(reg, reg.register_name)
-
 
 
 valid_word = string.ascii_letters + string.digits + "_$"
@@ -299,7 +300,9 @@ def constant_fold(arg: Argument) -> Argument:
     return arg
 
 
-def replace_bare_reg(arg: Argument, arch: ArchAsmParsing, reg_formatter: RegFormatter) -> Argument:
+def replace_bare_reg(
+    arg: Argument, arch: ArchAsmParsing, reg_formatter: RegFormatter
+) -> Argument:
     """If `arg` is an AsmGlobalSymbol whose name matches a known or aliased register,
     convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
@@ -317,7 +320,9 @@ def get_jump_target(label: Argument) -> JumpTarget:
 
 
 # Main parser.
-def parse_arg_elems(arg_elems: List[str], arch: ArchAsmParsing, reg_formatter: RegFormatter) -> Optional[Argument]:
+def parse_arg_elems(
+    arg_elems: List[str], arch: ArchAsmParsing, reg_formatter: RegFormatter
+) -> Optional[Argument]:
     value: Optional[Argument] = None
 
     def expect(n: str) -> str:
@@ -469,17 +474,23 @@ def split_arg_list(args: str) -> List[str]:
     )
 
 
-def parse_asm_instruction(line: str, arch: ArchAsmParsing, reg_formatter: RegFormatter) -> AsmInstruction:
+def parse_asm_instruction(
+    line: str, arch: ArchAsmParsing, reg_formatter: RegFormatter
+) -> AsmInstruction:
     # First token is instruction name, rest is args.
     line = line.strip()
     mnemonic, _, args_str = line.partition(" ")
     # Parse arguments.
-    args = [parse_arg(arg_str, arch, reg_formatter) for arg_str in split_arg_list(args_str)]
+    args = [
+        parse_arg(arg_str, arch, reg_formatter) for arg_str in split_arg_list(args_str)
+    ]
     instr = AsmInstruction(mnemonic, args)
     return arch.normalize_instruction(instr)
 
 
-def parse_instruction(line: str, meta: InstructionMeta, arch: ArchAsm, reg_formatter: RegFormatter) -> Instruction:
+def parse_instruction(
+    line: str, meta: InstructionMeta, arch: ArchAsm, reg_formatter: RegFormatter
+) -> Instruction:
     try:
         base = parse_asm_instruction(line, arch, reg_formatter)
         return arch.parse(base.mnemonic, base.args, meta)
