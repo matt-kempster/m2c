@@ -3883,7 +3883,6 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if prefix == "condition_bit":
             prefix = "cond"
 
-        # HERE
         var = reuse_var or Var(stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
             wrapped_expr=expr,
@@ -4895,7 +4894,6 @@ def translate_to_ast(
     for reg in reg_vars:
         reg_name = stack_info.function.used_reg_names.internal_to_output(reg).register_name
         stack_info.add_register_var(reg, reg_name)
-        print(reg_name)
 
 
     if options.debug:

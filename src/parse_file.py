@@ -42,18 +42,12 @@ class Function:
         self.body.append(instruction)
 
     def bodyless_copy(self) -> "Function":
-        # return Function(name=self.name)
         return Function(name=self.name, used_reg_names=self.used_reg_names)
 
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
         return f"glabel {self.name}\n{body}"
 
-    def __post_init__(self):
-        print(self.name)
-        print(self.body)
-        print(self.used_reg_names.used_names)
-        print()
 
 @dataclass
 class AsmDataEntry:

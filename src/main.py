@@ -212,8 +212,7 @@ def run(options: Options) -> int:
 
             function_text = get_function_text(function_info, options)
             print(function_text)
-            for reg in function.used_reg_names.used_names:
-                print(f"{reg}: {function.used_reg_names.used_names[reg]}")
+
         except Exception as e:
             print_exception_as_comment(
                 e,
@@ -221,10 +220,6 @@ def run(options: Options) -> int:
                 sanitize=options.sanitize_tracebacks,
             )
             return_code = 1
-
-    for function in functions:
-        print(function.used_reg_names.used_names)
-        print()
 
     for warning in typepool.warnings:
         print(fmt.with_comments("", comments=[warning]))
