@@ -13,6 +13,7 @@ from .options import Target
 @dataclass(frozen=True)
 class Register:
     register_name: str
+    # input_name: str = ""
 
     def is_float(self) -> bool:
         name = self.register_name
@@ -27,6 +28,9 @@ class Register:
 
     def __str__(self) -> str:
         return f"${self.register_name}"
+
+    # def __init__(self):
+    #     ...
 
 
 @dataclass(frozen=True)
@@ -237,9 +241,9 @@ class NaiveParsingArch(ArchAsmParsing):
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
 
-@dataclass
+# @dataclass
 class UsedRegNames:
-    used_names: Dict[Register, Register] = field(default_factory=dict)
+    used_names: Dict[Register, Register] = {} # field(default_factory=dict)
 
     def input_to_internal(self, reg: Register, arch: ArchAsmParsing) -> Register:
         if reg in arch.aliased_regs:    

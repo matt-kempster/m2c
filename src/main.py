@@ -222,6 +222,10 @@ def run(options: Options) -> int:
             )
             return_code = 1
 
+    for function in functions:
+        print(function.used_reg_names.used_names)
+        print()
+
     for warning in typepool.warnings:
         print(fmt.with_comments("", comments=[warning]))
 
