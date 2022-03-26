@@ -1227,7 +1227,7 @@ class RegisterVar(Expression):
         return []
 
     def format(self, fmt: Formatter) -> str:
-        return self.reg.register_name
+        return self.name
 
 
 @dataclass(frozen=True, eq=True)
@@ -4893,9 +4893,10 @@ def translate_to_ast(
     else:
         reg_vars = list(map(Register, options.reg_vars))
     for reg in reg_vars:
-        converted_reg = stack_info.function.used_reg_names.input_to_internal(reg, arch)
-        stack_info.add_register_var(converted_reg, reg.register_name)
-        print(reg)
+        reg_name = stack_info.function.used_reg_names.internal_to_output(reg).register_name
+        stack_info.add_register_var(reg, reg_name)
+        print(reg_name)
+
 
     if options.debug:
         print(stack_info)
