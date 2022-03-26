@@ -243,8 +243,9 @@ class UsedRegNames:
 
     def input_to_internal(self, reg: Register, arch: ArchAsmParsing) -> Register:
         if reg in arch.aliased_regs:    
-            if reg not in self.used_names:
+            if reg not in self.used_names.values():
                 self.used_names[arch.aliased_regs[reg]] = reg
+                # print(reg)
             return arch.aliased_regs[reg]
         else:
             return reg
