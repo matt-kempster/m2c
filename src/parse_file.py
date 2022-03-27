@@ -11,6 +11,7 @@ from .parse_instruction import (
     ArchAsm,
     Instruction,
     InstructionMeta,
+    RegFormatter,
     parse_instruction,
     split_arg_list,
 )
@@ -28,6 +29,7 @@ class Label:
 class Function:
     name: str
     body: List[Union[Instruction, Label]] = field(default_factory=list)
+    reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
     def new_label(self, name: str) -> None:
         label = Label(name)
@@ -40,7 +42,7 @@ class Function:
         self.body.append(instruction)
 
     def bodyless_copy(self) -> "Function":
-        return Function(name=self.name)
+        return Function(name=self.name, reg_formatter=self.reg_formatter)
 
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
@@ -458,7 +460,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                instr: Instruction = parse_instruction(line, meta, arch)
+                if mips_file.current_function is not None:
+                    reg_formatter = mips_file.current_function.reg_formatter
+                else:
+                    reg_formatter = RegFormatter()
+                instr = parse_instruction(line, meta, arch, reg_formatter)
                 mips_file.new_instruction(instr)
 
     if warnings:

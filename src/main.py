@@ -212,6 +212,7 @@ def run(options: Options) -> int:
 
             function_text = get_function_text(function_info, options)
             print(function_text)
+
         except Exception as e:
             print_exception_as_comment(
                 e,

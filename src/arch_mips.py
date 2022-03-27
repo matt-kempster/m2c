@@ -527,10 +527,47 @@ class MipsArch(Arch):
     ]
     all_regs = saved_regs + temp_regs
 
-    aliased_regs = {
-        Register("s8"): Register("fp"),
-        Register("r0"): Register("zero"),
+    aliased_gp_regs = {
+        "s8": Register("fp"),
+        "r0": Register("zero"),
     }
+
+    o32abi_float_regs = {
+        "fv0": Register("f0"),
+        "fv0f": Register("f1"),
+        "fv1": Register("f2"),
+        "fv1f": Register("f3"),
+        "ft0": Register("f4"),
+        "ft0f": Register("f5"),
+        "ft1": Register("f6"),
+        "ft1f": Register("f7"),
+        "ft2": Register("f8"),
+        "ft2f": Register("f9"),
+        "ft3": Register("f10"),
+        "ft3f": Register("f11"),
+        "fa0": Register("f12"),
+        "fa0f": Register("f13"),
+        "fa1": Register("f14"),
+        "fa1f": Register("f15"),
+        "ft4": Register("f16"),
+        "ft4f": Register("f17"),
+        "ft5": Register("f18"),
+        "ft5f": Register("f19"),
+        "fs0": Register("f20"),
+        "fs0f": Register("f21"),
+        "fs1": Register("f22"),
+        "fs1f": Register("f23"),
+        "fs2": Register("f24"),
+        "fs2f": Register("f25"),
+        "fs3": Register("f26"),
+        "fs3f": Register("f27"),
+        "fs4": Register("f28"),
+        "fs4f": Register("f29"),
+        "fs5": Register("f30"),
+        "fs5f": Register("f31"),
+    }
+
+    aliased_regs = { **o32abi_float_regs, **aliased_gp_regs }
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:
