@@ -376,7 +376,8 @@ class PpcArch(Arch):
     )
 
     constant_regs = [Register(r) for r in ["r2", "r13", "zero"]]
-    aliased_regs: Dict[Register, Register] = {}
+
+    aliased_regs: Dict[str, Register] = {}
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:

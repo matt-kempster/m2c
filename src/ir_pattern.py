@@ -30,6 +30,7 @@ from .parse_instruction import (
     Macro,
     MemoryAccess,
     Register,
+    RegFormatter,
     parse_instruction,
 )
 
@@ -62,7 +63,8 @@ class IrPattern(abc.ABC):
     @classmethod
     def compile(cls, arch: ArchFlowGraph) -> "IrPattern":
         missing_meta = InstructionMeta.missing()
-        replacement_instr = parse_instruction(cls.replacement, missing_meta, arch)
+        regf = RegFormatter()
+        replacement_instr = parse_instruction(cls.replacement, missing_meta, arch, regf)
 
         name = f"__pattern_{cls.__name__}"
         func = Function(name=name, arguments=[])
@@ -80,7 +82,7 @@ class IrPattern(abc.ABC):
                 )
             )
         for part in cls.parts:
-            func.new_instruction(parse_instruction(part, missing_meta, arch))
+            func.new_instruction(parse_instruction(part, missing_meta, arch, regf))
         # Add a fictive nop instruction for each output from the replacement_instr
         for out in replacement_instr.outputs:
             func.new_instruction(

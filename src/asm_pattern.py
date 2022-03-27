@@ -16,6 +16,7 @@ from .parse_instruction import (
     JumpTarget,
     NaiveParsingArch,
     Register,
+    RegFormatter,
     parse_asm_instruction,
 )
 
@@ -36,7 +37,7 @@ def make_pattern(*parts: str) -> Pattern:
         elif part.endswith(":"):
             ret.append((Label(part.strip(".:")), optional))
         else:
-            ins = parse_asm_instruction(part, NaiveParsingArch())
+            ins = parse_asm_instruction(part, NaiveParsingArch(), RegFormatter())
             ret.append((ins, optional))
     return ret
 
