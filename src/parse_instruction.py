@@ -241,7 +241,7 @@ class NaiveParsingArch(ArchAsmParsing):
 @dataclass
 class RegFormatter:
     """Converts register names used in input assembly to the internal register representation,
-    saving the original names for use in the output"""
+    saves the input's names, and converts back to the input's names for the output."""
 
     used_names: Dict[Register, str] = field(default_factory=dict)
 
@@ -306,9 +306,9 @@ def replace_bare_reg(
     """If `arg` is an AsmGlobalSymbol whose name matches a known or aliased register,
     convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
-        maybe_reg = Register(arg.symbol_name)
-        if maybe_reg in arch.all_regs or maybe_reg.register_name in arch.aliased_regs:
-            return reg_formatter.parse(maybe_reg.register_name, arch)
+        reg_name = arg.symbol_name
+        if Register(reg_name) in arch.all_regs or reg_name in arch.aliased_regs:
+            return reg_formatter.parse(reg_name, arch)
     return arg
 
 
