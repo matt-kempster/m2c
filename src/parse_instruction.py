@@ -246,8 +246,7 @@ class RegFormatter:
     used_names: Dict[Register, str] = field(default_factory=dict)
 
     def parse(self, reg_name: str, arch: ArchAsmParsing) -> Register:
-        internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
-        return internal_reg
+        return arch.aliased_regs.get(reg_name, Register(reg_name))
 
     def parse_and_store(self, reg_name: str, arch: ArchAsmParsing) -> Register:
         internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
