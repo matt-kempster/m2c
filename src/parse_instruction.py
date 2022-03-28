@@ -247,6 +247,10 @@ class RegFormatter:
 
     def parse(self, reg_name: str, arch: ArchAsmParsing) -> Register:
         internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
+        return internal_reg
+
+    def parse_and_store(self, reg_name: str, arch: ArchAsmParsing) -> Register:
+        internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
         existing_reg_name = self.used_names.get(internal_reg)
         if existing_reg_name is None:
             self.used_names[internal_reg] = reg_name
@@ -308,7 +312,7 @@ def replace_bare_reg(
     if isinstance(arg, AsmGlobalSymbol):
         reg_name = arg.symbol_name
         if Register(reg_name) in arch.all_regs or reg_name in arch.aliased_regs:
-            return reg_formatter.parse(reg_name, arch)
+            return reg_formatter.parse_and_store(reg_name, arch)
     return arg
 
 
@@ -349,7 +353,7 @@ def parse_arg_elems(
                 value = AsmGlobalSymbol(word)
             else:
                 value = Register(reg)
-                value = reg_formatter.parse(value.register_name, arch)
+                value = reg_formatter.parse_and_store(value.register_name, arch)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None

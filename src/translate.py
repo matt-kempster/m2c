@@ -4891,11 +4891,15 @@ def translate_to_ast(
     elif options.reg_vars == ["all"]:
         reg_vars = arch.saved_regs + arch.simple_temp_regs + arch.argument_regs
     else:
-        reg_vars = list(map(Register, options.reg_vars))
+        reg_vars = list(
+            map(
+                lambda x: stack_info.function.reg_formatter.parse(x, arch),
+                options.reg_vars,
+            )
+        )
     for reg in reg_vars:
         reg_name = stack_info.function.reg_formatter.format(reg)
         stack_info.add_register_var(reg, reg_name)
-
 
     if options.debug:
         print(stack_info)
