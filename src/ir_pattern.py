@@ -266,7 +266,6 @@ class TryIrMatch(IrMatch):
             return False
         if not all(self.match_access(*accs) for accs in zip(pat.outputs, cand.outputs)):
             return False
-        # TODO: Do clobbers also need to be matched?
         return True
 
     def match_ref(self, pat: Reference, cand: Reference) -> bool:
@@ -364,7 +363,6 @@ def simplify_ir_patterns(
             for prev_state in partial_matches:
                 for cand_ref in refs_by_mnemonic.get(pat_instr.mnemonic, []):
                     cand_instr = cand_ref.instruction()
-                    assert cand_instr is not None
                     state = prev_state.copy()
                     if not state.match_ref(pat_ref, cand_ref):
                         continue
