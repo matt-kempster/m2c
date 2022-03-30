@@ -45,7 +45,7 @@ from .parse_instruction import (
     BinOp,
     Instruction,
     InstrProcessingFailure,
-    MemoryAccess,
+    MemoryLocation,
     Macro,
     Register,
     current_instr,
@@ -516,7 +516,7 @@ def get_stack_info(
             for reg, mem in zip(inst.inputs, inst.outputs):
                 if (
                     isinstance(reg, Register)
-                    and isinstance(mem, MemoryAccess)
+                    and isinstance(mem, MemoryLocation)
                     and mem.base_reg == arch.stack_pointer_reg
                     and isinstance(mem.offset, AsmLiteral)
                 ):
@@ -4397,7 +4397,7 @@ def translate_graph_from_block(
                 reg, data.value, RegMeta(inherited=True, force=data.meta.force)
             )
 
-        for phi_arg, addrs in stack_info.flow_graph.node_phis[child].items():
+        for phi_arg, addrs in child.block.phis.items():
             if not isinstance(phi_arg, Register):
                 continue
             if addrs.is_valid():

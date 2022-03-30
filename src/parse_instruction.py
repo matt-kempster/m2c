@@ -107,15 +107,15 @@ class JumpTarget:
 
 
 @dataclass(frozen=True)
-class MemoryAccess:
+class MemoryLocation:
     base_reg: Register
     offset: "Argument"
     size: int
 
     @staticmethod
-    def arbitrary() -> "MemoryAccess":
+    def arbitrary() -> "MemoryLocation":
         """Placeholder value used to mark that some arbitrary memory may be clobbered"""
-        return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
+        return MemoryLocation(Register("zero"), AsmLiteral(0), 0)
 
     def __str__(self) -> str:
         return f"{self.offset}({self.base_reg}):{self.size}"
@@ -124,51 +124,40 @@ class MemoryAccess:
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
-Access = Union[Register, MemoryAccess]
+Location = Union[Register, MemoryLocation]
 
 
-def access_depends_on(base: Access, dep: Access) -> bool:
-    if isinstance(base, Register):
+def location_depends_on(base: Location, dep: Location) -> bool:
+    """
+    Return True if the `base` location includes a reference to the `dep` location.
+    This can only happen if `base` is a MemoryLocation and `dep` is a Register
+    referenced by one of `base`'s fields.
+    """
+    if not isinstance(base, MemoryLocation) or not isinstance(dep, Register):
         return False
-    elif isinstance(base, MemoryAccess):
-        if isinstance(dep, MemoryAccess):
-            return False
-        if base.base_reg == dep:
-            return True
-        if isinstance(base.offset, AsmAddressMode) and base.offset.rhs == dep:
-            return True
-        if isinstance(base.offset, Macro) and base.offset.argument == dep:
-            return True
-        if isinstance(base.offset, BinOp) and (
-            base.offset.lhs == dep or base.offset.rhs == dep
-        ):
-            return True
-        return False
-    else:
-        static_assert_unreachable(base)
+    return (
+        base.base_reg == dep
+        or (isinstance(base.offset, AsmAddressMode) and base.offset.rhs == dep)
+        or (
+            isinstance(base.offset, BinOp)
+            and (base.offset.lhs == dep or base.offset.rhs == dep)
+        )
+    )
 
 
-def access_may_overlap(left: Access, right: Access) -> bool:
+def locations_alias(left: Location, right: Location) -> bool:
+    """
+    Return True if `left` & `right` refer to the same register or memory region.
+    For MemoryLocations, this function is conservative and will return False if
+    the base_regs are not exactly equal or the offsets are not compile-time constants.
+    """
     if isinstance(left, Register):
         return left == right
-    elif isinstance(left, MemoryAccess):
-        if not isinstance(right, MemoryAccess):
-            return False
-        if left.base_reg == right.base_reg:
-            return access_must_overlap(left, right)
-        # TODO: For now, assume any two accesses via different base regs may overlap
-        return True
-    else:
-        static_assert_unreachable(left)
-
-
-def access_must_overlap(left: Access, right: Access) -> bool:
-    if isinstance(left, Register):
-        return left == right
-    elif isinstance(left, MemoryAccess):
-        if not isinstance(right, MemoryAccess) or left.base_reg != right.base_reg:
+    elif isinstance(left, MemoryLocation):
+        if not isinstance(right, MemoryLocation) or left.base_reg != right.base_reg:
             return False
         if left.offset == right.offset:
+            # If the offsets are identical, they alias regardless of size
             return True
         if isinstance(left.offset, AsmLiteral) and isinstance(right.offset, AsmLiteral):
             left_start = left.offset.value
@@ -178,7 +167,9 @@ def access_must_overlap(left: Access, right: Access) -> bool:
                 and right_start < left_start + left.size
             )
 
+        # Support cases where one side is a simple BinOp expression
         if isinstance(left.offset, BinOp) and not isinstance(right.offset, BinOp):
+            # Normalize the pair so `right` is the BinOp expression
             left, right = right, left
         if (
             isinstance(right.offset, BinOp)
@@ -189,6 +180,9 @@ def access_must_overlap(left: Access, right: Access) -> bool:
                 return right.offset.rhs.value < left.size
             elif right.offset.op == "-":
                 return right.offset.rhs.value < right.size
+
+        # TODO: Support cases where both `left` & `right` are BinOp expressions
+        # (This currently isn't needed for any of the existing IrPatterns)
         return False
     else:
         static_assert_unreachable(left)
@@ -236,9 +230,9 @@ class Instruction:
     # Track register and memory dependencies
     # An Instruction evaluates by reading from `inputs`, invalidating `clobbers`,
     # then writing to `outputs` (in that order)
-    inputs: List[Access]
-    clobbers: List[Access]
-    outputs: List[Access]
+    inputs: List[Location]
+    clobbers: List[Location]
+    outputs: List[Location]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None

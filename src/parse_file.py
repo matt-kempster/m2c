@@ -8,10 +8,10 @@ from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, U
 from .error import DecompFailure
 from .options import Options
 from .parse_instruction import (
-    Access,
     ArchAsm,
     Instruction,
     InstructionMeta,
+    Location,
     RegFormatter,
     parse_instruction,
     split_arg_list,
@@ -29,7 +29,7 @@ class Label:
 @dataclass
 class Function:
     name: str
-    arguments: List[Access]
+    arguments: List[Location]
     body: List[Union[Instruction, Label]] = field(default_factory=list)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 

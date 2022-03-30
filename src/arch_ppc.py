@@ -14,7 +14,7 @@ from .flow_graph import FlowGraph
 from .ir_pattern import IrMatch, IrPattern, simplify_ir_patterns
 from .options import Target
 from .parse_instruction import (
-    Access,
+    Location,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -24,7 +24,7 @@ from .parse_instruction import (
     InstructionMeta,
     JumpTarget,
     Macro,
-    MemoryAccess,
+    MemoryLocation,
     Register,
     get_jump_target,
 )
@@ -206,6 +206,9 @@ class CheckConstantMixin:
 
 
 class SintToDoubleIrPattern(IrPattern, CheckConstantMixin):
+    # The replacement asm for these patterns reference the float constant `K($k)`
+    # as an input, even though the value is ignored. This is needed to mark `$k`
+    # as an input to the pattern for matching.
     replacement = "cvt.d.i.fictive $f, $i, K($k)"
     parts = [
         "lis $a, 0x4330",
@@ -498,15 +501,15 @@ class PpcArch(Arch):
     def parse(
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
-        inputs: List[Access] = []
-        clobbers: List[Access] = []
-        outputs: List[Access] = []
+        inputs: List[Location] = []
+        clobbers: List[Location] = []
+        outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
         is_return = False
 
-        cr0_bits: List[Access] = [
+        cr0_bits: List[Location] = [
             Register("cr0_lt"),
             Register("cr0_gt"),
             Register("cr0_eq"),
@@ -522,16 +525,16 @@ class PpcArch(Arch):
         }
         size = memory_sizes.get(mnemonic.lstrip("stl").rstrip("azux"))
 
-        def make_memory_access(arg: Argument) -> Access:
+        def make_memory_access(arg: Argument) -> Location:
             assert size is not None
             assert not isinstance(arg, Register)
             if isinstance(arg, AsmAddressMode):
-                return MemoryAccess(
+                return MemoryLocation(
                     base_reg=arg.rhs,
                     offset=arg.lhs,
                     size=size,
                 )
-            return MemoryAccess(
+            return MemoryLocation(
                 base_reg=Register("zero"),
                 offset=arg,
                 size=size,
@@ -572,7 +575,7 @@ class PpcArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
+            clobbers.append(MemoryLocation.arbitrary())
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
@@ -581,7 +584,7 @@ class PpcArch(Arch):
             inputs.append(Register("clr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
+            clobbers.append(MemoryLocation.arbitrary())
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
@@ -590,7 +593,7 @@ class PpcArch(Arch):
             inputs.append(Register("lr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
+            clobbers.append(MemoryLocation.arbitrary())
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
@@ -629,7 +632,7 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                outputs = [MemoryAccess(args[1], args[2], size)]
+                outputs = [MemoryLocation(args[1], args[2], size)]
             else:
                 assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
@@ -643,7 +646,7 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                outputs = [MemoryAccess(args[1], args[2], size), args[1]]
+                outputs = [MemoryLocation(args[1], args[2], size), args[1]]
             else:
                 assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
@@ -656,7 +659,7 @@ class PpcArch(Arch):
                     and isinstance(args[1], Register)
                     and isinstance(args[2], Register)
                 )
-                inputs = [MemoryAccess(args[1], args[2], size), args[1], args[2]]
+                inputs = [MemoryLocation(args[1], args[2], size), args[1], args[2]]
                 outputs = [args[0], args[1]]
             else:
                 assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
@@ -697,7 +700,7 @@ class PpcArch(Arch):
                         and isinstance(args[1], Register)
                         and isinstance(args[2], Register)
                     )
-                    inputs = [args[1], args[2], MemoryAccess(args[1], args[2], size)]
+                    inputs = [args[1], args[2], MemoryLocation(args[1], args[2], size)]
                 else:
                     assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
                     inputs = [args[1].rhs, make_memory_access(args[1])]

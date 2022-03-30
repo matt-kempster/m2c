@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Type, TypeVar
 
 from .flow_graph import (
-    AccessRefs,
     ArchFlowGraph,
     BaseNode,
     FlowGraph,
-    Instruction,
     InstrRef,
+    Instruction,
+    LocationRefSetDict,
     RefSet,
     Reference,
     TerminalNode,
@@ -17,7 +17,6 @@ from .flow_graph import (
 )
 from .parse_file import AsmData, Function
 from .parse_instruction import (
-    Access,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -27,10 +26,11 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    Location,
     Macro,
-    MemoryAccess,
-    Register,
+    MemoryLocation,
     RegFormatter,
+    Register,
     parse_instruction,
 )
 
@@ -73,7 +73,7 @@ class IrPattern(abc.ABC):
         for inp in replacement_instr.inputs:
             func.new_instruction(
                 Instruction(
-                    "nop",
+                    "in.fictive",
                     [],
                     meta=missing_meta,
                     inputs=[],
@@ -87,7 +87,7 @@ class IrPattern(abc.ABC):
         for out in replacement_instr.outputs:
             func.new_instruction(
                 Instruction(
-                    "nop",
+                    "out.fictive",
                     [],
                     meta=missing_meta,
                     inputs=[out],
@@ -171,16 +171,16 @@ class IrMatch:
         assert isinstance(value, InstrRef)
         return value
 
-    def map_access(self, key: Access) -> Access:
+    def map_location(self, key: Location) -> Location:
         if isinstance(key, Register):
             return self.map_reg(key)
-        elif isinstance(key, MemoryAccess):
-            return MemoryAccess(
+        elif isinstance(key, MemoryLocation):
+            return MemoryLocation(
                 base_reg=self.map_reg(key.base_reg),
                 offset=self.map_arg(key.offset),
                 size=key.size,
             )
-        assert False, f"bad access: {key}"
+        assert False, f"bad location: {key}"
 
 
 class TryIrMatch(IrMatch):
@@ -240,17 +240,17 @@ class TryIrMatch(IrMatch):
             return isinstance(cand, AsmLiteral) and self.eval_math(pat) == cand.value
         assert False, f"bad pattern arg: {pat}"
 
-    def match_access(self, pat: Access, cand: Access) -> bool:
+    def match_location(self, pat: Location, cand: Location) -> bool:
         if isinstance(pat, Register):
             return isinstance(cand, Register) and self.match_reg(pat, cand)
-        if isinstance(pat, MemoryAccess):
+        if isinstance(pat, MemoryLocation):
             return (
-                isinstance(cand, MemoryAccess)
+                isinstance(cand, MemoryLocation)
                 and pat.size == cand.size
                 and self.match_reg(pat.base_reg, cand.base_reg)
                 and self.match_arg(pat.offset, cand.offset)
             )
-        assert False, f"bad pattern access: {pat}"
+        assert False, f"bad pattern location: {pat}"
 
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
         if (
@@ -262,9 +262,11 @@ class TryIrMatch(IrMatch):
             return False
         if not all(self.match_arg(*args) for args in zip(pat.args, cand.args)):
             return False
-        if not all(self.match_access(*accs) for accs in zip(pat.inputs, cand.inputs)):
+        if not all(self.match_location(*locs) for locs in zip(pat.inputs, cand.inputs)):
             return False
-        if not all(self.match_access(*accs) for accs in zip(pat.outputs, cand.outputs)):
+        if not all(
+            self.match_location(*locs) for locs in zip(pat.outputs, cand.outputs)
+        ):
             return False
         return True
 
@@ -274,32 +276,35 @@ class TryIrMatch(IrMatch):
         return self._match_var(self.ref_map, pat, cand)
 
     def match_refset(self, pat: RefSet, cand: RefSet) -> bool:
+        """Match every ref in `pat` a *unique* ref in `cand`"""
         if len(pat) > len(cand):
             return False
         # TODO: This may need backtracking?
-        refs = cand.copy()
-        for e in pat:
-            assert len(refs) >= 1
-            for a in refs:
-                if self.match_ref(e, a):
-                    refs.remove(a)
+        cand_refs = cand.copy()
+        for p in pat:
+            assert len(cand_refs) >= 1
+            for c in cand_refs:
+                if self.match_ref(p, c):
+                    cand_refs.remove(c)
                     break
             else:
                 return False
         return True
 
-    def match_accessrefs(self, pat: AccessRefs, cand: AccessRefs) -> bool:
+    def match_inputrefs(
+        self, pat: LocationRefSetDict, cand: LocationRefSetDict
+    ) -> bool:
         for pat_reg, pat_refs in pat.items():
-            # For now, skip mapping any memory accesses outside of the stack.
-            # Usually, these accesses are not intended to be part of the matched pattern,
+            # For now, skip mapping any memory locations outside of the stack.
+            # Usually, these locations are not intended to be part of the matched pattern,
             # but in the future the pattern syntax could be extended to explicitly mark
-            # which accesses must be matched.
+            # which locations must be matched.
             if (
-                isinstance(pat_reg, MemoryAccess)
+                isinstance(pat_reg, MemoryLocation)
                 and pat_reg.base_reg != self.arch.stack_pointer_reg
             ):
                 continue
-            cand_reg = self.map_access(pat_reg)
+            cand_reg = self.map_location(pat_reg)
             cand_refs = cand.get(cand_reg)
             if not self.match_refset(pat_refs, cand_refs):
                 return False
@@ -317,21 +322,18 @@ def simplify_ir_patterns(
             refs_by_mnemonic[instr.mnemonic].append(ref)
 
     def replace_instr(ref: InstrRef, new_asm: AsmInstruction) -> None:
-        # Remove ref from all instr_references
+        # Remove ref from all instr_uses
         instr = ref.instruction()
         for rs in flow_graph.instr_inputs[ref].values():
             for r in rs:
                 if isinstance(r, InstrRef):
-                    flow_graph.instr_references[r].remove_ref(ref)
+                    flow_graph.instr_uses[r].remove_ref(ref)
 
         # Parse the asm & set the clobbers
         new_instr = arch.parse(new_asm.mnemonic, new_asm.args, instr.meta.derived())
-        new_instr.clobbers.extend(
-            acc for acc in instr.outputs if acc not in new_instr.outputs
-        )
-        new_instr.clobbers.extend(
-            acc for acc in instr.clobbers if acc not in new_instr.clobbers
-        )
+        for loc in new_instr.outputs + new_instr.clobbers:
+            if loc not in new_instr.clobbers:
+                new_instr.clobbers.append(loc)
 
         # Replace the instruction in the block
         ref.node.block.instructions[ref.index] = new_instr
@@ -353,7 +355,7 @@ def simplify_ir_patterns(
         # have poor performance with large patterns that use common mnemonics.
         partial_matches = [TryIrMatch(arch=arch)]
         for i, pat_instr in enumerate(pattern_node.block.instructions):
-            if pat_instr.mnemonic == "nop":
+            if pat_instr.mnemonic in ("in.fictive", "out.fictive"):
                 continue
 
             pat_ref = InstrRef(pattern_node, i)
@@ -368,7 +370,7 @@ def simplify_ir_patterns(
                         continue
                     if not state.match_instr(pat_instr, cand_instr):
                         continue
-                    if not state.match_accessrefs(
+                    if not state.match_inputrefs(
                         pat_inputs, flow_graph.instr_inputs[cand_ref]
                     ):
                         continue
@@ -384,17 +386,17 @@ def simplify_ir_patterns(
                 continue
 
             pattern_inputs = {
-                state.map_access(p) for p in pattern.replacement_instr.inputs
+                state.map_location(p) for p in pattern.replacement_instr.inputs
             }
-            pattern_outputs = AccessRefs()
+            pattern_outputs = LocationRefSetDict()
             for i, out in enumerate(reversed(pattern.replacement_instr.outputs)):
                 out_ref = InstrRef(
                     pattern_node, len(pattern_node.block.instructions) - 1 - i
                 )
                 out_instr = out_ref.instruction()
-                assert out_instr.mnemonic == "nop" and out_instr.inputs == [out]
+                assert out_instr.mnemonic == "out.fictive" and out_instr.inputs == [out]
                 pattern_outputs.extend(
-                    state.map_access(out),
+                    state.map_location(out),
                     pattern.flow_graph.instr_inputs[out_ref].get(out),
                 )
 
@@ -402,7 +404,7 @@ def simplify_ir_patterns(
             for i, pat_instr in reversed(
                 list(enumerate(pattern_node.block.instructions))
             ):
-                if pat_instr.mnemonic == "nop":
+                if pat_instr.mnemonic in ("in.fictive", "out.fictive"):
                     continue
                 pat_ref = InstrRef(pattern_node, i)
                 cand_ref = state.map_ref(pat_ref)
@@ -412,7 +414,7 @@ def simplify_ir_patterns(
                 # the replacement instruction's outputs, or if they are not used by by
                 # any instruction outside this pattern.
                 is_unreferenced = True
-                for reg, refs in flow_graph.instr_references[cand_ref].items():
+                for reg, refs in flow_graph.instr_uses[cand_ref].items():
                     if pat_ref in pattern_outputs.get(reg):
                         continue
                     if not all(r in refs_to_replace for r in refs):
