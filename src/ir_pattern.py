@@ -276,7 +276,7 @@ class TryIrMatch(IrMatch):
         return self._match_var(self.ref_map, pat, cand)
 
     def match_refset(self, pat: RefSet, cand: RefSet) -> bool:
-        """Match every ref in `pat` a *unique* ref in `cand`"""
+        """Match every ref in `pat` to a unique ref in `cand`"""
         if len(pat) > len(cand):
             return False
         # TODO: This may need backtracking?
@@ -295,15 +295,6 @@ class TryIrMatch(IrMatch):
         self, pat: LocationRefSetDict, cand: LocationRefSetDict
     ) -> bool:
         for pat_reg, pat_refs in pat.items():
-            # For now, skip mapping any memory locations outside of the stack.
-            # Usually, these locations are not intended to be part of the matched pattern,
-            # but in the future the pattern syntax could be extended to explicitly mark
-            # which locations must be matched.
-            if (
-                isinstance(pat_reg, MemoryLocation)
-                and pat_reg.base_reg != self.arch.stack_pointer_reg
-            ):
-                continue
             cand_reg = self.map_location(pat_reg)
             cand_refs = cand.get(cand_reg)
             if not self.match_refset(pat_refs, cand_refs):
