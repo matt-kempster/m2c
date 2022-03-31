@@ -14,7 +14,6 @@ from typing import (
     Set,
     Tuple,
     Union,
-    ValuesView,
 )
 
 from .error import DecompFailure
@@ -1373,7 +1372,7 @@ def nodes_to_flowgraph(
                 loc_srcs[out] = RefSet([ref])
 
         # Translate everything dominated by this node, now that we know our own
-        # final register flow_graph. This will eventually reach every node.
+        # final Location sources. This will eventually reach every node.
         for child in node.immediately_dominates:
             child_loc_srcs = loc_srcs.copy()
 
