@@ -321,23 +321,6 @@ def simplify_ir_patterns(
             ref = InstrRef(node, i)
             refs_by_mnemonic[instr.mnemonic].append(ref)
 
-    def replace_instr(ref: InstrRef, new_asm: AsmInstruction) -> None:
-        # Remove ref from all instr_uses
-        instr = ref.instruction()
-        for rs in flow_graph.instr_inputs[ref].values():
-            for r in rs:
-                if isinstance(r, InstrRef):
-                    flow_graph.instr_uses[r].remove_ref(ref)
-
-        # Parse the asm & set the clobbers
-        new_instr = arch.parse(new_asm.mnemonic, new_asm.args, instr.meta.derived())
-        for loc in new_instr.outputs + new_instr.clobbers:
-            if loc not in new_instr.clobbers:
-                new_instr.clobbers.append(loc)
-
-        # Replace the instruction in the block
-        ref.node.block.instructions[ref.index] = new_instr
-
     for pattern_class in pattern_classes:
         pattern = pattern_class.compile(arch)
 
@@ -434,12 +417,31 @@ def simplify_ir_patterns(
                 continue
 
             # Replace unreferenced instructions. The last instruction in the source is
-            # rewritten with the replacement instruction (refs_to_replace is in reverse
-            # order), and the others are replaced with a nop.
-            new_instr = AsmInstruction(
-                pattern.replacement_instr.mnemonic,
-                [state.map_arg(a) for a in pattern.replacement_instr.args],
-            )
-            replace_instr(refs_to_replace[0], new_instr)
-            for ref in refs_to_replace[1:]:
-                replace_instr(ref, AsmInstruction("nop", []))
+            for i, ref in enumerate(refs_to_replace):
+                # Remove ref from all instr_uses
+                instr = ref.instruction()
+                for _, rs in flow_graph.instr_inputs[ref].items():
+                    for r in rs:
+                        if isinstance(r, InstrRef):
+                            flow_graph.instr_uses[r].remove_ref(ref)
+
+                # The last instruction in the source is rewritten with the replacement instruction
+                # (refs_to_replace is in reverse order), and the others are replaced with a nop.
+                if i == 0:
+                    new_asm = AsmInstruction(
+                        pattern.replacement_instr.mnemonic,
+                        [state.map_arg(a) for a in pattern.replacement_instr.args],
+                    )
+                else:
+                    new_asm = AsmInstruction("nop", [])
+
+                # Parse the asm & set the clobbers
+                new_instr = arch.parse(
+                    new_asm.mnemonic, new_asm.args, instr.meta.derived()
+                )
+                for loc in new_instr.outputs + new_instr.clobbers:
+                    if loc not in new_instr.clobbers:
+                        new_instr.clobbers.append(loc)
+
+                # Replace the instruction in the block
+                ref.node.block.instructions[ref.index] = new_instr

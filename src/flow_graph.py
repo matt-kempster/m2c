@@ -52,7 +52,12 @@ class Block:
     label: Optional[Label]
     approx_label_name: str
     instructions: List[Instruction]
-    phis: "LocationRefSetDict"
+
+    # Set of phi locations for the start of this block, and the instruction references
+    # that assign the possible values. If the value is None, then the phi location is
+    # "invalid" because the location was not always assigned to.
+    # By construction, the value will either be None, or a RefSet with at least 2 elements.
+    phis: Dict[Location, Optional["RefSet"]] = field(default_factory=dict)
 
     # block_info is actually an Optional[BlockInfo], set by translate.py for
     # non-TerminalNode's, but due to circular dependencies we cannot type it
@@ -93,7 +98,6 @@ class BlockBuilder:
             self.curr_label,
             label_name,
             self.curr_instructions,
-            LocationRefSetDict(),
         )
         self.blocks.append(block)
 
@@ -610,7 +614,7 @@ class TerminalNode(BaseNode):
 
     @staticmethod
     def terminal() -> "TerminalNode":
-        return TerminalNode(Block(-1, None, "", [], LocationRefSetDict()), False)
+        return TerminalNode(Block(-1, None, "", []), False)
 
     def children(self) -> List["Node"]:
         return []
@@ -1057,13 +1061,12 @@ Reference = Union[InstrRef, str]
 
 @dataclass
 class RefSet:
-    """An set of References, with an empty set representing an invalid/missing state."""
+    """A set of References, backed by a list to avoid non-determinism"""
 
-    # Store the References in a list instead of a set to avoid non-determinism
     refs: List[Reference] = field(default_factory=list)
 
     @staticmethod
-    def invalid() -> "RefSet":
+    def empty() -> "RefSet":
         """Represent a missing reference, such as an unset register"""
         return RefSet(refs=[])
 
@@ -1071,9 +1074,6 @@ class RefSet:
     def special(name: str) -> "RefSet":
         """Represent non-instruction references, such as arguments or constant regs"""
         return RefSet(refs=[name])
-
-    def is_valid(self) -> bool:
-        return bool(self.refs)
 
     def is_unique(self) -> bool:
         return len(self.refs) == 1
@@ -1098,8 +1098,6 @@ class RefSet:
         return RefSet(refs=self.refs.copy())
 
     def __repr__(self) -> str:
-        if not self.refs:
-            return "invalid"
         return repr(self.refs)
 
     def __contains__(self, ref: Reference) -> bool:
@@ -1114,11 +1112,16 @@ class RefSet:
 
 @dataclass
 class LocationRefSetDict:
-    # TODO: document behavior of invalid values
+    """
+    A map from Locations to RefSets.
+    If a key is missing, it is equivalent to mapping to an empty RefSet.
+    """
+
     refs: Dict[Location, RefSet] = field(default_factory=dict)
 
     def get(self, loc: Location) -> RefSet:
-        return self.refs.get(loc, RefSet.invalid())
+        # Missing keys map to an empty RefSet
+        return self.refs.get(loc, RefSet.empty())
 
     def add(self, loc: Location, ref: Reference) -> None:
         if loc not in self:
@@ -1136,17 +1139,16 @@ class LocationRefSetDict:
         self.refs.pop(loc)
 
     def remove_ref(self, ref: Reference) -> None:
+        """Remove `ref` from all stored RefSet values"""
         to_remove = []
         for loc, refset in self.refs.items():
             if ref in refset:
                 refset.remove(ref)
             if not refset:
                 to_remove.append(loc)
+        # Remove any locs that now map to empty RefSets
         for loc in to_remove:
             self.refs.pop(loc)
-
-    def is_empty(self) -> bool:
-        return not self.refs
 
     def copy(self) -> "LocationRefSetDict":
         return LocationRefSetDict(refs=self.refs.copy())
@@ -1154,14 +1156,11 @@ class LocationRefSetDict:
     def update(self, other: "LocationRefSetDict") -> None:
         self.refs.update(other.refs)
 
-    def values(self) -> ValuesView[RefSet]:
-        return self.refs.values()
-
     def items(self) -> ItemsView[Location, RefSet]:
         return self.refs.items()
 
     def __contains__(self, key: Location) -> bool:
-        return key in self.refs
+        return bool(self.get(key))
 
     def __iter__(self) -> Iterator[Location]:
         return iter(self.refs)
@@ -1259,36 +1258,47 @@ class FlowGraph:
             node.block.block_info = None
 
 
-def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> RefSet:
+def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[RefSet]:
     """
     Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
-    Otherwise, return RefSet.invalid().
+    Otherwise, return None. This analysis is accurate when `loc` is a Register, but
+    is only best-effort for local variables: it will miss local array accesses and
+    stack pointers passed to functions. This is analysis is also nonsensical for global
+    MemoryLocations, because these do not need to be written to before being read.
     """
     assert node.immediate_dominator is not None
 
-    seen = {node.immediate_dominator}
+    seen = set()
     stack = node.parents[:]
     sources = RefSet()
 
     while stack:
         n = stack.pop()
-        if n == node.immediate_dominator and not imdom_srcs.is_valid():
-            return RefSet.invalid()
         if n in seen:
             continue
         seen.add(n)
 
+        # Find the last instruction in the node that either writes or clobbers to `loc`
         for i, instr in list(enumerate(n.block.instructions))[::-1]:
             if loc in instr.outputs:
                 sources.add(InstrRef(n, i))
                 break
             if loc in instr.clobbers:
-                return RefSet.invalid()
+                return None
         else:
-            stack.extend(n.parents)
+            # This node didn't touch `loc`, so iterate by checking its parents.
+            # As an optimization, we only need to iterate up until the immediate dominator,
+            # because its phi sources have already been computed (`imdom_srcs`).
+            if n == node.immediate_dominator and not imdom_srcs:
+                # `loc` was unset on the path to `node` via its imdom, so it's not a valid phi
+                return None
+            elif n == node.immediate_dominator:
+                # Take the union with `imdom_srcs`, but do not iterate on the imdom's parents
+                sources.update(imdom_srcs)
+            else:
+                # Otherwise, continue iterating on the current node's parents
+                stack.extend(n.parents)
 
-    if not sources.is_valid():
-        return imdom_srcs
     return sources
 
 
@@ -1337,7 +1347,7 @@ def nodes_to_flowgraph(
                 for loc, srcs in loc_srcs.items():
                     if locations_alias(loc, inp):
                         sources.update(srcs)
-                if isinstance(inp, Register) and not sources.is_valid():
+                if isinstance(inp, Register) and not sources:
                     # Registers must be written to before being read.
                     # If the instruction is a function call and we don't have a source
                     # for the argument, we can prune the argument from the input list.
@@ -1372,10 +1382,13 @@ def nodes_to_flowgraph(
                     continue
                 phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
                 # If phi_reg_srcs is invalid, then the loc is inconsistently set, so it should
-                # not be used by the child node.
-                # Otherwise, it *is* set in every control flow path to the child node, so
-                # it can be used (but it will have a phi value)
-                child_loc_srcs[loc] = phi_reg_srcs
+                # not be used by the child node. Otherwise, it *is* set in every control flow
+                # path to the child node, so it can be used (but it will have a phi value).
+                if phi_reg_srcs is not None:
+                    assert len(phi_reg_srcs) >= 2
+                    child_loc_srcs[loc] = phi_reg_srcs
+                elif loc in child_loc_srcs:
+                    child_loc_srcs.remove(loc)
                 child.block.phis[loc] = phi_reg_srcs
 
             process_node(child, child_loc_srcs)

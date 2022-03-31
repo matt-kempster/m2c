@@ -4400,7 +4400,7 @@ def translate_graph_from_block(
         for phi_arg, addrs in child.block.phis.items():
             if not isinstance(phi_arg, Register):
                 continue
-            if addrs.is_valid():
+            if addrs is not None:
                 expr: Optional[Expression] = stack_info.maybe_get_register_var(phi_arg)
                 if expr is None:
                     expr = PhiExpr(
