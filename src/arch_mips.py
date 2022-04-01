@@ -288,7 +288,7 @@ class Div2S16Pattern(SimpleAsmPattern):
         return Replacement([m.body[0], m.body[1], div], len(m.body))
 
 
-class Div2S32Pattern(SimpleAsmPattern):
+class Div2S32Pattern1(SimpleAsmPattern):
     pattern = make_pattern(
         "srl $o, $i, 0x1f",
         "addu $o, $i, $o",
@@ -298,6 +298,20 @@ class Div2S32Pattern(SimpleAsmPattern):
     def replace(self, m: AsmMatch) -> Replacement:
         div = AsmInstruction("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
         return Replacement([div], len(m.body))
+
+
+class Div2S32Pattern2(SimpleAsmPattern):
+    pattern = make_pattern(
+        "srl $t, $x, 0x1f",
+        "addu $x, $x, $t",
+        "sra $x, $x, 1",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        if m.regs["x"] == m.regs["t"]:
+            return None
+        div = AsmInstruction("div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2)])
+        return Replacement([m.body[0], div], len(m.body))
 
 
 class UtfPattern(SimpleAsmPattern):
@@ -567,7 +581,7 @@ class MipsArch(Arch):
         "fs5f": Register("f31"),
     }
 
-    aliased_regs = { **o32abi_float_regs, **aliased_gp_regs }
+    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs}
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:
@@ -911,7 +925,8 @@ class MipsArch(Arch):
         DivP2Pattern1(),
         DivP2Pattern2(),
         Div2S16Pattern(),
-        Div2S32Pattern(),
+        Div2S32Pattern1(),
+        Div2S32Pattern2(),
         ModP2Pattern1(),
         ModP2Pattern2(),
         UtfPattern(),
