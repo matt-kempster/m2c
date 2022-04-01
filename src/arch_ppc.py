@@ -494,7 +494,7 @@ class PpcArch(Arch):
             # Function call to pointer in $ctr
             assert len(args) == 0
             inputs = list(cls.argument_regs)
-            inputs.append(Register("clr"))
+            inputs.append(Register("ctr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             clobbers.append(MemoryAccess.arbitrary())
