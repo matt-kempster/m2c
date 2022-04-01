@@ -290,28 +290,32 @@ class Div2S16Pattern(SimpleAsmPattern):
 
 class Div2S32Pattern1(SimpleAsmPattern):
     pattern = make_pattern(
-        "srl $o, $i, 0x1f",
-        "addu $o, $i, $o",
-        "sra $o, $o, 1",
+        "srl $t, $i, 0x1f",
+        "addu $t, $i, $t",
+        "sra $o, $t, 1",
     )
 
-    def replace(self, m: AsmMatch) -> Replacement:
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        if m.regs["t"] == m.regs["i"]:
+            return None
         div = AsmInstruction("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
+        # While it would be more correct, we don't include m.body[:2] in the
+        # result, because the srl incorrectly type inferences $i to u32.
         return Replacement([div], len(m.body))
 
 
 class Div2S32Pattern2(SimpleAsmPattern):
     pattern = make_pattern(
-        "srl $t, $x, 0x1f",
-        "addu $x, $x, $t",
-        "sra $x, $x, 1",
+        "srl $t, $i, 0x1f",
+        "addu $i, $i, $t",
+        "sra $o, $i, 1",
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        if m.regs["x"] == m.regs["t"]:
+        if m.regs["t"] == m.regs["i"]:
             return None
-        div = AsmInstruction("div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2)])
-        return Replacement([m.body[0], div], len(m.body))
+        div = AsmInstruction("div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2)])
+        return Replacement([div], len(m.body))
 
 
 class UtfPattern(SimpleAsmPattern):
