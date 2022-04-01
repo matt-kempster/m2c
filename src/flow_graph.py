@@ -32,7 +32,6 @@ from .parse_instruction import (
     Macro,
     MemoryLocation,
     Register,
-    location_depends_on,
     locations_alias,
 )
 from .asm_pattern import simplify_patterns, AsmPattern
@@ -1357,11 +1356,12 @@ def nodes_to_flowgraph(
                         missing_regs.append((inp, ref))
                 inputs[inp] = sources
 
-            # Remove any clobbered locations, or any MemoryLocations that depend on
-            # clobbered Registers. Ex: If `$v0` is clobbered, remove `$v0` and `4($v0)`
+            # Remove any clobbered locations
             for clob in ir.clobbers + ir.outputs:
                 for loc in loc_srcs:
-                    if location_depends_on(loc, clob) or locations_alias(loc, clob):
+                    if locations_alias(loc, clob) or (
+                        isinstance(loc, MemoryLocation) and loc.base_reg == clob
+                    ):
                         loc_srcs.remove(loc)
                         break
 

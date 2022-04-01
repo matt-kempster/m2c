@@ -127,24 +127,6 @@ Argument = Union[
 Location = Union[Register, MemoryLocation]
 
 
-def location_depends_on(base: Location, dep: Location) -> bool:
-    """
-    Return True if the `base` location includes a reference to the `dep` location.
-    This can only happen if `base` is a MemoryLocation and `dep` is a Register
-    referenced by one of `base`'s fields.
-    """
-    if not isinstance(base, MemoryLocation) or not isinstance(dep, Register):
-        return False
-    return (
-        base.base_reg == dep
-        or (isinstance(base.offset, AsmAddressMode) and base.offset.rhs == dep)
-        or (
-            isinstance(base.offset, BinOp)
-            and (base.offset.lhs == dep or base.offset.rhs == dep)
-        )
-    )
-
-
 def locations_alias(left: Location, right: Location) -> bool:
     """
     Return True if `left` & `right` refer to the same register or memory region.
