@@ -45,7 +45,6 @@ from .parse_instruction import (
     BinOp,
     Instruction,
     InstrProcessingFailure,
-    MemoryLocation,
     Macro,
     Register,
     StackLocation,

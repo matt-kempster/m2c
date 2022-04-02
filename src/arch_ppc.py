@@ -14,7 +14,6 @@ from .flow_graph import FlowGraph
 from .ir_pattern import IrMatch, IrPattern, simplify_ir_patterns
 from .options import Target
 from .parse_instruction import (
-    ArbitraryMemoryLocation,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -25,10 +24,9 @@ from .parse_instruction import (
     JumpTarget,
     Location,
     Macro,
-    MemoryLocation,
     Register,
+    StackLocation,
     get_jump_target,
-    make_location,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -506,6 +504,8 @@ class PpcArch(Arch):
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
+        reads_memory = False
+        writes_memory = False
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
@@ -527,10 +527,13 @@ class PpcArch(Arch):
         }
         size = memory_sizes.get(mnemonic.lstrip("stl").rstrip("azux"))
 
-        def make_memory_access(arg: Argument) -> Location:
+        def make_memory_access(arg: Argument) -> List[Location]:
             assert size is not None
-            assert not isinstance(arg, Register)
-            return make_location(arg, size, cls.stack_pointer_reg)
+            if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
+                loc = StackLocation.from_offset(arg.lhs, size)
+                if loc is not None:
+                    return [loc]
+            return []
 
         if mnemonic == "blr":
             # Return
@@ -567,7 +570,8 @@ class PpcArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(ArbitraryMemoryLocation())
+            reads_memory = True
+            writes_memory = True
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
@@ -576,7 +580,8 @@ class PpcArch(Arch):
             inputs.append(Register("clr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(ArbitraryMemoryLocation())
+            reads_memory = True
+            writes_memory = True
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
@@ -585,7 +590,8 @@ class PpcArch(Arch):
             inputs.append(Register("lr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(ArbitraryMemoryLocation())
+            reads_memory = True
+            writes_memory = True
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
@@ -624,11 +630,12 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                outputs = [MemoryLocation(args[1], args[2], size)]
+                writes_memory = True
             else:
                 assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
-                outputs = [make_memory_access(args[1])]
+                outputs = make_memory_access(args[1])
+                writes_memory = not outputs
         elif mnemonic in cls.instrs_store_update:
             assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
@@ -638,11 +645,13 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                outputs = [MemoryLocation(args[1], args[2], size), args[1]]
+                outputs = [args[1]]
+                writes_memory = True
             else:
                 assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
-                outputs = [make_memory_access(args[1]), args[1].rhs]
+                outputs = make_memory_access(args[1]) + [args[1].rhs]
+                writes_memory = len(outputs) < 2
         elif mnemonic in cls.instrs_load_update:
             assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
@@ -651,12 +660,14 @@ class PpcArch(Arch):
                     and isinstance(args[1], Register)
                     and isinstance(args[2], Register)
                 )
-                inputs = [MemoryLocation(args[1], args[2], size), args[1], args[2]]
+                inputs = [args[1], args[2]]
                 outputs = [args[0], args[1]]
+                reads_memory = True
             else:
                 assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
-                inputs = [make_memory_access(args[1]), args[1].rhs]
+                inputs = make_memory_access(args[1]) + [args[1].rhs]
                 outputs = [args[0], args[1].rhs]
+                reads_memory = len(inputs) < 2
         elif mnemonic in ("stmw", "lmw"):
             assert (
                 len(args) == 2
@@ -673,10 +684,12 @@ class PpcArch(Arch):
                 )
                 if mnemonic == "stmw":
                     inputs.append(reg)
-                    outputs.append(mem)
+                    outputs.extend(mem)
+                    writes_memory = not mem
                 else:
                     outputs.append(reg)
-                    inputs.append(mem)
+                    inputs.extend(mem)
+                    reads_memory = not mem
                 index += 1
                 offset += 4
             inputs.append(args[1].rhs)
@@ -692,10 +705,12 @@ class PpcArch(Arch):
                         and isinstance(args[1], Register)
                         and isinstance(args[2], Register)
                     )
-                    inputs = [args[1], args[2], MemoryLocation(args[1], args[2], size)]
+                    inputs = [args[1], args[2]]
+                    reads_memory = True
                 else:
                     assert len(args) == 2 and isinstance(args[1], AsmAddressMode)
-                    inputs = [args[1].rhs, make_memory_access(args[1])]
+                    inputs = make_memory_access(args[1]) + [args[1].rhs]
+                    reads_memory = len(inputs) < 2
             elif mnemonic == "mflr":
                 assert len(args) == 1
                 inputs = [Register("lr")]
@@ -718,7 +733,8 @@ class PpcArch(Arch):
                 else:
                     assert isinstance(args[2], AsmAddressMode)
                     size = 8
-                    inputs = [args[1], args[2].rhs, make_memory_access(args[2])]
+                    inputs = make_memory_access(args[2]) + [args[1], args[2].rhs]
+                    reads_memory = len(inputs) < 3
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
@@ -748,6 +764,8 @@ class PpcArch(Arch):
             inputs=inputs,
             clobbers=clobbers,
             outputs=outputs,
+            reads_memory=reads_memory,
+            writes_memory=writes_memory,
             jump_target=jump_target,
             function_target=function_target,
             is_conditional=is_conditional,

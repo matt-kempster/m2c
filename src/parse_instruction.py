@@ -108,14 +108,13 @@ class JumpTarget:
 
 @dataclass(frozen=True)
 class StackLocation:
-    base_reg: Register
     offset: int
     symbolic_offset: Optional[str]
     size: int
 
     def __str__(self) -> str:
         prefix = "" if self.symbolic_offset is None else f"{self.symbolic_offset}+"
-        return f"{prefix}{self.offset}({self.base_reg}):{self.size}"
+        return f"{prefix}{self.offset}($sp):{self.size}"
 
     def offset_as_arg(self) -> "Argument":
         if self.symbolic_offset is None:
@@ -128,88 +127,50 @@ class StackLocation:
             rhs=AsmLiteral(self.offset),
         )
 
-
-@dataclass(frozen=True)
-class MemoryLocation:
-    base_reg: Register
-    offset: "Argument"
-    size: int
-
-    def __str__(self) -> str:
-        return f"{self.offset}({self.base_reg}):{self.size}"
-
-
-@dataclass(frozen=True)
-class ArbitraryMemoryLocation:
-    """Placeholder value used to mark that some arbitrary memory may be clobbered"""
-
-    def __str__(self) -> str:
-        return f"(mem)"
+    @staticmethod
+    def from_offset(offset: "Argument", size: int) -> Optional["StackLocation"]:
+        if isinstance(offset, AsmLiteral):
+            return StackLocation(
+                offset=offset.value,
+                symbolic_offset=None,
+                size=size,
+            )
+        if isinstance(offset, AsmGlobalSymbol):
+            return StackLocation(
+                offset=0,
+                symbolic_offset=offset.symbol_name,
+                size=size,
+            )
+        if (
+            isinstance(offset, BinOp)
+            and offset.op in ("+", "-")
+            and isinstance(offset.lhs, AsmGlobalSymbol)
+            and isinstance(offset.rhs, AsmLiteral)
+        ):
+            base = offset.rhs.value
+            if offset.op == "-":
+                base = -base
+            return StackLocation(
+                offset=base,
+                symbolic_offset=offset.lhs.symbol_name,
+                size=size,
+            )
+        return None
 
 
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
-LocalLocation = Union[Register, StackLocation]
-Location = Union[Register, StackLocation, MemoryLocation, ArbitraryMemoryLocation]
+Location = Union[Register, StackLocation]
 
 
-def make_location(arg: Argument, size: int, stack_reg: Register) -> Location:
-    if not isinstance(arg, AsmAddressMode):
-        return MemoryLocation(
-            base_reg=Register("zero"),
-            offset=arg,
-            size=size,
-        )
-    if arg.rhs == stack_reg:
-        if isinstance(arg.lhs, AsmLiteral):
-            return StackLocation(
-                base_reg=arg.rhs,
-                offset=arg.lhs.value,
-                symbolic_offset=None,
-                size=size,
-            )
-        if isinstance(arg.lhs, AsmGlobalSymbol):
-            return StackLocation(
-                base_reg=arg.rhs,
-                offset=0,
-                symbolic_offset=arg.lhs.symbol_name,
-                size=size,
-            )
-        if (
-            isinstance(arg.lhs, BinOp)
-            and arg.lhs.op in ("+", "-")
-            and isinstance(arg.lhs.lhs, AsmGlobalSymbol)
-            and isinstance(arg.lhs.rhs, AsmLiteral)
-        ):
-            offset = arg.lhs.rhs.value
-            if arg.lhs.op == "-":
-                offset = -offset
-            return StackLocation(
-                base_reg=arg.rhs,
-                offset=offset,
-                symbolic_offset=arg.lhs.lhs.symbol_name,
-                size=size,
-            )
-    return MemoryLocation(
-        base_reg=arg.rhs,
-        offset=arg.lhs,
-        size=size,
-    )
-
-
-def locations_alias(left: LocalLocation, right: LocalLocation) -> bool:
-    """
-    Return True if `left` & `right` refer to the same register or memory region.
-    For MemoryLocations, this function is conservative and will return False if
-    the base_regs are not exactly equal or the offsets are not compile-time constants.
-    """
+def locations_alias(left: Location, right: Location) -> bool:
+    """Return True if `left` & `right` refer to the same register or stack variable."""
     if isinstance(left, Register):
         return left == right
     elif isinstance(left, StackLocation):
         if (
             not isinstance(right, StackLocation)
-            or left.base_reg != right.base_reg
             or left.symbolic_offset != right.symbolic_offset
         ):
             return False
@@ -266,6 +227,8 @@ class Instruction:
     inputs: List[Location]
     clobbers: List[Location]
     outputs: List[Location]
+    reads_memory: bool
+    writes_memory: bool
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None

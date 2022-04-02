@@ -18,7 +18,6 @@ from .flow_graph import (
 )
 from .parse_file import AsmData, Function
 from .parse_instruction import (
-    ArbitraryMemoryLocation,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -28,14 +27,11 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
-    LocalLocation,
     Location,
     Macro,
-    MemoryLocation,
     RegFormatter,
     Register,
     StackLocation,
-    make_location,
     parse_instruction,
 )
 
@@ -84,6 +80,8 @@ class IrPattern(abc.ABC):
                     inputs=[],
                     clobbers=[],
                     outputs=[inp],
+                    reads_memory=False,
+                    writes_memory=False,
                 )
             )
         for part in cls.parts:
@@ -98,6 +96,8 @@ class IrPattern(abc.ABC):
                     inputs=[out],
                     clobbers=[],
                     outputs=[],
+                    reads_memory=False,
+                    writes_memory=False,
                 )
             )
 
@@ -180,17 +180,9 @@ class IrMatch:
         if isinstance(key, Register):
             return self.map_reg(key)
         if isinstance(key, StackLocation):
-            sp_reg = self.map_reg(key.base_reg)
-            offset = self.map_arg(key.offset_as_arg())
-            return make_location(AsmAddressMode(offset, sp_reg), key.size, sp_reg)
-        if isinstance(key, MemoryLocation):
-            return MemoryLocation(
-                base_reg=self.map_reg(key.base_reg),
-                offset=self.map_arg(key.offset),
-                size=key.size,
-            )
-        if isinstance(key, ArbitraryMemoryLocation):
-            return key
+            loc = StackLocation.from_offset(self.map_arg(key.offset_as_arg()), key.size)
+            assert loc is not None
+            return loc
         static_assert_unreachable(key)
 
 
@@ -258,44 +250,17 @@ class TryIrMatch(IrMatch):
             return (
                 isinstance(cand, StackLocation)
                 and pat.size == cand.size
-                and self.match_reg(pat.base_reg, cand.base_reg)
                 and self.match_arg(pat.offset_as_arg(), cand.offset_as_arg())
             )
-        if isinstance(pat, MemoryLocation):
-            if isinstance(cand, StackLocation):
-                return (
-                    pat.size == cand.size
-                    and self.match_reg(pat.base_reg, cand.base_reg)
-                    and self.match_arg(pat.offset, cand.offset_as_arg())
-                )
-            return (
-                isinstance(cand, MemoryLocation)
-                and pat.size == cand.size
-                and self.match_reg(pat.base_reg, cand.base_reg)
-                and self.match_arg(pat.offset, cand.offset)
-            )
-        if isinstance(pat, ArbitraryMemoryLocation):
-            return pat == cand
         static_assert_unreachable(pat)
 
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
         if (
             pat.mnemonic != cand.mnemonic
             or len(pat.args) != len(cand.args)
-            or len(pat.inputs) != len(cand.inputs)
-            or len(pat.outputs) != len(cand.outputs)
         ):
             return False
         if not all(self.match_arg(*args) for args in zip(pat.args, cand.args)):
-            return False
-        # NB: Here, we assume that if `pat` & `cand` match, that their input & output
-        # lists will be in the same order. This assumes that Instruction parsing will
-        # always populate these lists deterministically.
-        if not all(self.match_location(*locs) for locs in zip(pat.inputs, cand.inputs)):
-            return False
-        if not all(
-            self.match_location(*locs) for locs in zip(pat.outputs, cand.outputs)
-        ):
             return False
         return True
 
@@ -434,7 +399,6 @@ def simplify_ir_patterns(
             if not refs_to_replace:
                 continue
 
-            # Replace unreferenced instructions. The last instruction in the source is
             for i, ref in enumerate(refs_to_replace):
                 # Remove ref from all instr_uses
                 instr = ref.instruction()

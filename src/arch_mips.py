@@ -11,7 +11,6 @@ from typing import (
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
-    ArbitraryMemoryLocation,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -21,10 +20,9 @@ from .parse_instruction import (
     InstructionMeta,
     JumpTarget,
     Location,
-    MemoryLocation,
     Register,
+    StackLocation,
     get_jump_target,
-    make_location,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -653,6 +651,8 @@ class MipsArch(Arch):
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
+        reads_memory = False
+        writes_memory = False
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
@@ -668,10 +668,13 @@ class MipsArch(Arch):
         }
         size = memory_sizes.get(mnemonic[1:2])
 
-        def make_memory_access(arg: Argument) -> Location:
+        def make_memory_access(arg: Argument) -> List[Location]:
             assert size is not None
-            assert not isinstance(arg, Register)
-            return make_location(arg, size, cls.stack_pointer_reg)
+            if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
+                loc = StackLocation.from_offset(arg.lhs, size)
+                if loc is not None:
+                    return [loc]
+            return []
 
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
@@ -692,7 +695,8 @@ class MipsArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(ArbitraryMemoryLocation())
+            reads_memory = True
+            writes_memory = True
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
@@ -706,7 +710,8 @@ class MipsArch(Arch):
             inputs.append(args[1])
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(ArbitraryMemoryLocation())
+            reads_memory = True
+            writes_memory = True
             function_target = args[1]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
@@ -786,7 +791,8 @@ class MipsArch(Arch):
         elif mnemonic in cls.instrs_store:
             assert isinstance(args[0], Register)
             inputs = [args[0]]
-            outputs = [make_memory_access(args[1])]
+            outputs = make_memory_access(args[1])
+            writes_memory = not outputs
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].rhs)
             if mnemonic == "sdc1":
@@ -831,7 +837,8 @@ class MipsArch(Arch):
             elif mnemonic.startswith("l") and size is not None:
                 # Load instructions
                 assert len(args) == 2
-                inputs = [make_memory_access(args[1])]
+                inputs = make_memory_access(args[1])
+                reads_memory = not inputs
                 if isinstance(args[1], AsmAddressMode):
                     inputs.append(args[1].rhs)
                 if mnemonic == "lwr":
@@ -898,6 +905,8 @@ class MipsArch(Arch):
             inputs=inputs,
             clobbers=clobbers,
             outputs=outputs,
+            reads_memory=reads_memory,
+            writes_memory=writes_memory,
             jump_target=jump_target,
             function_target=function_target,
             has_delay_slot=has_delay_slot,
