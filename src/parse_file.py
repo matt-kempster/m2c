@@ -401,6 +401,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                                     try_parse(lambda: int(w, 0), directive) & 0xFFFFFFFF
                                 )
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
+                            elif w == "NULL":
+                                # NULL is a non-standard but common asm macro
+                                # that expands to 0
+                                mips_file.new_data_bytes(b"\0\0\0\0")
                             else:
                                 mips_file.new_data_sym(w)
                     elif directive in (".short", ".half", ".2byte"):
