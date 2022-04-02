@@ -16,7 +16,7 @@ from typing import (
     Union,
 )
 
-from .error import DecompFailure
+from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter, Target
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
@@ -28,10 +28,12 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    LocalLocation,
     Location,
     Macro,
     MemoryLocation,
     Register,
+    StackLocation,
     locations_alias,
 )
 from .asm_pattern import simplify_patterns, AsmPattern
@@ -55,7 +57,7 @@ class Block:
     # that assign the possible values. If the value is None, then the phi location is
     # "invalid" because the location was not always assigned to.
     # By construction, the value will either be None, or a RefSet with at least 2 elements.
-    phis: Dict[Location, Optional["RefSet"]] = field(default_factory=dict)
+    phis: Dict[LocalLocation, Optional["RefSet"]] = field(default_factory=dict)
 
     # block_info is actually an Optional[BlockInfo], set by translate.py for
     # non-TerminalNode's, but due to circular dependencies we cannot type it
@@ -1256,7 +1258,9 @@ class FlowGraph:
             node.block.block_info = None
 
 
-def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[RefSet]:
+def phi_loc_sources(
+    node: Node, loc: LocalLocation, imdom_srcs: RefSet
+) -> Optional[RefSet]:
     """
     Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
     Otherwise, return None. This analysis is accurate when `loc` is a Register, but
@@ -1300,7 +1304,7 @@ def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[R
     return sources
 
 
-def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
+def locs_clobbered_until_dominator(node: Node) -> Set[LocalLocation]:
     assert node.immediate_dominator is not None
 
     seen = {node.immediate_dominator}
@@ -1315,7 +1319,7 @@ def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
             clobbered.update(instr.outputs)
             clobbered.update(instr.clobbers)
         stack.extend(n.parents)
-    return clobbered
+    return {c for c in clobbered if isinstance(c, (Register, StackLocation))}
 
 
 def nodes_to_flowgraph(
@@ -1323,11 +1327,6 @@ def nodes_to_flowgraph(
 ) -> FlowGraph:
     flow_graph = FlowGraph(nodes)
     missing_regs = []
-
-    def is_local(l: Location) -> bool:
-        return isinstance(l, Register) or (
-            l.base_reg == arch.stack_pointer_reg and not isinstance(l.offset, Register)
-        )
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
         # Calculate register usage for each instruction in this node
@@ -1339,10 +1338,11 @@ def nodes_to_flowgraph(
 
             # Calculate the source of each location
             for inp in ir.inputs:
-                if not is_local(inp):
+                if not isinstance(inp, (Register, StackLocation)):
                     continue
                 sources = RefSet()
                 for loc, srcs in loc_srcs.items():
+                    assert isinstance(loc, (Register, StackLocation))
                     if locations_alias(loc, inp):
                         sources.update(srcs)
                 if isinstance(inp, Register) and not sources:
@@ -1358,16 +1358,19 @@ def nodes_to_flowgraph(
 
             # Remove any clobbered locations
             for clob in ir.clobbers + ir.outputs:
+                if not isinstance(clob, (Register, StackLocation)):
+                    continue
                 for loc in loc_srcs:
+                    assert isinstance(loc, (Register, StackLocation))
                     if locations_alias(loc, clob) or (
-                        isinstance(loc, MemoryLocation) and loc.base_reg == clob
+                        isinstance(loc, StackLocation) and loc.base_reg == clob
                     ):
                         loc_srcs.remove(loc)
                         break
 
             # Mark outputs as coming from this instruction
             for out in ir.outputs:
-                if not is_local(out):
+                if not isinstance(out, (Register, StackLocation)):
                     continue
                 loc_srcs[out] = RefSet([ref])
 
@@ -1377,8 +1380,6 @@ def nodes_to_flowgraph(
             child_loc_srcs = loc_srcs.copy()
 
             for loc in locs_clobbered_until_dominator(child):
-                if not is_local(loc):
-                    continue
                 phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
                 # If phi_reg_srcs is invalid, then the loc is inconsistently set, so it should
                 # not be used by the child node. Otherwise, it *is* set in every control flow

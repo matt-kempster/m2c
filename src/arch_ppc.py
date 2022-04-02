@@ -14,7 +14,7 @@ from .flow_graph import FlowGraph
 from .ir_pattern import IrMatch, IrPattern, simplify_ir_patterns
 from .options import Target
 from .parse_instruction import (
-    Location,
+    ArbitraryMemoryLocation,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -23,10 +23,12 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    Location,
     Macro,
     MemoryLocation,
     Register,
     get_jump_target,
+    make_location,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -528,17 +530,7 @@ class PpcArch(Arch):
         def make_memory_access(arg: Argument) -> Location:
             assert size is not None
             assert not isinstance(arg, Register)
-            if isinstance(arg, AsmAddressMode):
-                return MemoryLocation(
-                    base_reg=arg.rhs,
-                    offset=arg.lhs,
-                    size=size,
-                )
-            return MemoryLocation(
-                base_reg=Register("zero"),
-                offset=arg,
-                size=size,
-            )
+            return make_location(arg, size, cls.stack_pointer_reg)
 
         if mnemonic == "blr":
             # Return
@@ -575,7 +567,7 @@ class PpcArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryLocation.arbitrary())
+            clobbers.append(ArbitraryMemoryLocation())
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
@@ -584,7 +576,7 @@ class PpcArch(Arch):
             inputs.append(Register("clr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryLocation.arbitrary())
+            clobbers.append(ArbitraryMemoryLocation())
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
@@ -593,7 +585,7 @@ class PpcArch(Arch):
             inputs.append(Register("lr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryLocation.arbitrary())
+            clobbers.append(ArbitraryMemoryLocation())
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump

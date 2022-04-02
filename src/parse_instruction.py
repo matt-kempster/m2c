@@ -107,27 +107,98 @@ class JumpTarget:
 
 
 @dataclass(frozen=True)
+class StackLocation:
+    base_reg: Register
+    offset: int
+    symbolic_offset: Optional[str]
+    size: int
+
+    def __str__(self) -> str:
+        prefix = "" if self.symbolic_offset is None else f"{self.symbolic_offset}+"
+        return f"{prefix}{self.offset}({self.base_reg}):{self.size}"
+
+    def offset_as_arg(self) -> "Argument":
+        if self.symbolic_offset is None:
+            return AsmLiteral(self.offset)
+        if self.offset == 0:
+            return AsmGlobalSymbol(self.symbolic_offset)
+        return BinOp(
+            lhs=AsmGlobalSymbol(self.symbolic_offset),
+            op="+",
+            rhs=AsmLiteral(self.offset),
+        )
+
+
+@dataclass(frozen=True)
 class MemoryLocation:
     base_reg: Register
     offset: "Argument"
     size: int
 
-    @staticmethod
-    def arbitrary() -> "MemoryLocation":
-        """Placeholder value used to mark that some arbitrary memory may be clobbered"""
-        return MemoryLocation(Register("zero"), AsmLiteral(0), 0)
-
     def __str__(self) -> str:
         return f"{self.offset}({self.base_reg}):{self.size}"
+
+
+@dataclass(frozen=True)
+class ArbitraryMemoryLocation:
+    """Placeholder value used to mark that some arbitrary memory may be clobbered"""
+
+    def __str__(self) -> str:
+        return f"(mem)"
 
 
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
-Location = Union[Register, MemoryLocation]
+LocalLocation = Union[Register, StackLocation]
+Location = Union[Register, StackLocation, MemoryLocation, ArbitraryMemoryLocation]
 
 
-def locations_alias(left: Location, right: Location) -> bool:
+def make_location(arg: Argument, size: int, stack_reg: Register) -> Location:
+    if not isinstance(arg, AsmAddressMode):
+        return MemoryLocation(
+            base_reg=Register("zero"),
+            offset=arg,
+            size=size,
+        )
+    if arg.rhs == stack_reg:
+        if isinstance(arg.lhs, AsmLiteral):
+            return StackLocation(
+                base_reg=arg.rhs,
+                offset=arg.lhs.value,
+                symbolic_offset=None,
+                size=size,
+            )
+        if isinstance(arg.lhs, AsmGlobalSymbol):
+            return StackLocation(
+                base_reg=arg.rhs,
+                offset=0,
+                symbolic_offset=arg.lhs.symbol_name,
+                size=size,
+            )
+        if (
+            isinstance(arg.lhs, BinOp)
+            and arg.lhs.op in ("+", "-")
+            and isinstance(arg.lhs.lhs, AsmGlobalSymbol)
+            and isinstance(arg.lhs.rhs, AsmLiteral)
+        ):
+            offset = arg.lhs.rhs.value
+            if arg.lhs.op == "-":
+                offset = -offset
+            return StackLocation(
+                base_reg=arg.rhs,
+                offset=offset,
+                symbolic_offset=arg.lhs.lhs.symbol_name,
+                size=size,
+            )
+    return MemoryLocation(
+        base_reg=arg.rhs,
+        offset=arg.lhs,
+        size=size,
+    )
+
+
+def locations_alias(left: LocalLocation, right: LocalLocation) -> bool:
     """
     Return True if `left` & `right` refer to the same register or memory region.
     For MemoryLocations, this function is conservative and will return False if
@@ -135,37 +206,17 @@ def locations_alias(left: Location, right: Location) -> bool:
     """
     if isinstance(left, Register):
         return left == right
-    elif isinstance(left, MemoryLocation):
-        if not isinstance(right, MemoryLocation) or left.base_reg != right.base_reg:
-            return False
-        if left.offset == right.offset:
-            # If the offsets are identical, they alias regardless of size
-            return True
-        if isinstance(left.offset, AsmLiteral) and isinstance(right.offset, AsmLiteral):
-            left_start = left.offset.value
-            right_start = right.offset.value
-            return (
-                left_start < right_start + right.size
-                and right_start < left_start + left.size
-            )
-
-        # Support cases where one side is a simple BinOp expression
-        if isinstance(left.offset, BinOp) and not isinstance(right.offset, BinOp):
-            # Normalize the pair so `right` is the BinOp expression
-            left, right = right, left
+    elif isinstance(left, StackLocation):
         if (
-            isinstance(right.offset, BinOp)
-            and right.offset.lhs == left.offset
-            and isinstance(right.offset.rhs, AsmLiteral)
+            not isinstance(right, StackLocation)
+            or left.base_reg != right.base_reg
+            or left.symbolic_offset != right.symbolic_offset
         ):
-            if right.offset.op == "+":
-                return right.offset.rhs.value < left.size
-            elif right.offset.op == "-":
-                return right.offset.rhs.value < right.size
-
-        # TODO: Support cases where both `left` & `right` are BinOp expressions
-        # (This currently isn't needed for any of the existing IrPatterns)
-        return False
+            return False
+        return (
+            left.offset < right.offset + right.size
+            and right.offset < left.offset + left.size
+        )
     else:
         static_assert_unreachable(left)
 

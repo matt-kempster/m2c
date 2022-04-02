@@ -3,6 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Type, TypeVar
 
+from .error import static_assert_unreachable
 from .flow_graph import (
     ArchFlowGraph,
     BaseNode,
@@ -17,6 +18,7 @@ from .flow_graph import (
 )
 from .parse_file import AsmData, Function
 from .parse_instruction import (
+    ArbitraryMemoryLocation,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -26,11 +28,14 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    LocalLocation,
     Location,
     Macro,
     MemoryLocation,
     RegFormatter,
     Register,
+    StackLocation,
+    make_location,
     parse_instruction,
 )
 
@@ -174,13 +179,19 @@ class IrMatch:
     def map_location(self, key: Location) -> Location:
         if isinstance(key, Register):
             return self.map_reg(key)
-        elif isinstance(key, MemoryLocation):
+        if isinstance(key, StackLocation):
+            sp_reg = self.map_reg(key.base_reg)
+            offset = self.map_arg(key.offset_as_arg())
+            return make_location(AsmAddressMode(offset, sp_reg), key.size, sp_reg)
+        if isinstance(key, MemoryLocation):
             return MemoryLocation(
                 base_reg=self.map_reg(key.base_reg),
                 offset=self.map_arg(key.offset),
                 size=key.size,
             )
-        assert False, f"bad location: {key}"
+        if isinstance(key, ArbitraryMemoryLocation):
+            return key
+        static_assert_unreachable(key)
 
 
 class TryIrMatch(IrMatch):
@@ -243,14 +254,29 @@ class TryIrMatch(IrMatch):
     def match_location(self, pat: Location, cand: Location) -> bool:
         if isinstance(pat, Register):
             return isinstance(cand, Register) and self.match_reg(pat, cand)
+        if isinstance(pat, StackLocation):
+            return (
+                isinstance(cand, StackLocation)
+                and pat.size == cand.size
+                and self.match_reg(pat.base_reg, cand.base_reg)
+                and self.match_arg(pat.offset_as_arg(), cand.offset_as_arg())
+            )
         if isinstance(pat, MemoryLocation):
+            if isinstance(cand, StackLocation):
+                return (
+                    pat.size == cand.size
+                    and self.match_reg(pat.base_reg, cand.base_reg)
+                    and self.match_arg(pat.offset, cand.offset_as_arg())
+                )
             return (
                 isinstance(cand, MemoryLocation)
                 and pat.size == cand.size
                 and self.match_reg(pat.base_reg, cand.base_reg)
                 and self.match_arg(pat.offset, cand.offset)
             )
-        assert False, f"bad pattern location: {pat}"
+        if isinstance(pat, ArbitraryMemoryLocation):
+            return pat == cand
+        static_assert_unreachable(pat)
 
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
         if (
@@ -262,6 +288,9 @@ class TryIrMatch(IrMatch):
             return False
         if not all(self.match_arg(*args) for args in zip(pat.args, cand.args)):
             return False
+        # NB: Here, we assume that if `pat` & `cand` match, that their input & output
+        # lists will be in the same order. This assumes that Instruction parsing will
+        # always populate these lists deterministically.
         if not all(self.match_location(*locs) for locs in zip(pat.inputs, cand.inputs)):
             return False
         if not all(
@@ -351,8 +380,6 @@ def simplify_ir_patterns(
                     next_partial_matches.append(state)
 
             partial_matches = next_partial_matches
-            if not partial_matches:
-                break
 
         for n, state in enumerate(partial_matches):
             # Perform any additional pattern-specific validation or compuation

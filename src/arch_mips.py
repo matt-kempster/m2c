@@ -11,7 +11,7 @@ from typing import (
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
-    Location,
+    ArbitraryMemoryLocation,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -20,9 +20,11 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    Location,
     MemoryLocation,
     Register,
     get_jump_target,
+    make_location,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -669,17 +671,7 @@ class MipsArch(Arch):
         def make_memory_access(arg: Argument) -> Location:
             assert size is not None
             assert not isinstance(arg, Register)
-            if isinstance(arg, AsmAddressMode):
-                return MemoryLocation(
-                    base_reg=arg.rhs,
-                    offset=arg.lhs,
-                    size=size,
-                )
-            return MemoryLocation(
-                base_reg=Register("zero"),
-                offset=arg,
-                size=size,
-            )
+            return make_location(arg, size, cls.stack_pointer_reg)
 
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
@@ -700,7 +692,7 @@ class MipsArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryLocation.arbitrary())
+            clobbers.append(ArbitraryMemoryLocation())
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
@@ -714,7 +706,7 @@ class MipsArch(Arch):
             inputs.append(args[1])
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryLocation.arbitrary())
+            clobbers.append(ArbitraryMemoryLocation())
             function_target = args[1]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):

@@ -48,6 +48,7 @@ from .parse_instruction import (
     MemoryLocation,
     Macro,
     Register,
+    StackLocation,
     current_instr,
 )
 from .types import (
@@ -516,11 +517,10 @@ def get_stack_info(
             for reg, mem in zip(inst.inputs, inst.outputs):
                 if (
                     isinstance(reg, Register)
-                    and isinstance(mem, MemoryLocation)
-                    and mem.base_reg == arch.stack_pointer_reg
-                    and isinstance(mem.offset, AsmLiteral)
+                    and isinstance(mem, StackLocation)
+                    and mem.symbolic_offset is None
                 ):
-                    stack_offset = mem.offset.value
+                    stack_offset = mem.offset
                     info.callee_save_reg_locations[reg] = stack_offset
                     callee_saved_offset_and_size.append((stack_offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
