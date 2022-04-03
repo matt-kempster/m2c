@@ -45,11 +45,19 @@ class ArchFlowGraph(ArchAsm):
 
 
 @dataclass(eq=False)
+class InstrRef:
+    instruction: Instruction
+
+    def __repr__(self) -> str:
+        return f"(line {self.instruction.meta.lineno})"
+
+
+@dataclass(eq=False)
 class Block:
     index: int
     label: Optional[Label]
     approx_label_name: str
-    instructions: List[Instruction]
+    instruction_refs: List[InstrRef]
 
     # Set of phi locations for the start of this block, and the instruction references
     # that assign the possible values. If the value is None, then the phi location is
@@ -61,6 +69,10 @@ class Block:
     # non-TerminalNode's, but due to circular dependencies we cannot type it
     # correctly. To access it, use the get_block_info method from translate.py.
     block_info: object = None
+
+    @property
+    def instructions(self) -> Iterator[Instruction]:
+        return (r.instruction for r in self.instruction_refs)
 
     def add_block_info(self, block_info: object) -> None:
         assert self.block_info is None
@@ -95,7 +107,7 @@ class BlockBuilder:
             self.curr_index,
             self.curr_label,
             label_name,
-            self.curr_instructions,
+            [InstrRef(i) for i in self.curr_instructions],
         )
         self.blocks.append(block)
 
@@ -1037,23 +1049,6 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
         compute_relations(nodes)
 
 
-@dataclass(frozen=True)
-class InstrRef:
-    node: Node
-    index: int
-
-    def instruction(self) -> "Instruction":
-        return self.node.block.instructions[self.index]
-
-    def replace_instruction(self, instr: Instruction) -> None:
-        self.node.block.instructions[self.index] = instr
-
-    def __repr__(self) -> str:
-        line = self.instruction().meta.lineno
-        base = f"{self.node.block.index}.{self.index}"
-        return f"{base} (line {line})" if line else base
-
-
 Reference = Union[InstrRef, str]
 
 
@@ -1276,11 +1271,11 @@ def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[R
         seen.add(n)
 
         # Find the last instruction in the node that either writes or clobbers to `loc`
-        for i, instr in list(enumerate(n.block.instructions))[::-1]:
-            if loc in instr.outputs:
-                sources.add(InstrRef(n, i))
+        for ref in n.block.instruction_refs[::-1]:
+            if loc in ref.instruction.outputs:
+                sources.add(ref)
                 break
-            if loc in instr.clobbers:
+            if loc in ref.instruction.clobbers:
                 return None
         else:
             # This node didn't touch `loc`, so iterate by checking its parents.
@@ -1325,14 +1320,13 @@ def nodes_to_flowgraph(
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
         # Calculate register usage for each instruction in this node
-        for i, ir in enumerate(node.block.instructions):
-            ref = InstrRef(node, i)
+        for ref in node.block.instruction_refs:
             inputs = LocationRefSetDict()
             flow_graph.instr_inputs[ref] = inputs
             flow_graph.instr_uses[ref] = LocationRefSetDict()
 
             # Calculate the source of each location
-            for inp in ir.inputs:
+            for inp in ref.instruction.inputs:
                 sources = RefSet()
                 for loc, srcs in loc_srcs.items():
                     if locations_alias(loc, inp):
@@ -1342,14 +1336,17 @@ def nodes_to_flowgraph(
                     # If the instruction is a function call and we don't have a source
                     # for the argument, we can prune the argument from the input list.
                     # Otherwise, this is likely undefined behavior in the original asm
-                    if ir.function_target is not None and inp in arch.argument_regs:
-                        ir.inputs.remove(inp)
+                    if (
+                        ref.instruction.function_target is not None
+                        and inp in arch.argument_regs
+                    ):
+                        ref.instruction.inputs.remove(inp)
                     else:
                         missing_regs.append((inp, ref))
                 inputs[inp] = sources
 
             # Remove any clobbered locations
-            for clob in ir.clobbers + ir.outputs:
+            for clob in ref.instruction.clobbers + ref.instruction.outputs:
                 for loc in loc_srcs:
                     if locations_alias(loc, clob) or (
                         isinstance(loc, StackLocation)
@@ -1359,7 +1356,7 @@ def nodes_to_flowgraph(
                         break
 
             # Mark outputs as coming from this instruction
-            for out in ir.outputs:
+            for out in ref.instruction.outputs:
                 loc_srcs[out] = RefSet([ref])
 
         # Translate everything dominated by this node, now that we know our own
@@ -1408,7 +1405,7 @@ def nodes_to_flowgraph(
         print("/*")
         print(f"Warning: in {function.name}, regs were read before being written to:")
         for reg, ref in missing_regs:
-            print(f"   {reg} at {ref}: {ref.instruction()}")
+            print(f"   {reg} at {ref}: {ref.instruction}")
         print(f"*/")
 
     return flow_graph

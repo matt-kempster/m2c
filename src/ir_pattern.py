@@ -255,10 +255,7 @@ class TryIrMatch(IrMatch):
         static_assert_unreachable(pat)
 
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
-        if (
-            pat.mnemonic != cand.mnemonic
-            or len(pat.args) != len(cand.args)
-        ):
+        if pat.mnemonic != cand.mnemonic or len(pat.args) != len(cand.args):
             return False
         if not all(self.match_arg(*args) for args in zip(pat.args, cand.args)):
             return False
@@ -302,9 +299,8 @@ def simplify_ir_patterns(
     # Precompute a RefSet for each mnemonic
     refs_by_mnemonic = defaultdict(list)
     for node in flow_graph.nodes:
-        for i, instr in enumerate(node.block.instructions):
-            ref = InstrRef(node, i)
-            refs_by_mnemonic[instr.mnemonic].append(ref)
+        for ref in node.block.instruction_refs:
+            refs_by_mnemonic[ref.instruction.mnemonic].append(ref)
 
     for pattern_class in pattern_classes:
         pattern = pattern_class.compile(arch)
@@ -322,21 +318,20 @@ def simplify_ir_patterns(
         # that match the pattern with the correct dependencies & arguments. This will
         # have poor performance with large patterns that use common mnemonics.
         partial_matches = [TryIrMatch(arch=arch)]
-        for i, pat_instr in enumerate(pattern_node.block.instructions):
-            if pat_instr.mnemonic in ("in.fictive", "out.fictive"):
+        for pat_ref in pattern_node.block.instruction_refs:
+            if pat_ref.instruction.mnemonic in ("in.fictive", "out.fictive"):
                 continue
 
-            pat_ref = InstrRef(pattern_node, i)
             pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
 
             next_partial_matches = []
             for prev_state in partial_matches:
-                for cand_ref in refs_by_mnemonic.get(pat_instr.mnemonic, []):
-                    cand_instr = cand_ref.instruction()
+                for cand_ref in refs_by_mnemonic.get(pat_ref.instruction.mnemonic, []):
+                    cand_instr = cand_ref.instruction
                     state = prev_state.copy()
                     if not state.match_ref(pat_ref, cand_ref):
                         continue
-                    if not state.match_instr(pat_instr, cand_instr):
+                    if not state.match_instr(pat_ref.instruction, cand_instr):
                         continue
                     if not state.match_inputrefs(
                         pat_inputs, flow_graph.instr_inputs[cand_ref]
@@ -355,11 +350,11 @@ def simplify_ir_patterns(
                 state.map_location(p) for p in pattern.replacement_instr.inputs
             }
             pattern_outputs = LocationRefSetDict()
-            for i, out in enumerate(reversed(pattern.replacement_instr.outputs)):
-                out_ref = InstrRef(
-                    pattern_node, len(pattern_node.block.instructions) - 1 - i
-                )
-                out_instr = out_ref.instruction()
+            for i, out in enumerate(
+                reversed(pattern.replacement_instr.outputs), start=1
+            ):
+                out_ref = pattern_node.block.instruction_refs[-i]
+                out_instr = out_ref.instruction
                 assert out_instr.mnemonic == "out.fictive" and out_instr.inputs == [out]
                 pattern_outputs.extend(
                     state.map_location(out),
@@ -367,14 +362,11 @@ def simplify_ir_patterns(
                 )
 
             refs_to_replace: List[InstrRef] = []
-            for i, pat_instr in reversed(
-                list(enumerate(pattern_node.block.instructions))
-            ):
-                if pat_instr.mnemonic in ("in.fictive", "out.fictive"):
+            for pat_ref in pattern_node.block.instruction_refs[::-1]:
+                if pat_ref.instruction.mnemonic in ("in.fictive", "out.fictive"):
                     continue
-                pat_ref = InstrRef(pattern_node, i)
                 cand_ref = state.map_ref(pat_ref)
-                instr = cand_ref.instruction()
+                instr = cand_ref.instruction
 
                 # Only add this instruction to refs_to_replace if its outputs are one of
                 # the replacement instruction's outputs, or if they are not used by by
@@ -401,7 +393,7 @@ def simplify_ir_patterns(
 
             for i, ref in enumerate(refs_to_replace):
                 # Remove ref from all instr_uses
-                instr = ref.instruction()
+                instr = ref.instruction
                 for _, rs in flow_graph.instr_inputs[ref].items():
                     for r in rs:
                         if isinstance(r, InstrRef):
@@ -426,4 +418,4 @@ def simplify_ir_patterns(
                         new_instr.clobbers.append(loc)
 
                 # Replace the instruction in the block
-                ref.node.block.instructions[ref.index] = new_instr
+                ref.instruction = new_instr

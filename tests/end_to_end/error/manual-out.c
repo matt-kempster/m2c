@@ -1,9 +1,9 @@
 /*
 Warning: in test, regs were read before being written to:
-   $t0 at 0.15 (line 24): badinstr $t0, $t0
-   $t1 at 0.16 (line 25): badinstr2 $t1, $t1
-   $t2 at 0.17 (line 26): badinstr3 $v0, $t2
-   $v1 at 0.20 (line 29): addiu $v1, $v1, 0x2
+   $t0 at (line 24): badinstr $t0, $t0
+   $t1 at (line 25): badinstr2 $t1, $t1
+   $t2 at (line 26): badinstr3 $v0, $t2
+   $v1 at (line 29): addiu $v1, $v1, 0x2
 */
 ? test(s32 arg0) {
     s32 temp_t1;
