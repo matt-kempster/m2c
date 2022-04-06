@@ -1,7 +1,8 @@
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import ClassVar, Dict, List, Type, TypeVar
+from itertools import permutations
+from typing import ClassVar, Dict, List, Optional, Type, TypeVar
 
 from .error import static_assert_unreachable
 from .flow_graph import (
@@ -86,20 +87,6 @@ class IrPattern(abc.ABC):
             )
         for part in cls.parts:
             func.new_instruction(parse_instruction(part, missing_meta, arch, regf))
-        # Add a fictive nop instruction for each output from the replacement_instr
-        for out in replacement_instr.outputs:
-            func.new_instruction(
-                Instruction(
-                    "out.fictive",
-                    [],
-                    meta=missing_meta,
-                    inputs=[out],
-                    clobbers=[],
-                    outputs=[],
-                    reads_memory=False,
-                    writes_memory=False,
-                )
-            )
 
         asm_data = AsmData()
         flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)
@@ -171,10 +158,13 @@ class IrMatch:
             return AsmLiteral(self.eval_math(key))
         assert False, f"bad pattern part: {key}"
 
-    def map_ref(self, key: InstrRef) -> InstrRef:
+    def map_ref(self, key: Reference) -> InstrRef:
         value = self.ref_map[key]
         assert isinstance(value, InstrRef)
         return value
+
+    def try_map_ref(self, key: Reference) -> Optional[Reference]:
+        return self.ref_map.get(key)
 
     def map_location(self, key: Location) -> Location:
         if isinstance(key, Register):
@@ -266,31 +256,53 @@ class TryIrMatch(IrMatch):
             return pat == cand
         return self._match_var(self.ref_map, pat, cand)
 
-    def match_refset(self, pat: RefSet, cand: RefSet) -> bool:
-        """Match every ref in `pat` to a unique ref in `cand`"""
+    def permute_and_match_refset(self, pat: RefSet, cand: RefSet) -> List["TryIrMatch"]:
+        """
+        Return a list of all possible TryIrMatch states, where every ref in `pat` is
+        matched to a unique ref in `cand`. This may modify the original TryIrMatch object.
+        Although this function is technically exponential in the size of `pat`, it
+        usually only contains a single ref.
+        """
         if len(pat) > len(cand):
-            return False
-        # TODO: This may need backtracking?
-        cand_refs = cand.copy()
-        for p in pat:
-            assert len(cand_refs) >= 1
-            for c in cand_refs:
-                if self.match_ref(p, c):
-                    cand_refs.remove(c)
+            # Pigeonhole principle: there can't be a unique ref in `cand` for each ref in `pat`
+            return []
+        if len(pat) == 0:
+            # Vacuous special case: nothing to match
+            return [self]
+        pat_unique = pat.get_unique()
+        cand_unique = cand.get_unique()
+        if pat_unique is not None and cand_unique is not None:
+            # Optimization for the most common case to avoid a copy
+            if self.match_ref(pat_unique, cand_unique):
+                return [self]
+            return []
+
+        matches = []
+        for cand_perm in permutations(cand, len(pat)):
+            state = self.copy()
+            for p, c in zip(pat, cand_perm):
+                if not state.match_ref(p, c):
                     break
             else:
-                return False
-        return True
+                matches.append(state)
+        return matches
 
-    def match_inputrefs(
+    def permute_and_match_inputrefs(
         self, pat: LocationRefSetDict, cand: LocationRefSetDict
-    ) -> bool:
-        for pat_reg, pat_refs in pat.items():
-            cand_reg = self.map_location(pat_reg)
-            cand_refs = cand.get(cand_reg)
-            if not self.match_refset(pat_refs, cand_refs):
-                return False
-        return True
+    ) -> List["TryIrMatch"]:
+        matches = [self]
+        for pat_loc, pat_refs in pat.items():
+            cand_loc = self.map_location(pat_loc)
+            cand_refs = cand.get(cand_loc)
+            new_matches = []
+            for state in matches:
+                new_matches.extend(state.permute_and_match_refset(pat_refs, cand_refs))
+            matches = new_matches
+        return matches
+
+    def rename_reg(self, pat: Register, new_reg: Register) -> None:
+        assert pat.register_name in self.symbolic_registers
+        self.symbolic_registers[pat.register_name] = new_reg
 
 
 def simplify_ir_patterns(
@@ -302,100 +314,122 @@ def simplify_ir_patterns(
         for ref in node.block.instruction_refs:
             refs_by_mnemonic[ref.instruction.mnemonic].append(ref)
 
+    # Counter used to name temporary registers
+    replace_index = 0
+
     for pattern_class in pattern_classes:
         pattern = pattern_class.compile(arch)
 
         # For now, patterns can't have branches: they should only have 2 Nodes,
-        # a BaseNode and an (empty) TerminalNode
+        # a BaseNode and an (empty) TerminalNode.
         assert (
             len(pattern.flow_graph.nodes) == 2
         ), "branching patterns not yet supported"
         assert isinstance(pattern.flow_graph.nodes[0], BaseNode)
         assert isinstance(pattern.flow_graph.nodes[1], TerminalNode)
         pattern_node = pattern.flow_graph.nodes[0]
+        pattern_refs = pattern_node.block.instruction_refs
 
-        # Perform a brute force-ish graph search to find candidate sets of instructions
-        # that match the pattern with the correct dependencies & arguments. This will
-        # have poor performance with large patterns that use common mnemonics.
-        partial_matches = [TryIrMatch(arch=arch)]
-        for pat_ref in pattern_node.block.instruction_refs:
-            if pat_ref.instruction.mnemonic in ("in.fictive", "out.fictive"):
+        # Split the pattern asm into 3 disjoint sets of instructions:
+        # input_refs ("in.fictive"s), body_refs, and tail_ref (the last instruction)
+        n_inputs = len(pattern.replacement_instr.inputs)
+        head_refs, tail_ref = pattern_refs[:-1], pattern_refs[-1]
+        input_refs, body_refs = head_refs[:n_inputs], head_refs[n_inputs:]
+        assert all(r.instruction.mnemonic == "in.fictive" for r in input_refs)
+        assert all(r.instruction.mnemonic != "in.fictive" for r in body_refs)
+
+        # For now, pattern inputs must be Registers, not StackLocations. It's not always
+        # trivial to create temporary StackLocations in the same way we create temporary
+        # Registers during replacement.
+        assert all(
+            isinstance(inp, Register) for inp in pattern.replacement_instr.inputs
+        )
+
+        # For now, patterns can only have 1 output put register (which must be set
+        # by the final instruction in the pattern). This simplifies pattern matching
+        # by guaranteeing that there is a there is a place where all of the (fictive)
+        # pattern inputs have been assigned and the outputs have not yet been used.
+        assert len(pattern.replacement_instr.outputs) == 1
+        assert pattern.replacement_instr.outputs == tail_ref.instruction.outputs
+
+        # Start the matching by finding all possible matches for the last instruction
+        try_matches = []
+        tail_inputs = pattern.flow_graph.instr_inputs[tail_ref]
+        for cand_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
+            state = TryIrMatch(arch=arch)
+            cand_instr = cand_ref.instruction
+            if not state.match_ref(tail_ref, cand_ref):
                 continue
+            if not state.match_instr(tail_ref.instruction, cand_instr):
+                continue
+            states = state.permute_and_match_inputrefs(
+                tail_inputs,
+                flow_graph.instr_inputs[cand_ref],
+            )
+            try_matches.extend(states)
 
+        # Continue matching by working backwards through the pattern
+        for pat_ref in body_refs[::-1]:
             pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
 
-            next_partial_matches = []
-            for prev_state in partial_matches:
-                for cand_ref in refs_by_mnemonic.get(pat_ref.instruction.mnemonic, []):
-                    cand_instr = cand_ref.instruction
-                    state = prev_state.copy()
-                    if not state.match_ref(pat_ref, cand_ref):
-                        continue
-                    if not state.match_instr(pat_ref.instruction, cand_instr):
-                        continue
-                    if not state.match_inputrefs(
-                        pat_inputs, flow_graph.instr_inputs[cand_ref]
-                    ):
-                        continue
-                    next_partial_matches.append(state)
+            next_try_matches = []
+            for state in try_matches:
+                # By pattern construction, pat_ref should be in the state's ref_map
+                # This would be true for "disjoint" or irrelevant instructions in the
+                # pattern, like random nops.
+                cand = state.try_map_ref(pat_ref)
+                if not isinstance(cand, InstrRef):
+                    continue
+                if not state.match_instr(pat_ref.instruction, cand.instruction):
+                    continue
+                states = state.permute_and_match_inputrefs(
+                    pat_inputs,
+                    flow_graph.instr_inputs[cand],
+                )
+                next_try_matches.extend(states)
+            try_matches = next_try_matches
 
-            partial_matches = next_partial_matches
-
-        for n, state in enumerate(partial_matches):
-            # Perform any additional pattern-specific validation or compuation
+        for n, state in enumerate(try_matches):
+            # Perform any additional pattern-specific validation or computation
             if not pattern.check(state):
                 continue
 
-            pattern_inputs = {
-                state.map_location(p) for p in pattern.replacement_instr.inputs
-            }
-            pattern_outputs = LocationRefSetDict()
-            for i, out in enumerate(
-                reversed(pattern.replacement_instr.outputs), start=1
-            ):
-                out_ref = pattern_node.block.instruction_refs[-i]
-                out_instr = out_ref.instruction
-                assert out_instr.mnemonic == "out.fictive" and out_instr.inputs == [out]
-                pattern_outputs.extend(
-                    state.map_location(out),
-                    pattern.flow_graph.instr_inputs[out_ref].get(out),
-                )
-
-            refs_to_replace: List[InstrRef] = []
-            for pat_ref in pattern_node.block.instruction_refs[::-1]:
-                if pat_ref.instruction.mnemonic in ("in.fictive", "out.fictive"):
-                    continue
+            # Determine which instructions we can replace with the replacement_instr or nops
+            refs_to_replace: List[InstrRef] = [state.map_ref(tail_ref)]
+            for pat_ref in body_refs[::-1]:
                 cand_ref = state.map_ref(pat_ref)
-                instr = cand_ref.instruction
-
-                # Only add this instruction to refs_to_replace if its outputs are one of
-                # the replacement instruction's outputs, or if they are not used by by
-                # any instruction outside this pattern.
-                is_unreferenced = True
-                for reg, refs in flow_graph.instr_uses[cand_ref].items():
-                    if pat_ref in pattern_outputs.get(reg):
-                        continue
-                    if not all(r in refs_to_replace for r in refs):
-                        is_unreferenced = False
-                        break
-
-                if is_unreferenced:
+                # The candidate instruction can be replaced if all of its downstream
+                # uses are also being replaced
+                if all(
+                    all(r in refs_to_replace for r in refs)
+                    for _, refs in flow_graph.instr_uses[cand_ref].items()
+                ):
                     refs_to_replace.append(cand_ref)
-                elif any(r in pattern_inputs for r in instr.clobbers + instr.outputs):
-                    # If this instruction can't be replaced, but it clobbers a needed
-                    # input register, then we can't perform the rewrite
-                    # TODO: It may be possible to do the rewrite by introducing
-                    # additional temporary registers?
-                    refs_to_replace = []
-                    break
-            if not refs_to_replace:
-                continue
+
+            # Create temporary registers for the inputs to the replacement_instr
+            for pat_ref in input_refs:
+                assert len(pat_ref.instruction.outputs) == 1
+                input_reg = pat_ref.instruction.outputs[0]
+                assert isinstance(input_reg, Register)
+
+                original_reg = state.map_reg(input_reg)
+                temp_reg = Register(
+                    f"{original_reg.register_name}_fictive_{replace_index}"
+                )
+                state.rename_reg(input_reg, temp_reg)
+                move_instr = arch.parse(
+                    "move.fictive", [temp_reg, original_reg], InstructionMeta.missing()
+                )
+                input_uses = pattern.flow_graph.instr_uses[pat_ref].get(input_reg)
+                assert len(input_uses) >= 1
+                for use in input_uses:
+                    state.map_ref(use).add_instruction_before(move_instr)
 
             for i, ref in enumerate(refs_to_replace):
                 # Remove ref from all instr_uses
                 instr = ref.instruction
-                for _, rs in flow_graph.instr_inputs[ref].items():
-                    for r in rs:
+                for loc in instr.inputs:
+                    for r in flow_graph.instr_inputs[ref].get(loc):
                         if isinstance(r, InstrRef):
                             flow_graph.instr_uses[r].remove_ref(ref)
 
@@ -419,3 +453,5 @@ def simplify_ir_patterns(
 
                 # Replace the instruction in the block
                 ref.instruction = new_instr
+
+            replace_index += 1

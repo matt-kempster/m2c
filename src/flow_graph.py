@@ -47,9 +47,15 @@ class ArchFlowGraph(ArchAsm):
 @dataclass(eq=False)
 class InstrRef:
     instruction: Instruction
+    block: "Block"
 
     def __repr__(self) -> str:
         return f"(line {self.instruction.meta.lineno})"
+
+    def add_instruction_before(self, instr: Instruction) -> None:
+        ref = InstrRef(instr, self.block)
+        index = self.block.instruction_refs.index(self)
+        self.block.instruction_refs.insert(index, ref)
 
 
 @dataclass(eq=False)
@@ -57,7 +63,7 @@ class Block:
     index: int
     label: Optional[Label]
     approx_label_name: str
-    instruction_refs: List[InstrRef]
+    instruction_refs: List[InstrRef] = field(default_factory=list)
 
     # Set of phi locations for the start of this block, and the instruction references
     # that assign the possible values. If the value is None, then the phi location is
@@ -107,7 +113,9 @@ class BlockBuilder:
             self.curr_index,
             self.curr_label,
             label_name,
-            [InstrRef(i) for i in self.curr_instructions],
+        )
+        block.instruction_refs.extend(
+            [InstrRef(i, block) for i in self.curr_instructions]
         )
         self.blocks.append(block)
 

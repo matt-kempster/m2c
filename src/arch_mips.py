@@ -1244,6 +1244,7 @@ class MipsArch(Arch):
         ),
         # Move pseudoinstruction
         "move": lambda a: a.reg(1),
+        "move.fictive": lambda a: a.reg(1),
         # Floating point moving instructions
         "mfc1": lambda a: a.reg(1),
         "mov.s": lambda a: a.reg(1),

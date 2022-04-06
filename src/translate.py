@@ -3824,6 +3824,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if emit_exactly_once:
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
+        elif "_fictive_" in prefix and isinstance(expr, EvalOnceExpr):
+            # Avoid creating additional EvalOnceExprs for fictive Registers
+            # so they're less likely to appear in the output
+            return expr
+
         assert reuse_var or prefix
         if prefix == "condition_bit":
             prefix = "cond"

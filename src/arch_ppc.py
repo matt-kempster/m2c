@@ -194,8 +194,8 @@ class FloatishToSintIrPattern(IrPattern):
     replacement = "fctiwz.fictive $i, $f"
     parts = [
         "fctiwz $t, $f",
-        "stfd $t, N($r1)",
-        "lwz $i, (N+4)($r1)",
+        "stfd $t, (N-4)($r1)",
+        "lwz $i, N($r1)",
     ]
 
 
@@ -988,7 +988,9 @@ class PpcArch(Arch):
         # Move from Special Register
         "mflr": lambda a: a.regs[Register("lr")],
         "mfctr": lambda a: a.regs[Register("ctr")],
+        # Move pseudoinstructions
         "mr": lambda a: a.reg(1),
+        "move.fictive": lambda a: a.reg(1),
         # Floating Point Loads
         # TODO: Do we need to model the promotion from f32 to f64 here?
         "lfs": lambda a: handle_load(a, type=Type.f32()),
