@@ -516,12 +516,23 @@ def get_stack_info(
             info.uses_framepointer = True
         elif (
             arch_mnemonic
-            in ["mips:sw", "mips:swc1", "mips:sdc1", "ppc:stw", "ppc:stmw", "ppc:stfd"]
+            in [
+                "mips:sw",
+                "mips:swc1",
+                "mips:sdc1",
+                "ppc:stw",
+                "ppc:stmw",
+                "ppc:stfd",
+                "ppc:psq_st",
+            ]
             and isinstance(inst.args[0], Register)
             and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs == arch.stack_pointer_reg
-            and inst.args[0] not in info.callee_save_reg_locations
+            and (
+                inst.args[0] not in info.callee_save_reg_locations
+                or arch_mnemonic == "ppc:psq_st"
+            )
         ):
             # Initial saving of callee-save register onto the stack.
             if inst.args[0] in (arch.return_address_reg, Register("r0")):
@@ -536,7 +547,10 @@ def get_stack_info(
                     and isinstance(mem.offset, AsmLiteral)
                 ):
                     stack_offset = mem.offset.value
-                    info.callee_save_reg_locations[reg] = stack_offset
+                    if arch_mnemonic != "ppc:psq_st":
+                        # psq_st instructions store the same register as stfd, just
+                        # as packed singles instead. Prioritize the stfd.
+                        info.callee_save_reg_locations[reg] = stack_offset
                     callee_saved_offset_and_size.append((stack_offset, mem.size))
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
