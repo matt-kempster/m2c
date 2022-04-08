@@ -203,18 +203,18 @@ class TryIrMatch(IrMatch):
             var_map[key] = value
         return True
 
-    def match_reg(self, pat: Register, cand: Register) -> bool:
-        # Single-letter registers are symbolic, and not matched exactly
-        if len(pat.register_name) > 1:
-            return pat == cand
-        return self._match_var(self.symbolic_registers, pat.register_name, cand)
-
     def match_arg(self, pat: Argument, cand: Argument) -> bool:
         if isinstance(pat, AsmLiteral):
             return pat == cand
         if isinstance(pat, Register):
-            return isinstance(cand, Register) and self.match_reg(pat, cand)
+            # Single-letter registers are symbolic
+            if len(pat.register_name) > 1:
+                return pat == cand
+            if not isinstance(cand, Register):
+                return False
+            return self._match_var(self.symbolic_registers, pat.register_name, cand)
         if isinstance(pat, AsmGlobalSymbol):
+            # Uppercase AsmGlobalSymbols are symbolic
             if pat.symbol_name.isupper():
                 return self._match_var(self.symbolic_args, pat.symbol_name, cand)
             else:
@@ -223,7 +223,7 @@ class TryIrMatch(IrMatch):
             return (
                 isinstance(cand, AsmAddressMode)
                 and self.match_arg(pat.lhs, cand.lhs)
-                and self.match_reg(pat.rhs, cand.rhs)
+                and self.match_arg(pat.rhs, cand.rhs)
             )
         if isinstance(pat, JumpTarget):
             return isinstance(cand, JumpTarget) and self._match_var(
@@ -232,17 +232,6 @@ class TryIrMatch(IrMatch):
         if isinstance(pat, BinOp):
             return isinstance(cand, AsmLiteral) and self.eval_math(pat) == cand.value
         assert False, f"bad pattern arg: {pat}"
-
-    def match_location(self, pat: Location, cand: Location) -> bool:
-        if isinstance(pat, Register):
-            return isinstance(cand, Register) and self.match_reg(pat, cand)
-        if isinstance(pat, StackLocation):
-            return (
-                isinstance(cand, StackLocation)
-                and pat.size == cand.size
-                and self.match_arg(pat.offset_as_arg(), cand.offset_as_arg())
-            )
-        static_assert_unreachable(pat)
 
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
         if pat.mnemonic != cand.mnemonic or len(pat.args) != len(cand.args):
