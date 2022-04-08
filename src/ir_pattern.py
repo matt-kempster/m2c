@@ -447,7 +447,7 @@ def simplify_ir_patterns(
                 new_instr = arch.parse(
                     new_asm.mnemonic, new_asm.args, instr.meta.derived()
                 )
-                for loc in new_instr.outputs + new_instr.clobbers:
+                for loc in instr.outputs + instr.clobbers:
                     if loc not in new_instr.clobbers:
                         new_instr.clobbers.append(loc)
 

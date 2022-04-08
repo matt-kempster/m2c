@@ -46,6 +46,12 @@ class ArchFlowGraph(ArchAsm):
 
 @dataclass(eq=False)
 class InstrRef:
+    """
+    Pointer to an Instruction as part of a Block. Allows other datastructures
+    to hold references to a spot in the assembly that remains valid even as
+    the Instruction is replaced or other Instructions are added to the Block.
+    """
+
     instruction: Instruction
     block: "Block"
 
@@ -53,6 +59,7 @@ class InstrRef:
         return f"(line {self.instruction.meta.lineno})"
 
     def add_instruction_before(self, instr: Instruction) -> None:
+        """Add `instr` into the parent assembly before this instruction"""
         ref = InstrRef(instr, self.block)
         index = self.block.instruction_refs.index(self)
         self.block.instruction_refs.insert(index, ref)
@@ -1057,6 +1064,8 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
         compute_relations(nodes)
 
 
+# Reference acts as a pointer to either a specific Instruction, or a special non-instruction
+# source represented by a str, such as a function argument or constant register
 Reference = Union[InstrRef, str]
 
 
@@ -1367,7 +1376,7 @@ def nodes_to_flowgraph(
             for out in ref.instruction.outputs:
                 loc_srcs[out] = RefSet([ref])
 
-        # Translate everything dominated by this node, now that we know our own
+        # Process nodes dominated by this node, now that we know our own
         # final Location sources. This will eventually reach every node.
         for child in node.immediately_dominates:
             child_loc_srcs = loc_srcs.copy()
