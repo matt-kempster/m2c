@@ -1,4 +1,4 @@
-f32 test(s32 arg0, s32 arg1, f32 arg8) {
+void test(s32 arg0, s32 arg1) {
     s32 temp_ctr_2;
     s32 temp_r5;
     s32 temp_r6;
@@ -44,10 +44,6 @@ f32 test(s32 arg0, s32 arg1, f32 arg8) {
                 phi_r3 += 1;
                 phi_ctr_2 = temp_ctr_2;
             } while (temp_ctr_2 != 0);
-            return arg8;
         }
-        /* Duplicate return node #7. Try simplifying control flow for better match */
-        return arg8;
     }
-    return arg8;
 }

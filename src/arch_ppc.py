@@ -5,19 +5,24 @@ from typing import (
     Optional,
     Set,
     Tuple,
+    Union,
 )
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
+    Access,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
+    AsmInstruction,
     AsmLiteral,
     Instruction,
     InstructionMeta,
     JumpTarget,
     Macro,
+    MemoryAccess,
     Register,
+    get_jump_target,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -32,6 +37,7 @@ from .translate import (
     AbiArgSlot,
     Arch,
     BinaryOp,
+    CarryBit,
     Cast,
     CmpInstrMap,
     CommentStmt,
@@ -40,11 +46,13 @@ from .translate import (
     ImplicitInstrMap,
     InstrMap,
     InstrSet,
+    Literal,
     PpcCmpInstrMap,
     PairInstrMap,
     SecondF64Half,
     StmtInstrMap,
     StoreInstrMap,
+    TernaryOp,
     UnaryOp,
     as_f32,
     as_f64,
@@ -68,6 +76,7 @@ from .translate import (
     handle_loadx,
     handle_or,
     handle_rlwinm,
+    handle_rlwimi,
     handle_sra,
     load_upper,
     make_store,
@@ -94,11 +103,11 @@ class FcmpoCrorPattern(SimpleAsmPattern):
         assert isinstance(fcmpo, Instruction)
         if m.literals["N"] == 0:
             return Replacement(
-                [m.derived_instr("fcmpo.lte.fictive", fcmpo.args)], len(m.body)
+                [AsmInstruction("fcmpo.lte.fictive", fcmpo.args)], len(m.body)
             )
         elif m.literals["N"] == 1:
             return Replacement(
-                [m.derived_instr("fcmpo.gte.fictive", fcmpo.args)], len(m.body)
+                [AsmInstruction("fcmpo.gte.fictive", fcmpo.args)], len(m.body)
             )
         return None
 
@@ -120,8 +129,8 @@ class TailCallPattern(AsmPattern):
         ):
             return Replacement(
                 [
-                    Instruction.derived("bl", instr.args, instr),
-                    Instruction.derived("blr", [], instr),
+                    AsmInstruction("bl", instr.args),
+                    AsmInstruction("blr", []),
                 ],
                 1,
             )
@@ -138,10 +147,13 @@ class BoolCastPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        return Replacement(
-            [m.derived_instr("boolcast.fictive", [Register("r0"), m.regs["x"]])],
-            len(m.body),
-        )
+        boolcast = AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]])
+        if m.regs["a"] == Register("r0"):
+            return None
+        elif m.regs["x"] == m.regs["a"]:
+            return Replacement([boolcast, m.body[0]], len(m.body))
+        else:
+            return Replacement([m.body[0], boolcast], len(m.body))
 
 
 class BranchCtrPattern(AsmPattern):
@@ -153,8 +165,8 @@ class BranchCtrPattern(AsmPattern):
             ctr = Register("ctr")
             return Replacement(
                 [
-                    Instruction.derived("addi", [ctr, ctr, AsmLiteral(-1)], instr),
-                    Instruction.derived(instr.mnemonic + ".fictive", instr.args, instr),
+                    AsmInstruction("addi", [ctr, ctr, AsmLiteral(-1)]),
+                    AsmInstruction(instr.mnemonic + ".fictive", instr.args),
                 ],
                 1,
             )
@@ -283,75 +295,9 @@ class PpcArch(Arch):
 
     aliased_regs: Dict[str, Register] = {}
 
-    uses_delay_slots = False
-
-    @staticmethod
-    def is_branch_instruction(instr: Instruction) -> bool:
-        return (
-            instr.mnemonic
-            in [
-                "ble",
-                "blt",
-                "beq",
-                "bge",
-                "bgt",
-                "bne",
-                "bdnz",
-                "bdz",
-                "bdnz.fictive",
-                "bdz.fictive",
-            ]
-            or PpcArch.is_constant_branch_instruction(instr)
-        )
-
-    @staticmethod
-    def is_branch_likely_instruction(instr: Instruction) -> bool:
-        return False
-
-    @staticmethod
-    def is_constant_branch_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic == "b"
-
-    @staticmethod
-    def is_jump_instruction(instr: Instruction) -> bool:
-        # (we don't treat jal/jalr as jumps, since control flow will return
-        # after the call)
-        return (
-            PpcArch.is_conditional_return_instruction(instr)
-            or PpcArch.is_branch_instruction(instr)
-            or instr.mnemonic in ("blr", "bctr")
-        )
-
-    @staticmethod
-    def is_delay_slot_instruction(instr: Instruction) -> bool:
-        return False
-
-    @staticmethod
-    def is_return_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic == "blr"
-
-    @staticmethod
-    def is_conditional_return_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic in (
-            "beqlr",
-            "bgelr",
-            "bgtlr",
-            "blelr",
-            "bltlr",
-            "bnelr",
-            "bnglr",
-            "bnllr",
-            "bnslr",
-            "bsolr",
-        )
-
-    @staticmethod
-    def is_jumptable_instruction(instr: Instruction) -> bool:
-        return instr.mnemonic == "bctr"
-
-    @staticmethod
-    def missing_return() -> List[Instruction]:
-        return [Instruction("blr", [], InstructionMeta.missing())]
+    @classmethod
+    def missing_return(cls) -> List[Instruction]:
+        return [cls.parse("blr", [], InstructionMeta.missing())]
 
     # List of all instructions where `$r0` as certian args is interpreted as `0`
     # instead of the contents of `$r0`. The dict value represents the argument
@@ -409,13 +355,13 @@ class PpcArch(Arch):
     }
 
     @classmethod
-    def normalize_instruction(cls, instr: Instruction) -> Instruction:
+    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
         # Remove +/- suffix, which indicates branch-(un)likely and can be ignored
         if instr.mnemonic.startswith("b") and (
             instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
         ):
             return PpcArch.normalize_instruction(
-                Instruction(instr.mnemonic[:-1], instr.args, instr.meta)
+                AsmInstruction(instr.mnemonic[:-1], instr.args)
             )
 
         args = instr.args
@@ -432,7 +378,7 @@ class PpcArch(Arch):
                 new_args = args[:]
                 new_args[r0_index] = r0_arg
                 return PpcArch.normalize_instruction(
-                    Instruction(instr.mnemonic, new_args, instr.meta)
+                    AsmInstruction(instr.mnemonic, new_args)
                 )
         if len(args) == 3:
             if (
@@ -441,11 +387,11 @@ class PpcArch(Arch):
                 and args[1] in (Register("r2"), Register("r13"))
                 and args[2].macro_name in ("sda2", "sda21")
             ):
-                return Instruction("li", [args[0], args[2].argument], instr.meta)
+                return AsmInstruction("li", [args[0], args[2].argument])
         if len(args) == 2:
             if instr.mnemonic == "lis" and isinstance(args[1], AsmLiteral):
                 lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
-                return Instruction("li", [args[0], lit], instr.meta)
+                return AsmInstruction("li", [args[0], lit])
             if (
                 instr.mnemonic == "lis"
                 and isinstance(args[1], Macro)
@@ -457,12 +403,274 @@ class PpcArch(Arch):
                 if value & 0x8000:
                     value += 0x10000
                 lit = AsmLiteral(value & 0xFFFF0000)
-                return Instruction("li", [args[0], lit], instr.meta)
+                return AsmInstruction("li", [args[0], lit])
             if instr.mnemonic.startswith("cmp"):
                 # For the two-argument form of cmpw, the insert an implicit CR0 as the first arg
                 cr0: Argument = Register("cr0")
-                return Instruction(instr.mnemonic, [cr0] + instr.args, instr.meta)
+                return AsmInstruction(instr.mnemonic, [cr0] + instr.args)
         return instr
+
+    @classmethod
+    def parse(
+        cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
+    ) -> Instruction:
+        inputs: List[Access] = []
+        clobbers: List[Access] = []
+        outputs: List[Access] = []
+        jump_target: Optional[Union[JumpTarget, Register]] = None
+        function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
+        is_conditional = False
+        is_return = False
+
+        cr0_bits: List[Access] = [
+            Register("cr0_lt"),
+            Register("cr0_gt"),
+            Register("cr0_eq"),
+            Register("cr0_so"),
+        ]
+
+        memory_sizes = {
+            "b": 1,
+            "h": 2,
+            "w": 4,
+            "fs": 4,
+            "fd": 8,
+        }
+        psq_imms = 0
+        size = memory_sizes.get(mnemonic.lstrip("stl").rstrip("azux"))
+        if mnemonic.startswith("psq_l") or mnemonic.startswith("psq_st"):
+            psq_imms = 2
+            size = 8
+
+        def make_memory_access(arg: Argument, size: int) -> Access:
+            assert not isinstance(arg, Register)
+            if isinstance(arg, AsmAddressMode):
+                return MemoryAccess(
+                    base_reg=arg.rhs,
+                    offset=arg.lhs,
+                    size=size,
+                )
+            return MemoryAccess(
+                base_reg=Register("zero"),
+                offset=arg,
+                size=size,
+            )
+
+        if mnemonic == "blr":
+            # Return
+            assert len(args) == 0
+            inputs = [Register("lr")]
+            is_return = True
+        elif mnemonic in (
+            "beqlr",
+            "bgelr",
+            "bgtlr",
+            "blelr",
+            "bltlr",
+            "bnelr",
+            "bnglr",
+            "bnllr",
+            "bnslr",
+            "bsolr",
+        ):
+            # Conditional return
+            # TODO: Support crN argument
+            assert len(args) <= 1
+            inputs = cr0_bits + [Register("lr")]
+            is_return = True
+            is_conditional = True
+        elif mnemonic == "bctr":
+            # Jump table (switch)
+            assert len(args) == 0
+            inputs = [Register("ctr")]
+            jump_target = Register("ctr")
+            is_conditional = True
+        elif mnemonic == "bl":
+            # Function call to label
+            assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
+            inputs = list(cls.argument_regs)
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            clobbers.append(MemoryAccess.arbitrary())
+            function_target = args[0]
+        elif mnemonic == "bctrl":
+            # Function call to pointer in $ctr
+            assert len(args) == 0
+            inputs = list(cls.argument_regs)
+            inputs.append(Register("ctr"))
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            clobbers.append(MemoryAccess.arbitrary())
+            function_target = Register("ctr")
+        elif mnemonic == "blrl":
+            # Function call to pointer in $lr
+            assert len(args) == 0
+            inputs = list(cls.argument_regs)
+            inputs.append(Register("lr"))
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            clobbers.append(MemoryAccess.arbitrary())
+            function_target = Register("lr")
+        elif mnemonic == "b":
+            # Unconditional jump
+            assert len(args) == 1
+            jump_target = get_jump_target(args[0])
+        elif mnemonic in cls.instrs_branches or mnemonic in ("bdnz", "bdz"):
+            # Normal branch
+            # TODO: Support crN argument
+            assert 1 <= len(args) <= 2
+            inputs = [
+                Register(
+                    {
+                        "beq": "cr0_eq",
+                        "bge": "cr0_lt",
+                        "bgt": "cr0_gt",
+                        "ble": "cr0_gt",
+                        "blt": "cr0_lt",
+                        "bne": "cr0_eq",
+                        "bns": "cr0_so",
+                        "bso": "cr0_so",
+                        "bdnz": "ctr",
+                        "bdz": "ctr",
+                        "bdnz.fictive": "ctr",
+                        "bdz.fictive": "ctr",
+                    }[mnemonic]
+                )
+            ]
+            jump_target = get_jump_target(args[-1])
+            is_conditional = True
+        elif mnemonic in cls.instrs_store:
+            assert isinstance(args[0], Register) and size is not None
+            if mnemonic.endswith("x"):
+                assert (
+                    len(args) == 3 + psq_imms
+                    and isinstance(args[1], Register)
+                    and isinstance(args[2], Register)
+                )
+                inputs = [args[0], args[1], args[2]]
+                outputs = [MemoryAccess(args[1], args[2], size)]
+            else:
+                assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
+                inputs = [args[0], args[1].rhs]
+                outputs = [make_memory_access(args[1], size)]
+        elif mnemonic in cls.instrs_store_update:
+            assert isinstance(args[0], Register) and size is not None
+            if mnemonic.endswith("x"):
+                assert (
+                    len(args) == 3 + psq_imms
+                    and isinstance(args[1], Register)
+                    and isinstance(args[2], Register)
+                )
+                inputs = [args[0], args[1], args[2]]
+                outputs = [MemoryAccess(args[1], args[2], size), args[1]]
+            else:
+                assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
+                inputs = [args[0], args[1].rhs]
+                outputs = [make_memory_access(args[1], size), args[1].rhs]
+        elif mnemonic in cls.instrs_load:
+            assert isinstance(args[0], Register) and size is not None
+            if mnemonic.endswith("x"):
+                assert (
+                    len(args) == 3 + psq_imms
+                    and isinstance(args[1], Register)
+                    and isinstance(args[2], Register)
+                )
+                inputs = [args[1], args[2], MemoryAccess(args[1], args[2], size)]
+            else:
+                assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
+                inputs = [args[1].rhs, make_memory_access(args[1], size)]
+            outputs = [args[0]]
+        elif mnemonic in cls.instrs_load_update:
+            assert isinstance(args[0], Register) and size is not None
+            if mnemonic.endswith("x"):
+                assert (
+                    len(args) == 3 + psq_imms
+                    and isinstance(args[1], Register)
+                    and isinstance(args[2], Register)
+                )
+                inputs = [MemoryAccess(args[1], args[2], size), args[1], args[2]]
+                outputs = [args[0], args[1]]
+            else:
+                assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
+                inputs = [make_memory_access(args[1], size), args[1].rhs]
+                outputs = [args[0], args[1].rhs]
+        elif mnemonic in ("stmw", "lmw"):
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], AsmAddressMode)
+                and args[0].register_name[0] == "r"
+            )
+            index = int(args[0].register_name[1:])
+            offset = args[1].lhs_as_literal()
+            while index <= 31:
+                reg = Register(f"r{index}")
+                mem = make_memory_access(
+                    AsmAddressMode(rhs=args[1].rhs, lhs=AsmLiteral(offset)), 4
+                )
+                if mnemonic == "stmw":
+                    inputs.append(reg)
+                    outputs.append(mem)
+                else:
+                    outputs.append(reg)
+                    inputs.append(mem)
+                index += 1
+                offset += 4
+            inputs.append(args[1].rhs)
+        elif mnemonic in cls.instrs_no_dest:
+            assert not any(isinstance(a, (Register, AsmAddressMode)) for a in args)
+        elif mnemonic.rstrip(".") in cls.instrs_destination_first:
+            assert isinstance(args[0], Register)
+            outputs = [args[0]]
+            if mnemonic == "mflr":
+                assert len(args) == 1
+                inputs = [Register("lr")]
+            elif mnemonic == "mfctr":
+                assert len(args) == 1
+                inputs = [Register("ctr")]
+            elif mnemonic.rstrip(".") == "rlwimi":
+                assert (
+                    len(args) == 5
+                    and isinstance(args[1], Register)
+                    and not isinstance(args[2], (Register, AsmAddressMode))
+                    and not isinstance(args[3], (Register, AsmAddressMode))
+                    and not isinstance(args[4], (Register, AsmAddressMode))
+                )
+                inputs = [args[0], args[1]]
+            else:
+                assert not any(isinstance(a, AsmAddressMode) for a in args)
+                inputs = [r for r in args[1:] if isinstance(r, Register)]
+        elif mnemonic in cls.instrs_implicit_destination:
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            outputs = [cls.instrs_implicit_destination[mnemonic][0]]
+        elif mnemonic in cls.instrs_ppc_compare:
+            assert len(args) == 3 and isinstance(args[1], Register)
+            inputs = [r for r in args[1:] if isinstance(r, Register)]
+            outputs = list(cr0_bits)
+        elif mnemonic in cls.instrs_ignore:
+            pass
+        elif args and isinstance(args[0], Register):
+            # If the mnemonic is unsupported, guess it is destination-first
+            inputs = [r for r in args[1:] if isinstance(r, Register)]
+            outputs = [args[0]]
+
+        if mnemonic.endswith("."):
+            # PPC instructions ending in `.` update the condition reg
+            outputs.extend(cr0_bits)
+
+        return Instruction(
+            mnemonic=mnemonic,
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=clobbers,
+            outputs=outputs,
+            jump_target=jump_target,
+            function_target=function_target,
+            is_conditional=is_conditional,
+            is_return=is_return,
+        )
 
     asm_patterns = [
         FcmpoCrorPattern(),
@@ -482,8 +690,8 @@ class PpcArch(Arch):
         "crclr",
         "crset",
     }
+
     instrs_store: StoreInstrMap = {
-        # Storage instructions
         "stb": lambda a: make_store(a, type=Type.int_of_size(8)),
         "sth": lambda a: make_store(a, type=Type.int_of_size(16)),
         "stw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
@@ -495,6 +703,7 @@ class PpcArch(Arch):
         "stfd": lambda a: make_store(a, type=Type.f64()),
         "stfsx": lambda a: make_storex(a, type=Type.f32()),
         "stfdx": lambda a: make_storex(a, type=Type.f64()),
+        "psq_st": lambda a: None,
     }
     instrs_store_update: StoreInstrMap = {
         "stbu": lambda a: make_store(a, type=Type.int_of_size(8)),
@@ -508,6 +717,41 @@ class PpcArch(Arch):
         "stfsux": lambda a: make_storex(a, type=Type.f32()),
         "stfdux": lambda a: make_storex(a, type=Type.f64()),
     }
+    instrs_load: InstrMap = {
+        "lba": lambda a: handle_load(a, type=Type.s8()),
+        "lbz": lambda a: handle_load(a, type=Type.u8()),
+        "lha": lambda a: handle_load(a, type=Type.s16()),
+        "lhz": lambda a: handle_load(a, type=Type.u16()),
+        "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+        "lbax": lambda a: handle_loadx(a, type=Type.s8()),
+        "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
+        "lhax": lambda a: handle_loadx(a, type=Type.s16()),
+        "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
+        "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+        # TODO: Do we need to model the promotion from f32 to f64 here?
+        "lfs": lambda a: handle_load(a, type=Type.f32()),
+        "lfd": lambda a: handle_load(a, type=Type.f64()),
+        "lfsx": lambda a: handle_loadx(a, type=Type.f32()),
+        "lfdx": lambda a: handle_loadx(a, type=Type.f64()),
+        "psq_l": lambda a: ErrorExpr("psq_l unimplemented"),
+    }
+    instrs_load_update: InstrMap = {
+        "lbau": lambda a: handle_load(a, type=Type.s8()),
+        "lbzu": lambda a: handle_load(a, type=Type.u8()),
+        "lhau": lambda a: handle_load(a, type=Type.s16()),
+        "lhzu": lambda a: handle_load(a, type=Type.u16()),
+        "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+        "lbaux": lambda a: handle_loadx(a, type=Type.s8()),
+        "lbzux": lambda a: handle_loadx(a, type=Type.u8()),
+        "lhaux": lambda a: handle_loadx(a, type=Type.s16()),
+        "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
+        "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+        "lfsu": lambda a: handle_load(a, type=Type.f32()),
+        "lfdu": lambda a: handle_load(a, type=Type.f64()),
+        "lfsux": lambda a: handle_loadx(a, type=Type.f32()),
+        "lfdux": lambda a: handle_loadx(a, type=Type.f64()),
+    }
+
     instrs_branches: CmpInstrMap = {
         # Branch instructions/pseudoinstructions
         # Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
@@ -541,16 +785,36 @@ class PpcArch(Arch):
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
         "isync": lambda a: void_fn_op("MIPS2C_SYNC", []),
     }
-    instrs_destination_first: InstrMap = {
+
+    instrs_dest_first_non_load: InstrMap = {
         # Integer arithmetic
-        "addi": lambda a: handle_addi(a),
+        # TODO: Read XER_CA in extended instrs, instead of using CarryBit
         "add": lambda a: handle_add(a),
+        "addc": lambda a: handle_add(a),
+        "adde": lambda a: CarryBit.add_to(handle_add(a)),
+        "addze": lambda a: CarryBit.add_to(a.reg(1)),
+        "addi": lambda a: handle_addi(a),
+        "addic": lambda a: handle_addi(a),
         "addis": lambda a: handle_addis(a),
         "subf": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
         ),
+        "subfc": lambda a: fold_divmod(
+            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
+        ),
+        "subfe": lambda a: CarryBit.sub_from(
+            fold_divmod(BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)))
+        ),
+        "subfic": lambda a: fold_divmod(
+            BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
+        ),
+        "subfze": lambda a: CarryBit.sub_from(
+            fold_mul_chains(
+                UnaryOp(op="-", expr=as_s32(a.reg(1), silent=True), type=Type.s32())
+            )
+        ),
         "neg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
+            UnaryOp(op="-", expr=as_s32(a.reg(1), silent=True), type=Type.s32())
         ),
         "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
         "divwu": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
@@ -563,17 +827,26 @@ class PpcArch(Arch):
         "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
         "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
         "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
+        "andc": lambda a: BinaryOp.int(
+            left=a.reg(1), op="&", right=UnaryOp("~", a.reg(2), type=Type.intish())
+        ),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
         "nor": lambda a: UnaryOp(
             "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
         ),
         "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
+        "eqv": lambda a: UnaryOp(
+            "~", BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)), type=Type.intish()
+        ),
         "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
         "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
         "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
         "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
         "boolcast.fictive": lambda a: UnaryOp(
             op="!!", expr=a.reg(1), type=Type.intish()
+        ),
+        "rlwimi": lambda a: handle_rlwimi(
+            a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
         "rlwinm": lambda a: handle_rlwinm(
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
@@ -622,17 +895,7 @@ class PpcArch(Arch):
         "srawi": lambda a: handle_sra(a),
         "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
         "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
-        # Integer Loads
-        "lba": lambda a: handle_load(a, type=Type.s8()),
-        "lbz": lambda a: handle_load(a, type=Type.u8()),
-        "lha": lambda a: handle_load(a, type=Type.s16()),
-        "lhz": lambda a: handle_load(a, type=Type.u16()),
-        "lwz": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-        "lbax": lambda a: handle_loadx(a, type=Type.s8()),
-        "lbzx": lambda a: handle_loadx(a, type=Type.u8()),
-        "lhax": lambda a: handle_loadx(a, type=Type.s16()),
-        "lhzx": lambda a: handle_loadx(a, type=Type.u16()),
-        "lwzx": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
+        "cntlzw": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
         # Load Immediate
         "li": lambda a: a.full_imm(1),
         "lis": lambda a: load_upper(a),
@@ -640,12 +903,6 @@ class PpcArch(Arch):
         "mflr": lambda a: a.regs[Register("lr")],
         "mfctr": lambda a: a.regs[Register("ctr")],
         "mr": lambda a: a.reg(1),
-        # Floating Point Loads
-        # TODO: Do we need to model the promotion from f32 to f64 here?
-        "lfs": lambda a: handle_load(a, type=Type.f32()),
-        "lfd": lambda a: handle_load(a, type=Type.f64()),
-        "lfsx": lambda a: handle_loadx(a, type=Type.f32()),
-        "lfdx": lambda a: handle_loadx(a, type=Type.f64()),
         # Floating Point Arithmetic
         "fadd": lambda a: handle_add_double(a),
         "fadds": lambda a: handle_add_float(a),
@@ -697,22 +954,18 @@ class PpcArch(Arch):
         ),
         # TODO: Detect if we should use fabs or fabsf
         "fabs": lambda a: fn_op("fabs", [a.reg(1)], Type.floatish()),
+        "fres": lambda a: fn_op("__fres", [a.reg(1)], Type.floatish()),
+        "frsqrte": lambda a: fn_op("__frsqrte", [a.reg(1)], Type.floatish()),
+        "fsel": lambda a: TernaryOp(
+            cond=BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
+            left=a.reg(2),
+            right=a.reg(3),
+            type=Type.floatish(),
+        ),
     }
-    instrs_load_update: InstrMap = {
-        "lbau": lambda a: handle_load(a, type=Type.s8()),
-        "lbzu": lambda a: handle_load(a, type=Type.u8()),
-        "lhau": lambda a: handle_load(a, type=Type.s16()),
-        "lhzu": lambda a: handle_load(a, type=Type.u16()),
-        "lwzu": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
-        "lbaux": lambda a: handle_loadx(a, type=Type.s8()),
-        "lbzux": lambda a: handle_loadx(a, type=Type.u8()),
-        "lhaux": lambda a: handle_loadx(a, type=Type.s16()),
-        "lhzux": lambda a: handle_loadx(a, type=Type.u16()),
-        "lwzux": lambda a: handle_loadx(a, type=Type.reg32(likely_float=False)),
-        "lfsu": lambda a: handle_load(a, type=Type.f32()),
-        "lfdu": lambda a: handle_load(a, type=Type.f64()),
-        "lfsux": lambda a: handle_loadx(a, type=Type.f32()),
-        "lfdux": lambda a: handle_loadx(a, type=Type.f64()),
+    instrs_destination_first: InstrMap = {
+        **instrs_dest_first_non_load,
+        **instrs_load,
     }
 
     instrs_implicit_destination: ImplicitInstrMap = {
@@ -839,18 +1092,15 @@ class PpcArch(Arch):
         )
 
     @staticmethod
-    def function_return(expr: Expression) -> List[Tuple[Register, Expression]]:
-        return [
-            (
-                Register("f1"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.floatish()),
+    def function_return(expr: Expression) -> Dict[Register, Expression]:
+        return {
+            Register("f1"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.floatish()
             ),
-            (
-                Register("r3"),
-                Cast(expr, reinterpret=True, silent=True, type=Type.intptr()),
+            Register("r3"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.intptr()
             ),
-            (
-                Register("r4"),
-                as_u32(Cast(expr, reinterpret=True, silent=False, type=Type.u64())),
+            Register("r4"): as_u32(
+                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
             ),
-        ]
+        }

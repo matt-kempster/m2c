@@ -110,7 +110,7 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
         if paths.MWCC_CC.suffix == ".exe" and sys.platform.startswith("linux"):
             cc_command.insert(0, "/usr/bin/wine")
         mwcc = Compiler(
-            name="ppc",
+            name="mwcc",
             cc_command=cc_command,
         )
         compilers.append(("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])))
@@ -313,7 +313,7 @@ def main() -> int:
             continue
         expected_file = (
             Path(__file__).parent / "end_to_end" / orig_file.parent.name / "orig.c"
-        )
+        ).resolve()
         if orig_file != expected_file:
             logger.error(
                 f"`{orig_file}` does not have a path of the form `{expected_file}`! Skipping."

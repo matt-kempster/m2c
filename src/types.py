@@ -484,11 +484,7 @@ class Type:
                 return zero_offset_results[0]
             elif exact:
                 # Try to insert a new field into the struct at the given offset
-                # TODO Loosen this to Type.any_field(), even for stack structs
-                if data.struct.is_stack:
-                    field_type = Type.any_reg()
-                else:
-                    field_type = Type.any_field()
+                field_type = Type.any_field()
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
                 new_field = data.struct.try_add_field(
                     field_type, offset, field_name, size=target_size
@@ -1020,12 +1016,14 @@ class Type:
                     class_type = Type.struct(
                         typepool.get_or_create_struct_by_tag_name(class_name)
                     )
-                    # NB: This assumes `this` is passed as the first arg,
-                    # which may be different on other ABIs
+                    # NB: This assumes `this` is passed as the first arg, which is true
+                    # for most thiscall methods on PPC. However, this is incorrect for
+                    # static member functions, functions returning structs, and other ABIs.
                     params.append(FunctionParam(type=Type.ptr(class_type), name="this"))
                     # TODO: Virtual methods may take a second argument here
                 if final_name == "__dt":
                     params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
+                # TODO: Classes with virtual bases may also have an implicit `int vbasearg` arg
                 is_variadic = False
                 for i, param_type in enumerate(term.function_params):
                     name = f"arg{i}"

@@ -8,5 +8,5 @@ s32 test(s32 arg0, s32 arg1) {
     sp8 = arg0;
     temp_r0 = &spC - temp_r5;
     spC = arg1;
-    return MIPS2C_ERROR(unknown instruction: addze $r3, $r3);
+    return temp_r0 / 4;
 }
