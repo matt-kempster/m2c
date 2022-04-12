@@ -19,7 +19,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
-from .demangle_codewarrior import CxxSymbol, CxxTerm, CxxType
+from .demangle_codewarrior import CxxName, CxxSymbol, CxxTerm, CxxType
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
@@ -57,13 +57,15 @@ class TypePool:
         return None
 
     def get_or_create_struct_by_tag_name(
-        self,
-        tag_name: str,
+        self, tag_name: str, size: Optional[int] = None, *, with_typedef: bool = False
     ) -> "StructDeclaration":
         struct = self.structs_by_tag_name.get(tag_name)
         if struct is not None:
             return struct
-        return StructDeclaration.unknown(self, tag_name, align=4)
+        struct = StructDeclaration.unknown(self, size, tag_name, align=4)
+        if with_typedef:
+            struct.typedef_name = tag_name
+        return struct
 
     def get_struct_by_tag_name(
         self,
@@ -122,7 +124,6 @@ class TypePool:
     def prune_structs(self) -> None:
         """Remove overlapping fields from all known structs"""
         for struct in self.structs:
-            struct.size = struct.min_size()
             struct.prune_overlapping_fields()
 
 
@@ -959,6 +960,15 @@ class Type:
     def demangled_type(
         typepool: TypePool, sym_type: CxxType, sym_name: Optional[CxxTerm] = None
     ) -> "Type":
+        def type_for_class(qualified_name: List[CxxName]) -> Type:
+            # TODO: Using "::" here matches the C++ qualified identifiers, but is not valid C
+            # Maybe this seperator should depend on the --valid-syntax option?
+            class_name = "::".join(str(n) for n in qualified_name)
+            class_struct = typepool.get_or_create_struct_by_tag_name(
+                class_name, size=None, with_typedef=True
+            )
+            return Type.struct(class_struct)
+
         # TODO: This function may need to depend on the ABI or compiler to generate the types
         # of class member functions. It may need to be moved out of types.py, or some of this
         # logic could be moved into FunctionSignature?
@@ -969,8 +979,15 @@ class Type:
             assert len(sym_name.qualified_name) >= 1
             final_name = str(sym_name.qualified_name[-1]).split("@")[-1]
 
-        if final_name == "__vt" or final_name == "__RTTI":
+        # vtable types are created in translate.py by parsing the labels in the asm
+        if final_name == "__vt":
             return Type.any()
+
+        # RTTI data from MWCC is an 8-byte struct
+        if final_name == "__RTTI":
+            return Type.struct(
+                typepool.get_or_create_struct_by_tag_name("RTTI", size=8)
+            )
 
         type = Type.any()
         for term in sym_type.terms[::-1]:
@@ -1012,10 +1029,7 @@ class Type:
                     and len(sym_name.qualified_name) > 1
                     and final_name not in CxxSymbol.STATIC_FUNCTIONS
                 ):
-                    class_name = "::".join(str(n) for n in sym_name.qualified_name[:-1])
-                    class_type = Type.struct(
-                        typepool.get_or_create_struct_by_tag_name(class_name)
-                    )
+                    class_type = type_for_class(sym_name.qualified_name[:-1])
                     # NB: This assumes `this` is passed as the first arg, which is true
                     # for most thiscall methods on PPC. However, this is incorrect for
                     # static member functions, functions returning structs, and other ABIs.
@@ -1053,8 +1067,8 @@ class Type:
                     )
                 )
             elif term.kind == CxxTerm.Kind.QUALIFIED:
-                # TODO: Support C++ classes/namespaces
-                type = Type.any()
+                assert term.qualified_name is not None
+                type = type_for_class(term.qualified_name)
             elif term.kind == CxxTerm.Kind.VOID:
                 type = Type.void()
             elif term.kind == CxxTerm.Kind.ELLIPSIS:
@@ -1161,7 +1175,6 @@ class StructDeclaration:
             return self.size
         if not self.fields:
             return 0
-        # TODO: Factor in align
         last = self.fields[-1]
         return last.offset + (last.type.get_size_bytes() or 1)
 
@@ -1343,6 +1356,7 @@ class StructDeclaration:
                             comments,
                         )
                     )
+                    position = offset
 
             for field in self.fields:
                 pad_to(field.offset, is_final=False)
@@ -1359,6 +1373,7 @@ class StructDeclaration:
                 if not field.known:
                     comments.append("inferred")
                 lines.append(fmt.with_comments(field_decl, comments))
+                # Hack to recompute field.type's size
                 s = field.type.get_struct_declaration()
                 if s is not None:
                     field.type.unify(Type.struct(s))
@@ -1367,41 +1382,17 @@ class StructDeclaration:
                 )
                 prev_field = field
             pad_to(self.min_size(), is_final=True)
-        if self.size is not None:
-            lines.append(
-                fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"])
-            )
-        else:
-            lines.append(
-                fmt.with_comments(
-                    tail, [f"unk size, at least 0x{fmt.format_hex(position)}"]
-                )
-            )
+        comments = [f"size = 0x{fmt.format_hex(position)}"]
+        if self.size is None:
+            comments.append("inferred")
+        lines.append(fmt.with_comments(tail, comments))
         return "\n".join(lines)
 
     @staticmethod
     def unknown(
-        typepool: TypePool, tag_name: str, align: int = 1
+        typepool: TypePool, size: Optional[int], tag_name: str, align: int = 1
     ) -> "StructDeclaration":
-        """
-        Return an StructDeclaration with an unknown size and without any fields
-        """
-        decl = StructDeclaration(
-            size=None,
-            align=align,
-            tag_name=tag_name,
-            new_field_prefix=typepool.unknown_field_prefix,
-        )
-        typepool.add_struct(decl, tag_name)
-        return decl
-
-    @staticmethod
-    def unknown_of_size(
-        typepool: TypePool, size: int, tag_name: str, align: int = 1
-    ) -> "StructDeclaration":
-        """
-        Return an StructDeclaration of a given size, but without any known fields
-        """
+        """Return an StructDeclaration without any known fields"""
         decl = StructDeclaration(
             size=size,
             align=align,

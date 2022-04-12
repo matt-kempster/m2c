@@ -643,7 +643,7 @@ def get_stack_info(
                 f"{info.allocated_stack_size}."
             )
     else:
-        stack_struct = StructDeclaration.unknown_of_size(
+        stack_struct = StructDeclaration.unknown(
             global_info.typepool,
             size=info.allocated_stack_size,
             tag_name=stack_struct_name,
@@ -3347,7 +3347,7 @@ def array_access_from_add(
                 struct_name, stack_info.global_info.typemap
             )
             if struct is None:
-                struct = StructDeclaration.unknown_of_size(
+                struct = StructDeclaration.unknown(
                     typepool, size=scale, tag_name=struct_name
                 )
             elif struct.size != scale:
@@ -4524,7 +4524,6 @@ class GlobalInfo:
         return self.asm_data.values.get(sym_name)
 
     def address_of_gsym(self, sym_name: str) -> AddressOf:
-        sym_name = sym_name.strip('"')
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
@@ -4545,21 +4544,23 @@ class GlobalInfo:
                 demangled_str=demangled_str,
             )
 
+            # If the symbol is a C++ vtable, try to build a custom type for it by parsing it
             if (
                 self.target.language == Target.LanguageEnum.CXX
                 and sym_name.startswith("__vt__")
                 and sym.asm_data_entry is not None
             ):
-                vt_size = sum(
-                    4 if isinstance(d, str) else len(d) for d in sym.asm_data_entry.data
-                )
-                vt_struct = StructDeclaration.unknown_of_size(
+                vt_size = sym.asm_data_entry.size_range_bytes()[1]
+                vt_struct = StructDeclaration.unknown(
                     self.typepool, size=vt_size, align=4, tag_name=sym_name
                 )
                 offset = 0
                 for entry in sym.asm_data_entry.data:
                     if isinstance(entry, bytes):
-                        assert len(entry) % 4 == 0
+                        if len(entry) % 4 != 0:
+                            raise DecompFailure(
+                                "Unable to parse misaligned vtable data in {sym_name}"
+                            )
                         for i in range(len(entry) // 4):
                             field_name = f"{vt_struct.new_field_prefix}{offset:X}"
                             vt_struct.try_add_field(
@@ -4567,18 +4568,22 @@ class GlobalInfo:
                             )
                             offset += 4
                     else:
-                        entry = entry.strip('"')
-                        try: 
+                        entry_name = entry
+                        try:
                             demangled_field_sym = demangle_codewarrior_parse(entry)
-                            subsym = self.address_of_gsym(entry)
-                            field = vt_struct.try_add_field(
-                                subsym.type,
-                                offset,
-                                name=str(demangled_field_sym.name.qualified_name[-1]),
-                                size=4,
-                            )
+                            if demangled_field_sym.name.qualified_name is not None:
+                                entry_name = str(
+                                    demangled_field_sym.name.qualified_name[-1]
+                                )
                         except ValueError:
-                            field = vt_struct.try_add_field( Type.ptr(), offset, name=entry, size=4,)
+                            pass
+
+                        field = vt_struct.try_add_field(
+                            self.address_of_gsym(entry).type,
+                            offset,
+                            name=entry_name,
+                            size=4,
+                        )
                         assert field is not None
                         field.known = True
                         offset += 4
