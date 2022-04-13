@@ -57,9 +57,14 @@ class TypePool:
         return None
 
     def get_or_create_struct_by_tag_name(
-        self, tag_name: str, size: Optional[int] = None, *, with_typedef: bool = False
+        self,
+        tag_name: str,
+        typemap: Optional[TypeMap],
+        *,
+        size: Optional[int] = None,
+        with_typedef: bool = False,
     ) -> "StructDeclaration":
-        struct = self.structs_by_tag_name.get(tag_name)
+        struct = self.get_struct_by_tag_name(tag_name, typemap)
         if struct is not None:
             return struct
         struct = StructDeclaration.unknown(self, size, tag_name, align=4)
@@ -320,7 +325,9 @@ class Type:
         data = self.data()
         if self.is_struct():
             assert data.struct is not None
-            return data.struct.min_size(), data.struct.align
+            if data.struct.size is None:
+                raise DecompFailure(f"Cannot use incomplete type {self} as parameter")
+            return data.struct.size, data.struct.align
         size = (self.get_size_bits() or 32) // 8
         return size, size
 
@@ -584,10 +591,9 @@ class Type:
                 if data.struct.is_union:
                     break
 
-            if data.struct.size is not None:
+            if data.struct.size is not None and position > data.struct.size:
                 # This struct has a field that goes outside of the bounds of the struct
-                if position > data.struct.size:
-                    return None
+                return None
 
             add_padding(data.struct.min_size())
             return output
@@ -953,19 +959,26 @@ class Type:
         static_assert_unreachable(real_ctype)
 
     @staticmethod
-    def demangled_symbol(typepool: TypePool, sym: CxxSymbol) -> "Type":
-        return Type.demangled_type(typepool, sym_type=sym.type, sym_name=sym.name)
+    def demangled_symbol(
+        typemap: TypeMap, typepool: TypePool, sym: CxxSymbol
+    ) -> "Type":
+        return Type.demangled_type(
+            typemap, typepool, sym_type=sym.type, sym_name=sym.name
+        )
 
     @staticmethod
     def demangled_type(
-        typepool: TypePool, sym_type: CxxType, sym_name: Optional[CxxTerm] = None
+        typemap: TypeMap,
+        typepool: TypePool,
+        sym_type: CxxType,
+        sym_name: Optional[CxxTerm] = None,
     ) -> "Type":
         def type_for_class(qualified_name: List[CxxName]) -> Type:
             # TODO: Using "::" here matches the C++ qualified identifiers, but is not valid C
             # Maybe this seperator should depend on the --valid-syntax option?
             class_name = "::".join(str(n) for n in qualified_name)
             class_struct = typepool.get_or_create_struct_by_tag_name(
-                class_name, size=None, with_typedef=True
+                class_name, typemap, size=None, with_typedef=True
             )
             return Type.struct(class_struct)
 
@@ -986,7 +999,7 @@ class Type:
         # RTTI data from MWCC is an 8-byte struct
         if final_name == "__RTTI":
             return Type.struct(
-                typepool.get_or_create_struct_by_tag_name("RTTI", size=8)
+                typepool.get_or_create_struct_by_tag_name("RTTI", typemap, size=8)
             )
 
         type = Type.any()
@@ -1034,7 +1047,6 @@ class Type:
                     # for most thiscall methods on PPC. However, this is incorrect for
                     # static member functions, functions returning structs, and other ABIs.
                     params.append(FunctionParam(type=Type.ptr(class_type), name="this"))
-                    # TODO: Virtual methods may take a second argument here
                 if final_name == "__dt":
                     params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
                 # TODO: Classes with virtual bases may also have an implicit `int vbasearg` arg
@@ -1049,13 +1061,15 @@ class Type:
                     else:
                         params.append(
                             FunctionParam(
-                                type=Type.demangled_type(typepool, param_type),
+                                type=Type.demangled_type(typemap, typepool, param_type),
                                 name=name,
                             )
                         )
                 return_type = Type.any()
                 if term.function_return is not None:
-                    return_type = Type.demangled_type(typepool, term.function_return)
+                    return_type = Type.demangled_type(
+                        typemap, typepool, term.function_return
+                    )
                 elif final_name in ("__ct", "__dt"):
                     return_type = Type.ptr()
                 type = Type.function(
@@ -1173,10 +1187,13 @@ class StructDeclaration:
     def min_size(self) -> int:
         if self.size is not None:
             return self.size
-        if not self.fields:
-            return 0
-        last = self.fields[-1]
-        return last.offset + (last.type.get_size_bytes() or 1)
+        return max(
+            (
+                field.offset + (field.type.get_size_bytes() or 1)
+                for field in self.fields
+            ),
+            default=0,
+        )
 
     def unify(
         self,
@@ -1382,10 +1399,10 @@ class StructDeclaration:
                 )
                 prev_field = field
             pad_to(self.min_size(), is_final=True)
-        comments = [f"size = 0x{fmt.format_hex(position)}"]
-        if self.size is None:
-            comments.append("inferred")
-        lines.append(fmt.with_comments(tail, comments))
+        compare = ">=" if self.size is None else "="
+        lines.append(
+            fmt.with_comments(tail, [f"size {compare} 0x{fmt.format_hex(position)}"])
+        )
         return "\n".join(lines)
 
     @staticmethod
