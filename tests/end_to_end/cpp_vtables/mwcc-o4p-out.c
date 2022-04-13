@@ -5,7 +5,7 @@ typedef struct Base {
 
 typedef struct Derived {
     /* 0x0 */ s32 unk0;                             /* inferred */
-    /* 0x4 */ struct __vt__7Derived *unk4;          /* inferred */
+    /* 0x4 */ struct __vt__7Derived *vtable4;       /* inferred */
 } Derived;                                          /* size >= 0x8 */
 
 struct __vt__7Derived {
@@ -34,7 +34,7 @@ void compute__FR7Derivedi(Derived *arg0, s32 arg1) {
     u64 temp_ret;
 
     arg0->unk0 = arg1;
-    temp_ret = arg0->unk4->virtual_method(arg0, arg1);
+    temp_ret = arg0->vtable4->virtual_method(arg0, arg1);
     method__4BaseFi((Base *) arg0, static_method__4BaseFi(temp_ret, (u32) temp_ret));
 }
 
@@ -56,7 +56,7 @@ u64 virtual_method__7DerivedFi(Derived *this, s32 arg0) {
 /* Derived::Derived (int) */
 Derived *__ct__7DerivedFi(Derived *this, s32 arg0) {
     __ct__4BaseFv((Base *) this);
-    this->unk4 = &__vt__7Derived;
+    this->vtable4 = &__vt__7Derived;
     this->unk0 = arg0;
     return this;
 }

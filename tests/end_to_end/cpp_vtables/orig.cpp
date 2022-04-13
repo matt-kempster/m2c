@@ -1,4 +1,5 @@
-// This file needs to be compiled with the `-inline off` flag
+// This disables inlining, similar to the `-inline off` flag
+#pragma inline_depth(0)
 
 class Base {
 public:

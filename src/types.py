@@ -130,6 +130,7 @@ class TypePool:
         """Remove overlapping fields from all known structs"""
         for struct in self.structs:
             struct.prune_overlapping_fields()
+            struct.rename_inferred_vtables()
 
 
 @dataclass(eq=False)
@@ -1316,6 +1317,23 @@ class StructDeclaration:
                     break
             fields_to_remove |= set(conflicting_fields)
         self.fields = [f for f in self.fields if f not in fields_to_remove]
+
+    def rename_inferred_vtables(self) -> None:
+        """Rename inferred fields that are pointers to vtables"""
+        sep = "_" if self.new_field_prefix.endswith("_") else ""
+        for field in self.fields:
+            if field.known or not field.name.startswith(self.new_field_prefix):
+                continue
+            type_ptr = field.type.get_pointer_target()
+            if type_ptr is None:
+                continue
+            struct = type_ptr.get_struct_declaration()
+            if struct is None or struct.tag_name is None:
+                continue
+            if struct.tag_name.startswith("__vt__"):
+                name = field.name.replace(self.new_field_prefix, f"vtable{sep}", 1)
+                if not any(f.name == name for f in self.fields):
+                    field.name = name
 
     def format(self, fmt: Formatter) -> str:
         """
