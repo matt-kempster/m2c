@@ -643,7 +643,7 @@ def get_stack_info(
                 f"{info.allocated_stack_size}."
             )
     else:
-        stack_struct = StructDeclaration.unknown_of_size(
+        stack_struct = StructDeclaration.unknown(
             global_info.typepool,
             size=info.allocated_stack_size,
             tag_name=stack_struct_name,
@@ -3347,7 +3347,7 @@ def array_access_from_add(
                 struct_name, stack_info.global_info.typemap
             )
             if struct is None:
-                struct = StructDeclaration.unknown_of_size(
+                struct = StructDeclaration.unknown(
                     typepool, size=scale, tag_name=struct_name
                 )
             elif struct.size != scale:
@@ -4544,6 +4544,14 @@ class GlobalInfo:
                 demangled_str=demangled_str,
             )
 
+            # If the symbol is a C++ vtable, try to build a custom type for it by parsing it
+            if (
+                self.target.language == Target.LanguageEnum.CXX
+                and sym_name.startswith("__vt__")
+                and sym.asm_data_entry is not None
+            ):
+                sym.type.unify(self.vtable_type(sym_name, sym.asm_data_entry))
+
             fn = self.typemap.functions.get(sym_name)
             ctype: Optional[CType]
             if fn is not None:
@@ -4564,9 +4572,55 @@ class GlobalInfo:
 
             # Do this after unifying the type in the typemap, so that it has lower precedence
             if demangled_symbol is not None:
-                sym.type.unify(Type.demangled_symbol(demangled_symbol))
+                sym.type.unify(
+                    Type.demangled_symbol(self.typemap, self.typepool, demangled_symbol)
+                )
 
         return AddressOf(sym, type=sym.type.reference())
+
+    def vtable_type(self, sym_name: str, asm_data_entry: AsmDataEntry) -> Type:
+        """
+        Parse MWCC vtable data to create a custom struct to represent it.
+        This format is not well documented, but is briefly explored in this series of posts:
+        https://web.archive.org/web/20220413174849/http://hacksoflife.blogspot.com/2007/02/c-objects-part-2-single-inheritance.html
+        """
+        size = asm_data_entry.size_range_bytes()[1]
+        struct = StructDeclaration.unknown(
+            self.typepool, size=size, align=4, tag_name=sym_name
+        )
+        offset = 0
+        for entry in asm_data_entry.data:
+            if isinstance(entry, bytes):
+                # MWCC vtables start with a pointer to a typeid struct (or NULL) and an offset
+                if len(entry) % 4 != 0:
+                    raise DecompFailure(
+                        f"Unable to parse misaligned vtable data in {sym_name}"
+                    )
+                for i in range(len(entry) // 4):
+                    field_name = f"{struct.new_field_prefix}{offset:X}"
+                    struct.try_add_field(
+                        Type.reg32(likely_float=False), offset, field_name, size=4
+                    )
+                    offset += 4
+            else:
+                entry_name = entry
+                try:
+                    demangled_field_sym = demangle_codewarrior_parse(entry)
+                    if demangled_field_sym.name.qualified_name is not None:
+                        entry_name = str(demangled_field_sym.name.qualified_name[-1])
+                except ValueError:
+                    pass
+
+                field = struct.try_add_field(
+                    self.address_of_gsym(entry).type,
+                    offset,
+                    name=entry_name,
+                    size=4,
+                )
+                assert field is not None
+                field.known = True
+                offset += 4
+        return Type.struct(struct)
 
     def is_function_known_void(self, sym_name: str) -> bool:
         """Return True if the function exists in the context, and has no return value"""
@@ -4803,6 +4857,13 @@ class GlobalInfo:
                     continue
                 # In modes except "all", skip the decl if the context file already had an initializer
                 if decls != Options.GlobalDeclsEnum.ALL and sym.initializer_in_typemap:
+                    continue
+                # In modes except "all", skip vtable decls when compiling C++
+                if (
+                    decls != Options.GlobalDeclsEnum.ALL
+                    and self.target.language == Target.LanguageEnum.CXX
+                    and name.startswith("__vt__")
+                ):
                     continue
 
                 if (
