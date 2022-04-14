@@ -16,7 +16,7 @@ from typing import (
     Union,
 )
 
-from .error import DecompFailure, static_assert_unreachable
+from .error import DecompFailure
 from .options import Formatter, Target
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
@@ -71,12 +71,6 @@ class Block:
     label: Optional[Label]
     approx_label_name: str
     instruction_refs: List[InstrRef] = field(default_factory=list)
-
-    # Set of phi locations for the start of this block, and the instruction references
-    # that assign the possible values. If the value is None, then the phi location is
-    # "invalid" because the location was not always assigned to.
-    # By construction, the value will either be None, or a RefSet with at least 2 elements.
-    phis: Dict[Location, Optional["RefSet"]] = field(default_factory=dict)
 
     # block_info is actually an Optional[BlockInfo], set by translate.py for
     # non-TerminalNode's, but due to circular dependencies we cannot type it
@@ -1268,72 +1262,10 @@ class FlowGraph:
             node.block.block_info = None
 
 
-def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[RefSet]:
-    """
-    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
-    Otherwise, return None. This analysis is accurate when `loc` is a Register, but
-    is only best-effort for local variables: it will miss local array accesses and
-    stack pointers passed to functions.
-    """
-    assert node.immediate_dominator is not None
-
-    seen = set()
-    stack = node.parents[:]
-    sources = RefSet()
-
-    while stack:
-        n = stack.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-
-        # Find the last instruction in the node that either writes or clobbers to `loc`
-        for ref in n.block.instruction_refs[::-1]:
-            if loc in ref.instruction.outputs:
-                sources.add(ref)
-                break
-            if loc in ref.instruction.clobbers:
-                return None
-        else:
-            # This node didn't touch `loc`, so iterate by checking its parents.
-            # As an optimization, we only need to iterate up until the immediate dominator,
-            # because its phi sources have already been computed (`imdom_srcs`).
-            if n == node.immediate_dominator and not imdom_srcs:
-                # `loc` was unset on the path to `node` via its imdom, so it's not a valid phi
-                return None
-            elif n == node.immediate_dominator:
-                # Take the union with `imdom_srcs`, but do not iterate on the imdom's parents
-                sources.update(imdom_srcs)
-            else:
-                # Otherwise, continue iterating on the current node's parents
-                stack.extend(n.parents)
-
-    return sources
-
-
-def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
-    assert node.immediate_dominator is not None
-
-    seen = {node.immediate_dominator}
-    stack = node.parents[:]
-    clobbered = set()
-    while stack:
-        n = stack.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-        for instr in n.block.instructions:
-            clobbered.update(instr.outputs)
-            clobbered.update(instr.clobbers)
-        stack.extend(n.parents)
-    return clobbered
-
-
 def nodes_to_flowgraph(
     nodes: List[Node], function: Function, arch: ArchFlowGraph
 ) -> FlowGraph:
     flow_graph = FlowGraph(nodes)
-    missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
         # Calculate register usage for each instruction in this node
@@ -1348,18 +1280,6 @@ def nodes_to_flowgraph(
                 for loc, srcs in loc_srcs.items():
                     if locations_alias(loc, inp):
                         sources.update(srcs)
-                if isinstance(inp, Register) and not sources:
-                    # Registers must be written to before being read.
-                    # If the instruction is a function call and we don't have a source
-                    # for the argument, we can prune the argument from the input list.
-                    # Otherwise, this is likely undefined behavior in the original asm
-                    if (
-                        ref.instruction.function_target is not None
-                        and inp in arch.argument_regs
-                    ):
-                        ref.instruction.inputs.remove(inp)
-                    else:
-                        missing_regs.append((inp, ref))
                 inputs[inp] = sources
 
             # Remove any clobbered locations
@@ -1379,21 +1299,9 @@ def nodes_to_flowgraph(
         # Process nodes dominated by this node, now that we know our own
         # final Location sources. This will eventually reach every node.
         for child in node.immediately_dominates:
-            child_loc_srcs = loc_srcs.copy()
-
-            for loc in locs_clobbered_until_dominator(child):
-                phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
-                # If phi_reg_srcs is invalid, then the loc is inconsistently set, so it should
-                # not be used by the child node. Otherwise, it *is* set in every control flow
-                # path to the child node, so it can be used (but it will have a phi value).
-                if phi_reg_srcs is not None:
-                    assert len(phi_reg_srcs) >= 2
-                    child_loc_srcs[loc] = phi_reg_srcs
-                elif loc in child_loc_srcs:
-                    child_loc_srcs.remove(loc)
-                child.block.phis[loc] = phi_reg_srcs
-
-            process_node(child, child_loc_srcs)
+            # NB: This ignores phis; `loc_srcs` won't contain locations set
+            # from branching nodes.
+            process_node(child, loc_srcs.copy())
 
     # Set all the registers that are valid to access at the start of a function
     entry_reg_srcs = LocationRefSetDict()
@@ -1401,15 +1309,14 @@ def nodes_to_flowgraph(
         entry_reg_srcs.refs[r] = RefSet.special(f"saved_{r}")
     for r in arch.constant_regs:
         entry_reg_srcs.refs[r] = RefSet.special(f"const_{r}")
-    for a in function.arguments:
+    for a in arch.argument_regs:
         entry_reg_srcs.refs[a] = RefSet.special(f"arg_{a}")
     entry_reg_srcs.refs[arch.return_address_reg] = RefSet.special(f"return")
     entry_reg_srcs.refs[arch.stack_pointer_reg] = RefSet.special(f"sp")
 
-    # Recursively traverse every node, starting with the entry node
-    # This populates in node.block.phis and instr_inputs
-    entry_node = flow_graph.entry_node()
-    process_node(entry_node, entry_reg_srcs)
+    # Recursively traverse every node, starting with the entry node to populate instr_inputs
+    # This populates instr_inputs
+    process_node(flow_graph.entry_node(), entry_reg_srcs)
 
     # Populate instr_uses for each instruction
     for ref, inputs in flow_graph.instr_inputs.items():
@@ -1417,13 +1324,6 @@ def nodes_to_flowgraph(
             for dep in deps:
                 if isinstance(dep, InstrRef):
                     flow_graph.instr_uses[dep].add(reg, ref)
-
-    if missing_regs:
-        print("/*")
-        print(f"Warning: in {function.name}, regs were read before being written to:")
-        for reg, ref in missing_regs:
-            print(f"   {reg} at {ref}: {ref.instruction}")
-        print(f"*/")
 
     return flow_graph
 

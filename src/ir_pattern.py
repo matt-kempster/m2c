@@ -69,7 +69,7 @@ class IrPattern(abc.ABC):
         replacement_instr = parse_instruction(cls.replacement, missing_meta, arch, regf)
 
         name = f"__pattern_{cls.__name__}"
-        func = Function(name=name, arguments=[])
+        func = Function(name=name)
         # Add a fictive nop instruction for each input to the replacement_instr
         # This acts as a placeholder Reference to represent where the input was set
         for inp in replacement_instr.inputs:

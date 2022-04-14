@@ -29,7 +29,6 @@ class Label:
 @dataclass
 class Function:
     name: str
-    arguments: List[Location]
     body: List[Union[Instruction, Label]] = field(default_factory=list)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
@@ -46,7 +45,6 @@ class Function:
     def bodyless_copy(self) -> "Function":
         return Function(
             name=self.name,
-            arguments=self.arguments[:],
             reg_formatter=self.reg_formatter,
         )
 
@@ -111,7 +109,7 @@ class MIPSFile:
     current_data: AsmDataEntry = field(default_factory=AsmDataEntry)
 
     def new_function(self, name: str, arch: ArchAsm) -> None:
-        self.current_function = Function(name=name, arguments=list(arch.argument_regs))
+        self.current_function = Function(name=name)
         self.functions.append(self.current_function)
 
     def new_instruction(self, instruction: Instruction) -> None:

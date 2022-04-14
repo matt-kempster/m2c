@@ -17,7 +17,7 @@ from .translate import (
     FunctionInfo,
     GlobalInfo,
     translate_to_ast,
-    narrow_ir_with_context,
+    narrow_func_call_outputs,
 )
 from .types import TypePool
 from .arch_mips import MipsArch
@@ -127,7 +127,7 @@ def run(options: Options) -> int:
     flow_graphs: List[Union[FlowGraph, Exception]] = []
     for function in functions:
         try:
-            narrow_ir_with_context(function, global_info)
+            narrow_func_call_outputs(function, global_info)
             graph = build_flowgraph(
                 function, global_info.asm_data, arch, fragment=False
             )
