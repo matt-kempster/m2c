@@ -323,11 +323,11 @@ class Type:
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
 
-    def get_enum_value(self, value: int) -> Optional[str]:
+    def get_enum_name(self, value: int) -> Optional[str]:
         data = self.data()
         if data.enum is None:
             return None
-        return data.enum.values.get(value)
+        return data.enum.names.get(value)
 
     def get_size_bits(self) -> Optional[int]:
         return self.data().size_bits

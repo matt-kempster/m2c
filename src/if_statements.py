@@ -433,9 +433,9 @@ def add_labels_for_switch(
 
     # Mark which labels we need to emit
     for index, target in cases:
-        enum_value = case_type.get_enum_value(index)
-        if enum_value:
-            case_label = f"case {enum_value}"
+        enum_name = case_type.get_enum_name(index)
+        if enum_name:
+            case_label = f"case {enum_name}"
         elif use_hex:
             case_label = f"case 0x{index:X}"
         else:

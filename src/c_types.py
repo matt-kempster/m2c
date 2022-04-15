@@ -81,7 +81,7 @@ class Function:
 @dataclass(eq=False)
 class Enum:
     tag: Optional[str]
-    values: Dict[int, str]
+    names: Dict[int, str]
 
 
 @dataclass(eq=False)
@@ -356,7 +356,7 @@ def parse_enum(enum: ca.Enum, typemap: TypeMap) -> None:
     if enum.values is None:
         return
 
-    typemap_enum = Enum(tag=enum.name, values={})
+    typemap_enum = Enum(tag=enum.name, names={})
     typemap.enums[enum] = typemap_enum
     if enum.name is not None and enum.name not in typemap.enums:
         typemap.enums[enum.name] = typemap_enum
@@ -369,7 +369,8 @@ def parse_enum(enum: ca.Enum, typemap: TypeMap) -> None:
             value = next_value
         next_value = value + 1
         typemap.enum_values[enumerator.name] = value
-        typemap_enum.values[value] = enumerator.name
+        # If there are multiple names mapping to a single value, take the last one
+        typemap_enum.names[value] = enumerator.name
 
 
 def get_struct(
