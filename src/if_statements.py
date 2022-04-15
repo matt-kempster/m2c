@@ -414,6 +414,7 @@ def emit_goto(context: Context, target: Node, body: Body) -> None:
 def add_labels_for_switch(
     context: Context,
     node: Node,
+    case_type: Type,
     cases: List[Tuple[int, Node]],
     default_node: Optional[Node],
 ) -> int:
@@ -432,7 +433,13 @@ def add_labels_for_switch(
 
     # Mark which labels we need to emit
     for index, target in cases:
-        case_label = f"case 0x{index:X}" if use_hex else f"case {index}"
+        enum_name = case_type.get_enum_name(index)
+        if enum_name:
+            case_label = f"case {enum_name}"
+        elif use_hex:
+            case_label = f"case 0x{index:X}"
+        else:
+            case_label = f"case {index}"
 
         # Do not emit extra `case N:` labels for the `default:` block, skip the
         # switch block entirely, or are just jumps to these kinds of nodes.
@@ -924,6 +931,7 @@ def try_build_irregular_switch(
     add_labels_for_switch(
         context,
         start,
+        var_expr.type,
         cases=list(cases.items()),
         default_node=default_node,
     )
@@ -1098,6 +1106,7 @@ def build_switch_between(
     switch_index = add_labels_for_switch(
         context,
         switch,
+        jump.control_expr.type,
         cases=list(enumerate(switch.cases, start=jump.offset)),
         default_node=default,
     )
@@ -1298,6 +1307,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             index = add_labels_for_switch(
                 context,
                 node,
+                jump.control_expr.type,
                 cases=list(enumerate(node.cases, start=jump.offset)),
                 default_node=None,
             )
