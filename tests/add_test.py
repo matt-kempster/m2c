@@ -311,12 +311,13 @@ def main() -> int:
         if not orig_file.is_file():
             logger.error(f"{orig_file} does not exist. Skipping.")
             continue
-        expected_file = (
+        expected_c_file = (
             Path(__file__).parent / "end_to_end" / orig_file.parent.name / "orig.c"
         ).resolve()
-        if orig_file != expected_file:
+        expected_cpp_file = expected_c_file.with_suffix(".cpp")
+        if orig_file != expected_c_file and orig_file != expected_cpp_file:
             logger.error(
-                f"`{orig_file}` does not have a path of the form `{expected_file}`! Skipping."
+                f"`{orig_file}` does not have a path of the form `{expected_c_file}` or `{expected_cpp_file}`! Skipping."
             )
             continue
         add_test_from_file(orig_file, env_vars, compilers)
