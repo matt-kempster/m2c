@@ -202,7 +202,7 @@ class FloatishToSintIrPattern(IrPattern):
 class CheckConstantMixin:
     def check(self, m: IrMatch) -> bool:
         # TODO: Also validate that `K($k)` is the expected constant in rodata
-        return m.symbolic_registers["k"] in m.arch.constant_regs
+        return m.symbolic_registers["k"] in (Register("r2"), Register("r13"))
 
 
 class SintToDoubleIrPattern(IrPattern, CheckConstantMixin):
@@ -377,8 +377,6 @@ class PpcArch(Arch):
             ]
         ]
     )
-
-    constant_regs = [Register(r) for r in ["r2", "r13", "zero"]]
 
     aliased_regs: Dict[str, Register] = {}
 

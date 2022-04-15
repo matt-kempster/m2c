@@ -1303,16 +1303,10 @@ def nodes_to_flowgraph(
             # from branching nodes.
             process_node(child, loc_srcs.copy())
 
-    # Set all the registers that are valid to access at the start of a function
+    # Initialize all registers
     entry_reg_srcs = LocationRefSetDict()
-    for r in arch.saved_regs:
-        entry_reg_srcs.refs[r] = RefSet.special(f"saved_{r}")
-    for r in arch.constant_regs:
-        entry_reg_srcs.refs[r] = RefSet.special(f"const_{r}")
-    for a in arch.argument_regs:
-        entry_reg_srcs.refs[a] = RefSet.special(f"arg_{a}")
-    entry_reg_srcs.refs[arch.return_address_reg] = RefSet.special(f"return")
-    entry_reg_srcs.refs[arch.stack_pointer_reg] = RefSet.special(f"sp")
+    for r in arch.all_regs:
+        entry_reg_srcs.refs[r] = RefSet.special(f"initial")
 
     # Recursively traverse every node, starting with the entry node to populate instr_inputs
     # This populates instr_inputs
