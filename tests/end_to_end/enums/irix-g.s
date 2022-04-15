@@ -10,7 +10,7 @@ glabel test
 /* 0000A0 004000A0 24010002 */  addiu $at, $zero, 2
 /* 0000A4 004000A4 10A1000A */  beq   $a1, $at, .L004000D0
 /* 0000A8 004000A8 00000000 */   nop
-/* 0000AC 004000AC 24010004 */  addiu $at, $zero, 4
+/* 0000AC 004000AC 24010004 */  addiu $at, $zero, 3
 /* 0000B0 004000B0 10A1000B */  beq   $a1, $at, .L004000E0
 /* 0000B4 004000B4 00000000 */   nop
 /* 0000B8 004000B8 1000000D */  b     .L004000F0
@@ -45,8 +45,8 @@ glabel test
 .section .rodata
 .global array
 array:
-	.word 0x00000004
 	.word 0x00000003
+	.word 0x00000002
 	.word 0x00000002
 	.word 0x00000000
 

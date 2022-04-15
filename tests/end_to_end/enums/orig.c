@@ -1,7 +1,8 @@
 enum my_enum {
     ZERO,
+    // Test two enum names with the same value
     TWO = 2,
-    TWO_TOO,
+    TWO_TOO = 2,
     THREE,
 };
 

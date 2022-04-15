@@ -8,7 +8,7 @@ glabel test
 /* 000098 00400098 24010002 */  addiu $at, $zero, 2
 /* 00009C 0040009C 10810008 */  beq   $a0, $at, .L004000C0
 /* 0000A0 004000A0 3C020040 */   lui   $v0, %hi(array)
-/* 0000A4 004000A4 24010004 */  addiu $at, $zero, 4
+/* 0000A4 004000A4 24010004 */  addiu $at, $zero, 3
 /* 0000A8 004000A8 10810007 */  beq   $a0, $at, .L004000C8
 /* 0000AC 004000AC 3C020040 */   lui   $v0, %hi(array)
 /* 0000B0 004000B0 10000007 */  b     .L004000D0
@@ -35,7 +35,7 @@ glabel test
 .section .rodata
 .global array
 array:
-	.word 0x00000004
 	.word 0x00000003
+	.word 0x00000002
 	.word 0x00000002
 	.word 0x00000000

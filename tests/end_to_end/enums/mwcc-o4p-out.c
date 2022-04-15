@@ -6,7 +6,7 @@ enum my_enum test(enum my_enum x) {
             }
             return array->unk0;
         }
-        if (x != 4) {
+        if (x != 3) {
             return ZERO;
         }
         return array->unk8;
