@@ -6,13 +6,13 @@ f32 test(shape_t *s) {
 
     temp_a1 = s->type;
     switch (temp_a1) {                              /* irregular */
-    case 0:
+    case SHAPE_SQUARE:
         spC = s;
         return spC->origin.x + spC->unkC;
-    case 1:
+    case SHAPE_CIRCLE:
         sp8 = s;
         return sp8->origin.x + sp8->unkC;
-    case 2:
+    case SHAPE_TRIANGLE:
         sp4 = s;
         return sp4->origin.x + sp4->unkC;
     default:

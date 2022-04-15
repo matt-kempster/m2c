@@ -1489,6 +1489,10 @@ class Literal(Expression):
         return []
 
     def format(self, fmt: Formatter, force_dec: bool = False) -> str:
+        enum_name = self.type.get_enum_name(self.value)
+        if enum_name is not None:
+            return enum_name
+
         if self.type.is_likely_float():
             if self.type.get_size_bits() == 64:
                 return format_f64_imm(self.value)
@@ -4687,6 +4691,9 @@ class GlobalInfo:
 
                 value = read_uint(size)
                 if value is not None:
+                    enum_name = type.get_enum_name(value)
+                    if enum_name is not None:
+                        return enum_name
                     expr = as_type(Literal(value), type, True)
                     return elide_casts_for_store(expr).format(fmt)
 
