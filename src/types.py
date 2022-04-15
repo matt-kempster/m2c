@@ -6,6 +6,7 @@ import pycparser.c_ast as ca
 
 from .c_types import (
     CType,
+    Enum,
     Struct,
     StructUnion as CStructUnion,
     TypeMap,
@@ -160,6 +161,7 @@ class TypeData:
     fn_sig: Optional["FunctionSignature"] = None  # K_FN
     array_dim: Optional[int] = None  # K_ARRAY
     struct: Optional["StructDeclaration"] = None  # K_STRUCT
+    enum: Optional[Enum] = None  # K_INT
 
     def __post_init__(self) -> None:
         assert self.kind
@@ -232,6 +234,7 @@ class Type:
         fn_sig = x.fn_sig if x.fn_sig is not None else y.fn_sig
         array_dim = x.array_dim if x.array_dim is not None else y.array_dim
         struct = x.struct if x.struct is not None else y.struct
+        enum = x.enum if x.enum is not None else y.enum
         sign = x.sign & y.sign
         if size_bits not in (None, 32, 64):
             kind &= ~TypeData.K_FLOAT
@@ -248,6 +251,8 @@ class Type:
             size_bits = 32
         if sign != TypeData.ANY_SIGN:
             assert kind & TypeData.K_INTPTR
+        if enum is not None:
+            assert kind == TypeData.K_INT
         if x.ptr_to is not None and y.ptr_to is not None:
             if not x.ptr_to.unify(y.ptr_to, seen=seen):
                 return False
@@ -260,6 +265,9 @@ class Type:
         if x.struct is not None and y.struct is not None:
             if not x.struct.unify(y.struct, seen=seen):
                 return False
+        if x.enum is not None and y.enum is not None:
+            if x.enum != y.enum:
+                return False
         x.kind = kind
         x.likely_kind = likely_kind
         x.size_bits = size_bits
@@ -268,6 +276,7 @@ class Type:
         x.fn_sig = fn_sig
         x.array_dim = array_dim
         x.struct = struct
+        x.enum = enum
         y.uf_parent = x
         return True
 
@@ -313,6 +322,12 @@ class Type:
 
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
+
+    def get_enum_value(self, value: int) -> Optional[str]:
+        data = self.data()
+        if data.enum is None:
+            return None
+        return data.enum.values.get(value)
 
     def get_size_bits(self) -> Optional[int]:
         return self.data().size_bits
@@ -645,6 +660,15 @@ class Type:
         size_bits = data.size_bits or 32
         sign = "s" if data.sign & TypeData.SIGNED else "u"
 
+        if data.enum is not None and data.enum.tag is not None:
+            assert data.kind == TypeData.K_INT
+            return ca.TypeDecl(
+                type=ca.Enum(name=data.enum.tag, values=None),
+                declname=None,
+                quals=[],
+                align=[],
+            )
+
         if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG and (
             data.likely_kind & (TypeData.K_INT | TypeData.K_FLOAT)
         ) not in (TypeData.K_INT, TypeData.K_FLOAT):
@@ -942,11 +966,22 @@ class Type:
                 return Type.struct(
                     StructDeclaration.from_ctype(real_ctype.type, typemap, typepool)
                 )
-            names = (
-                ["int"]
-                if isinstance(real_ctype.type, ca.Enum)
-                else real_ctype.type.names
-            )
+            if isinstance(real_ctype.type, ca.Enum):
+                enum = None
+                if real_ctype.type.name is not None:
+                    enum = typemap.enums.get(real_ctype.type.name)
+                if enum is None:
+                    enum = typemap.enums.get(real_ctype.type)
+                return Type(
+                    TypeData(
+                        kind=TypeData.K_INT,
+                        size_bits=32,
+                        sign=TypeData.SIGNED,
+                        enum=enum,
+                    )
+                )
+
+            names = real_ctype.type.names
             if "double" in names:
                 return Type.f64()
             if "float" in names:
