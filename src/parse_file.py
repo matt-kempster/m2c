@@ -371,6 +371,17 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     level = 1 - level
                 ifdef_level += level
                 ifdef_levels.append(level)
+            elif line.startswith(".if"):
+                macro_name = line.split()[1]
+                if macro_name == "0":
+                    level = 1
+                elif macro_name == "1":
+                    level = 0
+                else:
+                    level = 0
+                    add_warning(warnings, f"Note: ignoring .if {macro_name} directive")
+                ifdef_level += level
+                ifdef_levels.append(level)
             elif line.startswith(".else"):
                 level = ifdef_levels.pop()
                 ifdef_level -= level

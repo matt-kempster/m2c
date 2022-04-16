@@ -406,6 +406,8 @@ def parse_arg_elems(
             else:
                 # Address mode.
                 rhs = replace_bare_reg(rhs, arch, reg_formatter)
+                if rhs == AsmLiteral(0):
+                    rhs = Register("zero")
                 assert isinstance(rhs, Register)
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
         elif tok == '"':
