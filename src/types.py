@@ -1299,6 +1299,19 @@ class StructDeclaration:
         # Sort by offset, with bigger fields at the same offset first
         self.fields.sort(key=lambda f: (f.offset, -(f.type.get_size_bytes() or 0)))
 
+        # Use a fake field to mark the end of the struct if it has a known size
+        if self.size is not None:
+            end_pseudofield = [
+                StructDeclaration.StructField(
+                    offset=self.size,
+                    type=Type.void(),
+                    known=True,
+                    name="",
+                )
+            ]
+        else:
+            end_pseudofield = []
+
         fields_to_remove: Set[StructDeclaration.StructField] = set()
         for i, field in enumerate(self.fields):
             # Skip fields provided by the context or marked for removal
@@ -1309,7 +1322,7 @@ class StructDeclaration:
             field_size = field.type.get_size_bytes() or 1
 
             conflicting_fields: List[StructDeclaration.StructField] = []
-            for f2 in self.fields[i + 1 :]:
+            for f2 in self.fields[i + 1 :] + end_pseudofield:
                 assert f2.offset >= field.offset
                 # If `f2` is after the end of `field`, we're done
                 if f2.offset >= field.offset + field_size:
