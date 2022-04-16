@@ -1,3 +1,4 @@
+import csv
 from dataclasses import dataclass, field
 import re
 import struct
@@ -13,7 +14,6 @@ from .parse_instruction import (
     InstructionMeta,
     RegFormatter,
     parse_instruction,
-    split_arg_list,
 )
 
 
@@ -145,6 +145,19 @@ class MIPSFile:
         return f"# {self.filename}\n{functions_str}"
 
 
+def split_arg_list(args: str) -> List[str]:
+    """Split a string of comma-separated arguments, handling quotes"""
+    reader = csv.reader(
+        [args],
+        delimiter=",",
+        doublequote=False,
+        escapechar="\\",
+        quotechar='"',
+        skipinitialspace=True,
+    )
+    return [a.strip() for a in next(reader)]
+
+
 def parse_ascii_directive(line: str, z: bool) -> bytes:
     # This is wrong wrt encodings; the assembler really operates on bytes and
     # not chars. But for our purposes it should be good enough.
@@ -221,10 +234,9 @@ def parse_incbin(
     args: List[str], options: Options, warnings: List[str]
 ) -> Optional[bytes]:
     try:
-        # TODO: Reuse ASCII string parser, instead of just stripping quotes
-        filename = args[0].strip("'\"")
-        offset = int(args[1].strip(), 0)
-        size = int(args[2].strip(), 0)
+        filename = args[0]
+        offset = int(args[1], 0)
+        size = int(args[2], 0)
     except ValueError:
         raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
 
@@ -395,7 +407,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     args = split_arg_list(args_str)
                     if directive in (".word", ".4byte"):
                         for w in args:
-                            w = w.strip()
                             if not w or w[0].isdigit() or w[0] == "-":
                                 ival = (
                                     try_parse(lambda: int(w, 0), directive) & 0xFFFFFFFF
@@ -409,23 +420,19 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                                 mips_file.new_data_sym(w)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
-                            ival = (
-                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFFFF
-                            )
+                            ival = try_parse(lambda: int(w, 0), directive) & 0xFFFF
                             mips_file.new_data_bytes(struct.pack(">H", ival))
                     elif directive == ".byte":
                         for w in args:
-                            ival = (
-                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFF
-                            )
+                            ival = try_parse(lambda: int(w, 0), directive) & 0xFF
                             mips_file.new_data_bytes(bytes([ival]))
                     elif directive == ".float":
                         for w in args:
-                            fval = try_parse(lambda: float(w.strip()), directive)
+                            fval = try_parse(lambda: float(w), directive)
                             mips_file.new_data_bytes(struct.pack(">f", fval))
                     elif directive == ".double":
                         for w in args:
-                            fval = try_parse(lambda: float(w.strip()), directive)
+                            fval = try_parse(lambda: float(w), directive)
                             mips_file.new_data_bytes(struct.pack(">d", fval))
                     elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
                         z = directive.endswith("z")
@@ -434,17 +441,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                         )
                     elif directive in (".space", ".skip"):
                         if len(args) == 2:
-                            fill = (
-                                try_parse(lambda: int(args[1].strip(), 0), directive)
-                                & 0xFF
-                            )
+                            fill = try_parse(lambda: int(args[1], 0), directive) & 0xFF
                         elif len(args) == 1:
                             fill = 0
                         else:
                             raise DecompFailure(
                                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
-                        size = try_parse(lambda: int(args[0].strip(), 0), directive)
+                        size = try_parse(lambda: int(args[0], 0), directive)
                         mips_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
                         data = parse_incbin(args, options, warnings)
