@@ -267,20 +267,23 @@ valid_number = "-xX" + string.hexdigits
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
-    S: str = ""
+    ret: str = ""
     while elems and elems[0] in valid:
-        S += elems.pop(0)
-    return S
+        ret += elems.pop(0)
+    return ret
 
 
-def parse_quoted(elems: List[str], quote_chars: str) -> str:
-    S: str = ""
-    while elems and elems[0] not in quote_chars:
+def parse_quoted(elems: List[str], quote_char: str) -> str:
+    ret: str = ""
+    while elems and elems[0] != quote_char:
         # Handle backslash-escaped characters
+        # We only need to care about \\, \" and \' in this context.
         if elems[0] == "\\":
             elems.pop(0)
-        S += elems.pop(0)
-    return S
+            if not elems:
+                break
+        ret += elems.pop(0)
+    return ret
 
 
 def parse_number(elems: List[str]) -> int:
