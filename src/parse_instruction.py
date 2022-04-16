@@ -1,7 +1,6 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
 import abc
-import csv
 from dataclasses import dataclass, replace, field
 import string
 from typing import Dict, List, Optional, Set, Union
@@ -268,10 +267,23 @@ valid_number = "-xX" + string.hexdigits
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
-    S: str = ""
+    ret: str = ""
     while elems and elems[0] in valid:
-        S += elems.pop(0)
-    return S
+        ret += elems.pop(0)
+    return ret
+
+
+def parse_quoted(elems: List[str], quote_char: str) -> str:
+    ret: str = ""
+    while elems and elems[0] != quote_char:
+        # Handle backslash-escaped characters
+        # We only need to care about \\, \" and \' in this context.
+        if elems[0] == "\\":
+            elems.pop(0)
+            if not elems:
+                break
+        ret += elems.pop(0)
+    return ret
 
 
 def parse_number(elems: List[str]) -> int:
@@ -397,8 +409,17 @@ def parse_arg_elems(
             else:
                 # Address mode.
                 rhs = replace_bare_reg(rhs, arch, reg_formatter)
+                if rhs == AsmLiteral(0):
+                    rhs = Register("zero")
                 assert isinstance(rhs, Register)
                 value = AsmAddressMode(value or AsmLiteral(0), rhs)
+        elif tok == '"':
+            # Quoted global symbol.
+            expect('"')
+            assert value is None
+            word = parse_quoted(arg_elems, '"')
+            value = AsmGlobalSymbol(word)
+            expect('"')
         elif tok in valid_word:
             # Global symbol.
             assert value is None
@@ -456,25 +477,16 @@ def parse_arg_elems(
     return value
 
 
-def parse_arg(arg: str, arch: ArchAsmParsing, reg_formatter: RegFormatter) -> Argument:
-    arg_elems: List[str] = list(arg.strip())
-    ret = parse_arg_elems(arg_elems, arch, reg_formatter)
-    assert ret is not None
-    return replace_bare_reg(constant_fold(ret), arch, reg_formatter)
-
-
-def split_arg_list(args: str) -> List[str]:
-    """Split a string of comma-separated arguments, handling quotes"""
-    return next(
-        csv.reader(
-            [args],
-            delimiter=",",
-            doublequote=False,
-            escapechar="\\",
-            quotechar='"',
-            skipinitialspace=True,
-        )
-    )
+def parse_args(
+    args: str, arch: ArchAsmParsing, reg_formatter: RegFormatter
+) -> List[Argument]:
+    arg_elems: List[str] = list(args.strip())
+    output = []
+    while arg_elems:
+        ret = parse_arg_elems(arg_elems, arch, reg_formatter)
+        assert ret is not None
+        output.append(replace_bare_reg(constant_fold(ret), arch, reg_formatter))
+    return output
 
 
 def parse_asm_instruction(
@@ -484,9 +496,7 @@ def parse_asm_instruction(
     line = line.strip()
     mnemonic, _, args_str = line.partition(" ")
     # Parse arguments.
-    args = [
-        parse_arg(arg_str, arch, reg_formatter) for arg_str in split_arg_list(args_str)
-    ]
+    args = parse_args(args_str, arch, reg_formatter)
     instr = AsmInstruction(mnemonic, args)
     return arch.normalize_instruction(instr)
 
