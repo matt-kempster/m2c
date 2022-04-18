@@ -350,19 +350,11 @@ def simplify_ir_patterns(
         tail_inputs = pattern.flow_graph.instr_inputs[tail_ref]
         for cand_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
             state = TryIrMatch(arch=arch)
-            cand_instr = cand_ref.instruction
-            if not state.match_ref(tail_ref, cand_ref):
-                continue
-            if not state.match_instr(tail_ref.instruction, cand_instr):
-                continue
-            states = state.permute_and_match_inputrefs(
-                tail_inputs,
-                flow_graph.instr_inputs[cand_ref],
-            )
-            try_matches.extend(states)
+            if state.match_ref(tail_ref, cand_ref):
+                try_matches.append(state)
 
         # Continue matching by working backwards through the pattern
-        for pat_ref in body_refs[::-1]:
+        for pat_ref in [tail_ref] + body_refs[::-1]:
             pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
 
             next_try_matches = []
@@ -400,6 +392,7 @@ def simplify_ir_patterns(
                     refs_to_replace.append(cand_ref)
 
             # Create temporary registers for the inputs to the replacement_instr
+            fictive_meta = refs_to_replace[0].instruction.meta
             for pat_ref in input_refs:
                 assert len(pat_ref.instruction.outputs) == 1
                 input_reg = pat_ref.instruction.outputs[0]
@@ -412,8 +405,11 @@ def simplify_ir_patterns(
                 fictive_reg_index += 1
                 state.rename_reg(input_reg, temp_reg)
                 move_instr = arch.parse(
-                    "move.fictive", [temp_reg, original_reg], InstructionMeta.missing()
+                    "move.fictive", [temp_reg, original_reg], fictive_meta
                 )
+
+                # We only need to insert `move_instr` before its first use. However, it's
+                # easier to insert it before *every* use instead of determining which is first.
                 input_uses = pattern.flow_graph.instr_uses[pat_ref].get(input_reg)
                 assert len(input_uses) >= 1
                 for use in input_uses:

@@ -1059,9 +1059,17 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
         compute_relations(nodes)
 
 
-# Reference acts as a pointer to either a specific Instruction, or a special non-instruction
-# source represented by a str, such as a function argument or constant register
-Reference = Union[InstrRef, str]
+@dataclass(frozen=True)
+class PhiRef:
+    """Represents the initial value of a Location at the start of a Block."""
+
+    location: Location
+    block: Block
+
+
+# Reference acts as a pointer to either a specific Instruction, or an unspecified phi
+# at the start of a block. PhiRefs are also used to represent initial register values.
+Reference = Union[InstrRef, PhiRef]
 
 
 @dataclass
@@ -1076,9 +1084,9 @@ class RefSet:
         return RefSet(refs=[])
 
     @staticmethod
-    def special(name: str) -> "RefSet":
-        """Represent non-instruction references, such as arguments or constant regs"""
-        return RefSet(refs=[name])
+    def phi(loc: Location, block: Block) -> "RefSet":
+        """Represent a phi at the start of a block"""
+        return RefSet(refs=[PhiRef(loc, block)])
 
     def is_unique(self) -> bool:
         return len(self.refs) == 1
@@ -1324,19 +1332,18 @@ def nodes_to_flowgraph(
             # Create phi refsets for the loc_srcs map for this child
             child_loc_srcs = loc_srcs.copy()
             for loc in locs_clobbered_until_dominator(child):
-                # TODO: This is a hack
-                child_loc_srcs[loc] = RefSet.special(f"phi_{loc}_{child}")
+                child_loc_srcs[loc] = RefSet.phi(loc, child.block)
 
             process_node(child, child_loc_srcs)
 
-    # Initialize all registers
+    # Set all registers to come from an unspecified source at the start of the entry node
+    entry_node = flow_graph.entry_node()
     entry_reg_srcs = LocationRefSetDict()
     for r in arch.all_regs:
-        entry_reg_srcs.refs[r] = RefSet.special(f"initial")
+        entry_reg_srcs.refs[r] = RefSet.phi(r, entry_node.block)
 
     # Recursively traverse every node, starting with the entry node to populate instr_inputs
-    # This populates instr_inputs
-    process_node(flow_graph.entry_node(), entry_reg_srcs)
+    process_node(entry_node, entry_reg_srcs)
 
     # Populate instr_uses for each instruction
     for ref, inputs in flow_graph.instr_inputs.items():
