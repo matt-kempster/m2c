@@ -393,6 +393,7 @@ def simplify_ir_patterns(
 
             # Create temporary registers for the inputs to the replacement_instr
             fictive_meta = refs_to_replace[0].instruction.meta
+            temp_locs = LocationRefSetDict()
             for pat_ref in input_refs:
                 assert len(pat_ref.instruction.outputs) == 1
                 input_reg = pat_ref.instruction.outputs[0]
@@ -413,15 +414,28 @@ def simplify_ir_patterns(
                 input_uses = pattern.flow_graph.instr_uses[pat_ref].get(input_reg)
                 assert len(input_uses) >= 1
                 for use in input_uses:
-                    state.map_ref(use).add_instruction_before(move_instr)
+                    input_use_ref = state.map_ref(use)
+                    move_ref = input_use_ref.add_instruction_before(move_instr)
+                    temp_locs.add(temp_reg, move_ref)
+
+                    # Update the instr_inputs/instr_uses graph
+                    flow_graph.instr_inputs[move_ref] = LocationRefSetDict()
+                    flow_graph.instr_uses[move_ref] = LocationRefSetDict()
+                    for src_ref in flow_graph.instr_inputs[input_use_ref].get(
+                        original_reg
+                    ):
+                        if isinstance(src_ref, InstrRef):
+                            flow_graph.instr_inputs[move_ref].add(original_reg, src_ref)
+                            flow_graph.instr_uses[src_ref].add(original_reg, move_ref)
 
             for i, ref in enumerate(refs_to_replace):
-                # Remove ref from all instr_uses
-                instr = ref.instruction
-                for loc in instr.inputs:
-                    for r in flow_graph.instr_inputs[ref].get(loc):
-                        if isinstance(r, InstrRef):
-                            flow_graph.instr_uses[r].remove_ref(ref)
+                # Remove ref from all instr_uses/instr_inputs
+                for input_loc in ref.instruction.inputs:
+                    for input_ref in flow_graph.instr_inputs[ref].get(input_loc):
+                        flow_graph.instr_inputs[ref].remove(input_loc)
+                        if isinstance(input_ref, InstrRef):
+                            flow_graph.instr_uses[input_ref].remove_ref(ref)
+                assert flow_graph.instr_inputs[ref].is_empty()
 
                 # The last instruction in the source is rewritten with the replacement instruction
                 # (refs_to_replace is in reverse order), and the others are replaced with a nop.
@@ -430,10 +444,21 @@ def simplify_ir_patterns(
                         pattern.replacement_instr.mnemonic,
                         [state.map_arg(a) for a in pattern.replacement_instr.args],
                     )
+
+                    # Update instr_inputs/instr_uses to mark that the replacement instruction
+                    # will depend on all of the temporary registers added earlier
+                    flow_graph.instr_inputs[ref].update(temp_locs)
+                    for temp_loc, temp_refs in temp_locs.items():
+                        for temp_ref in temp_refs:
+                            if isinstance(temp_ref, InstrRef):
+                                flow_graph.instr_uses[temp_ref].add(temp_loc, ref)
                 else:
                     new_asm = AsmInstruction("nop", [])
+                    # Assert that there are no uses of the outputs from this instruction
+                    assert flow_graph.instr_uses[ref].is_empty()
 
                 # Parse the asm & set the clobbers
+                instr = ref.instruction
                 new_instr = arch.parse(
                     new_asm.mnemonic, new_asm.args, instr.meta.derived()
                 )
@@ -443,3 +468,17 @@ def simplify_ir_patterns(
 
                 # Replace the instruction in the block
                 ref.instruction = new_instr
+
+    # After all of the rewrites above, verify that the instr_inputs & instr_uses
+    # dicts are still consistent by recomputing instr_uses.
+    new_uses = {r: LocationRefSetDict() for r in flow_graph.instr_inputs}
+    for ref, inputs in flow_graph.instr_inputs.items():
+        for reg, deps in inputs.items():
+            for dep in deps:
+                if isinstance(dep, InstrRef):
+                    new_uses[dep].add(reg, ref)
+
+    # Assert that new_uses is equivalent to flow_graph.instr_uses
+    for ref, uses in new_uses.items():
+        for reg, deps in uses.items():
+            assert deps == flow_graph.instr_uses[ref].get(reg)

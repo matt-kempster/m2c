@@ -59,11 +59,12 @@ class InstrRef:
     def __repr__(self) -> str:
         return f"(line {self.instruction.meta.lineno})"
 
-    def add_instruction_before(self, instr: Instruction) -> None:
+    def add_instruction_before(self, instr: Instruction) -> "InstrRef":
         """Add `instr` into the parent assembly before this instruction"""
         ref = InstrRef(instr, self.block)
         index = self.block.instruction_refs.index(self)
         self.block.instruction_refs.insert(index, ref)
+        return ref
 
 
 @dataclass(eq=False)
@@ -1122,6 +1123,11 @@ class RefSet:
     def __len__(self) -> int:
         return len(self.refs)
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RefSet):
+            return NotImplemented
+        return len(self) == len(other) and all(x in other for x in self)
+
 
 @dataclass
 class LocationRefSetDict:
@@ -1174,6 +1180,9 @@ class LocationRefSetDict:
 
     def values(self) -> ValuesView[RefSet]:
         return self.refs.values()
+
+    def is_empty(self) -> bool:
+        return all(not v for v in self.values())
 
     def __contains__(self, key: Location) -> bool:
         return bool(self.get(key))
