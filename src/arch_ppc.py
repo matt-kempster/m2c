@@ -11,7 +11,7 @@ from typing import (
 
 from .error import DecompFailure
 from .flow_graph import FlowGraph
-from .ir_pattern import IrMatch, IrPattern, simplify_ir_patterns
+from .ir_pattern import IrMatch, IrPattern
 from .options import Target
 from .parse_instruction import (
     Argument,
@@ -776,10 +776,7 @@ class PpcArch(Arch):
             is_return=is_return,
         )
 
-    def simplify_ir(self, flow_graph: FlowGraph) -> None:
-        simplify_ir_patterns(self, flow_graph, self.ir_patterns)
-
-    ir_patterns: List[typing.Type[IrPattern]] = [
+    ir_patterns = [
         FloatishToSintIrPattern,
         SintToDoubleIrPattern,
         UintToDoubleIrPattern,

@@ -70,6 +70,9 @@ class IrPattern(abc.ABC):
 
         name = f"__pattern_{cls.__name__}"
         func = Function(name=name)
+        assert len(replacement_instr.inputs) == len(
+            set(replacement_instr.inputs)
+        ), "pattern inputs must be unique"
         # Add a fictive nop instruction for each input to the replacement_instr
         # This acts as a placeholder Reference to represent where the input was set
         for inp in replacement_instr.inputs:
@@ -236,9 +239,7 @@ class TryIrMatch(IrMatch):
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
         if pat.mnemonic != cand.mnemonic or len(pat.args) != len(cand.args):
             return False
-        if not all(self.match_arg(*args) for args in zip(pat.args, cand.args)):
-            return False
-        return True
+        return all(self.match_arg(*args) for args in zip(pat.args, cand.args))
 
     def match_ref(self, pat: Reference, cand: Reference) -> bool:
         if isinstance(pat, str) and isinstance(cand, str):
@@ -304,7 +305,7 @@ def simplify_ir_patterns(
             refs_by_mnemonic[ref.instruction.mnemonic].append(ref)
 
     # Counter used to name temporary registers
-    replace_index = 0
+    fictive_reg_index = 0
 
     for pattern_class in pattern_classes:
         pattern = pattern_class.compile(arch)
@@ -322,8 +323,11 @@ def simplify_ir_patterns(
         # Split the pattern asm into 3 disjoint sets of instructions:
         # input_refs ("in.fictive"s), body_refs, and tail_ref (the last instruction)
         n_inputs = len(pattern.replacement_instr.inputs)
-        head_refs, tail_ref = pattern_refs[:-1], pattern_refs[-1]
-        input_refs, body_refs = head_refs[:n_inputs], head_refs[n_inputs:]
+        input_refs, body_refs, tail_ref = (
+            pattern_refs[:n_inputs],
+            pattern_refs[n_inputs:-1],
+            pattern_refs[-1],
+        )
         assert all(r.instruction.mnemonic == "in.fictive" for r in input_refs)
         assert all(r.instruction.mnemonic != "in.fictive" for r in body_refs)
 
@@ -334,10 +338,10 @@ def simplify_ir_patterns(
             isinstance(inp, Register) for inp in pattern.replacement_instr.inputs
         )
 
-        # For now, patterns can only have 1 output put register (which must be set
-        # by the final instruction in the pattern). This simplifies pattern matching
-        # by guaranteeing that there is a there is a place where all of the (fictive)
-        # pattern inputs have been assigned and the outputs have not yet been used.
+        # For now, patterns can only have 1 output register (which must be set by the
+        # final instruction in the pattern). This simplifies the replacement step because
+        # we can replace the final instruction and know that all the pattern inputs have
+        # been assigned by there, and the output has not yet been used.
         assert len(pattern.replacement_instr.outputs) == 1
         assert pattern.replacement_instr.outputs == tail_ref.instruction.outputs
 
@@ -364,8 +368,8 @@ def simplify_ir_patterns(
             next_try_matches = []
             for state in try_matches:
                 # By pattern construction, pat_ref should be in the state's ref_map
-                # This would be true for "disjoint" or irrelevant instructions in the
-                # pattern, like random nops.
+                # (It would be missing for "disjoint" or irrelevant instructions in the
+                # pattern, like random nops: these aren't allowed)
                 cand = state.try_map_ref(pat_ref)
                 if not isinstance(cand, InstrRef):
                     continue
@@ -391,7 +395,7 @@ def simplify_ir_patterns(
                 # uses are also being replaced
                 if all(
                     all(r in refs_to_replace for r in refs)
-                    for _, refs in flow_graph.instr_uses[cand_ref].items()
+                    for refs in flow_graph.instr_uses[cand_ref].values()
                 ):
                     refs_to_replace.append(cand_ref)
 
@@ -403,8 +407,9 @@ def simplify_ir_patterns(
 
                 original_reg = state.map_reg(input_reg)
                 temp_reg = Register(
-                    f"{original_reg.register_name}_fictive_{replace_index}"
+                    f"{original_reg.register_name}_fictive_{fictive_reg_index}"
                 )
+                fictive_reg_index += 1
                 state.rename_reg(input_reg, temp_reg)
                 move_instr = arch.parse(
                     "move.fictive", [temp_reg, original_reg], InstructionMeta.missing()
@@ -442,5 +447,3 @@ def simplify_ir_patterns(
 
                 # Replace the instruction in the block
                 ref.instruction = new_instr
-
-            replace_index += 1

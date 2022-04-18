@@ -33,7 +33,9 @@ from .flow_graph import (
     ReturnNode,
     SwitchNode,
     TerminalNode,
+    locs_clobbered_until_dominator,
 )
+from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import CodingStyle, Formatter, Options, Target
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
@@ -114,6 +116,12 @@ class Arch(ArchFlowGraph):
         function's return type, even though it may be more accurate.
         """
         ...
+
+    # These are defined here to avoid a circular import in flow_graph.py
+    ir_patterns: List[typing.Type[IrPattern]] = []
+
+    def simplify_ir(self, flow_graph: FlowGraph) -> None:
+        simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
@@ -3630,25 +3638,6 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
-def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
-    if node.immediate_dominator is None:
-        return set()
-    seen = {node.immediate_dominator}
-    stack = node.parents[:]
-    clobbered = set()
-    while stack:
-        n = stack.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-        for instr in n.block.instructions:
-            for r in instr.outputs + instr.clobbers:
-                if isinstance(r, Register):
-                    clobbered.add(r)
-        stack.extend(n.parents)
-    return clobbered
-
-
 def reg_always_set(node: Node, reg: Register, *, dom_set: bool) -> bool:
     if node.immediate_dominator is None:
         return False
@@ -4464,7 +4453,9 @@ def translate_graph_from_block(
                 reg, data.value, RegMeta(inherited=True, force=data.meta.force)
             )
 
-        phi_regs = regs_clobbered_until_dominator(child)
+        phi_regs = (
+            r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
+        )
         for reg in phi_regs:
             if reg_always_set(child, reg, dom_set=(reg in regs)):
                 expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)

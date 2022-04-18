@@ -14,6 +14,7 @@ from typing import (
     Set,
     Tuple,
     Union,
+    ValuesView,
 )
 
 from .error import DecompFailure
@@ -1140,7 +1141,7 @@ class LocationRefSetDict:
             self.refs[loc].update(refs)
 
     def remove(self, loc: Location) -> None:
-        self.refs.pop(loc)
+        self.refs.pop(loc, None)
 
     def remove_ref(self, ref: Reference) -> None:
         """Remove `ref` from all stored RefSet values"""
@@ -1162,6 +1163,9 @@ class LocationRefSetDict:
 
     def items(self) -> ItemsView[Location, RefSet]:
         return self.refs.items()
+
+    def values(self) -> ValuesView[RefSet]:
+        return self.refs.values()
 
     def __contains__(self, key: Location) -> bool:
         return bool(self.get(key))
@@ -1262,6 +1266,24 @@ class FlowGraph:
             node.block.block_info = None
 
 
+def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
+    assert node.immediate_dominator is not None
+
+    seen = {node.immediate_dominator}
+    stack = node.parents[:]
+    clobbered = set()
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        for instr in n.block.instructions:
+            clobbered.update(instr.outputs)
+            clobbered.update(instr.clobbers)
+        stack.extend(n.parents)
+    return clobbered
+
+
 def nodes_to_flowgraph(
     nodes: List[Node], function: Function, arch: ArchFlowGraph
 ) -> FlowGraph:
@@ -1299,9 +1321,13 @@ def nodes_to_flowgraph(
         # Process nodes dominated by this node, now that we know our own
         # final Location sources. This will eventually reach every node.
         for child in node.immediately_dominates:
-            # NB: This ignores phis; `loc_srcs` won't contain locations set
-            # from branching nodes.
-            process_node(child, loc_srcs.copy())
+            # Create phi refsets for the loc_srcs map for this child
+            child_loc_srcs = loc_srcs.copy()
+            for loc in locs_clobbered_until_dominator(child):
+                # TODO: This is a hack
+                child_loc_srcs[loc] = RefSet.special(f"phi_{loc}_{child}")
+
+            process_node(child, child_loc_srcs)
 
     # Initialize all registers
     entry_reg_srcs = LocationRefSetDict()

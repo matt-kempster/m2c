@@ -106,8 +106,15 @@ class JumpTarget:
         return f".{self.target}"
 
 
+Argument = Union[
+    Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
+]
+
+
 @dataclass(frozen=True)
 class StackLocation:
+    """Represents a region on the stack. Only used for pattern matching"""
+
     offset: int
     symbolic_offset: Optional[str]
     size: int
@@ -158,14 +165,11 @@ class StackLocation:
         return None
 
 
-Argument = Union[
-    Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
-]
 Location = Union[Register, StackLocation]
 
 
 def locations_alias(left: Location, right: Location) -> bool:
-    """Return True if `left` & `right` refer to the same register or stack variable."""
+    """Return True if `left` & `right` refer to the same register or overlapping stack locations."""
     if isinstance(left, Register):
         return left == right
     elif isinstance(left, StackLocation):
