@@ -1060,7 +1060,7 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
 
 
 @dataclass(frozen=True)
-class PhiRef:
+class BlockEntryRef:
     """Represents the initial value of a Location at the start of a Block."""
 
     location: Location
@@ -1069,7 +1069,7 @@ class PhiRef:
 
 # Reference acts as a pointer to either a specific Instruction, or an unspecified phi
 # at the start of a block. PhiRefs are also used to represent initial register values.
-Reference = Union[InstrRef, PhiRef]
+Reference = Union[InstrRef, BlockEntryRef]
 
 
 @dataclass
@@ -1084,9 +1084,9 @@ class RefSet:
         return RefSet(refs=[])
 
     @staticmethod
-    def phi(loc: Location, block: Block) -> "RefSet":
-        """Represent a phi at the start of a block"""
-        return RefSet(refs=[PhiRef(loc, block)])
+    def block_entry(loc: Location, block: Block) -> "RefSet":
+        """Represent the value of a register/stack location at the start of a block"""
+        return RefSet(refs=[BlockEntryRef(loc, block)])
 
     def is_unique(self) -> bool:
         return len(self.refs) == 1
@@ -1332,7 +1332,7 @@ def nodes_to_flowgraph(
             # Create phi refsets for the loc_srcs map for this child
             child_loc_srcs = loc_srcs.copy()
             for loc in locs_clobbered_until_dominator(child):
-                child_loc_srcs[loc] = RefSet.phi(loc, child.block)
+                child_loc_srcs[loc] = RefSet.block_entry(loc, child.block)
 
             process_node(child, child_loc_srcs)
 
@@ -1340,7 +1340,7 @@ def nodes_to_flowgraph(
     entry_node = flow_graph.entry_node()
     entry_reg_srcs = LocationRefSetDict()
     for r in arch.all_regs:
-        entry_reg_srcs.refs[r] = RefSet.phi(r, entry_node.block)
+        entry_reg_srcs.refs[r] = RefSet.block_entry(r, entry_node.block)
 
     # Recursively traverse every node, starting with the entry node to populate instr_inputs
     process_node(entry_node, entry_reg_srcs)
