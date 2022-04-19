@@ -29,8 +29,6 @@ from .parse_instruction import (
     InstructionMeta,
     JumpTarget,
     Location,
-    Macro,
-    NaiveParsingArch,
     RegFormatter,
     Register,
     StackLocation,
