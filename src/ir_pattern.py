@@ -113,7 +113,6 @@ class IrMatch:
     Its `map_*` methods take a pattern part and return the matched instruction part.
     """
 
-    arch: ArchFlowGraph
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
@@ -197,7 +196,6 @@ class TryIrMatch(IrMatch):
 
     def copy(self) -> "TryIrMatch":
         return TryIrMatch(
-            arch=self.arch,
             symbolic_registers=self.symbolic_registers.copy(),
             symbolic_labels=self.symbolic_labels.copy(),
             symbolic_args=self.symbolic_args.copy(),
@@ -355,7 +353,7 @@ def simplify_ir_patterns(
         try_matches = []
         tail_inputs = pattern.flow_graph.instr_inputs[tail_ref]
         for cand_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
-            state = TryIrMatch(arch=arch)
+            state = TryIrMatch()
             if state.match_ref(tail_ref, cand_ref):
                 try_matches.append(state)
 
