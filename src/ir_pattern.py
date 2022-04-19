@@ -392,41 +392,40 @@ def simplify_ir_patterns(
                     refs_to_replace.append(cand_ref)
 
             # Create temporary registers for the inputs to the replacement_instr
-            fictive_meta = refs_to_replace[0].instruction.meta
-            temp_locs = LocationRefSetDict()
+            temp_reg_refs = {}
             for pat_ref in input_refs:
                 assert len(pat_ref.instruction.outputs) == 1
                 input_reg = pat_ref.instruction.outputs[0]
                 assert isinstance(input_reg, Register)
 
+                # It doesn't matter which instruction we pick; the new move instruction to save
+                # the register can come before any of the instructions that use it.
+                input_uses = pattern.flow_graph.instr_uses[pat_ref].get(input_reg)
+                input_use_ref = state.map_ref(next(iter(input_uses)))
+
+                # Create a unique fictive register to act as a temporary
                 original_reg = state.map_reg(input_reg)
                 temp_reg = Register(
                     f"{original_reg.register_name}_fictive_{fictive_reg_index}"
                 )
                 fictive_reg_index += 1
                 state.rename_reg(input_reg, temp_reg)
+
                 move_instr = arch.parse(
-                    "move.fictive", [temp_reg, original_reg], fictive_meta
+                    "move.fictive",
+                    [temp_reg, original_reg],
+                    input_use_ref.instruction.meta,
                 )
+                move_ref = input_use_ref.add_instruction_before(move_instr)
+                temp_reg_refs[temp_reg] = move_ref
 
-                # We only need to insert `move_instr` before its first use. However, it's
-                # easier to insert it before *every* use instead of determining which is first.
-                input_uses = pattern.flow_graph.instr_uses[pat_ref].get(input_reg)
-                assert len(input_uses) >= 1
-                for use in input_uses:
-                    input_use_ref = state.map_ref(use)
-                    move_ref = input_use_ref.add_instruction_before(move_instr)
-                    temp_locs.add(temp_reg, move_ref)
-
-                    # Update the instr_inputs/instr_uses graph
-                    flow_graph.instr_inputs[move_ref] = LocationRefSetDict()
-                    flow_graph.instr_uses[move_ref] = LocationRefSetDict()
-                    for src_ref in flow_graph.instr_inputs[input_use_ref].get(
-                        original_reg
-                    ):
-                        if isinstance(src_ref, InstrRef):
-                            flow_graph.instr_inputs[move_ref].add(original_reg, src_ref)
-                            flow_graph.instr_uses[src_ref].add(original_reg, move_ref)
+                # Update the instr_inputs/instr_uses graph
+                flow_graph.instr_inputs[move_ref] = LocationRefSetDict()
+                flow_graph.instr_uses[move_ref] = LocationRefSetDict()
+                for src_ref in flow_graph.instr_inputs[input_use_ref].get(original_reg):
+                    if isinstance(src_ref, InstrRef):
+                        flow_graph.instr_inputs[move_ref].add(original_reg, src_ref)
+                        flow_graph.instr_uses[src_ref].add(original_reg, move_ref)
 
             for i, ref in enumerate(refs_to_replace):
                 # Remove ref from all instr_uses/instr_inputs
@@ -447,11 +446,9 @@ def simplify_ir_patterns(
 
                     # Update instr_inputs/instr_uses to mark that the replacement instruction
                     # will depend on all of the temporary registers added earlier
-                    flow_graph.instr_inputs[ref].update(temp_locs)
-                    for temp_loc, temp_refs in temp_locs.items():
-                        for temp_ref in temp_refs:
-                            if isinstance(temp_ref, InstrRef):
-                                flow_graph.instr_uses[temp_ref].add(temp_loc, ref)
+                    for temp_reg, temp_ref in temp_reg_refs.items():
+                        flow_graph.instr_inputs[ref].add(temp_reg, temp_ref)
+                        flow_graph.instr_uses[temp_ref].add(temp_reg, ref)
                 else:
                     new_asm = AsmInstruction("nop", [])
                     # Assert that there are no uses of the outputs from this instruction
