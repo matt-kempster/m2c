@@ -118,7 +118,7 @@ class Arch(ArchFlowGraph):
         ...
 
     # These are defined here to avoid a circular import in flow_graph.py
-    ir_patterns: List[typing.Type[IrPattern]] = []
+    ir_patterns: List[IrPattern] = []
 
     def simplify_ir(self, flow_graph: FlowGraph) -> None:
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)

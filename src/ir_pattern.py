@@ -2,7 +2,7 @@ import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from itertools import permutations
-from typing import ClassVar, Dict, List, Optional, Type, TypeVar
+from typing import ClassVar, Dict, List, Optional, TypeVar
 
 from .error import static_assert_unreachable
 from .flow_graph import (
@@ -30,6 +30,7 @@ from .parse_instruction import (
     JumpTarget,
     Location,
     Macro,
+    NaiveParsingArch,
     RegFormatter,
     Register,
     StackLocation,
@@ -55,26 +56,24 @@ class IrPattern(abc.ABC):
     parts: ClassVar[List[str]]
     replacement: ClassVar[str]
 
-    flow_graph: FlowGraph
-    replacement_instr: Instruction
-
     def check(self, m: "IrMatch") -> bool:
         """Override to perform additional checks/calculations before replacement."""
         return True
 
-    @classmethod
-    def compile(cls, arch: ArchFlowGraph) -> "IrPattern":
+    def compile(self, arch: ArchFlowGraph) -> "CompiledIrPattern":
         missing_meta = InstructionMeta.missing()
         regf = RegFormatter()
-        replacement_instr = parse_instruction(cls.replacement, missing_meta, arch, regf)
+        replacement_instr = parse_instruction(
+            self.replacement, missing_meta, arch, regf
+        )
 
-        name = f"__pattern_{cls.__name__}"
+        name = f"__pattern_{self.__class__.__name__}"
         func = Function(name=name)
+        # Add a fictive nop instruction for each input to the replacement_instr
+        # This acts as a placeholder Reference to represent where the input was set
         assert len(replacement_instr.inputs) == len(
             set(replacement_instr.inputs)
         ), "pattern inputs must be unique"
-        # Add a fictive nop instruction for each input to the replacement_instr
-        # This acts as a placeholder Reference to represent where the input was set
         for inp in replacement_instr.inputs:
             func.new_instruction(
                 Instruction(
@@ -88,15 +87,24 @@ class IrPattern(abc.ABC):
                     writes_memory=False,
                 )
             )
-        for part in cls.parts:
+        for part in self.parts:
             func.new_instruction(parse_instruction(part, missing_meta, arch, regf))
 
         asm_data = AsmData()
         flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)
-        return cls(
+        return CompiledIrPattern(
+            source=self,
             flow_graph=flow_graph,
             replacement_instr=replacement_instr,
         )
+
+
+@dataclass(eq=False, frozen=True)
+class CompiledIrPattern:
+    source: IrPattern
+
+    flow_graph: FlowGraph
+    replacement_instr: Instruction
 
 
 @dataclass
@@ -296,7 +304,7 @@ class TryIrMatch(IrMatch):
 
 
 def simplify_ir_patterns(
-    arch: ArchFlowGraph, flow_graph: FlowGraph, pattern_classes: List[Type[IrPattern]]
+    arch: ArchFlowGraph, flow_graph: FlowGraph, pattern_classes: List[IrPattern]
 ) -> None:
     # Precompute a RefSet for each mnemonic
     refs_by_mnemonic = defaultdict(list)
@@ -376,7 +384,7 @@ def simplify_ir_patterns(
 
         for n, state in enumerate(try_matches):
             # Perform any additional pattern-specific validation or computation
-            if not pattern.check(state):
+            if not pattern.source.check(state):
                 continue
 
             # Determine which instructions we can replace with the replacement_instr or nops

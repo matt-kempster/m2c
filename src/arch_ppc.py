@@ -777,11 +777,11 @@ class PpcArch(Arch):
         )
 
     ir_patterns = [
-        FloatishToSintIrPattern,
-        SintToDoubleIrPattern,
-        UintToDoubleIrPattern,
-        SintToFloatIrPattern,
-        UintToFloatIrPattern,
+        FloatishToSintIrPattern(),
+        SintToDoubleIrPattern(),
+        UintToDoubleIrPattern(),
+        SintToFloatIrPattern(),
+        UintToFloatIrPattern(),
     ]
 
     asm_patterns = [
