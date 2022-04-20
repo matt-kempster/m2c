@@ -1981,7 +1981,9 @@ class RegInfo:
     def __getitem__(self, key: Register) -> Expression:
         if self._active_instr is not None and key not in self._active_instr.inputs:
             lineno = self._active_instr.meta.lineno
-            return ErrorExpr(f"Read from unset register {key} on line {lineno}")
+            # XXX: Disabled to make the diff smaller
+            # return ErrorExpr(f"Read from unset register {key} on line {lineno}")
+            return ErrorExpr(f"Read from unset register {key}")
         if key == Register("zero"):
             return Literal(0)
         data = self.contents.get(key)

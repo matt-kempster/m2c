@@ -1309,36 +1309,47 @@ class FlowGraph:
                 assert deps == self.instr_uses[ref].get(reg)
 
 
-def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> RefSet:
+def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[RefSet]:
     """
-    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
-    Otherwise, return RefSet.empty().
+    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi
+
+    Otherwise, return None. This analysis is accurate when `loc` is a Register, but
+    is only best-effort for local variables: it will miss local array accesses and
+    stack pointers passed to functions.
     """
     assert node.immediate_dominator is not None
 
-    seen = {node.immediate_dominator}
+    seen = set()
     stack = node.parents[:]
     sources = RefSet()
 
     while stack:
         n = stack.pop()
-        if n == node.immediate_dominator and imdom_srcs.is_empty():
-            return RefSet.empty()
         if n in seen:
             continue
         seen.add(n)
 
+        # Find the last instruction in the node that either writes or clobbers to `loc`
         for ref in n.block.instruction_refs[::-1]:
             if loc in ref.instruction.outputs:
                 sources.add(ref)
                 break
             if loc in ref.instruction.clobbers:
-                return RefSet.empty()
+                return None
         else:
-            stack.extend(n.parents)
+            # This node didn't touch `loc`, so iterate by checking its parents.
+            # As an optimization, we only need to iterate up until the immediate dominator,
+            # because its phi sources have already been computed (`imdom_srcs`).
+            if n == node.immediate_dominator and not imdom_srcs:
+                # `loc` was unset on the path to `node` via its imdom, so it's not a valid phi
+                return None
+            elif n == node.immediate_dominator:
+                # Take the union with `imdom_srcs`, but do not iterate on the imdom's parents
+                sources.update(imdom_srcs)
+            else:
+                # Otherwise, continue iterating on the current node's parents
+                stack.extend(n.parents)
 
-    if sources.is_empty():
-        return imdom_srcs
     return sources
 
 
@@ -1409,16 +1420,18 @@ def nodes_to_flowgraph(
 
             for loc in locs_clobbered_until_dominator(child):
                 phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
-                # If phi_reg_srcs is empty, then the loc is inconsistently set, so it should
-                # not be used by the child node.
-                # Otherwise, it *is* set in every control flow path to the child node, so
-                # it can be used (but it will have a phi value)
-                child_loc_srcs[loc] = phi_reg_srcs
-                # child.block.phis[loc] = phi_reg_srcs
+                if phi_reg_srcs is not None:
+                    # If phi_reg_srcs is empty, then the loc is inconsistently set, so it should
+                    # not be used by the child node.
+                    # Otherwise, it *is* set in every control flow path to the child node, so
+                    # it can be used (but it will have a phi value)
+                    child_loc_srcs[loc] = phi_reg_srcs
+                elif loc in child_loc_srcs:
+                    child_loc_srcs.remove(loc)
 
             process_node(child, child_loc_srcs)
 
-        if isinstance(node, TerminalNode):
+        if isinstance(node, TerminalNode) and False:
             assert not node.block.instruction_refs
             for inp in arch.all_return_regs:
                 sources = RefSet()
