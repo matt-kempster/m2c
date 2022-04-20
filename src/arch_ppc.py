@@ -364,6 +364,8 @@ class PpcArch(Arch):
         + [
             Register(r)
             for r in [
+                # `zero` isn't a "real" PPC register; it's a normalized form of `r0`
+                "zero",
                 # TODO: These `crX` registers are only used to parse instructions, but
                 # the instructions that use these registers aren't implemented yet.
                 "cr0",

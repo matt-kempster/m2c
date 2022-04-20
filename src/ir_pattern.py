@@ -424,21 +424,12 @@ def simplify_ir_patterns(
                 temp_reg_refs[temp_reg] = move_ref
 
                 # Update the instr_inputs/instr_uses graph
-                flow_graph.instr_inputs[move_ref] = LocationRefSetDict()
-                flow_graph.instr_uses[move_ref] = LocationRefSetDict()
                 for src_ref in flow_graph.instr_inputs[input_use_ref].get(original_reg):
-                    if isinstance(src_ref, InstrRef):
-                        flow_graph.instr_inputs[move_ref].add(original_reg, src_ref)
-                        flow_graph.instr_uses[src_ref].add(original_reg, move_ref)
+                    flow_graph.add_dependency(move_ref, original_reg, src_ref)
 
             for i, ref in enumerate(refs_to_replace):
                 # Remove ref from all instr_uses/instr_inputs
-                for input_loc in ref.instruction.inputs:
-                    for input_ref in flow_graph.instr_inputs[ref].get(input_loc):
-                        flow_graph.instr_inputs[ref].remove(input_loc)
-                        if isinstance(input_ref, InstrRef):
-                            flow_graph.instr_uses[input_ref].remove_ref(ref)
-                assert flow_graph.instr_inputs[ref].is_empty()
+                flow_graph.remove_dependencies(ref)
 
                 # The last instruction in the source is rewritten with the replacement instruction
                 # (refs_to_replace is in reverse order), and the others are replaced with a nop.
@@ -451,11 +442,9 @@ def simplify_ir_patterns(
                     # Update instr_inputs/instr_uses to mark that the replacement instruction
                     # will depend on all of the temporary registers added earlier
                     for temp_reg, temp_ref in temp_reg_refs.items():
-                        flow_graph.instr_inputs[ref].add(temp_reg, temp_ref)
-                        flow_graph.instr_uses[temp_ref].add(temp_reg, ref)
+                        flow_graph.add_dependency(ref, temp_reg, temp_ref)
                 else:
                     new_asm = AsmInstruction("nop", [])
-                    # Assert that there are no uses of the outputs from this instruction
                     assert flow_graph.instr_uses[ref].is_empty()
 
                 # Parse the asm & set the clobbers
@@ -470,16 +459,6 @@ def simplify_ir_patterns(
                 # Replace the instruction in the block
                 ref.instruction = new_instr
 
-    # After all of the rewrites above, verify that the instr_inputs & instr_uses
-    # dicts are still consistent by recomputing instr_uses.
-    new_uses = {r: LocationRefSetDict() for r in flow_graph.instr_inputs}
-    for ref, inputs in flow_graph.instr_inputs.items():
-        for reg, deps in inputs.items():
-            for dep in deps:
-                if isinstance(dep, InstrRef):
-                    new_uses[dep].add(reg, ref)
-
-    # Assert that new_uses is equivalent to flow_graph.instr_uses
-    for ref, uses in new_uses.items():
-        for reg, deps in uses.items():
-            assert deps == flow_graph.instr_uses[ref].get(reg)
+    # After all of the rewrites above, verify that the instruction dependency
+    # data structures are still consistent
+    flow_graph.validate_dependencies()
