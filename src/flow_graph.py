@@ -1201,12 +1201,13 @@ class LocationRefSetDict:
 class FlowGraph:
     nodes: List[Node]
 
-    # The set of source References for each input Location to each Instruction
+    # For each Reference (typically an instruction), track the source References for
+    # each of its input Locations (typically registers)
     instr_inputs: DefaultDict[Reference, LocationRefSetDict] = field(
         default_factory=lambda: defaultdict(LocationRefSetDict)
     )
-    # The set of all downstream Instructions whose inputs depend on outputs from a given
-    # Instruction. This is the same information as `instr_inputs`, but reversed.
+    # The set of all downstream References whose inputs depend on outputs from other
+    # References. This is the same information as `instr_inputs`, but reversed.
     instr_uses: DefaultDict[Reference, LocationRefSetDict] = field(
         default_factory=lambda: defaultdict(LocationRefSetDict)
     )
@@ -1290,19 +1291,20 @@ class FlowGraph:
             node.block.block_info = None
 
     def add_dependency(self, dst: Reference, loc: Location, src: Reference) -> None:
-        """Add a dependency edge that `dst` depends on `loc` from `src`"""
+        """Update instr_inputs/instr_uses that `dst` depends on `loc` from `src`"""
         self.instr_inputs[dst].add(loc, src)
         self.instr_uses[src].add(loc, dst)
 
     def remove_dependencies(self, ref: Reference) -> None:
-        """Remove all dependency edges for `ref`"""
+        """Remove all inputs for `ref` from instr_inputs/instr_uses"""
         for loc, uses in self.instr_inputs[ref].items():
             for use in uses:
                 self.instr_uses[use].remove_ref(ref)
         self.instr_inputs.pop(ref)
 
     def validate_dependencies(self) -> None:
-        # Verify that the instr_inputs & instr_uses dicts are consistent by recomputing instr_uses.
+        """Verify that the instr_inputs & instr_uses dicts are consistent"""
+        # Recompute instr_uses from instr_inputs as new_uses
         new_uses: DefaultDict[Reference, LocationRefSetDict] = defaultdict(
             LocationRefSetDict
         )
