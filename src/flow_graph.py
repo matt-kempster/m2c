@@ -1372,7 +1372,11 @@ def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
 
 
 def nodes_to_flowgraph(
-    nodes: List[Node], function: Function, arch: ArchFlowGraph
+    nodes: List[Node],
+    function: Function,
+    arch: ArchFlowGraph,
+    *,
+    print_warnings: bool = False,
 ) -> FlowGraph:
     flow_graph = FlowGraph(nodes)
     missing_regs = []
@@ -1431,7 +1435,7 @@ def nodes_to_flowgraph(
 
             process_node(child, child_loc_srcs)
 
-        if isinstance(node, TerminalNode) and False:
+        if isinstance(node, TerminalNode):
             assert not node.block.instruction_refs
             for inp in arch.all_return_regs:
                 sources = RefSet()
@@ -1458,8 +1462,7 @@ def nodes_to_flowgraph(
                 if isinstance(dep, InstrRef):
                     flow_graph.instr_uses[dep].add(reg, ref)
 
-    # TODO: Add an option to enable these warnings
-    if missing_regs and False:
+    if print_warnings and missing_regs:
         print("/*")
         print(f"Warning: in {function.name}, regs were read before being written to:")
         for reg, ref in missing_regs:
@@ -1470,7 +1473,12 @@ def nodes_to_flowgraph(
 
 
 def build_flowgraph(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
+    print_warnings: bool = False,
 ) -> FlowGraph:
     blocks = build_blocks(function, asm_data, arch, fragment=fragment)
     nodes = build_nodes(function, blocks, asm_data, arch)
@@ -1481,7 +1489,9 @@ def build_flowgraph(
     if not fragment:
         terminate_infinite_loops(nodes)
 
-    flow_graph = nodes_to_flowgraph(nodes, function, arch)
+    flow_graph = nodes_to_flowgraph(
+        nodes, function, arch, print_warnings=print_warnings
+    )
     if not fragment:
         arch.simplify_ir(flow_graph)
 

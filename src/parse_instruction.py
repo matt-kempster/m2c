@@ -200,15 +200,24 @@ class AsmInstruction:
 
 @dataclass(frozen=True)
 class InstructionMeta:
+    # True if the original asm line was marked with a goto pattern
     emit_goto: bool
+    # Asm source filename & line number
     filename: str
     lineno: int
+    # True if the Instruction is not directly from the source asm
     synthetic: bool
+    # True if the Instruction was part of a matched IR pattern, but not elided
+    in_pattern: bool
 
     @staticmethod
     def missing() -> "InstructionMeta":
         return InstructionMeta(
-            emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
+            emit_goto=False,
+            filename="<unknown>",
+            lineno=0,
+            synthetic=True,
+            in_pattern=False,
         )
 
     def derived(self) -> "InstructionMeta":

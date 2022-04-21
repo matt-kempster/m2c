@@ -1964,6 +1964,10 @@ class RegMeta:
     # True if the regdata must be replaced by variable if it is ever read
     force: bool = False
 
+    # True if the regdata was assigned by an Instruction marked as in_pattern;
+    # it was part of a matched IR pattern but couldn't be elided at the time
+    in_pattern: bool = False
+
 
 @dataclass
 class RegData:
@@ -3779,17 +3783,20 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
                 par_meta.is_read = True
                 todo.append(p)
 
-    # Set `uninteresting` and propagate it and `function_return` forwards. Start by
-    # assuming inherited values are all set; they will get unset iteratively, but for
-    # cyclic dependency purposes we want to assume them set.
+    # Set `uninteresting` and propagate it, `function_return`, and `in_pattern` forwards.
+    # Start by assuming inherited values are all set; they will get unset iteratively,
+    # but for cyclic dependency purposes we want to assume them set.
     for n in non_terminal:
         meta = get_block_info(n).final_register_states.get_meta(reg)
         if meta:
             if meta.inherited:
                 meta.uninteresting = True
                 meta.function_return = True
+                meta.in_pattern = True
             else:
-                meta.uninteresting |= meta.is_read or meta.function_return
+                meta.uninteresting |= (
+                    meta.is_read or meta.function_return or meta.in_pattern
+                )
 
     todo = non_terminal[:]
     while todo:
@@ -3801,16 +3808,21 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
             continue
         all_uninteresting = True
         all_function_return = True
+        all_in_pattern = True
         for p in n.parents:
             par_meta = get_block_info(p).final_register_states.get_meta(reg)
             if par_meta:
                 all_uninteresting &= par_meta.uninteresting
                 all_function_return &= par_meta.function_return
+                all_in_pattern &= par_meta.in_pattern
         if meta.uninteresting and not all_uninteresting and not meta.is_read:
             meta.uninteresting = False
             todo.extend(n.children())
         if meta.function_return and not all_function_return:
             meta.function_return = False
+            todo.extend(n.children())
+        if meta.in_pattern and not all_in_pattern:
+            meta.in_pattern = False
             todo.extend(n.children())
 
 
@@ -3823,12 +3835,14 @@ def determine_return_register(
     def priority(block_info: BlockInfo, reg: Register) -> int:
         meta = block_info.final_register_states.get_meta(reg)
         if not meta:
-            return 3
+            return 4
         if meta.uninteresting:
+            return 2
+        if meta.in_pattern:
             return 1
         if meta.function_return:
             return 0
-        return 2
+        return 3
 
     if not return_blocks:
         return None
@@ -3838,10 +3852,10 @@ def determine_return_register(
     for reg in arch.base_return_regs:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
-        if max_prio == 3:
+        if max_prio == 4:
             # Register is not always set, skip it
             continue
-        if max_prio <= 1 and not fn_decl_provided:
+        if max_prio <= 2 and not fn_decl_provided:
             # Register is always read after being written, or comes from a
             # function call; seems unlikely to be an intentional return.
             # Skip it, unless we have a known non-void return type.
@@ -3865,6 +3879,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
     has_function_call: bool = False
+    in_pattern: bool = False
     arch = stack_info.global_info.arch
 
     def eval_once(
@@ -3946,7 +3961,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
-        regs[reg] = expr
+        regs.set_with_meta(reg, expr, RegMeta(in_pattern=in_pattern))
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> Optional[Expression]:
         if expr is None:
@@ -4015,8 +4030,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 return
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_expr, has_function_call
+        nonlocal branch_condition, switch_expr, has_function_call, in_pattern
 
+        in_pattern = instr.meta.in_pattern
         mnemonic = instr.mnemonic
         arch_mnemonic = instr.arch_mnemonic(arch)
         args = InstrArgs(instr.args, regs, stack_info)
@@ -4162,6 +4178,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if arch.arch == Target.ArchEnum.PPC and (
                     data.meta.inherited or data.meta.function_return
                 ):
+                    likely_regs[reg] = False
+                elif data.meta.in_pattern:
                     likely_regs[reg] = False
                 elif isinstance(data.value, PassedInArg) and not data.value.copied:
                     likely_regs[reg] = False

@@ -1,6 +1,6 @@
 import abc
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import permutations
 from typing import ClassVar, Dict, List, Optional, TypeVar
 
@@ -394,6 +394,11 @@ def simplify_ir_patterns(
                     for refs in flow_graph.instr_uses[cand_ref].values()
                 ):
                     refs_to_replace.append(cand_ref)
+                elif not cand_ref.instruction.meta.in_pattern:
+                    cand_ref.instruction = replace(
+                        cand_ref.instruction,
+                        meta=replace(cand_ref.instruction.meta, in_pattern=True),
+                    )
 
             # Create temporary registers for the inputs to the replacement_instr
             temp_reg_refs = {}

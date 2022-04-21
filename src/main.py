@@ -129,7 +129,11 @@ def run(options: Options) -> int:
         try:
             narrow_func_call_outputs(function, global_info)
             graph = build_flowgraph(
-                function, global_info.asm_data, arch, fragment=False
+                function,
+                global_info.asm_data,
+                arch,
+                fragment=False,
+                print_warnings=options.debug,
             )
             flow_graphs.append(graph)
         except Exception as e:
