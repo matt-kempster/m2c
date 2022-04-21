@@ -67,6 +67,14 @@ class InstrRef:
         self.block.instruction_refs.insert(index, ref)
         return ref
 
+    def replace_instruction(self, new_instr: Instruction) -> None:
+        # Copy over old outputs/clobbers into new_instr.clobbers
+        old_instr = self.instruction
+        for loc in old_instr.outputs + old_instr.clobbers:
+            if loc not in new_instr.clobbers:
+                new_instr.clobbers.append(loc)
+        self.instruction = new_instr
+
 
 @dataclass(eq=False)
 class Block:

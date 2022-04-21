@@ -183,6 +183,11 @@ class IrMatch:
             return loc
         static_assert_unreachable(key)
 
+    def map_instruction(self, key: Instruction, arch: ArchFlowGraph) -> Instruction:
+        return arch.parse(
+            key.mnemonic, [self.map_arg(a) for a in key.args], key.meta.derived()
+        )
+
 
 class TryIrMatch(IrMatch):
     """
@@ -383,23 +388,6 @@ def simplify_ir_patterns(
             if not pattern.source.check(state):
                 continue
 
-            # Determine which instructions we can replace with the replacement_instr or nops
-            refs_to_replace: List[InstrRef] = [state.map_ref(tail_ref)]
-            for pat_ref in body_refs[::-1]:
-                cand_ref = state.map_ref(pat_ref)
-                # The candidate instruction can be replaced if all of its downstream
-                # uses are also being replaced
-                if all(
-                    all(r in refs_to_replace for r in refs)
-                    for refs in flow_graph.instr_uses[cand_ref].values()
-                ):
-                    refs_to_replace.append(cand_ref)
-                elif not cand_ref.instruction.meta.in_pattern:
-                    cand_ref.instruction = replace(
-                        cand_ref.instruction,
-                        meta=replace(cand_ref.instruction.meta, in_pattern=True),
-                    )
-
             # Create temporary registers for the inputs to the replacement_instr
             temp_reg_refs = {}
             for pat_ref in input_refs:
@@ -432,37 +420,32 @@ def simplify_ir_patterns(
                 for src_ref in flow_graph.instr_inputs[input_use_ref].get(original_reg):
                     flow_graph.add_dependency(move_ref, original_reg, src_ref)
 
-            for i, ref in enumerate(refs_to_replace):
-                # Remove ref from all instr_uses/instr_inputs
-                flow_graph.remove_dependencies(ref)
+            # Rewrite the final instruction with the pattern's replacement instruction.
+            repl_ref = state.map_ref(tail_ref)
+            repl_instr = state.map_instruction(pattern.replacement_instr, arch)
+            repl_ref.replace_instruction(repl_instr)
 
-                # The last instruction in the source is rewritten with the replacement instruction
-                # (refs_to_replace is in reverse order), and the others are replaced with a nop.
-                if i == 0:
-                    new_asm = AsmInstruction(
-                        pattern.replacement_instr.mnemonic,
-                        [state.map_arg(a) for a in pattern.replacement_instr.args],
+            # Reset repl_ref's dependencies, then repopulate them from temp_reg_refs
+            flow_graph.remove_dependencies(repl_ref)
+            for temp_reg, temp_ref in temp_reg_refs.items():
+                flow_graph.add_dependency(repl_ref, temp_reg, temp_ref)
+
+            # For the rest of the instructions in the pattern body, take any instructions
+            # whose outputs aren't used later and replace them with nops.
+            for pat_ref in body_refs[::-1]:
+                cand_ref = state.map_ref(pat_ref)
+                cand_instr = cand_ref.instruction
+
+                if flow_graph.instr_uses[cand_ref].is_empty():
+                    # Replace cand_ref with a nop, and clear its dependencies
+                    nop_instr = arch.parse("nop", [], cand_instr.meta.derived())
+                    cand_ref.replace_instruction(nop_instr)
+                    flow_graph.remove_dependencies(cand_ref)
+                elif not cand_instr.meta.in_pattern:
+                    # It needs to be kept; but ensure the meta.in_pattern flag is set
+                    cand_ref.instruction = replace(
+                        cand_instr, meta=replace(cand_instr.meta, in_pattern=True)
                     )
-
-                    # Update instr_inputs/instr_uses to mark that the replacement instruction
-                    # will depend on all of the temporary registers added earlier
-                    for temp_reg, temp_ref in temp_reg_refs.items():
-                        flow_graph.add_dependency(ref, temp_reg, temp_ref)
-                else:
-                    new_asm = AsmInstruction("nop", [])
-                    assert flow_graph.instr_uses[ref].is_empty()
-
-                # Parse the asm & set the clobbers
-                instr = ref.instruction
-                new_instr = arch.parse(
-                    new_asm.mnemonic, new_asm.args, instr.meta.derived()
-                )
-                for loc in instr.outputs + instr.clobbers:
-                    if loc not in new_instr.clobbers:
-                        new_instr.clobbers.append(loc)
-
-                # Replace the instruction in the block
-                ref.instruction = new_instr
 
     # After all of the rewrites above, verify that the instruction dependency
     # data structures are still consistent

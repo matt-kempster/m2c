@@ -113,7 +113,11 @@ Argument = Union[
 
 @dataclass(frozen=True)
 class StackLocation:
-    """Represents a region on the stack. Only used for pattern matching"""
+    """
+    Represents a region on the stack. Only used for pattern matching.
+    `symbolic_offset` represents a label offset that is only used in patterns,
+    to represent the "N" in arguments such as `(N+4)($sp)`.
+    """
 
     offset: int
     symbolic_offset: Optional[str]
