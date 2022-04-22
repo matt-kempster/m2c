@@ -1,7 +1,7 @@
 import abc
 import copy
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
@@ -73,7 +73,7 @@ class InstrRef:
         for loc in old_instr.outputs + old_instr.clobbers:
             if loc not in new_instr.clobbers:
                 new_instr.clobbers.append(loc)
-        self.instruction = new_instr
+        self.instruction = replace(new_instr, meta=old_instr.meta)
 
 
 @dataclass(eq=False)
@@ -1160,18 +1160,6 @@ class LocationRefSetDict:
     def remove(self, loc: Location) -> None:
         self.refs.pop(loc, None)
 
-    def remove_ref(self, ref: Reference) -> None:
-        """Remove `ref` from all stored RefSet values"""
-        to_remove = []
-        for loc, refset in self.refs.items():
-            if ref in refset:
-                refset.remove(ref)
-            if not refset:
-                to_remove.append(loc)
-        # Remove any locs that now map to empty RefSets
-        for loc in to_remove:
-            self.refs.pop(loc)
-
     def copy(self) -> "LocationRefSetDict":
         return LocationRefSetDict(refs=self.refs.copy())
 
@@ -1290,7 +1278,7 @@ class FlowGraph:
         for node in self.nodes:
             node.block.block_info = None
 
-    def add_dependency(self, dst: Reference, loc: Location, src: Reference) -> None:
+    def add_dependency(self, *, dst: Reference, loc: Location, src: Reference) -> None:
         """Update instr_inputs/instr_uses that `dst` depends on `loc` from `src`"""
         self.instr_inputs[dst].add(loc, src)
         self.instr_uses[src].add(loc, dst)
@@ -1299,7 +1287,7 @@ class FlowGraph:
         """Remove all inputs for `ref` from instr_inputs/instr_uses"""
         for loc, uses in self.instr_inputs[ref].items():
             for use in uses:
-                self.instr_uses[use].remove_ref(ref)
+                self.instr_uses[use].get(loc).remove(ref)
         self.instr_inputs.pop(ref)
 
     def validate_dependencies(self) -> None:
@@ -1319,7 +1307,7 @@ class FlowGraph:
                 assert deps == self.instr_uses[ref].get(reg)
 
 
-def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[RefSet]:
+def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> RefSet:
     """
     Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi
 
@@ -1339,26 +1327,26 @@ def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> Optional[R
             continue
         seen.add(n)
 
+        # As an optimization, we only need to iterate up until the immediate dominator,
+        # because its phi sources have already been computed (`imdom_srcs`).
+        if n == node.immediate_dominator:
+            # If `loc` was unset on the path to `node` via its imdom, it's not a valid phi
+            if not imdom_srcs:
+                return RefSet.empty()
+
+            sources.update(imdom_srcs)
+            continue
+
         # Find the last instruction in the node that either writes or clobbers to `loc`
         for ref in n.block.instruction_refs[::-1]:
             if loc in ref.instruction.outputs:
                 sources.add(ref)
                 break
             if loc in ref.instruction.clobbers:
-                return None
+                return RefSet.empty()
         else:
             # This node didn't touch `loc`, so iterate by checking its parents.
-            # As an optimization, we only need to iterate up until the immediate dominator,
-            # because its phi sources have already been computed (`imdom_srcs`).
-            if n == node.immediate_dominator and not imdom_srcs:
-                # `loc` was unset on the path to `node` via its imdom, so it's not a valid phi
-                return None
-            elif n == node.immediate_dominator:
-                # Take the union with `imdom_srcs`, but do not iterate on the imdom's parents
-                sources.update(imdom_srcs)
-            else:
-                # Otherwise, continue iterating on the current node's parents
-                stack.extend(n.parents)
+            stack.extend(n.parents)
 
     return sources
 
@@ -1392,17 +1380,22 @@ def nodes_to_flowgraph(
     missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
-        # Calculate register usage for each instruction in this node
+        def add_source_dependencies(dst: Reference, input_loc: Location) -> RefSet:
+            sources = RefSet()
+            for loc, srcs in loc_srcs.items():
+                if locations_alias(loc, input_loc):
+                    sources.update(srcs)
+            for src in sources:
+                flow_graph.add_dependency(dst=dst, loc=input_loc, src=src)
+            return sources
 
+        # Calculate register usage for each instruction in this node
         for ref in node.block.instruction_refs:
             ir = ref.instruction
 
             # Calculate the source of each location
             for inp in ir.inputs:
-                sources = RefSet()
-                for loc, srcs in loc_srcs.items():
-                    if locations_alias(loc, inp):
-                        sources.update(srcs)
+                sources = add_source_dependencies(ref, inp)
                 if isinstance(inp, Register) and sources.is_empty():
                     # Registers must be written to before being read.
                     # If the instruction is a function call and we don't have a source
@@ -1412,11 +1405,8 @@ def nodes_to_flowgraph(
                         ir.inputs.remove(inp)
                     else:
                         missing_regs.append((inp, ref))
-                for src in sources:
-                    flow_graph.add_dependency(ref, inp, src)
 
-            # Remove any clobbered locations, or any MemoryLocations that depend on
-            # clobbered Registers. Ex: If `$v0` is clobbered, remove `$v0` and `4($v0)`
+            # Remove any clobbered locations
             for clob in ir.clobbers + ir.outputs:
                 for loc in loc_srcs:
                     if locations_alias(loc, clob):
@@ -1427,41 +1417,36 @@ def nodes_to_flowgraph(
             for out in ir.outputs:
                 loc_srcs[out] = RefSet([ref])
 
-        # Translate everything dominated by this node, now that we know our own
-        # final register flow_graph. This will eventually reach every node.
+        # If this is a TerminalNode, it has no instructions; instead add dependencies
+        # for the (potential) return registers of the function
+        if isinstance(node, TerminalNode):
+            assert not node.block.instruction_refs
+            for reg in arch.all_return_regs:
+                add_source_dependencies("epilogue", reg)
+
+        # Process everything dominated by this node, now that we know our own
+        # register sources. This will eventually reach every node.
         for child in node.immediately_dominates:
             child_loc_srcs = loc_srcs.copy()
 
             for loc in locs_clobbered_until_dominator(child):
                 phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
-                if phi_reg_srcs is not None:
-                    # If phi_reg_srcs is empty, then the loc is inconsistently set, so it should
-                    # not be used by the child node.
-                    # Otherwise, it *is* set in every control flow path to the child node, so
-                    # it can be used (but it will have a phi value)
+                if phi_reg_srcs:
+                    # If phi_reg_srcs is non-empty, then loc is set in every control flow path
+                    # to the child node (but it may have a phi value)
                     child_loc_srcs[loc] = phi_reg_srcs
                 elif loc in child_loc_srcs:
+                    # Otherwise, it's not always set, and cannot be used by the child node
                     child_loc_srcs.remove(loc)
 
             process_node(child, child_loc_srcs)
-
-        if isinstance(node, TerminalNode):
-            assert not node.block.instruction_refs
-            for inp in arch.all_return_regs:
-                sources = RefSet()
-                for loc, srcs in loc_srcs.items():
-                    if locations_alias(loc, inp):
-                        sources.update(srcs)
-                for src in sources:
-                    flow_graph.add_dependency("epilogue", inp, src)
 
     # Set all the registers that are valid to access at the start of a function
     entry_reg_srcs = LocationRefSetDict()
     for r in arch.all_regs:
         entry_reg_srcs.refs[r] = RefSet.special("prologue")
 
-    # Recursively traverse every node, starting with the entry node
-    # This populates in node.block.phis and instr_inputs
+    # Recursively traverse every node, starting with the entry node, populating instr_inputs
     entry_node = flow_graph.entry_node()
     process_node(entry_node, entry_reg_srcs)
 

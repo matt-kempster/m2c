@@ -211,8 +211,6 @@ class InstructionMeta:
     lineno: int
     # True if the Instruction is not directly from the source asm
     synthetic: bool
-    # True if the Instruction was part of a matched IR pattern, but not elided
-    in_pattern: bool
 
     @staticmethod
     def missing() -> "InstructionMeta":
@@ -221,7 +219,6 @@ class InstructionMeta:
             filename="<unknown>",
             lineno=0,
             synthetic=True,
-            in_pattern=False,
         )
 
     def derived(self) -> "InstructionMeta":
@@ -257,6 +254,9 @@ class Instruction:
     # bools should be merged into a 3-valued enum?)
     has_delay_slot: bool = False
     is_branch_likely: bool = False
+
+    # True if the Instruction was part of a matched IR pattern, but not elided
+    in_pattern: bool = False
 
     def is_jump(self) -> bool:
         return self.jump_target is not None or self.is_return

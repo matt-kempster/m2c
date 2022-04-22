@@ -185,7 +185,7 @@ class IrMatch:
 
     def map_instruction(self, key: Instruction, arch: ArchFlowGraph) -> Instruction:
         return arch.parse(
-            key.mnemonic, [self.map_arg(a) for a in key.args], key.meta.derived()
+            key.mnemonic, [self.map_arg(a) for a in key.args], InstructionMeta.missing()
         )
 
 
@@ -418,7 +418,9 @@ def simplify_ir_patterns(
 
                 # Update the instr_inputs/instr_uses graph
                 for src_ref in flow_graph.instr_inputs[input_use_ref].get(original_reg):
-                    flow_graph.add_dependency(move_ref, original_reg, src_ref)
+                    flow_graph.add_dependency(
+                        dst=move_ref, loc=original_reg, src=src_ref
+                    )
 
             # Rewrite the final instruction with the pattern's replacement instruction.
             repl_ref = state.map_ref(tail_ref)
@@ -428,23 +430,22 @@ def simplify_ir_patterns(
             # Reset repl_ref's dependencies, then repopulate them from temp_reg_refs
             flow_graph.remove_dependencies(repl_ref)
             for temp_reg, temp_ref in temp_reg_refs.items():
-                flow_graph.add_dependency(repl_ref, temp_reg, temp_ref)
+                flow_graph.add_dependency(dst=repl_ref, loc=temp_reg, src=temp_ref)
 
             # For the rest of the instructions in the pattern body, take any instructions
             # whose outputs aren't used later and replace them with nops.
             for pat_ref in body_refs[::-1]:
                 cand_ref = state.map_ref(pat_ref)
-                cand_instr = cand_ref.instruction
 
                 if flow_graph.instr_uses[cand_ref].is_empty():
                     # Replace cand_ref with a nop, and clear its dependencies
-                    nop_instr = arch.parse("nop", [], cand_instr.meta.derived())
-                    cand_ref.replace_instruction(nop_instr)
+                    nop = arch.parse("nop", [], InstructionMeta.missing())
+                    cand_ref.replace_instruction(nop)
                     flow_graph.remove_dependencies(cand_ref)
-                elif not cand_instr.meta.in_pattern:
+                elif not cand_ref.instruction.in_pattern:
                     # It needs to be kept; but ensure the meta.in_pattern flag is set
                     cand_ref.instruction = replace(
-                        cand_instr, meta=replace(cand_instr.meta, in_pattern=True)
+                        cand_ref.instruction, in_pattern=True
                     )
 
     # After all of the rewrites above, verify that the instruction dependency

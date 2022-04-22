@@ -482,7 +482,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     filename=filename,
                     lineno=lineno,
                     synthetic=False,
-                    in_pattern=False,
                 )
                 if mips_file.current_function is not None:
                     reg_formatter = mips_file.current_function.reg_formatter

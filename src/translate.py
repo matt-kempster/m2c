@@ -4030,7 +4030,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     def process_instr(instr: Instruction) -> None:
         nonlocal branch_condition, switch_expr, has_function_call, in_pattern
 
-        in_pattern = instr.meta.in_pattern
+        in_pattern = instr.in_pattern
         mnemonic = instr.mnemonic
         arch_mnemonic = instr.arch_mnemonic(arch)
         args = InstrArgs(instr.args, regs, stack_info)
@@ -4178,6 +4178,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 ):
                     likely_regs[reg] = False
                 elif data.meta.in_pattern:
+                    # Like `meta.function_return` mentioned above, `meta.in_pattern` will only be
+                    # accurate for registers set within this basic block.
                     likely_regs[reg] = False
                 elif isinstance(data.value, PassedInArg) and not data.value.copied:
                     likely_regs[reg] = False
