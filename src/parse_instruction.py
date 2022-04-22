@@ -139,7 +139,9 @@ class StackLocation:
 
     @staticmethod
     def from_offset(offset: "Argument") -> Optional["StackLocation"]:
-        align = lambda x: x & ~3
+        def align(x: int) -> int:
+            return x & ~3
+
         if isinstance(offset, AsmLiteral):
             return StackLocation(
                 offset=align(offset.value),
