@@ -114,18 +114,17 @@ Argument = Union[
 @dataclass(frozen=True)
 class StackLocation:
     """
-    Represents a region on the stack. Only used for pattern matching.
+    Represents a word on the stack. Only used for pattern matching.
     `symbolic_offset` represents a label offset that is only used in patterns,
     to represent the "N" in arguments such as `(N+4)($sp)`.
     """
 
     offset: int
     symbolic_offset: Optional[str]
-    size: int
 
     def __str__(self) -> str:
         prefix = "" if self.symbolic_offset is None else f"{self.symbolic_offset}+"
-        return f"{prefix}{self.offset}($sp):{self.size}"
+        return f"{prefix}{self.offset}($sp)"
 
     def offset_as_arg(self) -> "Argument":
         if self.symbolic_offset is None:
@@ -139,18 +138,17 @@ class StackLocation:
         )
 
     @staticmethod
-    def from_offset(offset: "Argument", size: int) -> Optional["StackLocation"]:
+    def from_offset(offset: "Argument") -> Optional["StackLocation"]:
+        align = lambda x: x & ~3
         if isinstance(offset, AsmLiteral):
             return StackLocation(
-                offset=offset.value,
+                offset=align(offset.value),
                 symbolic_offset=None,
-                size=size,
             )
         if isinstance(offset, AsmGlobalSymbol):
             return StackLocation(
                 offset=0,
                 symbolic_offset=offset.symbol_name,
-                size=size,
             )
         if (
             isinstance(offset, BinOp)
@@ -162,9 +160,8 @@ class StackLocation:
             if offset.op == "-":
                 base = -base
             return StackLocation(
-                offset=base,
+                offset=align(base),
                 symbolic_offset=offset.lhs.symbol_name,
-                size=size,
             )
         return None
 
@@ -174,20 +171,7 @@ Location = Union[Register, StackLocation]
 
 def locations_alias(left: Location, right: Location) -> bool:
     """Return True if `left` & `right` refer to the same register or overlapping stack locations."""
-    if isinstance(left, Register):
-        return left == right
-    elif isinstance(left, StackLocation):
-        if (
-            not isinstance(right, StackLocation)
-            or left.symbolic_offset != right.symbolic_offset
-        ):
-            return False
-        return (
-            left.offset < right.offset + right.size
-            and right.offset < left.offset + left.size
-        )
-    else:
-        static_assert_unreachable(left)
+    return left == right
 
 
 @dataclass(frozen=True)

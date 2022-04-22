@@ -178,7 +178,7 @@ class IrMatch:
         if isinstance(key, Register):
             return self.map_reg(key)
         if isinstance(key, StackLocation):
-            loc = StackLocation.from_offset(self.map_arg(key.offset_as_arg()), key.size)
+            loc = StackLocation.from_offset(self.map_arg(key.offset_as_arg()))
             assert loc is not None
             return loc
         static_assert_unreachable(key)

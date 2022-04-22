@@ -1,3 +1,4 @@
+from dataclasses import replace
 import typing
 from typing import (
     Dict,
@@ -687,8 +688,13 @@ class MipsArch(Arch):
         def make_memory_access(arg: Argument) -> List[Location]:
             assert size is not None
             if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
-                loc = StackLocation.from_offset(arg.lhs, size)
-                if loc is not None:
+                loc = StackLocation.from_offset(arg.lhs)
+                if loc is None:
+                    return []
+                elif size == 8:
+                    return [loc, replace(loc, offset=loc.offset + 4)]
+                else:
+                    assert size <= 4
                     return [loc]
             return []
 

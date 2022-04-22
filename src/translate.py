@@ -211,7 +211,7 @@ class StackInfo:
     is_variadic: bool = False
     uses_framepointer: bool = False
     subroutine_arg_top: int = 0
-    callee_save_reg_locations: Dict[Register, int] = field(default_factory=dict)
+    callee_save_regs: Set[Register] = field(default_factory=set)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
     unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
     local_vars: List["LocalVar"] = field(default_factory=list)
@@ -447,7 +447,7 @@ class StackInfo:
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
                 f"Bounds of callee-saved vars region: {self.callee_save_reg_region}",
-                f"Locations of callee save registers: {self.callee_save_reg_locations}",
+                f"Callee save registers: {self.callee_save_regs}",
             ]
         )
 
@@ -471,7 +471,7 @@ def get_stack_info(
     # assumes that the compiler will never reuse a section of stack for *both*
     # a local variable *and* a subroutine argument.) Anything within the stack frame,
     # but outside of these two regions, is considered a local variable.
-    callee_saved_offset_and_size: List[Tuple[int, int]] = []
+    callee_saved_offsets: List[int] = []
     # Track simple literal values stored into registers: MIPS compilers need a temp
     # reg to move the stack pointer more than 0x7FFF bytes.
     temp_reg_values: Dict[Register, int] = {}
@@ -523,7 +523,7 @@ def get_stack_info(
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs == arch.stack_pointer_reg
             and (
-                inst.args[0] not in info.callee_save_reg_locations
+                inst.args[0] not in info.callee_save_regs
                 or arch_mnemonic == "ppc:psq_st"
             )
         ):
@@ -542,8 +542,8 @@ def get_stack_info(
                     if arch_mnemonic != "ppc:psq_st":
                         # psq_st instructions store the same register as stfd, just
                         # as packed singles instead. Prioritize the stfd.
-                        info.callee_save_reg_locations[reg] = stack_offset
-                    callee_saved_offset_and_size.append((stack_offset, mem.size))
+                        info.callee_save_regs.add(reg)
+                    callee_saved_offsets.append(stack_offset)
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
@@ -587,9 +587,9 @@ def get_stack_info(
                     )
 
         # Compute the bounds of the callee-saved register region, including padding
-        if callee_saved_offset_and_size:
-            callee_saved_offset_and_size.sort()
-            bottom, last_size = callee_saved_offset_and_size[0]
+        if callee_saved_offsets:
+            callee_saved_offsets.sort()
+            bottom = callee_saved_offsets[0]
 
             # Both IDO & GCC save registers in two subregions:
             # (a) One for double-sized registers
@@ -599,22 +599,17 @@ def get_stack_info(
             # 4-byte word between subregions.
             top = bottom
             internal_padding_added = False
-            for offset, size in callee_saved_offset_and_size:
+            for offset in callee_saved_offsets:
                 if offset != top:
-                    if (
-                        not internal_padding_added
-                        and size != last_size
-                        and offset == top + 4
-                    ):
+                    if not internal_padding_added and offset == top + 4:
                         internal_padding_added = True
                     else:
                         raise DecompFailure(
                             f"Gap in callee-saved word stack region. "
-                            f"Saved: {callee_saved_offset_and_size}, "
+                            f"Saved: {callee_saved_offsets}, "
                             f"gap at: {offset} != {top}."
                         )
-                top = offset + size
-                last_size = size
+                top = offset + 4
             info.callee_save_reg_region = (bottom, top)
 
             # Subroutine arguments must be at the very bottom of the stack, so they
@@ -3971,7 +3966,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if (
                 isinstance(node, ReturnNode)
                 and stack_info.maybe_get_register_var(reg)
-                and (stack_info.callee_save_reg_locations.get(reg) == expr.value)
+                and stack_info.in_callee_save_reg_region(expr.value)
+                and reg in stack_info.callee_save_regs
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
