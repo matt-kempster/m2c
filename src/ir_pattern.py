@@ -1,7 +1,6 @@
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from itertools import permutations
 from typing import ClassVar, Dict, List, Optional, TypeVar
 
 from .error import static_assert_unreachable
@@ -116,7 +115,7 @@ class IrMatch:
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
-    ref_map: Dict[Reference, Reference] = field(default_factory=dict)
+    ref_map: Dict[Reference, RefSet] = field(default_factory=dict)
 
     def eval_math(self, pat: Argument) -> int:
         # This function can only evaluate math in *patterns*, not candidate
@@ -167,12 +166,17 @@ class IrMatch:
         assert False, f"bad pattern part: {key}"
 
     def map_ref(self, key: Reference) -> InstrRef:
-        value = self.ref_map[key]
+        refset = self.ref_map[key]
+        assert refset is not None
+        value = refset.get_unique()
         assert isinstance(value, InstrRef)
         return value
 
     def try_map_ref(self, key: Reference) -> Optional[Reference]:
-        return self.ref_map.get(key)
+        refset = self.ref_map.get(key)
+        if refset is None:
+            return None
+        return refset.get_unique()
 
     def map_location(self, key: Location) -> Location:
         if isinstance(key, Register):
@@ -250,54 +254,25 @@ class TryIrMatch(IrMatch):
             return False
         return all(self.match_arg(*args) for args in zip(pat.args, cand.args))
 
-    def match_ref(self, pat: Reference, cand: Reference) -> bool:
+    def match_refset(self, pat_set: RefSet, cand_set: RefSet) -> bool:
+        pat = pat_set.get_unique()
+        assert pat is not None
+
+        cand = cand_set.get_unique()
         if isinstance(pat, str) and isinstance(cand, str):
             return pat == cand
-        return self._match_var(self.ref_map, pat, cand)
 
-    def permute_and_match_refset(self, pat: RefSet, cand: RefSet) -> List["TryIrMatch"]:
-        """
-        Return a list of all possible TryIrMatch states, where every ref in `pat` is
-        matched to a unique ref in `cand`. This may modify the original TryIrMatch object.
-        Although this function is technically exponential in the size of `pat`, it
-        usually only contains a single ref.
-        """
-        if len(pat) > len(cand):
-            # Pigeonhole principle: there can't be a unique ref in `cand` for each ref in `pat`
-            return []
-        if len(pat) == 0:
-            # Vacuous special case: nothing to match
-            return [self]
-        pat_unique = pat.get_unique()
-        cand_unique = cand.get_unique()
-        if pat_unique is not None and cand_unique is not None:
-            # Optimization for the most common case to avoid a copy
-            if self.match_ref(pat_unique, cand_unique):
-                return [self]
-            return []
+        return self._match_var(self.ref_map, pat, cand_set.copy())
 
-        matches = []
-        for cand_perm in permutations(cand, len(pat)):
-            state = self.copy()
-            for p, c in zip(pat, cand_perm):
-                if not state.match_ref(p, c):
-                    break
-            else:
-                matches.append(state)
-        return matches
-
-    def permute_and_match_inputrefs(
+    def match_inputrefs(
         self, pat: LocationRefSetDict, cand: LocationRefSetDict
-    ) -> List["TryIrMatch"]:
-        matches = [self]
+    ) -> bool:
         for pat_loc, pat_refs in pat.items():
             cand_loc = self.map_location(pat_loc)
             cand_refs = cand.get(cand_loc)
-            new_matches = []
-            for state in matches:
-                new_matches.extend(state.permute_and_match_refset(pat_refs, cand_refs))
-            matches = new_matches
-        return matches
+            if not self.match_refset(pat_refs, cand_refs):
+                return False
+        return True
 
     def rename_reg(self, pat: Register, new_reg: Register) -> None:
         assert pat.register_name in self.symbolic_registers
@@ -359,7 +334,7 @@ def simplify_ir_patterns(
         tail_inputs = pattern.flow_graph.instr_inputs[tail_ref]
         for cand_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
             state = TryIrMatch()
-            if state.match_ref(tail_ref, cand_ref):
+            if state.match_refset(RefSet([tail_ref]), RefSet([cand_ref])):
                 try_matches.append(state)
 
         # Continue matching by working backwards through the pattern
@@ -376,11 +351,12 @@ def simplify_ir_patterns(
                     continue
                 if not state.match_instr(pat_ref.instruction, cand.instruction):
                     continue
-                states = state.permute_and_match_inputrefs(
+                if not state.match_inputrefs(
                     pat_inputs,
                     flow_graph.instr_inputs[cand],
-                )
-                next_try_matches.extend(states)
+                ):
+                    continue
+                next_try_matches.append(state)
             try_matches = next_try_matches
 
         for n, state in enumerate(try_matches):

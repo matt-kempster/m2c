@@ -34,7 +34,6 @@ from .parse_instruction import (
     Macro,
     Register,
     StackLocation,
-    locations_alias,
 )
 from .asm_pattern import simplify_patterns, AsmPattern
 
@@ -1381,10 +1380,7 @@ def nodes_to_flowgraph(
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
         def add_source_dependencies(dst: Reference, input_loc: Location) -> RefSet:
-            sources = RefSet()
-            for loc, srcs in loc_srcs.items():
-                if locations_alias(loc, input_loc):
-                    sources.update(srcs)
+            sources = loc_srcs.get(input_loc)
             for src in sources:
                 flow_graph.add_dependency(dst=dst, loc=input_loc, src=src)
             return sources
@@ -1408,10 +1404,8 @@ def nodes_to_flowgraph(
 
             # Remove any clobbered locations
             for clob in ir.clobbers + ir.outputs:
-                for loc in loc_srcs:
-                    if locations_alias(loc, clob):
-                        loc_srcs.remove(loc)
-                        break
+                if clob in loc_srcs:
+                    loc_srcs.remove(clob)
 
             # Mark outputs as coming from this instruction
             for out in ir.outputs:

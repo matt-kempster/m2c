@@ -171,11 +171,6 @@ class StackLocation:
 Location = Union[Register, StackLocation]
 
 
-def locations_alias(left: Location, right: Location) -> bool:
-    """Return True if `left` & `right` refer to the same register or overlapping stack locations."""
-    return left == right
-
-
 @dataclass(frozen=True)
 class AsmInstruction:
     mnemonic: str
