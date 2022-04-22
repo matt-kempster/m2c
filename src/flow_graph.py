@@ -1392,15 +1392,17 @@ def nodes_to_flowgraph(
             # Calculate the source of each location
             for inp in ir.inputs:
                 sources = add_source_dependencies(ref, inp)
-                if isinstance(inp, Register) and sources.is_empty():
-                    # Registers must be written to before being read.
-                    # If the instruction is a function call and we don't have a source
-                    # for the argument, we can prune the argument from the input list.
-                    # Otherwise, this is likely undefined behavior in the original asm
-                    if ir.function_target is not None and inp in arch.argument_regs:
-                        ir.inputs.remove(inp)
-                    else:
-                        missing_regs.append((inp, ref))
+                # Registers must be written to before being read.
+                # Function calls are known to list all possible argument registers,
+                # so they're a common false positive here.
+                # Otherwise, this may indicate that the instruction's inputs were
+                # incorrectly specified (or the instruction isn't fully implemented).
+                if (
+                    isinstance(inp, Register)
+                    and sources.is_empty()
+                    and (ir.function_target is None or inp not in arch.argument_regs)
+                ):
+                    missing_regs.append((inp, ref))
 
             # Remove any clobbered locations
             for clob in ir.clobbers + ir.outputs:
