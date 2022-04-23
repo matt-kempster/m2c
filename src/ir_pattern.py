@@ -187,10 +187,8 @@ class IrMatch:
             return loc
         static_assert_unreachable(key)
 
-    def map_instruction(self, key: Instruction, arch: ArchFlowGraph) -> Instruction:
-        return arch.parse(
-            key.mnemonic, [self.map_arg(a) for a in key.args], InstructionMeta.missing()
-        )
+    def map_asm(self, key: Instruction) -> AsmInstruction:
+        return AsmInstruction(key.mnemonic, [self.map_arg(a) for a in key.args])
 
 
 class TryIrMatch(IrMatch):
@@ -384,12 +382,8 @@ def simplify_ir_patterns(
                 fictive_reg_index += 1
                 state.rename_reg(input_reg, temp_reg)
 
-                move_instr = arch.parse(
-                    "move.fictive",
-                    [temp_reg, original_reg],
-                    input_use_ref.instruction.meta,
-                )
-                move_ref = input_use_ref.add_instruction_before(move_instr)
+                move_asm = AsmInstruction("move.fictive", [temp_reg, original_reg])
+                move_ref = input_use_ref.add_instruction_before(move_asm, arch)
                 temp_reg_refs[temp_reg] = move_ref
 
                 # Update the instr_inputs/instr_uses graph
@@ -400,8 +394,8 @@ def simplify_ir_patterns(
 
             # Rewrite the final instruction with the pattern's replacement instruction.
             repl_ref = state.map_ref(tail_ref)
-            repl_instr = state.map_instruction(pattern.replacement_instr, arch)
-            repl_ref.replace_instruction(repl_instr)
+            repl_asm = state.map_asm(pattern.replacement_instr)
+            repl_ref.replace_instruction(repl_asm, arch)
 
             # Reset repl_ref's dependencies, then repopulate them from temp_reg_refs
             flow_graph.clear_instruction_inputs(repl_ref)
@@ -415,8 +409,8 @@ def simplify_ir_patterns(
 
                 if flow_graph.instr_uses[cand_ref].is_empty():
                     # Replace cand_ref with a nop, and clear its dependencies
-                    nop = arch.parse("nop", [], InstructionMeta.missing())
-                    cand_ref.replace_instruction(nop)
+                    nop_asm = AsmInstruction("nop", [])
+                    cand_ref.replace_instruction(nop_asm, arch)
                     flow_graph.clear_instruction_inputs(cand_ref)
                 elif not cand_ref.instruction.in_pattern:
                     # It needs to be kept; but ensure the meta.in_pattern flag is set

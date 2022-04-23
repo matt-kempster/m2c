@@ -1,7 +1,7 @@
 import abc
 import copy
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Callable,
@@ -25,6 +25,7 @@ from .parse_instruction import (
     ArchAsm,
     AsmAddressMode,
     AsmGlobalSymbol,
+    AsmInstruction,
     AsmLiteral,
     BinOp,
     Instruction,
@@ -59,20 +60,25 @@ class InstrRef:
     def __repr__(self) -> str:
         return f"(line {self.instruction.meta.lineno})"
 
-    def add_instruction_before(self, instr: Instruction) -> "InstrRef":
-        """Add `instr` into the parent assembly before this instruction"""
+    def add_instruction_before(
+        self, asm: AsmInstruction, arch: ArchFlowGraph
+    ) -> "InstrRef":
+        """Add `asm` into the parent assembly before this instruction"""
+        instr = arch.parse(asm.mnemonic, asm.args, self.instruction.meta.derived())
         ref = InstrRef(instr, self.block)
         index = self.block.instruction_refs.index(self)
         self.block.instruction_refs.insert(index, ref)
         return ref
 
-    def replace_instruction(self, new_instr: Instruction) -> None:
-        # Copy over old outputs/clobbers into new_instr.clobbers
+    def replace_instruction(self, new_asm: AsmInstruction, arch: ArchFlowGraph) -> None:
         old_instr = self.instruction
+        new_instr = arch.parse(new_asm.mnemonic, new_asm.args, old_instr.meta.derived())
+
+        # Copy over old outputs/clobbers into new_instr.clobbers
         for loc in old_instr.outputs + old_instr.clobbers:
             if loc not in new_instr.clobbers:
                 new_instr.clobbers.append(loc)
-        self.instruction = replace(new_instr, meta=old_instr.meta)
+        self.instruction = new_instr
 
 
 @dataclass(eq=False)
