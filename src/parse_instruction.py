@@ -2,12 +2,11 @@
 """
 import abc
 from contextlib import contextmanager
-import csv
 from dataclasses import dataclass, field, replace
 import string
 from typing import Dict, Iterator, List, Optional, Set, Union
 
-from .error import DecompFailure, static_assert_unreachable
+from .error import DecompFailure
 from .options import Target
 
 
@@ -196,10 +195,7 @@ class InstructionMeta:
     @staticmethod
     def missing() -> "InstructionMeta":
         return InstructionMeta(
-            emit_goto=False,
-            filename="<unknown>",
-            lineno=0,
-            synthetic=True,
+            emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
         )
 
     def derived(self) -> "InstructionMeta":

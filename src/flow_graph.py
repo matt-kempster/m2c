@@ -15,7 +15,6 @@ from typing import (
     Set,
     Tuple,
     Union,
-    ValuesView,
 )
 
 from .error import DecompFailure
@@ -34,7 +33,6 @@ from .parse_instruction import (
     Location,
     Macro,
     Register,
-    StackLocation,
 )
 from .asm_pattern import simplify_patterns, AsmPattern
 
@@ -1097,9 +1095,6 @@ class RefSet:
     def is_empty(self) -> bool:
         return not self
 
-    def is_unique(self) -> bool:
-        return len(self.refs) == 1
-
     def get_unique(self) -> Optional[Reference]:
         if len(self.refs) == 1:
             return self.refs[0]
@@ -1118,9 +1113,6 @@ class RefSet:
 
     def copy(self) -> "RefSet":
         return RefSet(refs=self.refs.copy())
-
-    def __repr__(self) -> str:
-        return repr(self.refs)
 
     def __contains__(self, ref: Reference) -> bool:
         return ref in self.refs
@@ -1156,35 +1148,20 @@ class LocationRefSetDict:
         else:
             self.refs[loc].add(ref)
 
-    def extend(self, loc: Location, refs: RefSet) -> None:
-        if loc not in self:
-            self.refs[loc] = refs.copy()
-        else:
-            self.refs[loc].update(refs)
-
     def remove(self, loc: Location) -> None:
         self.refs.pop(loc, None)
 
     def copy(self) -> "LocationRefSetDict":
         return LocationRefSetDict(refs=self.refs.copy())
 
-    def update(self, other: "LocationRefSetDict") -> None:
-        self.refs.update(other.refs)
-
     def items(self) -> ItemsView[Location, RefSet]:
         return self.refs.items()
 
-    def values(self) -> ValuesView[RefSet]:
-        return self.refs.values()
-
     def is_empty(self) -> bool:
-        return all(not v for v in self.values())
+        return all(not v for v in self.refs.values())
 
     def __contains__(self, key: Location) -> bool:
         return bool(self.get(key))
-
-    def __iter__(self) -> Iterator[Location]:
-        return iter(self.refs)
 
     def __setitem__(self, key: Location, value: RefSet) -> None:
         self.refs[key] = value
@@ -1419,7 +1396,7 @@ def nodes_to_flowgraph(
 
             # Mark outputs as coming from this instruction
             for out in ir.outputs:
-                loc_srcs[out] = RefSet([ref])
+                loc_srcs.add(out, ref)
 
         # If this is a TerminalNode, it has no instructions; instead add dependencies
         # for the (potential) return registers of the function

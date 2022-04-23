@@ -12,7 +12,6 @@ from .parse_instruction import (
     ArchAsm,
     Instruction,
     InstructionMeta,
-    Location,
     RegFormatter,
     parse_instruction,
 )
