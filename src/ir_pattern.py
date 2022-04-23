@@ -394,8 +394,8 @@ def simplify_ir_patterns(
 
                 # Update the instr_inputs/instr_uses graph
                 for src_ref in flow_graph.instr_inputs[input_use_ref].get(original_reg):
-                    flow_graph.add_dependency(
-                        dst=move_ref, loc=original_reg, src=src_ref
+                    flow_graph.add_instruction_use(
+                        use=move_ref, loc=original_reg, src=src_ref
                     )
 
             # Rewrite the final instruction with the pattern's replacement instruction.
@@ -404,9 +404,9 @@ def simplify_ir_patterns(
             repl_ref.replace_instruction(repl_instr)
 
             # Reset repl_ref's dependencies, then repopulate them from temp_reg_refs
-            flow_graph.remove_dependencies(repl_ref)
+            flow_graph.clear_instruction_inputs(repl_ref)
             for temp_reg, temp_ref in temp_reg_refs.items():
-                flow_graph.add_dependency(dst=repl_ref, loc=temp_reg, src=temp_ref)
+                flow_graph.add_instruction_use(use=repl_ref, loc=temp_reg, src=temp_ref)
 
             # For the rest of the instructions in the pattern body, take any instructions
             # whose outputs aren't used later and replace them with nops.
@@ -417,7 +417,7 @@ def simplify_ir_patterns(
                     # Replace cand_ref with a nop, and clear its dependencies
                     nop = arch.parse("nop", [], InstructionMeta.missing())
                     cand_ref.replace_instruction(nop)
-                    flow_graph.remove_dependencies(cand_ref)
+                    flow_graph.clear_instruction_inputs(cand_ref)
                 elif not cand_ref.instruction.in_pattern:
                     # It needs to be kept; but ensure the meta.in_pattern flag is set
                     cand_ref.instruction = replace(
@@ -426,4 +426,4 @@ def simplify_ir_patterns(
 
     # After all of the rewrites above, verify that the instruction dependency
     # data structures are still consistent
-    flow_graph.validate_dependencies()
+    flow_graph.validate_instruction_graph()

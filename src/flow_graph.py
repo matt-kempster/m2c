@@ -1277,19 +1277,21 @@ class FlowGraph:
         for node in self.nodes:
             node.block.block_info = None
 
-    def add_dependency(self, *, dst: Reference, loc: Location, src: Reference) -> None:
-        """Update instr_inputs/instr_uses that `dst` depends on `loc` from `src`"""
-        self.instr_inputs[dst].add(loc, src)
-        self.instr_uses[src].add(loc, dst)
+    def add_instruction_use(
+        self, *, use: Reference, loc: Location, src: Reference
+    ) -> None:
+        """Update instr_inputs/instr_uses that `use` depends on `loc` from `src`"""
+        self.instr_inputs[use].add(loc, src)
+        self.instr_uses[src].add(loc, use)
 
-    def remove_dependencies(self, ref: Reference) -> None:
+    def clear_instruction_inputs(self, ref: Reference) -> None:
         """Remove all inputs for `ref` from instr_inputs/instr_uses"""
         for loc, uses in self.instr_inputs[ref].items():
             for use in uses:
                 self.instr_uses[use].get(loc).remove(ref)
         self.instr_inputs.pop(ref)
 
-    def validate_dependencies(self) -> None:
+    def validate_instruction_graph(self) -> None:
         """Verify that the instr_inputs & instr_uses dicts are consistent"""
         # Recompute instr_uses from instr_inputs as new_uses
         new_uses: DefaultDict[Reference, LocationRefSetDict] = defaultdict(
@@ -1308,10 +1310,10 @@ class FlowGraph:
 
 def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> RefSet:
     """
-    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi
+    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
 
-    Otherwise, return None. This analysis is accurate when `loc` is a Register, but
-    is only best-effort for local variables: it will miss local array accesses and
+    Otherwise, return an empty set. This analysis is accurate when `loc` is a Register,
+    but is only best-effort for local variables: it will miss local array accesses and
     stack pointers passed to functions.
     """
     assert node.immediate_dominator is not None
@@ -1379,10 +1381,10 @@ def nodes_to_flowgraph(
     missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
-        def add_source_dependencies(dst: Reference, input_loc: Location) -> RefSet:
+        def add_source_uses(use: Reference, input_loc: Location) -> RefSet:
             sources = loc_srcs.get(input_loc)
             for src in sources:
-                flow_graph.add_dependency(dst=dst, loc=input_loc, src=src)
+                flow_graph.add_instruction_use(use=use, loc=input_loc, src=src)
             return sources
 
         # Calculate register usage for each instruction in this node
@@ -1391,7 +1393,7 @@ def nodes_to_flowgraph(
 
             # Calculate the source of each location
             for inp in ir.inputs:
-                sources = add_source_dependencies(ref, inp)
+                sources = add_source_uses(ref, inp)
                 # Registers must be written to before being read.
                 # Function calls are known to list all possible argument registers,
                 # so they're a common false positive here.
@@ -1418,7 +1420,7 @@ def nodes_to_flowgraph(
         if isinstance(node, TerminalNode):
             assert not node.block.instruction_refs
             for reg in arch.all_return_regs:
-                add_source_dependencies("epilogue", reg)
+                add_source_uses("epilogue", reg)
 
         # Process everything dominated by this node, now that we know our own
         # register sources. This will eventually reach every node.
