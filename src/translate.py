@@ -3039,20 +3039,20 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
                 right=Literal(new_denom),
             )
 
-    # Detect `%`: (x - ((x / N) * N)) --> x % N
+    # Detect `%`: (x - ((x / y) * y)) --> x % y
     if expr.op == "-" and isinstance(right_expr, BinaryOp) and right_expr.op == "*":
         div_expr = early_unwrap_ints(right_expr.left)
         mod_base = early_unwrap_ints(right_expr.right)
         if (
             isinstance(div_expr, BinaryOp)
             and early_unwrap_ints(div_expr.left) == left_expr
-            and isinstance(mod_base, Literal)
         ):
-            # Accept either `(x / N) * N` or `(x >> N) * M` (where `1 << N == M`)
+            # Accept either `(x / y) * y` or `(x >> N) * M` (where `1 << N == M`)
             divisor = early_unwrap_ints(div_expr.right)
             if (div_expr.op == "/" and divisor == mod_base) or (
                 div_expr.op == ">>"
                 and isinstance(divisor, Literal)
+                and isinstance(mod_base, Literal)
                 and (1 << divisor.value) == mod_base.value
             ):
                 return BinaryOp.int(left=left_expr, op="%", right=right_expr.right)
