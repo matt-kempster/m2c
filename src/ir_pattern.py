@@ -328,39 +328,30 @@ def simplify_ir_patterns(
         assert len(pattern.replacement_instr.outputs) == 1
         assert pattern.replacement_instr.outputs == tail_ref.instruction.outputs
 
-        # Start the matching by finding all possible matches for the last instruction
-        try_matches = []
-        tail_inputs = pattern.flow_graph.instr_inputs[tail_ref]
-        for cand_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
+        # Start matches with a mnemonic match for the last instruction in the pattern
+        for cand_tail_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
             state = TryIrMatch()
-            if state.match_refset(tail_ref, RefSet([cand_ref])):
-                try_matches.append(state)
+            if not state.match_refset(tail_ref, RefSet([cand_tail_ref])):
+                continue
 
-        # Continue matching by working backwards through the pattern
-        for pat_ref in [tail_ref] + body_refs[::-1]:
-            pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
-
-            next_try_matches = []
-            for state in try_matches:
+            # Continue matching by working backwards through the pattern
+            is_match = True
+            for pat_ref in [tail_ref] + body_refs[::-1]:
                 # By pattern construction, pat_ref should be in the state's ref_map
                 # (It would be missing for "disjoint" or irrelevant instructions in the
                 # pattern, like random nops: these aren't allowed)
                 cand = state.try_map_ref(pat_ref)
-                if not isinstance(cand, InstrRef):
-                    continue
-                if not state.match_instr(pat_ref.instruction, cand.instruction):
-                    continue
-                if not state.match_inputrefs(
-                    pat_inputs,
-                    flow_graph.instr_inputs[cand],
+                pat_inputs = pattern.flow_graph.instr_inputs[pat_ref]
+                if not (
+                    isinstance(cand, InstrRef)
+                    and state.match_instr(pat_ref.instruction, cand.instruction)
+                    and state.match_inputrefs(pat_inputs, flow_graph.instr_inputs[cand])
                 ):
-                    continue
-                next_try_matches.append(state)
-            try_matches = next_try_matches
+                    is_match = False
+                    break
 
-        for n, state in enumerate(try_matches):
             # Perform any additional pattern-specific validation
-            if not pattern.source.check(state):
+            if not is_match or not pattern.source.check(state):
                 continue
 
             # Create temporary registers for the inputs to the replacement_instr.
