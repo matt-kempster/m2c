@@ -3,7 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import ClassVar, Dict, List, Optional, TypeVar
 
-from .error import static_assert_unreachable
+from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     ArchFlowGraph,
     BaseNode,
@@ -66,8 +66,9 @@ class IrPattern(abc.ABC):
 
         name = f"__pattern_{self.__class__.__name__}"
         func = Function(name=name)
-        # Add a fictive nop instruction for each input to the replacement_instr
-        # This acts as a placeholder Reference to represent where the input was set
+        # Add a fictive nop instruction for each input to the replacement_instr.
+        # This acts as a placeholder Reference to represent where the input was set,
+        # and allows each input to be sourced from a different Reference.
         assert len(replacement_instr.inputs) == len(
             set(replacement_instr.inputs)
         ), "pattern inputs must be unique"
@@ -109,7 +110,10 @@ class IrMatch:
     """
     IrMatch represents the matched state of an IrPattern.
     This object is considered read-only; none of its methods modify its state.
-    Its `map_*` methods take a pattern part and return the matched instruction part.
+    The `map_*` methods take a pattern part and return the matched part of the original asm.
+
+    Single-letter registers and all-uppercase symbols in patternsare symbolic,
+    whereas other registers and symbols are matched literally.
     """
 
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
@@ -136,12 +140,14 @@ class IrMatch:
                 pat.symbol_name in self.symbolic_args
             ), f"undefined variable in math pattern: {pat.symbol_name}"
             lit = self.symbolic_args[pat.symbol_name]
-            assert isinstance(lit, AsmLiteral)
+            if not isinstance(lit, AsmLiteral):
+                raise DecompFailure(f"cannot evaluate math with {pat} as {lit}")
             return lit.value
         else:
             assert False, f"bad pattern expr: {pat}"
 
     def map_reg(self, key: Register) -> Register:
+        # Single-letter registers are symbolic; everything else is literal
         if len(key.register_name) <= 1:
             return self.symbolic_registers[key.register_name]
         return key
@@ -152,6 +158,7 @@ class IrMatch:
         if isinstance(key, Register):
             return self.map_reg(key)
         if isinstance(key, AsmGlobalSymbol):
+            # Uppercase symbols are symbolic; everything else is literal
             if key.symbol_name.isupper():
                 return self.symbolic_args[key.symbol_name]
             return key
@@ -195,19 +202,11 @@ class TryIrMatch(IrMatch):
     """
     TryIrMatch represents the partial (in-progress) match state of an IrPattern.
     Unlike IrMatch, all of its `match_*` methods may modify its internal state.
-    These all take a pair of arguments: pattern part, and candidate part.
+    These all take a pair of arguments: pattern part, and candidate asm part.
     """
 
     K = TypeVar("K")
     V = TypeVar("V")
-
-    def copy(self) -> "TryIrMatch":
-        return TryIrMatch(
-            symbolic_registers=self.symbolic_registers.copy(),
-            symbolic_labels=self.symbolic_labels.copy(),
-            symbolic_args=self.symbolic_args.copy(),
-            ref_map=self.ref_map.copy(),
-        )
 
     def _match_var(self, var_map: Dict[K, V], key: K, value: V) -> bool:
         if key in var_map:
@@ -221,18 +220,17 @@ class TryIrMatch(IrMatch):
         if isinstance(pat, AsmLiteral):
             return pat == cand
         if isinstance(pat, Register):
-            # Single-letter registers are symbolic
+            # Single-letter registers are symbolic; everything else is literal
             if len(pat.register_name) > 1:
                 return pat == cand
             if not isinstance(cand, Register):
                 return False
             return self._match_var(self.symbolic_registers, pat.register_name, cand)
         if isinstance(pat, AsmGlobalSymbol):
-            # Uppercase AsmGlobalSymbols are symbolic
+            # Uppercase symbols are symbolic; everything else is literal
             if pat.symbol_name.isupper():
                 return self._match_var(self.symbolic_args, pat.symbol_name, cand)
-            else:
-                return pat == cand
+            return pat == cand
         if isinstance(pat, AsmAddressMode):
             return (
                 isinstance(cand, AsmAddressMode)
@@ -244,7 +242,13 @@ class TryIrMatch(IrMatch):
                 self.symbolic_labels, pat.target, cand.target
             )
         if isinstance(pat, BinOp):
-            return isinstance(cand, AsmLiteral) and self.eval_math(pat) == cand.value
+            if not isinstance(cand, AsmLiteral):
+                return False
+            try:
+                return self.eval_math(pat) == cand.value
+            except DecompFailure:
+                return False
+
         assert False, f"bad pattern arg: {pat}"
 
     def match_instr(self, pat: Instruction, cand: Instruction) -> bool:
@@ -278,7 +282,7 @@ class TryIrMatch(IrMatch):
 
 
 def simplify_ir_patterns(
-    arch: ArchFlowGraph, flow_graph: FlowGraph, pattern_classes: List[IrPattern]
+    arch: ArchFlowGraph, flow_graph: FlowGraph, patterns: List[IrPattern]
 ) -> None:
     # Precompute a RefSet for each mnemonic
     refs_by_mnemonic = defaultdict(list)
@@ -289,8 +293,8 @@ def simplify_ir_patterns(
     # Counter used to name temporary registers
     fictive_reg_index = 0
 
-    for pattern_class in pattern_classes:
-        pattern = pattern_class.compile(arch)
+    for pattern_base in patterns:
+        pattern = pattern_base.compile(arch)
 
         # For now, patterns can't have branches: they should only have 2 Nodes,
         # a BaseNode and an (empty) TerminalNode.
@@ -315,7 +319,8 @@ def simplify_ir_patterns(
 
         # For now, pattern inputs must be Registers, not StackLocations. It's not always
         # trivial to create temporary StackLocations in the same way we create temporary
-        # Registers during replacement.
+        # Registers during replacement. (Also, we do not have a way to elide temporary
+        # stack variables during translation like we do with registers.)
         assert all(
             isinstance(inp, Register) for inp in pattern.replacement_instr.inputs
         )
@@ -362,7 +367,9 @@ def simplify_ir_patterns(
             if not pattern.source.check(state):
                 continue
 
-            # Create temporary registers for the inputs to the replacement_instr
+            # Create temporary registers for the inputs to the replacement_instr.
+            # These retain the input register contents even if an unrelated instruction
+            # overwrites the register in the middle of the pattern.
             temp_reg_refs = {}
             for pat_ref in input_refs:
                 assert len(pat_ref.instruction.outputs) == 1

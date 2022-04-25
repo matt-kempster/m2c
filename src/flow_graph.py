@@ -53,15 +53,12 @@ class InstrRef:
     """
 
     instruction: Instruction
-    block: "Block"
-
-    def __repr__(self) -> str:
-        return f"(line {self.instruction.meta.lineno})"
+    block: "Block" = field(repr=False)
 
     def add_instruction_before(
         self, asm: AsmInstruction, arch: ArchFlowGraph
     ) -> "InstrRef":
-        """Add `asm` into the parent assembly before this instruction"""
+        """Add `asm` into the parent assembly before this instruction."""
         instr = arch.parse(asm.mnemonic, asm.args, self.instruction.meta.derived())
         ref = InstrRef(instr, self.block)
         index = self.block.instruction_refs.index(self)
@@ -69,6 +66,8 @@ class InstrRef:
         return ref
 
     def replace_instruction(self, new_asm: AsmInstruction, arch: ArchFlowGraph) -> None:
+        """Replace the existing instruciton with `new_asm`.
+        Previous ouputs & clobbers are added to the new Instruction's clobbers list."""
         old_instr = self.instruction
         new_instr = arch.parse(new_asm.mnemonic, new_asm.args, old_instr.meta.derived())
 
@@ -124,13 +123,9 @@ class BlockBuilder:
         label_name = self.last_label_name
         if self.label_counter > 0:
             label_name += f".{self.label_counter}"
-        block = Block(
-            self.curr_index,
-            self.curr_label,
-            label_name,
-        )
+        block = Block(self.curr_index, self.curr_label, label_name)
         block.instruction_refs.extend(
-            [InstrRef(i, block) for i in self.curr_instructions]
+            InstrRef(i, block) for i in self.curr_instructions
         )
         self.blocks.append(block)
 
@@ -1090,6 +1085,7 @@ class RefSet:
 
     @staticmethod
     def special(name: str) -> "RefSet":
+        """Represent a non-Instruction reference, such as a constant or argument"""
         return RefSet(refs=[name])
 
     def is_empty(self) -> bool:
@@ -1431,13 +1427,6 @@ def nodes_to_flowgraph(
     entry_node = flow_graph.entry_node()
     process_node(entry_node, entry_reg_srcs)
 
-    # Populate instr_uses for each instruction
-    for ref, inputs in flow_graph.instr_inputs.items():
-        for reg, deps in inputs.items():
-            for dep in deps:
-                if isinstance(dep, InstrRef):
-                    flow_graph.instr_uses[dep].add(reg, ref)
-
     if print_warnings and missing_regs:
         print("/*")
         print(f"Warning: in {function.name}, regs were read before being written to:")
@@ -1456,6 +1445,11 @@ def build_flowgraph(
     fragment: bool,
     print_warnings: bool = False,
 ) -> FlowGraph:
+    """
+    Build the FlowGraph for the given Function.
+    If `fragment` is True, do not treat the asm as a full function: this is used
+    for analyzing IR patterns which do not need to be normalized in the same way.
+    """
     blocks = build_blocks(function, asm_data, arch, fragment=fragment)
     nodes = build_nodes(function, blocks, asm_data, arch)
     if not fragment:
