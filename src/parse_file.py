@@ -107,7 +107,7 @@ class MIPSFile:
     current_function: Optional[Function] = field(default=None, repr=False)
     current_data: AsmDataEntry = field(default_factory=AsmDataEntry)
 
-    def new_function(self, name: str, arch: ArchAsm) -> None:
+    def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
         self.functions.append(self.current_function)
 
@@ -341,7 +341,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
                     # glabel that has a branch that goes across?)
                     mips_file.new_label(label)
                 else:
-                    mips_file.new_function(label, arch)
+                    mips_file.new_function(label)
 
         # Check for labels
         while True:

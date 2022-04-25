@@ -44,8 +44,25 @@ class ArchFlowGraph(ArchAsm):
         ...
 
 
+class Reference(abc.ABC):
+    """
+    Reference acts as a pointer to either a specific Instruction, or one of the function's
+    bounds (either before the function is called, or after the function returns)
+    """
+
+
+@dataclass(frozen=True)
+class PrologueRef(Reference):
+    """Reference to anything before the start of a function (e.g. constants, args)"""
+
+
+@dataclass(frozen=True)
+class EpilogueRef(Reference):
+    """Reference to return values of a function"""
+
+
 @dataclass(eq=False)
-class InstrRef:
+class InstrRef(Reference):
     """
     Pointer to an Instruction as part of a Block. Allows other datastructures
     to hold references to a spot in the assembly that remains valid even as
@@ -797,7 +814,7 @@ def build_graph_from_block(
             new_node.successor = build_graph_from_block(
                 branch_block, blocks, nodes, asm_data, arch
             )
-        else:
+        elif block.index + 1 < len(blocks):
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
             new_node = ConditionalNode(block, emit_goto, dummy_node, dummy_node)
@@ -810,6 +827,11 @@ def build_graph_from_block(
             new_node.fallthrough_edge = build_graph_from_block(
                 next_block, blocks, nodes, asm_data, arch
             )
+        else:
+            # The last block should only be a branch for asm with fragment=True
+            # Make a ConditionalNode but set both edges to the TerminalNode
+            new_node = ConditionalNode(block, emit_goto, terminal_node, terminal_node)
+            nodes.append(new_node)
     return new_node
 
 
@@ -1067,11 +1089,6 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
         compute_relations(nodes)
 
 
-# Reference acts as a pointer to either a specific Instruction, or one of the function's
-# bounds (either before the function is called, or after the function returns)
-Reference = Union[InstrRef, str]
-
-
 @dataclass
 class RefSet:
     """A set of References, backed by a list to avoid non-determinism"""
@@ -1082,11 +1099,6 @@ class RefSet:
     def empty() -> "RefSet":
         """Represent a missing reference, such as an unset register"""
         return RefSet(refs=[])
-
-    @staticmethod
-    def special(name: str) -> "RefSet":
-        """Represent a non-Instruction reference, such as a constant or argument"""
-        return RefSet(refs=[name])
 
     def is_empty(self) -> bool:
         return not self
@@ -1360,7 +1372,7 @@ def nodes_to_flowgraph(
     missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
-        def add_source_uses(use: Reference, input_loc: Location) -> RefSet:
+        def add_uses_of_loc(use: Reference, input_loc: Location) -> RefSet:
             sources = loc_srcs.get(input_loc)
             for src in sources:
                 flow_graph.add_instruction_use(use=use, loc=input_loc, src=src)
@@ -1372,7 +1384,7 @@ def nodes_to_flowgraph(
 
             # Calculate the source of each location
             for inp in ir.inputs:
-                sources = add_source_uses(ref, inp)
+                sources = add_uses_of_loc(ref, inp)
                 # Registers must be written to before being read.
                 # Function calls are known to list all possible argument registers,
                 # so they're a common false positive here.
@@ -1399,7 +1411,7 @@ def nodes_to_flowgraph(
         if isinstance(node, TerminalNode):
             assert not node.block.instruction_refs
             for reg in arch.all_return_regs:
-                add_source_uses("epilogue", reg)
+                add_uses_of_loc(EpilogueRef(), reg)
 
         # Process everything dominated by this node, now that we know our own
         # register sources. This will eventually reach every node.
@@ -1421,7 +1433,7 @@ def nodes_to_flowgraph(
     # Set all the registers that are valid to access at the start of a function
     entry_reg_srcs = LocationRefSetDict()
     for r in arch.all_regs:
-        entry_reg_srcs.refs[r] = RefSet.special("prologue")
+        entry_reg_srcs.refs[r] = RefSet(refs=[PrologueRef()])
 
     # Recursively traverse every node, starting with the entry node, populating instr_inputs
     entry_node = flow_graph.entry_node()
@@ -1460,7 +1472,7 @@ def build_flowgraph(
         terminate_infinite_loops(nodes)
 
     flow_graph = nodes_to_flowgraph(
-        nodes, function, arch, print_warnings=print_warnings
+        nodes, function, arch, print_warnings=print_warnings or fragment
     )
     if not fragment:
         arch.simplify_ir(flow_graph)

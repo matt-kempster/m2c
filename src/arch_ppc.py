@@ -505,8 +505,6 @@ class PpcArch(Arch):
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
-        reads_memory = False
-        writes_memory = False
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
@@ -580,8 +578,6 @@ class PpcArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            reads_memory = True
-            writes_memory = True
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
@@ -590,8 +586,6 @@ class PpcArch(Arch):
             inputs.append(Register("ctr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            reads_memory = True
-            writes_memory = True
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
@@ -600,8 +594,6 @@ class PpcArch(Arch):
             inputs.append(Register("lr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            reads_memory = True
-            writes_memory = True
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
@@ -640,12 +632,10 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                writes_memory = True
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
                 outputs = make_memory_access(args[1], size)
-                writes_memory = not outputs
         elif mnemonic in cls.instrs_store_update:
             assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
@@ -656,12 +646,10 @@ class PpcArch(Arch):
                 )
                 inputs = [args[0], args[1], args[2]]
                 outputs = [args[1]]
-                writes_memory = True
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
                 outputs = make_memory_access(args[1], size) + [args[1].rhs]
-                writes_memory = len(outputs) < 2
         elif mnemonic in cls.instrs_load:
             assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
@@ -671,11 +659,9 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[1], args[2]]
-                reads_memory = True
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = make_memory_access(args[1], size) + [args[1].rhs]
-                reads_memory = len(inputs) < 2
             outputs = [args[0]]
         elif mnemonic in cls.instrs_load_update:
             assert isinstance(args[0], Register) and size is not None
@@ -687,12 +673,10 @@ class PpcArch(Arch):
                 )
                 inputs = [args[1], args[2]]
                 outputs = [args[0], args[1]]
-                reads_memory = True
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = make_memory_access(args[1], size) + [args[1].rhs]
                 outputs = [args[0], args[1].rhs]
-                reads_memory = len(inputs) < 2
         elif mnemonic in ("stmw", "lmw"):
             assert (
                 len(args) == 2
@@ -710,11 +694,9 @@ class PpcArch(Arch):
                 if mnemonic == "stmw":
                     inputs.append(reg)
                     outputs.extend(mem)
-                    writes_memory = not mem
                 else:
                     outputs.append(reg)
                     inputs.extend(mem)
-                    reads_memory = not mem
                 index += 1
                 offset += 4
             inputs.append(args[1].rhs)
@@ -746,7 +728,6 @@ class PpcArch(Arch):
                     assert isinstance(args[2], AsmAddressMode)
                     size = 8
                     inputs = make_memory_access(args[2], size) + [args[1], args[2].rhs]
-                    reads_memory = len(inputs) < 3
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
@@ -776,8 +757,6 @@ class PpcArch(Arch):
             inputs=inputs,
             clobbers=clobbers,
             outputs=outputs,
-            reads_memory=reads_memory,
-            writes_memory=writes_memory,
             jump_target=jump_target,
             function_target=function_target,
             is_conditional=is_conditional,
@@ -1217,8 +1196,7 @@ class PpcArch(Arch):
             # without access to function signatures, or when dealing with
             # varargs functions. Decompiling multiple functions at once
             # would help.
-            # TODO: don't do this in the middle of the argument list,
-            # except for f12 if a0 is passed and such.
+            # TODO: don't do this in the middle of the argument list
             if not likely_regs[slot.reg]:
                 continue
 

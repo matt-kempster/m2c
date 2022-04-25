@@ -54,7 +54,7 @@ class IrPattern(abc.ABC):
     replacement: ClassVar[str]
 
     def check(self, m: "IrMatch") -> bool:
-        """Override to perform additional checks/calculations before replacement."""
+        """Override to perform additional checks before replacement."""
         return True
 
     def compile(self, arch: ArchFlowGraph) -> "CompiledIrPattern":
@@ -81,8 +81,6 @@ class IrPattern(abc.ABC):
                     inputs=[],
                     clobbers=[],
                     outputs=[inp],
-                    reads_memory=False,
-                    writes_memory=False,
                 )
             )
         for part in self.parts:
@@ -112,7 +110,7 @@ class IrMatch:
     This object is considered read-only; none of its methods modify its state.
     The `map_*` methods take a pattern part and return the matched part of the original asm.
 
-    Single-letter registers and all-uppercase symbols in patternsare symbolic,
+    Single-letter registers and all-uppercase symbols in patterns are symbolic,
     whereas other registers and symbols are matched literally.
     """
 
@@ -121,34 +119,44 @@ class IrMatch:
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
     ref_map: Dict[Reference, RefSet] = field(default_factory=dict)
 
-    def eval_math(self, pat: Argument) -> int:
+    @staticmethod
+    def _is_symbolic_reg(arg: Register) -> bool:
+        # Single-letter registers are symbolic; everything else is literal
+        return len(arg.register_name) <= 1
+
+    @staticmethod
+    def _is_symbolic_sym(arg: AsmGlobalSymbol) -> bool:
+        # Uppercase symbols are symbolic; everything else is literal
+        return arg.symbol_name.isupper()
+
+    def eval_math(self, pat: Argument) -> Argument:
         # This function can only evaluate math in *patterns*, not candidate
         # instructions. It does not need to support arbitrary math, only
         # math used by IR patterns.
         if isinstance(pat, AsmLiteral):
-            return pat.value
+            return pat
         if isinstance(pat, BinOp):
-            if pat.op == "+":
-                return self.eval_math(pat.lhs) + self.eval_math(pat.rhs)
-            if pat.op == "-":
-                return self.eval_math(pat.lhs) - self.eval_math(pat.rhs)
-            if pat.op == "<<":
-                return self.eval_math(pat.lhs) << self.eval_math(pat.rhs)
-            assert False, f"bad pattern binop: {pat}"
+            lhs = self.eval_math(pat.lhs)
+            rhs = self.eval_math(pat.rhs)
+            if isinstance(lhs, AsmLiteral) and isinstance(rhs, AsmLiteral):
+                if pat.op == "+":
+                    return AsmLiteral(lhs.value + rhs.value)
+                if pat.op == "-":
+                    return AsmLiteral(lhs.value - rhs.value)
+                if pat.op == "<<":
+                    return AsmLiteral(lhs.value << rhs.value)
+            return BinOp(pat.op, lhs, rhs)
         elif isinstance(pat, AsmGlobalSymbol):
             assert (
                 pat.symbol_name in self.symbolic_args
             ), f"undefined variable in math pattern: {pat.symbol_name}"
             lit = self.symbolic_args[pat.symbol_name]
-            if not isinstance(lit, AsmLiteral):
-                raise DecompFailure(f"cannot evaluate math with {pat} as {lit}")
-            return lit.value
+            return lit
         else:
             assert False, f"bad pattern expr: {pat}"
 
     def map_reg(self, key: Register) -> Register:
-        # Single-letter registers are symbolic; everything else is literal
-        if len(key.register_name) <= 1:
+        if self._is_symbolic_reg(key):
             return self.symbolic_registers[key.register_name]
         return key
 
@@ -158,23 +166,21 @@ class IrMatch:
         if isinstance(key, Register):
             return self.map_reg(key)
         if isinstance(key, AsmGlobalSymbol):
-            # Uppercase symbols are symbolic; everything else is literal
-            if key.symbol_name.isupper():
+            if self._is_symbolic_sym(key):
                 return self.symbolic_args[key.symbol_name]
             return key
         if isinstance(key, AsmAddressMode):
             rhs = self.map_arg(key.rhs)
             assert isinstance(rhs, Register)
-            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=rhs)
+            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=self.map_reg(rhs))
         if isinstance(key, JumpTarget):
             return JumpTarget(self.symbolic_labels[key.target])
         if isinstance(key, BinOp):
-            return AsmLiteral(self.eval_math(key))
+            return self.eval_math(key)
         assert False, f"bad pattern part: {key}"
 
     def map_ref(self, key: Reference) -> InstrRef:
         refset = self.ref_map[key]
-        assert refset is not None
         value = refset.get_unique()
         assert isinstance(value, InstrRef)
         return value
@@ -220,15 +226,13 @@ class TryIrMatch(IrMatch):
         if isinstance(pat, AsmLiteral):
             return pat == cand
         if isinstance(pat, Register):
-            # Single-letter registers are symbolic; everything else is literal
-            if len(pat.register_name) > 1:
+            if not self._is_symbolic_reg(pat):
                 return pat == cand
             if not isinstance(cand, Register):
                 return False
             return self._match_var(self.symbolic_registers, pat.register_name, cand)
         if isinstance(pat, AsmGlobalSymbol):
-            # Uppercase symbols are symbolic; everything else is literal
-            if pat.symbol_name.isupper():
+            if self._is_symbolic_sym(pat):
                 return self._match_var(self.symbolic_args, pat.symbol_name, cand)
             return pat == cand
         if isinstance(pat, AsmAddressMode):
@@ -242,12 +246,7 @@ class TryIrMatch(IrMatch):
                 self.symbolic_labels, pat.target, cand.target
             )
         if isinstance(pat, BinOp):
-            if not isinstance(cand, AsmLiteral):
-                return False
-            try:
-                return self.eval_math(pat) == cand.value
-            except DecompFailure:
-                return False
+            return self.eval_math(pat) == cand
 
         assert False, f"bad pattern arg: {pat}"
 
@@ -256,14 +255,7 @@ class TryIrMatch(IrMatch):
             return False
         return all(self.match_arg(*args) for args in zip(pat.args, cand.args))
 
-    def match_refset(self, pat_set: RefSet, cand_set: RefSet) -> bool:
-        pat = pat_set.get_unique()
-        assert pat is not None
-
-        cand = cand_set.get_unique()
-        if isinstance(pat, str) and isinstance(cand, str):
-            return pat == cand
-
+    def match_refset(self, pat: Reference, cand_set: RefSet) -> bool:
         return self._match_var(self.ref_map, pat, cand_set.copy())
 
     def match_inputrefs(
@@ -272,7 +264,9 @@ class TryIrMatch(IrMatch):
         for pat_loc, pat_refs in pat.items():
             cand_loc = self.map_location(pat_loc)
             cand_refs = cand.get(cand_loc)
-            if not self.match_refset(pat_refs, cand_refs):
+            pat_ref = pat_refs.get_unique()
+            assert pat_ref is not None, "patterns can not have phis"
+            if not self.match_refset(pat_ref, cand_refs):
                 return False
         return True
 
@@ -285,6 +279,8 @@ def simplify_ir_patterns(
     arch: ArchFlowGraph, flow_graph: FlowGraph, patterns: List[IrPattern]
 ) -> None:
     # Precompute a RefSet for each mnemonic
+    # NB: It's difficult to plainly iterate over all Instruction in the flow_graph
+    # while it is being modified by the pattern replacement machinery.
     refs_by_mnemonic = defaultdict(list)
     for node in flow_graph.nodes:
         for ref in node.block.instruction_refs:
@@ -337,7 +333,7 @@ def simplify_ir_patterns(
         tail_inputs = pattern.flow_graph.instr_inputs[tail_ref]
         for cand_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
             state = TryIrMatch()
-            if state.match_refset(RefSet([tail_ref]), RefSet([cand_ref])):
+            if state.match_refset(tail_ref, RefSet([cand_ref])):
                 try_matches.append(state)
 
         # Continue matching by working backwards through the pattern
@@ -363,7 +359,7 @@ def simplify_ir_patterns(
             try_matches = next_try_matches
 
         for n, state in enumerate(try_matches):
-            # Perform any additional pattern-specific validation or computation
+            # Perform any additional pattern-specific validation
             if not pattern.source.check(state):
                 continue
 

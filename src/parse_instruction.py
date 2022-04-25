@@ -113,7 +113,7 @@ Argument = Union[
 @dataclass(frozen=True)
 class StackLocation:
     """
-    Represents a word on the stack. Only used for pattern matching.
+    Represents a word on the stack. Currently only used for pattern matching.
     `symbolic_offset` represents a label offset that is only used in patterns,
     to represent the "N" in arguments such as `(N+4)($sp)`.
     """
@@ -125,7 +125,7 @@ class StackLocation:
         prefix = "" if self.symbolic_offset is None else f"{self.symbolic_offset}+"
         return f"{prefix}{self.offset}($sp)"
 
-    def offset_as_arg(self) -> "Argument":
+    def offset_as_arg(self) -> Argument:
         if self.symbolic_offset is None:
             return AsmLiteral(self.offset)
         if self.offset == 0:
@@ -137,7 +137,7 @@ class StackLocation:
         )
 
     @staticmethod
-    def from_offset(offset: "Argument") -> Optional["StackLocation"]:
+    def from_offset(offset: Argument) -> Optional["StackLocation"]:
         def align(x: int) -> int:
             return x & ~3
 
@@ -212,14 +212,12 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
-    # Track register and memory dependencies
+    # Track register and stack dependencies
     # An Instruction evaluates by reading from `inputs`, invalidating `clobbers`,
     # then writing to `outputs` (in that order)
     inputs: List[Location]
     clobbers: List[Location]
     outputs: List[Location]
-    reads_memory: bool
-    writes_memory: bool
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
@@ -275,7 +273,6 @@ class ArchAsm(ArchAsmParsing):
     simple_temp_regs: List[Register]
     temp_regs: List[Register]
     saved_regs: List[Register]
-    constant_regs: List[Register]
     all_regs: List[Register]
 
     @abc.abstractmethod

@@ -668,8 +668,6 @@ class MipsArch(Arch):
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
-        reads_memory = False
-        writes_memory = False
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
@@ -717,8 +715,6 @@ class MipsArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            reads_memory = True
-            writes_memory = True
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
@@ -732,8 +728,6 @@ class MipsArch(Arch):
             inputs.append(args[1])
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            reads_memory = True
-            writes_memory = True
             function_target = args[1]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
@@ -814,7 +808,6 @@ class MipsArch(Arch):
             assert isinstance(args[0], Register)
             inputs = [args[0]]
             outputs = make_memory_access(args[1])
-            writes_memory = not outputs
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].rhs)
             if mnemonic == "sdc1":
@@ -860,7 +853,6 @@ class MipsArch(Arch):
                 # Load instructions
                 assert len(args) == 2
                 inputs = make_memory_access(args[1])
-                reads_memory = not inputs
                 if isinstance(args[1], AsmAddressMode):
                     inputs.append(args[1].rhs)
                 if mnemonic == "lwr":
@@ -927,8 +919,6 @@ class MipsArch(Arch):
             inputs=inputs,
             clobbers=clobbers,
             outputs=outputs,
-            reads_memory=reads_memory,
-            writes_memory=writes_memory,
             jump_target=jump_target,
             function_target=function_target,
             has_delay_slot=has_delay_slot,
@@ -1443,7 +1433,7 @@ class MipsArch(Arch):
                 # contain SecondF64Half(), and otherwise would need to be
                 # merged with f12/f14 which we don't have logic for right
                 # now. However, f13 can still matter for whether a2 should
-                # be passed, and so is kept in possible_regs.
+                # be passed, and so is kept in valid_extra_regs
                 continue
 
             # Skip registers that are untouched from the initial parameter
