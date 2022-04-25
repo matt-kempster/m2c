@@ -1469,6 +1469,13 @@ def build_flowgraph(
     blocks = build_blocks(function, asm_data, arch, fragment=fragment)
     nodes = build_nodes(function, blocks, asm_data, arch)
     if not fragment:
+        # Check that only ReturnNodes lead to the TerminalNode
+        for node in nodes:
+            if not isinstance(node, ReturnNode) and any(
+                isinstance(c, TerminalNode) for c in node.children()
+            ):
+                raise DecompFailure(f"Missing return instruction in block: {node}")
+
         nodes = duplicate_premature_returns(nodes)
 
     compute_relations(nodes)
