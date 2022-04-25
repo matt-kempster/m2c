@@ -53,12 +53,16 @@ class Reference(abc.ABC):
 
 @dataclass(frozen=True)
 class PrologueRef(Reference):
-    """Reference to anything before the start of a function (e.g. constants, args)"""
+    """Reference to a Location's value before the start of a function (e.g. constants, args)"""
+
+    location: Location
 
 
 @dataclass(frozen=True)
 class EpilogueRef(Reference):
     """Reference to return values of a function"""
+
+    location: Location
 
 
 @dataclass(eq=False)
@@ -1411,7 +1415,7 @@ def nodes_to_flowgraph(
         if isinstance(node, TerminalNode):
             assert not node.block.instruction_refs
             for reg in arch.all_return_regs:
-                add_uses_of_loc(EpilogueRef(), reg)
+                add_uses_of_loc(EpilogueRef(reg), reg)
 
         # Process everything dominated by this node, now that we know our own
         # register sources. This will eventually reach every node.
@@ -1433,7 +1437,7 @@ def nodes_to_flowgraph(
     # Set all the registers that are valid to access at the start of a function
     entry_reg_srcs = LocationRefSetDict()
     for r in arch.all_regs:
-        entry_reg_srcs.refs[r] = RefSet(refs=[PrologueRef()])
+        entry_reg_srcs.refs[r] = RefSet(refs=[PrologueRef(r)])
 
     # Recursively traverse every node, starting with the entry node, populating instr_inputs
     entry_node = flow_graph.entry_node()

@@ -170,9 +170,7 @@ class IrMatch:
                 return self.symbolic_args[key.symbol_name]
             return key
         if isinstance(key, AsmAddressMode):
-            rhs = self.map_arg(key.rhs)
-            assert isinstance(rhs, Register)
-            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=self.map_reg(rhs))
+            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=self.map_reg(key.rhs))
         if isinstance(key, JumpTarget):
             return JumpTarget(self.symbolic_labels[key.target])
         if isinstance(key, BinOp):
