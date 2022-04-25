@@ -533,11 +533,8 @@ def get_stack_info(
                 info.is_leaf = False
             # The registers & their stack accesses must be matched up in ArchAsm.parse
             for reg, mem in zip(inst.inputs, inst.outputs):
-                if (
-                    isinstance(reg, Register)
-                    and isinstance(mem, StackLocation)
-                    and mem.symbolic_offset is None
-                ):
+                if isinstance(reg, Register) and isinstance(mem, StackLocation):
+                    assert mem.symbolic_offset is None
                     stack_offset = mem.offset
                     if arch_mnemonic != "ppc:psq_st":
                         # psq_st instructions store the same register as stfd, just
