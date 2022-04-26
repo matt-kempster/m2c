@@ -1377,7 +1377,7 @@ def nodes_to_flowgraph(
     missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
-        def add_uses_of_loc(use: Reference, input_loc: Location) -> RefSet:
+        def add_use_sources(*, use: Reference, input_loc: Location) -> RefSet:
             sources = loc_srcs.get(input_loc)
             for src in sources:
                 flow_graph.add_instruction_use(use=use, loc=input_loc, src=src)
@@ -1389,7 +1389,7 @@ def nodes_to_flowgraph(
 
             # Calculate the source of each location
             for inp in ir.inputs:
-                sources = add_uses_of_loc(ref, inp)
+                sources = add_use_sources(use=ref, input_loc=inp)
                 # Registers must be written to before being read.
                 # Function calls are known to list all possible argument registers,
                 # so they're a common false positive here.
@@ -1416,7 +1416,7 @@ def nodes_to_flowgraph(
         if isinstance(node, TerminalNode):
             assert not node.block.instruction_refs
             for reg in arch.all_return_regs:
-                add_uses_of_loc(EpilogueRef(reg), reg)
+                add_use_sources(use=EpilogueRef(reg), input_loc=reg)
 
         # Process everything dominated by this node, now that we know our own
         # register sources. This will eventually reach every node.
