@@ -242,16 +242,10 @@ def parse_flags(flags: List[str]) -> Options:
 
     group = parser.add_argument_group("Input Options")
     group.add_argument(
-        "filename",
+        metavar="filename",
         nargs="+",
+        dest="filenames",
         help="Input asm filename(s)",
-    )
-    group.add_argument(
-        "--rodata",
-        dest="rodata_filenames",
-        action="append",
-        default=[],
-        help=argparse.SUPPRESS,  # For backwards compatibility
     )
     group.add_argument(
         "--context",
@@ -438,13 +432,6 @@ def parse_flags(flags: List[str]) -> Options:
         "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
     )
     group.add_argument(
-        "--compiler",
-        dest="target_compiler",
-        type=Target.CompilerEnum,
-        choices=list(Target.CompilerEnum),
-        help=argparse.SUPPRESS,  # For backwards compatibility; now use `--target`
-    )
-    group.add_argument(
         "--passes",
         "-P",
         dest="passes",
@@ -525,12 +512,6 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
         help=argparse.SUPPRESS,
     )
-    group.add_argument(
-        "--structs",
-        dest="structs_compat",
-        action="store_true",
-        help=argparse.SUPPRESS,  # For backwards compatibility; now enabled by default
-    )
 
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
@@ -548,29 +529,6 @@ def parse_flags(flags: List[str]) -> Options:
         comment_style=args.comment_style,
         comment_column=args.comment_column,
     )
-    filenames = args.filename + args.rodata_filenames
-
-    # Backwards compatibility: MIPS targets can be described with --compiler
-    if args.target_compiler == Target.CompilerEnum.IDO:
-        target = Target.parse("mips-ido-c")
-    elif args.target_compiler == Target.CompilerEnum.GCC:
-        target = Target.parse("mips-gcc-c")
-    elif args.target_compiler is None:
-        target = args.target
-    else:
-        parser.error(
-            "--compiler is partially supported for backwards compatibility, use --target instead"
-        )
-
-    # Backwards compatibility: giving a function index/name as a final argument, or "all"
-    assert filenames, "checked by argparse, nargs='+'"
-    if filenames[-1] == "all":
-        filenames.pop()
-    elif re.match(r"^[0-9a-zA-Z_]+$", filenames[-1]):
-        # The filename is a valid C identifier or a number
-        args.functions.append(filenames.pop())
-    if not filenames:
-        parser.error("the following arguments are required: filename")
 
     functions: List[Union[int, str]] = []
     for fn in args.functions:
@@ -584,7 +542,7 @@ def parse_flags(flags: List[str]) -> Options:
         args.debug = False
 
     return Options(
-        filenames=filenames,
+        filenames=args.filenames,
         function_indexes_or_names=functions,
         debug=args.debug,
         void=args.void,
@@ -607,7 +565,7 @@ def parse_flags(flags: List[str]) -> Options:
         sanitize_tracebacks=args.sanitize_tracebacks,
         valid_syntax=args.valid_syntax,
         global_decls=args.global_decls,
-        target=target,
+        target=args.target,
         print_stack_structs=args.print_stack_structs,
         unk_inference=args.unk_inference,
         passes=args.passes,

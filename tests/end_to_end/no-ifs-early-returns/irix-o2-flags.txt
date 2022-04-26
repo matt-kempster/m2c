@@ -1,1 +1,1 @@
---no-ifs --void
+--gotos-only --void

@@ -1271,7 +1271,7 @@ def build_flowgraph_between(
 def build_naive(context: Context, nodes: List[Node]) -> Body:
     """Naive procedure for generating output with only gotos for control flow.
 
-    Used for --no-ifs, when the regular if_statements code fails."""
+    Used for --gotos-only, when the regular if_statements code fails."""
 
     body = Body(print_node_comment=context.options.debug)
 
