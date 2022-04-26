@@ -20,7 +20,7 @@ void test_s8(s8 c) {
     s8 temp_r4_3;
 
     sp8 = c;
-    func_00400090((u32) ((s32) (s8) (u8) sp8 / 2));
+    func_00400090((u32) ((s8) (u8) sp8 / 2));
     func_00400090(MULT_HI(0x55555556, (s8) (u8) sp8) + ((s8) (u8) sp8 / 6442450941));
     func_00400090((s8) (u8) sp8 / 5);
     temp_r0 = (s8) (u8) sp8;
@@ -57,7 +57,7 @@ void test_s16(s16 h) {
     s32 temp_r3;
 
     sp8 = h;
-    func_00400090((u32) ((s32) sp8 / 2));
+    func_00400090((u32) (sp8 / 2));
     func_00400090(MULT_HI(0x55555556, sp8) + (sp8 / 6442450941));
     func_00400090(sp8 / 5);
     temp_r0 = (s32) (MULT_HI(0x92492493, sp8) + sp8) >> 2;
