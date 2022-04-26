@@ -906,19 +906,21 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def s32(
-        left: Expression, op: str, right: Expression, silent: bool = False
+    def sint(
+        left: Expression, op: str, right: Expression, *, silent: bool = False
     ) -> "BinaryOp":
         return BinaryOp(
-            left=as_s32(left, silent=silent),
+            left=as_sintish(left, silent=silent),
             op=op,
-            right=as_s32(right, silent=silent),
+            right=as_sintish(right, silent=silent),
             type=Type.s32(),
         )
 
     @staticmethod
-    def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.u32())
+    def uint(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_uintish(left), op=op, right=as_uintish(right), type=Type.u32()
+        )
 
     @staticmethod
     def s64(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -3029,11 +3031,10 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         and isinstance(right_expr, CarryBit)
     ):
         new_denom = 1 << left_expr.right.value
-        return BinaryOp.s32(
+        return BinaryOp.sint(
             left=left_expr.left,
             op="/",
             right=Literal(new_denom),
-            silent=True,
         )
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
@@ -3551,7 +3552,7 @@ def handle_rlwinm(
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+        lower_bits = BinaryOp.uint(left=source, op=">>", right=Literal(right_shift))
 
         if simplify:
             lower_bits = replace_clz_shift(fold_divmod(lower_bits))

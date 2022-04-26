@@ -1086,12 +1086,12 @@ class MipsArch(Arch):
     instrs_hi_lo: PairInstrMap = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
         "div": lambda a: (
-            BinaryOp.s32(a.reg(0), "%", a.reg(1)),
-            BinaryOp.s32(a.reg(0), "/", a.reg(1)),
+            BinaryOp.sint(a.reg(0), "%", a.reg(1)),
+            BinaryOp.sint(a.reg(0), "/", a.reg(1)),
         ),
         "divu": lambda a: (
-            BinaryOp.u32(a.reg(0), "%", a.reg(1)),
-            BinaryOp.u32(a.reg(0), "/", a.reg(1)),
+            BinaryOp.uint(a.reg(0), "%", a.reg(1)),
+            BinaryOp.uint(a.reg(0), "/", a.reg(1)),
         ),
         "ddiv": lambda a: (
             BinaryOp.s64(a.reg(0), "%", a.reg(1)),
@@ -1141,8 +1141,8 @@ class MipsArch(Arch):
         "neg": lambda a: fold_mul_chains(
             UnaryOp.sint(op="-", expr=a.reg(1)),
         ),
-        "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
-        "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
+        "div.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.full_imm(2)),
+        "mod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.full_imm(2)),
         # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
         "daddi": lambda a: handle_addi(a),
         "daddiu": lambda a: handle_addi(a),
