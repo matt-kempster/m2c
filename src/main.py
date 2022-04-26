@@ -150,16 +150,16 @@ def run(options: Options) -> int:
                 flow_graph.reset_block_info()
                 info = translate_to_ast(function, flow_graph, options, global_info)
                 preliminary_infos.append(info)
-            except:
+            except Exception:
                 pass
         try:
             global_info.global_decls(fmt, options.global_decls, [])
-        except:
+        except Exception:
             pass
         for info in preliminary_infos:
             try:
                 get_function_text(info, options)
-            except:
+            except Exception:
                 pass
 
         # This operation can change struct field paths, so it is only performed
