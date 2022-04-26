@@ -728,13 +728,10 @@ def build_graph_from_block(
         nodes.append(new_node)
 
         # Recursively analyze.
-        if block.index + 1 < len(blocks):
-            next_block = blocks[block.index + 1]
-            new_node.successor = build_graph_from_block(
-                next_block, blocks, nodes, asm_data, arch
-            )
-        else:
-            new_node.successor = terminal_node
+        next_block = blocks[block.index + 1]
+        new_node.successor = build_graph_from_block(
+            next_block, blocks, nodes, asm_data, arch
+        )
     elif len(jumps) == 1:
         # There is a jump. This is either:
         # - a ReturnNode, if it's a return instruction ("jr $ra" in MIPS)
@@ -818,7 +815,7 @@ def build_graph_from_block(
             new_node.successor = build_graph_from_block(
                 branch_block, blocks, nodes, asm_data, arch
             )
-        elif block.index + 1 < len(blocks):
+        else:
             # A conditional branch means the fallthrough block is the next
             # block if the branch isn't.
             new_node = ConditionalNode(block, emit_goto, dummy_node, dummy_node)
@@ -831,11 +828,6 @@ def build_graph_from_block(
             new_node.fallthrough_edge = build_graph_from_block(
                 next_block, blocks, nodes, asm_data, arch
             )
-        else:
-            # The last block should only be a branch for asm with fragment=True
-            # Make a ConditionalNode but set both edges to the TerminalNode
-            new_node = ConditionalNode(block, emit_goto, terminal_node, terminal_node)
-            nodes.append(new_node)
     return new_node
 
 
@@ -868,7 +860,12 @@ def reachable_without(start: Node, end: Node, without: Node) -> bool:
 
 
 def build_nodes(
-    function: Function, blocks: List[Block], asm_data: AsmData, arch: ArchFlowGraph
+    function: Function,
+    blocks: List[Block],
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
 ) -> List[Node]:
     terminal_node = TerminalNode.terminal()
     graph: List[Node] = [terminal_node]
@@ -877,6 +874,10 @@ def build_nodes(
         raise DecompFailure(
             f"Function {function.name} contains no instructions. Maybe it is rodata?"
         )
+
+    # Fragments do not need a ReturnNode, they can directly fall through to the TerminalNode
+    if fragment:
+        blocks.append(terminal_node.block)
 
     # Traverse through the block tree.
     entry_block = blocks[0]
@@ -1467,7 +1468,7 @@ def build_flowgraph(
     for analyzing IR patterns which do not need to be normalized in the same way.
     """
     blocks = build_blocks(function, asm_data, arch, fragment=fragment)
-    nodes = build_nodes(function, blocks, asm_data, arch)
+    nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
     if not fragment:
         # Check that only ReturnNodes lead to the TerminalNode
         for node in nodes:
