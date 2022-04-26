@@ -1,12 +1,14 @@
 import abc
 import copy
+from collections import defaultdict
 from dataclasses import dataclass, field
-import typing
 from typing import (
     Any,
     Callable,
     Counter,
+    DefaultDict,
     Dict,
+    ItemsView,
     Iterator,
     List,
     Optional,
@@ -16,19 +18,85 @@ from typing import (
 )
 
 from .error import DecompFailure
-from .options import Formatter
+from .options import Formatter, Target
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
+    ArchAsm,
     AsmAddressMode,
     AsmGlobalSymbol,
+    AsmInstruction,
     AsmLiteral,
+    BinOp,
     Instruction,
     InstructionMeta,
     JumpTarget,
+    Location,
     Macro,
     Register,
-    parse_instruction,
 )
+from .asm_pattern import simplify_patterns, AsmPattern
+
+
+class ArchFlowGraph(ArchAsm):
+    asm_patterns: List[AsmPattern] = []
+
+    def simplify_ir(self, flow_graph: "FlowGraph") -> None:
+        ...
+
+
+class Reference(abc.ABC):
+    """
+    Reference acts as a pointer to either a specific Instruction, or one of the function's
+    bounds (either before the function is called, or after the function returns)
+    """
+
+
+@dataclass(frozen=True)
+class PrologueRef(Reference):
+    """Reference to a Location's value before the start of a function (e.g. constants, args)"""
+
+    location: Location
+
+
+@dataclass(frozen=True)
+class EpilogueRef(Reference):
+    """Reference to return values of a function"""
+
+    location: Location
+
+
+@dataclass(eq=False)
+class InstrRef(Reference):
+    """
+    Pointer to an Instruction as part of a Block. Allows other datastructures
+    to hold references to a spot in the assembly that remains valid even as
+    the Instruction is replaced or other Instructions are added to the Block.
+    """
+
+    instruction: Instruction
+    block: "Block" = field(repr=False)
+
+    def add_instruction_before(
+        self, asm: AsmInstruction, arch: ArchFlowGraph
+    ) -> "InstrRef":
+        """Add `asm` into the parent assembly before this instruction."""
+        instr = arch.parse(asm.mnemonic, asm.args, self.instruction.meta.derived())
+        ref = InstrRef(instr, self.block)
+        index = self.block.instruction_refs.index(self)
+        self.block.instruction_refs.insert(index, ref)
+        return ref
+
+    def replace_instruction(self, new_asm: AsmInstruction, arch: ArchFlowGraph) -> None:
+        """Replace the existing instruciton with `new_asm`.
+        Previous ouputs & clobbers are added to the new Instruction's clobbers list."""
+        old_instr = self.instruction
+        new_instr = arch.parse(new_asm.mnemonic, new_asm.args, old_instr.meta.derived())
+
+        # Copy over old outputs/clobbers into new_instr.clobbers
+        for loc in old_instr.outputs + old_instr.clobbers:
+            if loc not in new_instr.clobbers:
+                new_instr.clobbers.append(loc)
+        self.instruction = new_instr
 
 
 @dataclass(eq=False)
@@ -36,12 +104,16 @@ class Block:
     index: int
     label: Optional[Label]
     approx_label_name: str
-    instructions: List[Instruction]
+    instruction_refs: List[InstrRef] = field(default_factory=list)
 
     # block_info is actually an Optional[BlockInfo], set by translate.py for
     # non-TerminalNode's, but due to circular dependencies we cannot type it
     # correctly. To access it, use the get_block_info method from translate.py.
     block_info: object = None
+
+    @property
+    def instructions(self) -> Iterator[Instruction]:
+        return (r.instruction for r in self.instruction_refs)
 
     def add_block_info(self, block_info: object) -> None:
         assert self.block_info is None
@@ -72,8 +144,9 @@ class BlockBuilder:
         label_name = self.last_label_name
         if self.label_counter > 0:
             label_name += f".{self.label_counter}"
-        block = Block(
-            self.curr_index, self.curr_label, label_name, self.curr_instructions
+        block = Block(self.curr_index, self.curr_label, label_name)
+        block.instruction_refs.extend(
+            InstrRef(i, block) for i in self.curr_instructions
         )
         self.blocks.append(block)
 
@@ -112,7 +185,7 @@ def verify_no_trailing_delay_slot(function: Function) -> None:
     for item in function.body:
         if isinstance(item, Instruction):
             last_ins = item
-    if last_ins and last_ins.is_delay_slot_instruction():
+    if last_ins and last_ins.has_delay_slot:
         raise DecompFailure(f"Last instruction is missing a delay slot:\n{last_ins}")
 
 
@@ -132,7 +205,7 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-def normalize_likely_branches(function: Function) -> Function:
+def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
     taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
@@ -185,9 +258,10 @@ def normalize_likely_branches(function: Function) -> Function:
     for item in body_iter:
         orig_item = item
         if isinstance(item, Instruction) and (
-            item.is_branch_likely_instruction() or item.mnemonic == "b"
+            item.is_branch_likely or item.mnemonic == "b"
         ):
-            old_label = item.get_branch_target().target
+            assert isinstance(item.jump_target, JumpTarget)
+            old_label = item.jump_target.target
             if old_label not in label_prev_instr:
                 raise DecompFailure(
                     f"Unable to parse branch: label {old_label} does not exist in function {function.name}"
@@ -203,7 +277,7 @@ def normalize_likely_branches(function: Function) -> Function:
             if (
                 item.mnemonic == "b"
                 and before_before_target is not None
-                and before_before_target.is_delay_slot_instruction()
+                and before_before_target.has_delay_slot
             ):
                 # Don't treat 'b' instructions as branch likelies if doing so would
                 # introduce a label in a delay slot.
@@ -215,8 +289,8 @@ def normalize_likely_branches(function: Function) -> Function:
                 and item.mnemonic != "b"
             ):
                 mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-                item = Instruction.derived(mn_inverted, item.args, item)
-                new_nop = Instruction.derived("nop", [], item)
+                item = arch.parse(mn_inverted, item.args, item.meta.derived())
+                new_nop = arch.parse("nop", [], item.meta.derived())
                 new_body.append((orig_item, item))
                 new_body.append((new_nop, new_nop))
                 new_body.append((orig_next_item, next_item))
@@ -233,10 +307,10 @@ def normalize_likely_branches(function: Function) -> Function:
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
                 mn_unlikely = item.mnemonic[:-1] or "b"
-                item = Instruction.derived(
-                    mn_unlikely, item.args[:-1] + [new_target], item
+                item = arch.parse(
+                    mn_unlikely, item.args[:-1] + [new_target], item.meta.derived()
                 )
-                next_item = Instruction.derived("nop", [], item)
+                next_item = arch.parse("nop", [], item.meta.derived())
                 new_body.append((orig_item, item))
                 new_body.append((orig_next_item, next_item))
             else:
@@ -261,8 +335,8 @@ def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function
         if isinstance(label, Label) and label.name in asm_data.mentioned_labels
     }
     for item in function.body:
-        if isinstance(item, Instruction) and item.is_branch_instruction():
-            labels_used.add(item.get_branch_target().target)
+        if isinstance(item, Instruction) and isinstance(item.jump_target, JumpTarget):
+            labels_used.add(item.jump_target.target)
 
     new_function = function.bodyless_copy()
     for item in function.body:
@@ -272,428 +346,45 @@ def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function
     return new_function
 
 
-def simplify_standard_patterns(function: Function) -> Function:
-    """Detect and simplify various standard patterns emitted by IDO and GCC."""
-    BodyPart = Union[Instruction, Label]
-    PatternPart = Union[Instruction, Label, None]
-    Pattern = List[Tuple[PatternPart, bool]]
-
-    def make_pattern(*parts: str) -> Pattern:
-        ret: Pattern = []
-        for part in parts:
-            optional = part.endswith("?")
-            part = part.rstrip("?")
-            if part == "*":
-                ret.append((None, optional))
-            elif part.endswith(":"):
-                ret.append((Label(""), optional))
-            else:
-                ins = parse_instruction(part, InstructionMeta.missing())
-                ret.append((ins, optional))
-        return ret
-
-    div_pattern = make_pattern(
-        "bnez $x, .A",
-        "*",  # nop or div
-        "break",
-        ".A:",
-        "li $at, -1",
-        "bne $x, $at, .B",
-        "li $at, 0x80000000",
-        "bne $y, $at, .B",
-        "nop",
-        "break",
-        ".B:",
-    )
-
-    divu_pattern = make_pattern(
-        "bnez $x, .A",
-        "nop",
-        "break",
-        ".A:",
-    )
-
-    mod_p2_pattern = make_pattern(
-        "bgez $x, .A",
-        "andi $y, $x, LIT",
-        "beqz $y, .A",
-        "nop",
-        "addiu $y, $y, LIT",
-        ".A:",
-    )
-
-    div_p2_pattern_1 = make_pattern(
-        "bgez $x, .A",
-        "sra $y, $x, LIT",
-        "addiu $at, $x, LIT",
-        "sra $y, $at, LIT",
-        ".A:",
-    )
-
-    div_p2_pattern_2 = make_pattern(
-        "bgez $x, .A",
-        "move $at, $x",
-        "addiu $at, $x, LIT",
-        ".A:",
-        "sra $x, $at, LIT",
-    )
-
-    div_2_s16_pattern = make_pattern(
-        "sll $x, $x, LIT",
-        "sra $y, $x, LIT",
-        "srl $x, $x, 0x1f",
-        "addu $y, $y, $x",
-        "sra $y, $y, 1",
-    )
-
-    div_2_s32_pattern = make_pattern(
-        "srl $x, $y, 0x1f",
-        "addu $x, $y, $x",
-        "sra $x, $x, 1",
-    )
-
-    utf_pattern = make_pattern(
-        "bgez $x, .A",
-        "cvt.s.w",
-        "li $at, 0x4f800000",
-        "mtc1",
-        "nop",
-        "add.s",
-        ".A:",
-    )
-
-    ftu_pattern = make_pattern(
-        "cfc1 $y, $31",
-        "nop",
-        "andi",
-        "andi?",  # (skippable)
-        "*",  # bnez or bneql
-        "*",
-        "li?",
-        "mtc1",
-        "mtc1?",
-        "li",
-        "*",  # sub.fmt *, X, *
-        "ctc1",
-        "nop",
-        "*",  # cvt.w.fmt *, *
-        "cfc1",
-        "nop",
-        "andi",
-        "andi?",
-        "bnez",
-        "nop",
-        "mfc1",
-        "li",
-        "b",
-        "or",
-        ".A:",
-        "b",
-        "li",
-        "*",  # label: (moved one step down if bneql)
-        "*",  # mfc1
-        "nop",
-        "bltz",
-        "nop",
-    )
-
-    lwc1_twice_pattern = make_pattern("lwc1", "lwc1")
-    swc1_twice_pattern = make_pattern("swc1", "swc1")
-
-    gcc_sqrt_pattern = make_pattern(
-        "sqrt.s $x, $y",
-        "c.eq.s",
-        "nop",
-        "bc1t",
-        "*",
-        "jal sqrtf",
-        "nop",
-        "mov.s $x, $f0?",
-    )
-
-    trapuv_pattern = make_pattern(
-        "lui $x, 0xfffa",
-        "move $y, $sp",
-        "addiu $sp, $sp, LIT",
-        "ori $x, $x, 0x5a5a",
-        ".loop:",
-        "addiu $y, $y, -8",
-        "sw $x, ($y)",
-        "bne $y, $sp, .loop",
-        "sw $x, 4($y)",
-    )
-
-    def try_match(starti: int, pattern: Pattern) -> Optional[List[BodyPart]]:
-        symbolic_registers: Dict[str, Register] = {}
-        symbolic_labels: Dict[str, str] = {}
-
-        def match_reg(actual: Register, exp: Register) -> bool:
-            if len(exp.register_name) <= 1:
-                if exp.register_name not in symbolic_registers:
-                    symbolic_registers[exp.register_name] = actual
-                elif symbolic_registers[exp.register_name] != actual:
-                    return False
-            elif exp.register_name != actual.register_name:
-                return False
-            return True
-
-        def match_one(actual: BodyPart, exp: PatternPart) -> bool:
-            if exp is None:
-                return True
-            if isinstance(exp, Label):
-                name = symbolic_labels.get(exp.name)
-                return isinstance(actual, Label) and (
-                    name is None or actual.name == name
-                )
-            if not isinstance(actual, Instruction):
-                return False
-            ins = actual
-            if ins.mnemonic != exp.mnemonic:
-                return False
-            if exp.args:
-                if len(exp.args) != len(ins.args):
-                    return False
-                for (e, a) in zip(exp.args, ins.args):
-                    if isinstance(e, AsmLiteral):
-                        if not isinstance(a, AsmLiteral) or a.value != e.value:
-                            return False
-                    elif isinstance(e, Register):
-                        if not isinstance(a, Register) or not match_reg(a, e):
-                            return False
-                    elif isinstance(e, AsmGlobalSymbol):
-                        if e.symbol_name == "LIT":
-                            if not isinstance(a, AsmLiteral):
-                                return False
-                        else:
-                            if (
-                                not isinstance(a, AsmGlobalSymbol)
-                                or a.symbol_name != e.symbol_name
-                            ):
-                                return False
-                    elif isinstance(e, AsmAddressMode):
-                        if (
-                            not isinstance(a, AsmAddressMode)
-                            or a.lhs != e.lhs
-                            or not match_reg(a.rhs, e.rhs)
-                        ):
-                            return False
-                    elif isinstance(e, JumpTarget):
-                        if not isinstance(a, JumpTarget):
-                            return False
-                        if e.target not in symbolic_labels:
-                            symbolic_labels[e.target] = a.target
-                        elif symbolic_labels[e.target] != a.target:
-                            return False
-                    else:
-                        assert False, f"bad pattern part: {exp} contains {type(e)}"
-            return True
-
-        actuali = starti
-        for (pat, optional) in pattern:
-            if actuali < len(function.body) and match_one(function.body[actuali], pat):
-                actuali += 1
-            elif not optional:
-                return None
-        return function.body[starti:actuali]
-
-    def create_div_p2(bgez: Instruction, sra: Instruction) -> Instruction:
-        assert isinstance(sra.args[2], AsmLiteral)
-        shift = sra.args[2].value & 0x1F
-        return Instruction.derived(
-            "div.fictive", [sra.args[0], bgez.args[0], AsmLiteral(2 ** shift)], sra
-        )
-
-    def try_replace_div(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, div_pattern)
-        if not match:
-            return None
-        return [match[1]], len(match) - 1
-
-    def try_replace_divu(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, divu_pattern)
-        if not match:
-            return None
-        return [], len(match) - 1
-
-    def try_replace_div_p2_1(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        # Division by power of two where input reg != output reg
-        match = try_match(i, div_p2_pattern_1)
-        if not match:
-            return None
-        bnez = typing.cast(Instruction, match[0])
-        div = create_div_p2(bnez, typing.cast(Instruction, match[3]))
-        return [div], len(match) - 1
-
-    def try_replace_div_p2_2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        # Division by power of two where input reg = output reg
-        match = try_match(i, div_p2_pattern_2)
-        if not match:
-            return None
-        bnez = typing.cast(Instruction, match[0])
-        div = create_div_p2(bnez, typing.cast(Instruction, match[4]))
-        return [div], len(match)
-
-    def try_replace_div_2_s16(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, div_2_s16_pattern)
-        if not match:
-            return None
-        sll1 = typing.cast(Instruction, match[0])
-        sra1 = typing.cast(Instruction, match[1])
-        sra = typing.cast(Instruction, match[4])
-        if sll1.args[2] != sra1.args[2]:
-            return None
-        div = Instruction.derived(
-            "div.fictive", [sra.args[0], sra.args[0], AsmLiteral(2)], sra
-        )
-        return [sll1, sra1, div], len(match)
-
-    def try_replace_div_2_s32(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, div_2_s32_pattern)
-        if not match:
-            return None
-        addu = typing.cast(Instruction, match[1])
-        sra = typing.cast(Instruction, match[2])
-        div = Instruction.derived(
-            "div.fictive", [sra.args[0], addu.args[1], AsmLiteral(2)], sra
-        )
-        return [div], len(match)
-
-    def try_replace_mod_p2(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, mod_p2_pattern)
-        if not match:
-            return None
-        andi = typing.cast(Instruction, match[1])
-        val = (typing.cast(AsmLiteral, andi.args[2]).value & 0xFFFF) + 1
-        mod = Instruction.derived(
-            "mod.fictive", [andi.args[0], andi.args[1], AsmLiteral(val)], andi
-        )
-        return [mod], len(match) - 1
-
-    def try_replace_utf_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, utf_pattern)
-        if not match:
-            return None
-        cvt_instr = typing.cast(Instruction, match[1])
-        new_instr = Instruction.derived("cvt.s.u.fictive", cvt_instr.args, cvt_instr)
-        return [new_instr], len(match) - 1
-
-    def try_replace_ftu_conv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, ftu_pattern)
-        if not match:
-            return None
-        sub = next(
-            x
-            for x in match
-            if isinstance(x, Instruction) and x.mnemonic.startswith("sub")
-        )
-        cfc = match[0]
-        assert isinstance(cfc, Instruction)
-        fmt = sub.mnemonic.split(".")[-1]
-        args = [cfc.args[0], sub.args[1]]
-        if fmt == "s":
-            new_instr = Instruction.derived("cvt.u.s.fictive", args, cfc)
-        else:
-            new_instr = Instruction.derived("cvt.u.d.fictive", args, cfc)
-        return [new_instr], len(match)
-
-    def try_replace_mips1_double_load_store(
-        i: int,
-    ) -> Optional[Tuple[List[BodyPart], int]]:
-        # TODO: sometimes the instructions aren't consecutive.
-        match = try_match(i, lwc1_twice_pattern) or try_match(i, swc1_twice_pattern)
-        if not match:
-            return None
-        a, b = match
-        assert isinstance(a, Instruction)
-        assert isinstance(b, Instruction)
-        ra, rb = a.args[0], b.args[0]
-        ma, mb = a.args[1], b.args[1]
-        # TODO: verify that the memory locations are consecutive as well (a bit
-        # annoying with macros...)
-        if not (
-            isinstance(ra, Register)
-            and ra.is_float()
-            and ra.other_f64_reg() == rb
-            and isinstance(ma, AsmAddressMode)
-            and isinstance(mb, AsmAddressMode)
-            and ma.rhs == mb.rhs
-        ):
-            return None
-        num = int(ra.register_name[1:])
-        if num % 2 == 1:
-            ra, rb = rb, ra
-            ma, mb = mb, ma
-        # Store the even-numbered register (ra) into the low address (mb).
-        new_args = [ra, mb]
-        new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
-        new_instr = Instruction.derived(new_mn, new_args, a)
-        return [new_instr], len(match)
-
-    def try_replace_gcc_sqrt(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, gcc_sqrt_pattern)
-        if not match:
-            return None
-        return [match[0]], len(match)
-
-    def try_replace_trapuv(i: int) -> Optional[Tuple[List[BodyPart], int]]:
-        match = try_match(i, trapuv_pattern)
-        if not match:
-            return None
-        assert isinstance(match[0], Instruction)
-        new_instr = Instruction.derived("trapuv.fictive", [], match[0])
-        return [match[2], new_instr], len(match)
-
-    def no_replacement(i: int) -> Tuple[List[BodyPart], int]:
-        return [function.body[i]], 1
-
+def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Function:
+    new_body = simplify_patterns(function.body, arch.asm_patterns, arch)
     new_function = function.bodyless_copy()
-    i = 0
-    while i < len(function.body):
-        repl, consumed = (
-            try_replace_div(i)
-            or try_replace_divu(i)
-            or try_replace_div_p2_1(i)
-            or try_replace_div_p2_2(i)
-            or try_replace_div_2_s32(i)
-            or try_replace_div_2_s16(i)
-            or try_replace_mod_p2(i)
-            or try_replace_utf_conv(i)
-            or try_replace_ftu_conv(i)
-            or try_replace_mips1_double_load_store(i)
-            or try_replace_gcc_sqrt(i)
-            or try_replace_trapuv(i)
-            or no_replacement(i)
-        )
-        new_function.body.extend(repl)
-        i += consumed
+    new_function.body.extend(new_body)
     return new_function
 
 
-def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
-    verify_no_trailing_delay_slot(function)
-    function = normalize_likely_branches(function)
+def build_blocks(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
+) -> List[Block]:
+    if arch.arch == Target.ArchEnum.MIPS:
+        verify_no_trailing_delay_slot(function)
+        function = normalize_likely_branches(function, arch)
+
     function = prune_unreferenced_labels(function, asm_data)
-    function = simplify_standard_patterns(function)
+    function = simplify_standard_patterns(function, arch)
     function = prune_unreferenced_labels(function, asm_data)
 
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
     branch_likely_counts: Counter[str] = Counter()
+    cond_return_target: Optional[JumpTarget] = None
 
-    def process(item: Union[Instruction, Label]) -> None:
+    def process_mips(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
             block_builder.set_label(item)
             return
 
-        if not item.is_delay_slot_instruction():
+        if not item.has_delay_slot:
             block_builder.add_instruction(item)
+            assert not item.is_jump(), "all MIPS jumps have a delay slot"
             return
 
         process_after: List[Union[Instruction, Label]] = []
         next_item = next(body_iter)
+
         if isinstance(next_item, Label):
             # Delay slot is a jump target, so we need the delay slot
             # instruction to be in two blocks at once... In most cases,
@@ -704,8 +395,8 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
 
             assert isinstance(next_item, Instruction), "Cannot have two labels in a row"
 
-            # (Best-effort check for whether the instruction can be
-            # executed twice in a row.)
+            # Best-effort check for whether the instruction can be executed twice in a row.
+            # TODO: This may be able to be improved to use the other fields in Instruction?
             r = next_item.args[0] if next_item.args else None
             if all(a != r for a in next_item.args[1:]):
                 process_after.append(label)
@@ -726,32 +417,35 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
                     ]
                 raise DecompFailure("\n".join(msg))
 
-        if next_item.is_delay_slot_instruction():
+        if next_item.has_delay_slot:
             raise DecompFailure(
                 f"Two delay slot instructions in a row is not supported:\n{item}\n{next_item}"
             )
 
-        if item.is_branch_likely_instruction():
-            target = item.get_branch_target()
+        if item.is_branch_likely:
+            assert isinstance(item.jump_target, JumpTarget)
+            target = item.jump_target
             branch_likely_counts[target.target] += 1
             index = branch_likely_counts[target.target]
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
             temp_label = JumpTarget(f"{target.target}_branchlikelyskip_{index}")
-            branch_not = Instruction.derived(
-                mn_inverted, item.args[:-1] + [temp_label], item
+            branch_not = arch.parse(
+                mn_inverted, item.args[:-1] + [temp_label], item.meta.derived()
             )
-            nop = Instruction.derived("nop", [], item)
+            nop = arch.parse("nop", [], item.meta.derived())
             block_builder.add_instruction(branch_not)
             block_builder.add_instruction(nop)
             block_builder.new_block()
             block_builder.add_instruction(next_item)
-            block_builder.add_instruction(Instruction.derived("b", [target], item))
+            block_builder.add_instruction(
+                arch.parse("b", [target], item.meta.derived())
+            )
             block_builder.add_instruction(nop)
             block_builder.new_block()
             block_builder.set_label(Label(temp_label.target))
             block_builder.add_instruction(nop)
 
-        elif item.mnemonic in ["jal", "jalr"]:
+        elif item.function_target is not None:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
             if next_item.args and next_item.args[0] == item.args[0]:
@@ -766,28 +460,71 @@ def build_blocks(function: Function, asm_data: AsmData) -> List[Block]:
             block_builder.add_instruction(item)
             block_builder.add_instruction(next_item)
 
-        if item.is_jump_instruction():
+        if item.is_jump():
             # Split blocks at jumps, after the next instruction.
             block_builder.new_block()
 
         for item in process_after:
-            process(item)
+            process_mips(item)
+
+    def process_no_delay_slots(item: Union[Instruction, Label]) -> None:
+        nonlocal cond_return_target
+
+        if isinstance(item, Label):
+            # Split blocks at labels.
+            block_builder.new_block()
+            block_builder.set_label(item)
+            return
+
+        if item.is_conditional and item.is_return:
+            if cond_return_target is None:
+                cond_return_target = JumpTarget(f"_conditionalreturn_")
+            # Strip the "lr" off of the instruction
+            assert item.mnemonic[-2:] == "lr"
+            branch_instr = arch.parse(
+                item.mnemonic[:-2], [cond_return_target], item.meta.derived()
+            )
+            block_builder.add_instruction(branch_instr)
+            block_builder.new_block()
+            return
+
+        block_builder.add_instruction(item)
+
+        # Split blocks at jumps, at the next instruction.
+        if item.is_jump():
+            block_builder.new_block()
 
     for item in body_iter:
-        process(item)
+        if arch.arch == Target.ArchEnum.MIPS:
+            process_mips(item)
+        else:
+            process_no_delay_slots(item)
+
+    if fragment:
+        # If we're parsing an asm fragment instead of a full function,
+        # then it does not need to end in a return or jump
+        block_builder.new_block()
+        return block_builder.get_blocks()
 
     if block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
-        # anonymous ("jr" instructions create new anonymous blocks, so if it's
-        # not we must be missing a "jr $ra").
+        # anonymous (jump instructions create new anonymous blocks, so if it's
+        # not we must be missing a return instruction).
         label = block_builder.curr_label.name
-        print(f'Warning: missing "jr $ra" in last block (.{label}).\n')
-        meta = InstructionMeta.missing()
-        block_builder.add_instruction(Instruction("jr", [Register("ra")], meta))
-        block_builder.add_instruction(Instruction("nop", [], meta))
+        return_instrs = arch.missing_return()
+        print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
+        for instr in return_instrs:
+            block_builder.add_instruction(instr)
         block_builder.new_block()
 
-    # Throw away whatever is past the last "jr $ra" and return what we have.
+    if cond_return_target is not None:
+        # Add an empty return block at the end of the function
+        block_builder.set_label(Label(cond_return_target.target))
+        for instr in arch.missing_return():
+            block_builder.add_instruction(instr)
+        block_builder.new_block()
+
+    # Throw away whatever is past the last return instruction and return what we have.
     return block_builder.get_blocks()
 
 
@@ -818,7 +555,7 @@ class BaseNode(_BaseNode, abc.ABC):
         ...
 
     def __repr__(self) -> str:
-        return f"<{self.__class__.__name__}: {self.block.index}>"
+        return f"<{self.__class__.__name__}: {self.name()}>"
 
 
 @dataclass(eq=False, repr=False)
@@ -838,7 +575,7 @@ class BasicNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> {self.successor.block.index}",
+                f"# {self.name()} -> {self.successor.name()}",
                 " (loop)" if self.loop else "",
                 " (goto)" if self.emit_goto else "",
             ]
@@ -859,11 +596,11 @@ class ConditionalNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> ",
-                f"cond: {self.conditional_edge.block.index}",
+                f"# {self.name()} -> ",
+                f"cond: {self.conditional_edge.name()}",
                 " (loop)" if self.loop else "",
                 ", ",
-                f"def: {self.fallthrough_edge.block.index}",
+                f"def: {self.fallthrough_edge.name()}",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -888,7 +625,7 @@ class ReturnNode(BaseNode):
         return "".join(
             [
                 f"{self.block}\n",
-                f"# {self.block.index} -> ret",
+                f"# {self.name()} -> ret",
                 " (goto)" if self.emit_goto else "",
             ]
         )
@@ -909,8 +646,8 @@ class SwitchNode(BaseNode):
         return children
 
     def __str__(self) -> str:
-        targets = ", ".join(str(c.block.index) for c in self.cases)
-        return f"{self.block}\n# {self.block.index} -> {targets}"
+        targets = ", ".join(c.name() for c in self.cases)
+        return f"{self.block}\n# {self.name()} -> {targets}"
 
 
 @dataclass(eq=False, repr=False)
@@ -957,7 +694,11 @@ class NaturalLoop:
 
 
 def build_graph_from_block(
-    block: Block, blocks: List[Block], nodes: List[Node], asm_data: AsmData
+    block: Block,
+    blocks: List[Block],
+    nodes: List[Node],
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -978,9 +719,7 @@ def build_graph_from_block(
         return None
 
     # Extract branching instructions from this block.
-    jumps: List[Instruction] = [
-        inst for inst in block.instructions if inst.is_jump_instruction()
-    ]
+    jumps: List[Instruction] = [inst for inst in block.instructions if inst.is_jump()]
     assert len(jumps) in [0, 1], "too many jump instructions in one block"
 
     if len(jumps) == 0:
@@ -990,21 +729,23 @@ def build_graph_from_block(
 
         # Recursively analyze.
         next_block = blocks[block.index + 1]
-        new_node.successor = build_graph_from_block(next_block, blocks, nodes, asm_data)
+        new_node.successor = build_graph_from_block(
+            next_block, blocks, nodes, asm_data, arch
+        )
     elif len(jumps) == 1:
         # There is a jump. This is either:
-        # - a ReturnNode, if it's "jr $ra",
-        # - a SwitchNode, if it's "jr $something_else",
+        # - a ReturnNode, if it's a return instruction ("jr $ra" in MIPS)
+        # - a SwitchNode, if it's a jumptable instruction ("jr $something_else" in MIPS)
         # - a BasicNode, if it's an unconditional branch, or
         # - a ConditionalNode.
         jump = jumps[0]
 
-        if jump.mnemonic == "jr" and jump.args[0] == Register("ra"):
+        if jump.is_return:
             new_node = ReturnNode(block, False, index=0, terminal=terminal_node)
             nodes.append(new_node)
             return new_node
 
-        if jump.mnemonic == "jr":
+        if isinstance(jump.jump_target, Register):
             new_node = SwitchNode(block, False, [])
             nodes.append(new_node)
 
@@ -1015,25 +756,25 @@ def build_graph_from_block(
                         arg = arg.lhs
                     if (
                         isinstance(arg, Macro)
-                        and arg.macro_name == "lo"
+                        and arg.macro_name in ("lo", "l")
                         and isinstance(arg.argument, AsmGlobalSymbol)
                         and any(
                             arg.argument.symbol_name.startswith(prefix)
-                            for prefix in ("jtbl", "jpt_")
+                            for prefix in ("jtbl", "jpt_", "lbl_")
                         )
                     ):
                         jtbl_names.append(arg.argument.symbol_name)
             if len(jtbl_names) != 1:
                 raise DecompFailure(
-                    f"Unable to determine jump table for jr instruction {jump.meta.loc_str()}.\n\n"
+                    f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable in the same block as\n"
-                    'the instruction, which has a name starting with "jtbl"/"jpt_".'
+                    'the instruction, which has a name starting with "jtbl"/"jpt_"/"lbl_".'
                 )
 
             jtbl_name = jtbl_names[0]
             if jtbl_name not in asm_data.values:
                 raise DecompFailure(
-                    f"Found jr instruction {jump.meta.loc_str()}, but the "
+                    f"Found {jump.mnemonic} instruction {jump.meta.loc_str()}, but the "
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file(s), or in an additional file.\n"
@@ -1050,28 +791,29 @@ def build_graph_from_block(
                 case_block = find_block_by_label(entry)
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
-                case_node = build_graph_from_block(case_block, blocks, nodes, asm_data)
+                case_node = build_graph_from_block(
+                    case_block, blocks, nodes, asm_data, arch
+                )
                 new_node.cases.append(case_node)
             return new_node
 
-        assert jump.is_branch_instruction()
-
         # Get the block associated with the jump target.
-        branch_label = jump.get_branch_target()
+        branch_label = jump.jump_target
+        assert isinstance(branch_label, JumpTarget)
+
         branch_block = find_block_by_label(branch_label.target)
         if branch_block is None:
             target = branch_label.target
             raise DecompFailure(f"Cannot find branch target {target}")
 
-        is_constant_branch = jump.mnemonic in ["b", "j"]
         emit_goto = jump.meta.emit_goto
-        if is_constant_branch:
+        if not jump.is_conditional:
             # A constant branch becomes a basic edge to our branch target.
             new_node = BasicNode(block, emit_goto, dummy_node)
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(
-                branch_block, blocks, nodes, asm_data
+                branch_block, blocks, nodes, asm_data, arch
             )
         else:
             # A conditional branch means the fallthrough block is the next
@@ -1081,10 +823,10 @@ def build_graph_from_block(
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(
-                branch_block, blocks, nodes, asm_data
+                branch_block, blocks, nodes, asm_data, arch
             )
             new_node.fallthrough_edge = build_graph_from_block(
-                next_block, blocks, nodes, asm_data
+                next_block, blocks, nodes, asm_data, arch
             )
     return new_node
 
@@ -1118,7 +860,12 @@ def reachable_without(start: Node, end: Node, without: Node) -> bool:
 
 
 def build_nodes(
-    function: Function, blocks: List[Block], asm_data: AsmData
+    function: Function,
+    blocks: List[Block],
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
 ) -> List[Node]:
     terminal_node = TerminalNode.terminal()
     graph: List[Node] = [terminal_node]
@@ -1128,9 +875,13 @@ def build_nodes(
             f"Function {function.name} contains no instructions. Maybe it is rodata?"
         )
 
+    # Fragments do not need a ReturnNode, they can directly fall through to the TerminalNode
+    if fragment:
+        blocks.append(terminal_node.block)
+
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph, asm_data)
+    build_graph_from_block(entry_block, blocks, graph, asm_data, arch)
 
     # Give the TerminalNode a new index so that it sorts to the end of the list
     assert [n for n in graph if isinstance(n, TerminalNode)] == [terminal_node]
@@ -1343,9 +1094,106 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
         compute_relations(nodes)
 
 
+@dataclass
+class RefSet:
+    """A set of References, backed by a list to avoid non-determinism"""
+
+    refs: List[Reference] = field(default_factory=list)
+
+    @staticmethod
+    def empty() -> "RefSet":
+        """Represent a missing reference, such as an unset register"""
+        return RefSet(refs=[])
+
+    def is_empty(self) -> bool:
+        return not self
+
+    def get_unique(self) -> Optional[Reference]:
+        if len(self.refs) == 1:
+            return self.refs[0]
+        return None
+
+    def add(self, ref: Reference) -> None:
+        if ref not in self.refs:
+            self.refs.append(ref)
+
+    def update(self, other: "RefSet") -> None:
+        for ref in other.refs:
+            self.add(ref)
+
+    def remove(self, ref: Reference) -> None:
+        self.refs.remove(ref)
+
+    def copy(self) -> "RefSet":
+        return RefSet(refs=self.refs.copy())
+
+    def __contains__(self, ref: Reference) -> bool:
+        return ref in self.refs
+
+    def __iter__(self) -> Iterator[Reference]:
+        return iter(self.refs)
+
+    def __len__(self) -> int:
+        return len(self.refs)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RefSet):
+            return NotImplemented
+        return len(self) == len(other) and all(x in other for x in self)
+
+
+@dataclass
+class LocationRefSetDict:
+    """
+    A map from Locations to RefSets.
+    If a key is missing, it is equivalent to mapping to an empty RefSet.
+    """
+
+    refs: Dict[Location, RefSet] = field(default_factory=dict)
+
+    def get(self, loc: Location) -> RefSet:
+        # Missing keys map to an empty RefSet
+        return self.refs.get(loc, RefSet.empty())
+
+    def add(self, loc: Location, ref: Reference) -> None:
+        if loc not in self:
+            self.refs[loc] = RefSet([ref])
+        else:
+            self.refs[loc].add(ref)
+
+    def remove(self, loc: Location) -> None:
+        self.refs.pop(loc, None)
+
+    def copy(self) -> "LocationRefSetDict":
+        return LocationRefSetDict(refs=self.refs.copy())
+
+    def items(self) -> ItemsView[Location, RefSet]:
+        return self.refs.items()
+
+    def is_empty(self) -> bool:
+        return all(not v for v in self.refs.values())
+
+    def __contains__(self, key: Location) -> bool:
+        return bool(self.get(key))
+
+    def __setitem__(self, key: Location, value: RefSet) -> None:
+        self.refs[key] = value
+
+
 @dataclass(frozen=True)
 class FlowGraph:
     nodes: List[Node]
+
+    # For each Reference (typically an instruction), track the source References for
+    # each of its input Locations (typically registers)
+    instr_inputs: DefaultDict[Reference, LocationRefSetDict] = field(
+        default_factory=lambda: defaultdict(LocationRefSetDict)
+    )
+    # The set of all downstream References whose inputs depend on outputs from other
+    # References. This is the same information as `instr_inputs`, but reversed.
+    instr_uses: DefaultDict[Reference, LocationRefSetDict] = field(
+        default_factory=lambda: defaultdict(LocationRefSetDict)
+    )
 
     def entry_node(self) -> Node:
         return self.nodes[0]
@@ -1425,14 +1273,216 @@ class FlowGraph:
         for node in self.nodes:
             node.block.block_info = None
 
+    def add_instruction_use(
+        self, *, use: Reference, loc: Location, src: Reference
+    ) -> None:
+        """Update instr_inputs/instr_uses that `use` depends on `loc` from `src`"""
+        self.instr_inputs[use].add(loc, src)
+        self.instr_uses[src].add(loc, use)
 
-def build_flowgraph(function: Function, asm_data: AsmData) -> FlowGraph:
-    blocks = build_blocks(function, asm_data)
-    nodes = build_nodes(function, blocks, asm_data)
-    nodes = duplicate_premature_returns(nodes)
+    def clear_instruction_inputs(self, ref: Reference) -> None:
+        """Remove all inputs for `ref` from instr_inputs/instr_uses"""
+        for loc, uses in self.instr_inputs[ref].items():
+            for use in uses:
+                self.instr_uses[use].get(loc).remove(ref)
+        self.instr_inputs.pop(ref)
+
+    def validate_instruction_graph(self) -> None:
+        """Verify that the instr_inputs & instr_uses dicts are consistent"""
+        # Recompute instr_uses from instr_inputs as new_uses
+        new_uses: DefaultDict[Reference, LocationRefSetDict] = defaultdict(
+            LocationRefSetDict
+        )
+        for ref, inputs in self.instr_inputs.items():
+            for reg, deps in inputs.items():
+                for dep in deps:
+                    new_uses[dep].add(reg, ref)
+
+        # Assert that new_uses is equivalent to instr_uses
+        for ref, uses in new_uses.items():
+            for reg, deps in uses.items():
+                assert deps == self.instr_uses[ref].get(reg)
+
+
+def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> RefSet:
+    """
+    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
+
+    Otherwise, return an empty set. This analysis is accurate when `loc` is a Register,
+    but is only best-effort for local variables: it will miss local array accesses and
+    stack pointers passed to functions.
+    """
+    assert node.immediate_dominator is not None
+
+    seen = set()
+    stack = node.parents[:]
+    sources = RefSet()
+
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+
+        # As an optimization, we only need to iterate up until the immediate dominator,
+        # because its phi sources have already been computed (`imdom_srcs`).
+        if n == node.immediate_dominator:
+            # If `loc` was unset on the path to `node` via its imdom, it's not a valid phi
+            if not imdom_srcs:
+                return RefSet.empty()
+
+            sources.update(imdom_srcs)
+            continue
+
+        # Find the last instruction in the node that either writes or clobbers to `loc`
+        for ref in n.block.instruction_refs[::-1]:
+            if loc in ref.instruction.outputs:
+                sources.add(ref)
+                break
+            if loc in ref.instruction.clobbers:
+                return RefSet.empty()
+        else:
+            # This node didn't touch `loc`, so iterate by checking its parents.
+            stack.extend(n.parents)
+
+    return sources
+
+
+def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
+    assert node.immediate_dominator is not None
+
+    seen = {node.immediate_dominator}
+    stack = node.parents[:]
+    clobbered = set()
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        for instr in n.block.instructions:
+            clobbered.update(instr.outputs)
+            clobbered.update(instr.clobbers)
+        stack.extend(n.parents)
+    return clobbered
+
+
+def nodes_to_flowgraph(
+    nodes: List[Node],
+    function: Function,
+    arch: ArchFlowGraph,
+    *,
+    print_warnings: bool = False,
+) -> FlowGraph:
+    flow_graph = FlowGraph(nodes)
+    missing_regs = []
+
+    def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
+        def add_use_sources(*, use: Reference, input_loc: Location) -> RefSet:
+            sources = loc_srcs.get(input_loc)
+            for src in sources:
+                flow_graph.add_instruction_use(use=use, loc=input_loc, src=src)
+            return sources
+
+        # Calculate register usage for each instruction in this node
+        for ref in node.block.instruction_refs:
+            ir = ref.instruction
+
+            # Calculate the source of each location
+            for inp in ir.inputs:
+                sources = add_use_sources(use=ref, input_loc=inp)
+                # Registers must be written to before being read.
+                # Function calls are known to list all possible argument registers,
+                # so they're a common false positive here.
+                # Otherwise, this may indicate that the instruction's inputs were
+                # incorrectly specified (or the instruction isn't fully implemented).
+                if (
+                    isinstance(inp, Register)
+                    and sources.is_empty()
+                    and (ir.function_target is None or inp not in arch.argument_regs)
+                ):
+                    missing_regs.append((inp, ref))
+
+            # Remove any clobbered locations
+            for clob in ir.clobbers + ir.outputs:
+                if clob in loc_srcs:
+                    loc_srcs.remove(clob)
+
+            # Mark outputs as coming from this instruction
+            for out in ir.outputs:
+                loc_srcs.add(out, ref)
+
+        # If this is a TerminalNode, it has no instructions; instead add dependencies
+        # for the (potential) return registers of the function
+        if isinstance(node, TerminalNode):
+            assert not node.block.instruction_refs
+            for reg in arch.all_return_regs:
+                add_use_sources(use=EpilogueRef(reg), input_loc=reg)
+
+        # Process everything dominated by this node, now that we know our own
+        # register sources. This will eventually reach every node.
+        for child in node.immediately_dominates:
+            child_loc_srcs = loc_srcs.copy()
+
+            for loc in locs_clobbered_until_dominator(child):
+                phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
+                if phi_reg_srcs:
+                    # If phi_reg_srcs is non-empty, then loc is set in every control flow path
+                    # to the child node (but it may have a phi value)
+                    child_loc_srcs[loc] = phi_reg_srcs
+                elif loc in child_loc_srcs:
+                    # Otherwise, it's not always set, and cannot be used by the child node
+                    child_loc_srcs.remove(loc)
+
+            process_node(child, child_loc_srcs)
+
+    # Set all the registers that are valid to access at the start of a function
+    entry_reg_srcs = LocationRefSetDict()
+    for r in arch.all_regs:
+        entry_reg_srcs.refs[r] = RefSet(refs=[PrologueRef(r)])
+
+    # Recursively traverse every node, starting with the entry node, populating instr_inputs
+    entry_node = flow_graph.entry_node()
+    process_node(entry_node, entry_reg_srcs)
+
+    if print_warnings and missing_regs:
+        print("/*")
+        print(f"Warning: in {function.name}, regs were read before being written to:")
+        for reg, ref in missing_regs:
+            print(f"   {reg} at {ref}: {ref.instruction}")
+        print(f"*/")
+
+    return flow_graph
+
+
+def build_flowgraph(
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
+    print_warnings: bool = False,
+) -> FlowGraph:
+    """
+    Build the FlowGraph for the given Function.
+    If `fragment` is True, do not treat the asm as a full function: this is used
+    for analyzing IR patterns which do not need to be normalized in the same way.
+    """
+    blocks = build_blocks(function, asm_data, arch, fragment=fragment)
+    nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
+    if not fragment:
+        nodes = duplicate_premature_returns(nodes)
+
     compute_relations(nodes)
-    terminate_infinite_loops(nodes)
-    return FlowGraph(nodes)
+    if not fragment:
+        terminate_infinite_loops(nodes)
+
+    flow_graph = nodes_to_flowgraph(
+        nodes, function, arch, print_warnings=print_warnings or fragment
+    )
+    if not fragment:
+        arch.simplify_ir(flow_graph)
+
+    return flow_graph
 
 
 def visualize_flowgraph(flow_graph: FlowGraph) -> str:

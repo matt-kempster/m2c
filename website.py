@@ -50,10 +50,15 @@ if "source" in form:
             cmd.extend(["--globals", value])
     if "visualize" in form:
         cmd.append("--visualize")
-    if "compiler" in form:
-        value = form.getfirst("compiler")
-        if value in ("ido", "gcc"):
-            cmd.extend(["--compiler", value])
+    if "target" in form:
+        value = form.getfirst("target")
+        if value in (
+            "ppc-mwcc-c",
+            "ppc-mwcc-c++",
+            "mips-ido-c",
+            "mips-gcc-c",
+        ):
+            cmd.extend(["--target", value])
     if "nounkinference" in form:
         cmd.append("--no-unk-inference")
     if "stackstructs" in form:
@@ -202,7 +207,7 @@ label {
 <form action="?go" method="post">
 <div class="main">
   <div>
-    MIPS assembly:
+    Assembly:
   </div>
   <div style="flex: 20;">
     <textarea name="source" spellcheck="false"></textarea>
@@ -225,10 +230,12 @@ label {
     <option value="none">none</option>
     </select>
     </label>
-    <label>Original compiler:
-    <select name="compiler">
-    <option value="ido">ido</option>
-    <option value="gcc">gcc</option>
+    <label>Target arch, compiler, &amp; language:
+    <select name="target">
+    <option value="mips-ido-c">MIPS, IDO, C</option>
+    <option value="mips-gcc-c">MIPS, GCC, C</option>
+    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
+    <option value="ppc-mwcc-c">PPC, MWCC, C</option>
     </select>
     </label>
     <label>Comment style:
@@ -341,7 +348,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "compiler", "nounkinference", "stackstructs"];
+    var shouldSave = ["usesidebar", "allman", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "target", "nounkinference", "stackstructs"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];

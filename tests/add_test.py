@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
 import argparse
-import distutils.spawn
 import logging
 import os
-import pathlib
-import shutil
 import subprocess
 import sys
-import typing
 from contextlib import ExitStack
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Dict, List, Mapping, NamedTuple, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field, replace
+from ppc_disasm import disassemble_ppc_elf
 
-COMMON_IRIX_FLAGS = ["-woff", "826"]
-
-OUT_FILES_TO_IRIX_FLAGS: Mapping[str, List[str]] = {
-    "irix-g": ["-g", "-mips2"],
-    "irix-o2": ["-O2", "-mips2"],
-    # "irix-g-mips1": ["-g", "-mips1"],
-    # "irix-o2-mips1": ["-O2", "-mips1"],
-}
+logger = logging.getLogger(__name__)
 
 
 def set_up_logging(debug: bool) -> None:
@@ -30,21 +21,28 @@ def set_up_logging(debug: bool) -> None:
     )
 
 
-class PathsToBinaries(NamedTuple):
-    MIPS_CC: str
-    SM64_TOOLS: str
+@dataclass
+class PathsToBinaries:
+    IDO_CC: Optional[Path]
+    SM64_TOOLS: Optional[Path]
+    MWCC_CC: Optional[Path]
 
 
-def get_environment_variables() -> Optional[PathsToBinaries]:
-    def load(env_var_name: str, error_message: str) -> Optional[str]:
+def get_environment_variables() -> PathsToBinaries:
+    def load(env_var_name: str, error_message: str) -> Optional[Path]:
         env_var = os.environ.get(env_var_name)
         if env_var is None:
-            logging.error(error_message)
-        return env_var
+            logger.error(error_message)
+            return None
+        path = Path(env_var)
+        if not path.exists():
+            logger.error(error_message + " (path does not exist)")
+            return None
+        return path
 
-    MIPS_CC = load(
-        "MIPS_CC",
-        "env variable MIPS_CC should point to recompiled IDO cc binary",
+    IDO_CC = load(
+        "IDO_CC",
+        "env variable IDO_CC should point to recompiled IDO cc binary",
     )
     SM64_TOOLS = load(
         "SM64_TOOLS",
@@ -53,16 +51,78 @@ def get_environment_variables() -> Optional[PathsToBinaries]:
             "https://github.com/queueRAM/sm64tools/, with mipsdisasm built"
         ),
     )
-    if not SM64_TOOLS or not MIPS_CC:
-        logging.error(
-            "One or more required environment variables are not set. Bailing."
+    MWCC_CC = load(
+        "MWCC_CC", "env variable MWCC_CC should point to a PPC cc binary (mwcceppc.exe)"
+    )
+    return PathsToBinaries(IDO_CC=IDO_CC, SM64_TOOLS=SM64_TOOLS, MWCC_CC=MWCC_CC)
+
+
+@dataclass
+class Compiler:
+    name: str
+    cc_command: List[str]
+
+    def with_cc_flags(self, flags: List[str]) -> "Compiler":
+        return replace(self, cc_command=self.cc_command + flags)
+
+
+def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
+    compilers: List[Tuple[str, Compiler]] = []
+    if paths.IDO_CC is not None and paths.SM64_TOOLS is not None:
+        ido = Compiler(
+            name="ido",
+            cc_command=[
+                str(paths.IDO_CC),
+                "-c",
+                "-Wab,-r4300_mul",
+                "-non_shared",
+                "-G",
+                "0",
+                "-Xcpluscomm",
+                "-fullwarn",
+                "-wlint",
+                "-woff",
+                "819,820,852,821,827,826",
+                "-signed",
+            ],
         )
-        return None
+        compilers.append(("irix-g", ido.with_cc_flags(["-g", "-mips2"])))
+        compilers.append(("irix-o2", ido.with_cc_flags(["-O2", "-mips2"])))
+        # compilers.append(("irix-g-mips1", ido.with_cc_flags(["-O2", "-mips1"])))
+        # compilers.append(("irix-o2-mips1", ido.with_cc_flags(["-O2", "-mips1"])))
     else:
-        return PathsToBinaries(MIPS_CC, SM64_TOOLS)
+        logger.warning("IDO tools not found; skipping MIPS compilers")
+
+    if paths.MWCC_CC is not None:
+        cc_command = [
+            str(paths.MWCC_CC),
+            "-c",
+            "-Cpp_exceptions",
+            "off",
+            "-proc",
+            "gekko",
+            "-fp",
+            "hard",
+            "-enum",
+            "int",
+            "-nodefaults",
+        ]
+        if paths.MWCC_CC.suffix == ".exe" and sys.platform.startswith("linux"):
+            cc_command.insert(0, "/usr/bin/wine")
+        mwcc = Compiler(
+            name="mwcc",
+            cc_command=cc_command,
+        )
+        compilers.append(("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])))
+        # compilers.append(("mwcc-o4p-s0", mwcc.with_cc_flags(["-O4,p", "-sdata", "0", "-sdata2", "0"])))
+    else:
+        logger.warning("MWCC tools not found; skipping PPC compilers")
+
+    return compilers
 
 
-class DisassemblyInfo(NamedTuple):
+@dataclass
+class DisassemblyInfo:
     entry_point: bytes
     disasm: bytes
 
@@ -98,11 +158,12 @@ def do_disassembly_step(
 
     arg = f"{addr}:{index}+{size}"
     entry_point_str = entry_point.decode("utf-8", "replace")
-    logging.debug(
+    logger.debug(
         f"Calling mipsdisasm with arg {arg} and entry point {entry_point_str}..."
     )
+    assert env_vars.SM64_TOOLS is not None
     final_asm = subprocess.run(
-        [env_vars.SM64_TOOLS + "/mipsdisasm", temp_out_file, arg],
+        [env_vars.SM64_TOOLS / "mipsdisasm", temp_out_file, arg],
         stdout=subprocess.PIPE,
     ).stdout
 
@@ -119,32 +180,20 @@ def do_linker_step(temp_out_file: str, temp_o_file: str) -> None:
 
 
 def do_compilation_step(
-    temp_o_file: str, in_file: str, flags: List[str], env_vars: PathsToBinaries
+    temp_o_file: str,
+    in_file: str,
+    compiler: Compiler,
 ) -> None:
-    subprocess.run(
-        [
-            env_vars.MIPS_CC,
-            "-c",
-            "-Wab,-r4300_mul",
-            "-non_shared",
-            "-G",
-            "0",
-            "-Xcpluscomm",
-            "-fullwarn",
-            "-wlint",
-            "-woff",
-            "819,820,852,821,827",
-            "-signed",
-            "-o",
-            temp_o_file,
-            in_file,
-            *flags,
-        ]
-    )
+    args = compiler.cc_command + [
+        "-o",
+        temp_o_file,
+        in_file,
+    ]
+    subprocess.run(args)
 
 
 def do_fix_lohi_step(disasm_info: DisassemblyInfo) -> bytes:
-    logging.debug("Fixing %lo and %hi macros...")
+    logger.debug("Fixing %lo and %hi macros...")
 
     def replace_last(s: bytes, a: bytes, b: bytes) -> bytes:
         return b.join(s.rsplit(a, 1))
@@ -183,30 +232,53 @@ def do_fix_lohi_step(disasm_info: DisassemblyInfo) -> bytes:
     return b"\n".join(output)
 
 
-def irix_compile_with_flag(
-    in_file: Path, out_file: Path, flags: List[str], env_vars: PathsToBinaries
+def irix_compile(
+    in_file: Path, out_file: Path, env_vars: PathsToBinaries, compiler: Compiler
 ) -> None:
-    flags_str = " ".join(flags)
-    logging.info(f"Compiling {in_file} to {out_file} using these flags: {flags_str}")
+    flags_str = " ".join(compiler.cc_command)
+    logger.info(f"Compiling {in_file} to {out_file} using: {flags_str}")
     with ExitStack() as stack:
         temp_o_file = stack.enter_context(NamedTemporaryFile(suffix=".o")).name
         temp_out_file = stack.enter_context(NamedTemporaryFile(suffix=".out")).name
-        logging.debug(f"Compiling and linking {in_file} with {flags_str}...")
-        do_compilation_step(temp_o_file, str(in_file), flags, env_vars)
+        logger.debug(f"Compiling and linking {in_file} using: {flags_str}")
+        do_compilation_step(temp_o_file, str(in_file), compiler)
         do_linker_step(temp_out_file, temp_o_file)
         disasm_info = do_disassembly_step(temp_out_file, env_vars)
         final_asm = do_fix_lohi_step(disasm_info)
     out_file.write_bytes(final_asm)
-    logging.info(f"Successfully wrote disassembly to {out_file}.")
+    logger.info(f"Successfully wrote disassembly to {out_file}.")
 
 
-def add_test_from_file(orig_file: Path, env_vars: PathsToBinaries) -> None:
+def ppc_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
+    flags_str = " ".join(compiler.cc_command)
+    logger.info(f"Compiling {in_file} to {out_file} using: {flags_str}")
+    with NamedTemporaryFile(suffix=".o") as temp_o_file:
+        logger.debug(f"Compiling {in_file} using: {flags_str}")
+        do_compilation_step(temp_o_file.name, str(in_file), compiler)
+        with open(temp_o_file.name, "rb") as o_f:
+            with out_file.open("w") as out_f:
+                disassemble_ppc_elf(o_f, out_f)
+    logger.info(f"Successfully wrote disassembly to {out_file}.")
+
+
+def add_test_from_file(
+    orig_file: Path, env_vars: PathsToBinaries, compilers: List[Tuple[str, Compiler]]
+) -> None:
     test_dir = orig_file.parent
-    for asm_filename, flags in OUT_FILES_TO_IRIX_FLAGS.items():
-        asm_file_path = Path(str(test_dir / asm_filename) + ".s")
-        irix_compile_with_flag(
-            orig_file, asm_file_path, flags + COMMON_IRIX_FLAGS, env_vars
-        )
+    for asm_filename, compiler in compilers:
+        asm_file_path = test_dir / (asm_filename + ".s")
+        try:
+            if compiler.name == "ido":
+                irix_compile(orig_file, asm_file_path, env_vars, compiler)
+            elif compiler.name == "mwcc":
+                ppc_compile(orig_file, asm_file_path, compiler)
+
+                # If the flags file doesn't exist, initialize it with the correct --target
+                ppc_flags = test_dir / (asm_filename + "-flags.txt")
+                if not ppc_flags.exists():
+                    ppc_flags.write_text("--target ppc-mwcc-c\n")
+        except Exception:
+            logger.exception(f"Failed to compile {asm_file_path}")
 
 
 def main() -> int:
@@ -230,23 +302,25 @@ def main() -> int:
     set_up_logging(args.debug)
 
     env_vars = get_environment_variables()
-    if env_vars is None:
+    compilers = get_compilers(env_vars)
+    if not compilers:
         return 2
 
     for orig_filename in args.files:
-        orig_file = Path(orig_filename)
+        orig_file = Path(orig_filename).resolve()
         if not orig_file.is_file():
-            logging.error(f"{orig_file} does not exist. Skipping.")
+            logger.error(f"{orig_file} does not exist. Skipping.")
             continue
-        expected_file = (
+        expected_c_file = (
             Path(__file__).parent / "end_to_end" / orig_file.parent.name / "orig.c"
-        )
-        if orig_file != expected_file:
-            logging.error(
-                f"`{orig_file}` does not have a path of the form `{expected_file}`! Skipping."
+        ).resolve()
+        expected_cpp_file = expected_c_file.with_suffix(".cpp")
+        if orig_file != expected_c_file and orig_file != expected_cpp_file:
+            logger.error(
+                f"`{orig_file}` does not have a path of the form `{expected_c_file}` or `{expected_cpp_file}`! Skipping."
             )
             continue
-        add_test_from_file(orig_file, env_vars)
+        add_test_from_file(orig_file, env_vars, compilers)
 
     return 0
 

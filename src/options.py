@@ -30,11 +30,60 @@ class CodingStyle:
 
 
 @dataclass
-class Options:
+class Target:
+    class ArchEnum(ChoicesEnum):
+        MIPS = "mips"
+        PPC = "ppc"
+
     class CompilerEnum(ChoicesEnum):
         IDO = "ido"
         GCC = "gcc"
+        MWCC = "mwcc"
 
+    class LanguageEnum(ChoicesEnum):
+        C = "c"
+        CXX = "c++"
+
+    arch: ArchEnum
+    compiler: CompilerEnum
+    language: LanguageEnum
+
+    @staticmethod
+    def parse(name: str) -> "Target":
+        """
+        Parse an `arch-compiler-language` triple.
+        If `-language` is missing, use the default for the compiler.
+        If `-compiler` is missing, use the default for the arch.
+        (This makes `mips` an alias for `mips-ido-c`, etc.)
+        """
+        terms = name.split("-")
+        try:
+            arch = Target.ArchEnum(terms[0])
+            if len(terms) >= 2:
+                compiler = Target.CompilerEnum(terms[1])
+            elif arch == Target.ArchEnum.PPC:
+                compiler = Target.CompilerEnum.MWCC
+            else:
+                compiler = Target.CompilerEnum.IDO
+
+            if len(terms) >= 3:
+                language = Target.LanguageEnum(terms[2])
+            elif compiler == Target.CompilerEnum.MWCC:
+                language = Target.LanguageEnum.CXX
+            else:
+                language = Target.LanguageEnum.C
+        except ValueError as e:
+            raise ValueError(f"Unable to parse Target '{name}' ({e})")
+
+        return Target(
+            arch=arch,
+            compiler=compiler,
+            language=language,
+        )
+
+
+@dataclass
+class Options:
     class GlobalDeclsEnum(ChoicesEnum):
         ALL = "all"
         USED = "used"
@@ -63,7 +112,7 @@ class Options:
     sanitize_tracebacks: bool
     valid_syntax: bool
     global_decls: GlobalDeclsEnum
-    compiler: CompilerEnum
+    target: Target
     print_stack_structs: bool
     unk_inference: bool
     passes: int

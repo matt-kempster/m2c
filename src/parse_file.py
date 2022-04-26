@@ -1,3 +1,4 @@
+import csv
 from dataclasses import dataclass, field
 import re
 import struct
@@ -7,7 +8,13 @@ from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, U
 
 from .error import DecompFailure
 from .options import Options
-from .parse_instruction import Instruction, InstructionMeta, parse_instruction
+from .parse_instruction import (
+    ArchAsm,
+    Instruction,
+    InstructionMeta,
+    RegFormatter,
+    parse_instruction,
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +29,7 @@ class Label:
 class Function:
     name: str
     body: List[Union[Instruction, Label]] = field(default_factory=list)
+    reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
     def new_label(self, name: str) -> None:
         label = Label(name)
@@ -34,7 +42,10 @@ class Function:
         self.body.append(instruction)
 
     def bodyless_copy(self) -> "Function":
-        return Function(name=self.name)
+        return Function(
+            name=self.name,
+            reg_formatter=self.reg_formatter,
+        )
 
     def __str__(self) -> str:
         body = "\n".join(str(item) for item in self.body)
@@ -108,7 +119,7 @@ class MIPSFile:
                 return
             else:
                 raise DecompFailure(
-                    "unsupported non-nop instruction outside of function"
+                    f"unsupported non-nop instruction outside of function ({instruction})"
                 )
         self.current_function.new_instruction(instruction)
 
@@ -135,6 +146,19 @@ class MIPSFile:
     def __str__(self) -> str:
         functions_str = "\n\n".join(str(function) for function in self.functions)
         return f"# {self.filename}\n{functions_str}"
+
+
+def split_arg_list(args: str) -> List[str]:
+    """Split a string of comma-separated arguments, handling quotes"""
+    reader = csv.reader(
+        [args],
+        delimiter=",",
+        doublequote=False,
+        escapechar="\\",
+        quotechar='"',
+        skipinitialspace=True,
+    )
+    return [a.strip() for a in next(reader)]
 
 
 def parse_ascii_directive(line: str, z: bool) -> bytes:
@@ -213,10 +237,9 @@ def parse_incbin(
     args: List[str], options: Options, warnings: List[str]
 ) -> Optional[bytes]:
     try:
-        # TODO: Reuse ASCII string parser, instead of just stripping quotes
-        filename = args[0].strip("'\"")
-        offset = int(args[1].strip(), 0)
-        size = int(args[2].strip(), 0)
+        filename = args[0]
+        offset = int(args[1], 0)
+        size = int(args[2], 0)
     except ValueError:
         raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
 
@@ -253,7 +276,7 @@ def parse_incbin(
     return None
 
 
-def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
+def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
     filename = Path(f.name).name
     mips_file: MIPSFile = MIPSFile(filename)
     defines: Dict[str, int] = options.preproc_defines
@@ -265,16 +288,16 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/# \t":
+        if s[0] in "/#; \t":
             return " "
         else:
             return s
 
-    re_comment_or_string = re.compile(r'#.*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
+    re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
     re_local_label = re.compile("loc_|locret_|def_|lbl_")
-    re_label = re.compile(r"([a-zA-Z0-9_.$]+):")
+    re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
     T = TypeVar("T")
 
@@ -326,11 +349,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
             if not g:
                 break
 
-            label = g.group(1)
+            label = g.group(1) or g.group(2)
             if ifdef_level == 0:
                 process_label(label, glabel=False)
 
-            line = line[len(label) + 1 :].strip()
+            line = line[len(g.group(0)) :].strip()
 
         if not line:
             continue
@@ -349,6 +372,17 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                 level = defines[macro_name]
                 if line.startswith(".ifdef"):
                     level = 1 - level
+                ifdef_level += level
+                ifdef_levels.append(level)
+            elif line.startswith(".if"):
+                macro_name = line.split()[1]
+                if macro_name == "0":
+                    level = 1
+                elif macro_name == "1":
+                    level = 0
+                else:
+                    level = 0
+                    add_warning(warnings, f"Note: ignoring .if {macro_name} directive")
                 ifdef_level += level
                 ifdef_levels.append(level)
             elif line.startswith(".else"):
@@ -384,36 +418,35 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     curr_section = ".text"
                 elif curr_section in (".rodata", ".data", ".bss"):
                     directive, _, args_str = line.partition(" ")
-                    args = args_str.split(",")
+                    args = split_arg_list(args_str)
                     if directive in (".word", ".4byte"):
                         for w in args:
-                            w = w.strip()
                             if not w or w[0].isdigit() or w[0] == "-":
                                 ival = (
                                     try_parse(lambda: int(w, 0), directive) & 0xFFFFFFFF
                                 )
                                 mips_file.new_data_bytes(struct.pack(">I", ival))
+                            elif w == "NULL":
+                                # NULL is a non-standard but common asm macro
+                                # that expands to 0
+                                mips_file.new_data_bytes(b"\0\0\0\0")
                             else:
                                 mips_file.new_data_sym(w)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
-                            ival = (
-                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFFFF
-                            )
+                            ival = try_parse(lambda: int(w, 0), directive) & 0xFFFF
                             mips_file.new_data_bytes(struct.pack(">H", ival))
                     elif directive == ".byte":
                         for w in args:
-                            ival = (
-                                try_parse(lambda: int(w.strip(), 0), directive) & 0xFF
-                            )
+                            ival = try_parse(lambda: int(w, 0), directive) & 0xFF
                             mips_file.new_data_bytes(bytes([ival]))
                     elif directive == ".float":
                         for w in args:
-                            fval = try_parse(lambda: float(w.strip()), directive)
+                            fval = try_parse(lambda: float(w), directive)
                             mips_file.new_data_bytes(struct.pack(">f", fval))
                     elif directive == ".double":
                         for w in args:
-                            fval = try_parse(lambda: float(w.strip()), directive)
+                            fval = try_parse(lambda: float(w), directive)
                             mips_file.new_data_bytes(struct.pack(">d", fval))
                     elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
                         z = directive.endswith("z")
@@ -422,17 +455,14 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                         )
                     elif directive in (".space", ".skip"):
                         if len(args) == 2:
-                            fill = (
-                                try_parse(lambda: int(args[1].strip(), 0), directive)
-                                & 0xFF
-                            )
+                            fill = try_parse(lambda: int(args[1], 0), directive) & 0xFF
                         elif len(args) == 1:
                             fill = 0
                         else:
                             raise DecompFailure(
                                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
-                        size = try_parse(lambda: int(args[0].strip(), 0), directive)
+                        size = try_parse(lambda: int(args[0], 0), directive)
                         mips_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
                         data = parse_incbin(args, options, warnings)
@@ -452,7 +482,11 @@ def parse_file(f: typing.TextIO, options: Options) -> MIPSFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                instr: Instruction = parse_instruction(line, meta)
+                if mips_file.current_function is not None:
+                    reg_formatter = mips_file.current_function.reg_formatter
+                else:
+                    reg_formatter = RegFormatter()
+                instr = parse_instruction(line, meta, arch, reg_formatter)
                 mips_file.new_instruction(instr)
 
     if warnings:

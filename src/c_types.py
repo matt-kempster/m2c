@@ -79,9 +79,15 @@ class Function:
 
 
 @dataclass(eq=False)
+class Enum:
+    tag: Optional[str]
+    names: Dict[int, str]
+
+
+@dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 3
+    VERSION: ClassVar[int] = 4
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
@@ -94,6 +100,7 @@ class TypeMap:
     struct_typedefs: Dict[Union[str, StructUnion], TypeDecl] = field(
         default_factory=dict
     )
+    enums: Dict[Union[str, ca.Enum], Enum] = field(default_factory=dict)
     enum_values: Dict[str, int] = field(default_factory=dict)
 
 
@@ -225,18 +232,6 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
             return False
 
 
-def get_primitive_list(type: CType, typemap: TypeMap) -> Optional[List[str]]:
-    type = resolve_typedefs(type, typemap)
-    if not isinstance(type, TypeDecl):
-        return None
-    inner_type = type.type
-    if isinstance(inner_type, ca.Enum):
-        return ["int"]
-    if isinstance(inner_type, ca.IdentifierType):
-        return inner_type.names
-    return None
-
-
 def parse_function(fn: CType) -> Optional[Function]:
     if not isinstance(fn, FuncDecl):
         return None
@@ -360,6 +355,12 @@ def parse_enum(enum: ca.Enum, typemap: TypeMap) -> None:
     size or alignment here."""
     if enum.values is None:
         return
+
+    typemap_enum = Enum(tag=enum.name, names={})
+    typemap.enums[enum] = typemap_enum
+    if enum.name is not None and enum.name not in typemap.enums:
+        typemap.enums[enum.name] = typemap_enum
+
     next_value = 0
     for enumerator in enum.values.enumerators:
         if enumerator.value:
@@ -368,6 +369,8 @@ def parse_enum(enum: ca.Enum, typemap: TypeMap) -> None:
             value = next_value
         next_value = value + 1
         typemap.enum_values[enumerator.name] = value
+        # If there are multiple names mapping to a single value, take the last one
+        typemap_enum.names[value] = enumerator.name
 
 
 def get_struct(
@@ -631,7 +634,7 @@ def parse_c(
 
 def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
     # Wrapper to convert `source_paths` into a hashable type
-    return _build_typemap(tuple(source_paths), True)
+    return _build_typemap(tuple(source_paths), use_cache)
 
 
 @functools.lru_cache(maxsize=16)
@@ -724,8 +727,8 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
         if use_cache:
             try:
-                with cache_path.open("wb") as f:
-                    pickle.dump(typemap, f)
+                with cache_path.open("wb") as f2:
+                    pickle.dump(typemap, f2)
             except Exception as e:
                 print(
                     f"Warning: Unable to write cache file {cache_path}, skipping ({e})"

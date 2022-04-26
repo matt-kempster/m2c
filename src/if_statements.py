@@ -11,7 +11,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Options
+from .options import Options, Target
 from .translate import (
     BinaryOp,
     BlockInfo,
@@ -414,6 +414,7 @@ def emit_goto(context: Context, target: Node, body: Body) -> None:
 def add_labels_for_switch(
     context: Context,
     node: Node,
+    case_type: Type,
     cases: List[Tuple[int, Node]],
     default_node: Optional[Node],
 ) -> int:
@@ -432,7 +433,13 @@ def add_labels_for_switch(
 
     # Mark which labels we need to emit
     for index, target in cases:
-        case_label = f"case 0x{index:X}" if use_hex else f"case {index}"
+        enum_name = case_type.get_enum_name(index)
+        if enum_name:
+            case_label = f"case {enum_name}"
+        elif use_hex:
+            case_label = f"case 0x{index:X}"
+        else:
+            case_label = f"case {index}"
 
         # Do not emit extra `case N:` labels for the `default:` block, skip the
         # switch block entirely, or are just jumps to these kinds of nodes.
@@ -841,7 +848,7 @@ def try_build_irregular_switch(
                     node_queue.append((node.fallthrough_edge, bounds.without(val)))
                 elif cond.op == "!=" and (
                     node.block.index > node.conditional_edge.block.index
-                    or context.options.compiler != context.options.CompilerEnum.IDO
+                    or context.options.target.compiler != Target.CompilerEnum.IDO
                 ):
                     if val in cases:
                         return None
@@ -883,7 +890,7 @@ def try_build_irregular_switch(
             continue
 
         values = bounds.values(max_count=1)
-        if values and context.options.compiler != context.options.CompilerEnum.IDO:
+        if values and context.options.target.compiler != Target.CompilerEnum.IDO:
             # The bounds only have a few possible values, so add this node to the set of cases
             # IDO won't make implicit cases like this, however.
             for value in values:
@@ -924,6 +931,7 @@ def try_build_irregular_switch(
     add_labels_for_switch(
         context,
         start,
+        var_expr.type,
         cases=list(cases.items()),
         default_node=default_node,
     )
@@ -1098,6 +1106,7 @@ def build_switch_between(
     switch_index = add_labels_for_switch(
         context,
         switch,
+        jump.control_expr.type,
         cases=list(enumerate(switch.cases, start=jump.offset)),
         default_node=default,
     )
@@ -1298,6 +1307,7 @@ def build_naive(context: Context, nodes: List[Node]) -> Body:
             index = add_labels_for_switch(
                 context,
                 node,
+                jump.control_expr.type,
                 cases=list(enumerate(node.cases, start=jump.offset)),
                 default_node=None,
             )
@@ -1360,12 +1370,9 @@ def build_body(context: Context, options: Options) -> Body:
 
     # Check no nodes were skipped: build_flowgraph_between should hit every node in
     # well-formed (reducible) graphs; and build_naive explicitly emits every node
-    unemitted_nodes = (
-        set(context.flow_graph.nodes)
-        - context.emitted_nodes
-        - {context.flow_graph.terminal_node()}
-    )
-    for node in unemitted_nodes:
+    for node in context.flow_graph.nodes:
+        if node in context.emitted_nodes or isinstance(node, TerminalNode):
+            continue
         if isinstance(node, ReturnNode) and not node.is_real():
             continue
         body.add_comment(
@@ -1382,6 +1389,11 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     body: Body = build_body(context, options)
 
     function_lines: List[str] = []
+
+    if function_info.symbol.demangled_str is not None:
+        function_lines.append(
+            fmt.with_comments("", [function_info.symbol.demangled_str])
+        )
 
     fn_name = function_info.stack_info.function.name
     arg_strs = []
@@ -1413,7 +1425,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         local_vars = function_info.stack_info.local_vars
         # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
         # IDO's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
-        if options.compiler == Options.CompilerEnum.IDO:
+        if options.target.compiler == Target.CompilerEnum.IDO:
             local_vars = local_vars[::-1]
         for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)

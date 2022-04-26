@@ -1,5 +1,5 @@
 # `mips_to_c`
-Given some MIPS assembly, this program will attempt to convert it to C.
+Given some MIPS or PPC assembly, this program will attempt to convert it to C.
 
 The goal of this project is to support decompilation projects, which aim to write C code that yields byte-identical output when compiled with a particular build system.
 It primarily focuses on supporting popular compilers of the late 1990's.
@@ -11,6 +11,8 @@ Right now the decompiler is fairly functional, though it sometimes generates sub
 
 The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
 See the `tests/` directory for some example input and output.
+
+Despite the project's name, `mips_to_c` also has **experimental support** for PowerPC (PPC) as well.
 
 [An online version is also available](https://simonsoftware.se/other/mips_to_c.py).
 
@@ -33,12 +35,26 @@ sudo apt install python3-pip
 ## Usage
 
 ```bash
-python3 mips_to_c.py [options] [--context <context file>] [-f <function name>] <asmfile>...
+python3 mips_to_c.py [options] [-t <target>] [--context <context file>] [-f <function name>] <asmfile>...
 ```
 
 Run with `--help` to see which options are available.
 
 Context files provided with `--context` are parsed and cached, so subsequent runs with the same file are faster. The cache for `foo/bar.c` is stored in `foo/bar.m2c`. These files can be ignored (added to `.gitignore`), and are automatically regenerated if context files change. Caching can be disabled with the `--no-cache` argument.
+
+### Target Architecture / Compiler / Language
+
+Despite the name, `mips_to_c` has support for both MIPS and PPC assembly.
+It also has some compiler-specific heuristics and language-specific behavior.
+For example, it can demangle C++ symbol names as used by CodeWarrior.
+
+Collectively, the output's architecture, compiler, and source language are referred to as a *target*.
+The following target triples are supported:
+
+- `--target mips-ido-c`: MIPS (with O32 ABI), IDO toolchain, C language
+- `--target mips-gcc-c`: MIPS (with O32 ABI), GCC toolchain, C language
+- `--target ppc-mwcc-c`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C language
+- `--target ppc-mwcc-c++`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C++ language
 
 ### Multiple functions
 

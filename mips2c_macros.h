@@ -33,4 +33,7 @@ typedef s64 MIPS2C_UNK64;
 #define MIPS2C_BREAK() (0)
 #define MIPS2C_SYNC() (0)
 
+/* Carry bit from partially-implemented instructions */
+#define MIPS2C_CARRY 0
+
 #endif

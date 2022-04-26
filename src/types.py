@@ -6,6 +6,7 @@ import pycparser.c_ast as ca
 
 from .c_types import (
     CType,
+    Enum,
     Struct,
     StructUnion as CStructUnion,
     TypeMap,
@@ -19,6 +20,7 @@ from .c_types import (
     set_decl_name,
     to_c,
 )
+from .demangle_codewarrior import CxxName, CxxSymbol, CxxTerm, CxxType
 from .error import DecompFailure, static_assert_unreachable
 from .options import Formatter
 
@@ -54,6 +56,22 @@ class TypePool:
         if ctype.name is not None:
             return self.structs_by_tag_name.get(ctype.name)
         return None
+
+    def get_or_create_struct_by_tag_name(
+        self,
+        tag_name: str,
+        typemap: Optional[TypeMap],
+        *,
+        size: Optional[int] = None,
+        with_typedef: bool = False,
+    ) -> "StructDeclaration":
+        struct = self.get_struct_by_tag_name(tag_name, typemap)
+        if struct is not None:
+            return struct
+        struct = StructDeclaration.unknown(self, size, tag_name, align=4)
+        if with_typedef:
+            struct.typedef_name = tag_name
+        return struct
 
     def get_struct_by_tag_name(
         self,
@@ -113,6 +131,7 @@ class TypePool:
         """Remove overlapping fields from all known structs"""
         for struct in self.structs:
             struct.prune_overlapping_fields()
+            struct.rename_inferred_vtables()
 
 
 @dataclass(eq=False)
@@ -142,6 +161,7 @@ class TypeData:
     fn_sig: Optional["FunctionSignature"] = None  # K_FN
     array_dim: Optional[int] = None  # K_ARRAY
     struct: Optional["StructDeclaration"] = None  # K_STRUCT
+    enum: Optional[Enum] = None  # K_INT
 
     def __post_init__(self) -> None:
         assert self.kind
@@ -214,6 +234,7 @@ class Type:
         fn_sig = x.fn_sig if x.fn_sig is not None else y.fn_sig
         array_dim = x.array_dim if x.array_dim is not None else y.array_dim
         struct = x.struct if x.struct is not None else y.struct
+        enum = x.enum if x.enum is not None else y.enum
         sign = x.sign & y.sign
         if size_bits not in (None, 32, 64):
             kind &= ~TypeData.K_FLOAT
@@ -229,6 +250,8 @@ class Type:
         if kind == TypeData.K_PTR:
             size_bits = 32
         if sign != TypeData.ANY_SIGN:
+            assert kind & TypeData.K_INTPTR
+        if enum is not None:
             assert kind == TypeData.K_INT
         if x.ptr_to is not None and y.ptr_to is not None:
             if not x.ptr_to.unify(y.ptr_to, seen=seen):
@@ -242,6 +265,9 @@ class Type:
         if x.struct is not None and y.struct is not None:
             if not x.struct.unify(y.struct, seen=seen):
                 return False
+        if x.enum is not None and y.enum is not None:
+            if x.enum != y.enum:
+                return False
         x.kind = kind
         x.likely_kind = likely_kind
         x.size_bits = size_bits
@@ -250,6 +276,7 @@ class Type:
         x.fn_sig = fn_sig
         x.array_dim = array_dim
         x.struct = struct
+        x.enum = enum
         y.uf_parent = x
         return True
 
@@ -296,6 +323,12 @@ class Type:
     def is_unsigned(self) -> bool:
         return self.data().sign == TypeData.UNSIGNED
 
+    def get_enum_name(self, value: int) -> Optional[str]:
+        data = self.data()
+        if data.enum is None:
+            return None
+        return data.enum.names.get(value)
+
     def get_size_bits(self) -> Optional[int]:
         return self.data().size_bits
 
@@ -308,6 +341,8 @@ class Type:
         data = self.data()
         if self.is_struct():
             assert data.struct is not None
+            if data.struct.size is None:
+                raise DecompFailure(f"Cannot use incomplete type {self} as parameter")
             return data.struct.size, data.struct.align
         size = (self.get_size_bits() or 32) // 8
         return size, size
@@ -420,7 +455,7 @@ class Type:
         if self.is_struct():
             data = self.data()
             assert data.struct is not None
-            if offset >= data.struct.size:
+            if data.struct.size is not None and offset >= data.struct.size:
                 return NO_MATCHING_FIELD
 
             # Get a list of fields which contain the byte at offset. There may be more
@@ -473,11 +508,7 @@ class Type:
                 return zero_offset_results[0]
             elif exact:
                 # Try to insert a new field into the struct at the given offset
-                # TODO Loosen this to Type.any_field(), even for stack structs
-                if data.struct.is_stack:
-                    field_type = Type.any_reg()
-                else:
-                    field_type = Type.any_field()
+                field_type = Type.any_field()
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
                 new_field = data.struct.try_add_field(
                     field_type, offset, field_name, size=target_size
@@ -576,11 +607,11 @@ class Type:
                 if data.struct.is_union:
                     break
 
-            # This struct has a field that goes outside of the bounds of the struct
-            if position > data.struct.size:
+            if data.struct.size is not None and position > data.struct.size:
+                # This struct has a field that goes outside of the bounds of the struct
                 return None
 
-            add_padding(data.struct.size)
+            add_padding(data.struct.min_size())
             return output
 
         return None
@@ -628,6 +659,15 @@ class Type:
         seen.add(data)
         size_bits = data.size_bits or 32
         sign = "s" if data.sign & TypeData.SIGNED else "u"
+
+        if data.enum is not None and data.enum.tag is not None:
+            assert data.kind == TypeData.K_INT
+            return ca.TypeDecl(
+                type=ca.Enum(name=data.enum.tag, values=None),
+                declname=None,
+                quals=[],
+                align=[],
+            )
 
         if (data.kind & TypeData.K_ANYREG) == TypeData.K_ANYREG and (
             data.likely_kind & (TypeData.K_INT | TypeData.K_FLOAT)
@@ -756,16 +796,24 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT))
 
     @staticmethod
-    def signed_int() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED))
+    def uintish() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def unsigned_int() -> "Type":
-        return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED))
+    def sintish() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED))
 
     @staticmethod
     def intptr() -> "Type":
         return Type(TypeData(kind=TypeData.K_INTPTR))
+
+    @staticmethod
+    def uintptr() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.UNSIGNED))
+
+    @staticmethod
+    def sintptr() -> "Type":
+        return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.SIGNED))
 
     @staticmethod
     def ptr(type: Optional["Type"] = None) -> "Type":
@@ -788,6 +836,10 @@ class Type:
     @staticmethod
     def f64() -> "Type":
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=64))
+
+    @staticmethod
+    def f128() -> "Type":
+        return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=128))
 
     @staticmethod
     def s8() -> "Type":
@@ -863,7 +915,8 @@ class Type:
 
     @staticmethod
     def struct(st: "StructDeclaration") -> "Type":
-        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=st.size * 8, struct=st))
+        size_bits = st.size * 8 if st.size is not None else None
+        return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=size_bits, struct=st))
 
     @staticmethod
     def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> "Type":
@@ -921,11 +974,22 @@ class Type:
                 return Type.struct(
                     StructDeclaration.from_ctype(real_ctype.type, typemap, typepool)
                 )
-            names = (
-                ["int"]
-                if isinstance(real_ctype.type, ca.Enum)
-                else real_ctype.type.names
-            )
+            if isinstance(real_ctype.type, ca.Enum):
+                enum = None
+                if real_ctype.type.name is not None:
+                    enum = typemap.enums.get(real_ctype.type.name)
+                if enum is None:
+                    enum = typemap.enums.get(real_ctype.type)
+                return Type(
+                    TypeData(
+                        kind=TypeData.K_INT,
+                        size_bits=32,
+                        sign=TypeData.SIGNED,
+                        enum=enum,
+                    )
+                )
+
+            names = real_ctype.type.names
             if "double" in names:
                 return Type.f64()
             if "float" in names:
@@ -937,6 +1001,140 @@ class Type:
             sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
             return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
         static_assert_unreachable(real_ctype)
+
+    @staticmethod
+    def demangled_symbol(
+        typemap: TypeMap, typepool: TypePool, sym: CxxSymbol
+    ) -> "Type":
+        return Type.demangled_type(
+            typemap, typepool, sym_type=sym.type, sym_name=sym.name
+        )
+
+    @staticmethod
+    def demangled_type(
+        typemap: TypeMap,
+        typepool: TypePool,
+        sym_type: CxxType,
+        sym_name: Optional[CxxTerm] = None,
+    ) -> "Type":
+        def type_for_class(qualified_name: List[CxxName]) -> Type:
+            # TODO: Using "::" here matches the C++ qualified identifiers, but is not valid C
+            # Maybe this seperator should depend on the --valid-syntax option?
+            class_name = "::".join(str(n) for n in qualified_name)
+            class_struct = typepool.get_or_create_struct_by_tag_name(
+                class_name, typemap, size=None, with_typedef=True
+            )
+            return Type.struct(class_struct)
+
+        # TODO: This function may need to depend on the ABI or compiler to generate the types
+        # of class member functions. It may need to be moved out of types.py, or some of this
+        # logic could be moved into FunctionSignature?
+        final_name = None
+        if sym_name is not None:
+            assert sym_name.kind == CxxTerm.Kind.QUALIFIED
+            assert sym_name.qualified_name is not None
+            assert len(sym_name.qualified_name) >= 1
+            final_name = str(sym_name.qualified_name[-1]).split("@")[-1]
+
+        # vtable types are created in translate.py by parsing the labels in the asm
+        if final_name == "__vt":
+            return Type.any()
+
+        # RTTI data from MWCC is an 8-byte struct
+        if final_name == "__RTTI":
+            return Type.struct(
+                typepool.get_or_create_struct_by_tag_name("RTTI", typemap, size=8)
+            )
+
+        type = Type.any()
+        for term in sym_type.terms[::-1]:
+            if term.kind == CxxTerm.Kind.CONST:
+                pass
+            elif term.kind == CxxTerm.Kind.UNSIGNED:
+                unsigned = True
+            elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
+                type = Type.ptr(type)
+            elif term.kind == CxxTerm.Kind.BOOL:
+                type = Type.bool()
+            elif term.kind == CxxTerm.Kind.CHAR:
+                type = Type.int_of_size(8)
+            elif term.kind in (CxxTerm.Kind.SHORT, CxxTerm.Kind.WIDE_CHAR):
+                type = Type.int_of_size(16)
+            elif term.kind in (CxxTerm.Kind.INT, CxxTerm.Kind.LONG):
+                type = Type.int_of_size(32)
+            elif term.kind == CxxTerm.Kind.LONG_LONG:
+                type = Type.int_of_size(64)
+            elif term.kind == CxxTerm.Kind.FLOAT:
+                type = Type.f32()
+            elif term.kind == CxxTerm.Kind.DOUBLE:
+                type = Type.f64()
+            elif term.kind == CxxTerm.Kind.LONG_DOUBLE:
+                type = Type.f128()
+            elif term.kind == CxxTerm.Kind.SIGNED:
+                type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED)))
+            elif term.kind == CxxTerm.Kind.UNSIGNED:
+                type.unify(Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED)))
+            elif term.kind == CxxTerm.Kind.ARRAY:
+                assert term.array_dim is not None, "array CxxTerms must have array_dim"
+                type = Type.array(type, term.array_dim)
+            elif term.kind == CxxTerm.Kind.FUNCTION:
+                assert term.function_params is not None
+                params = []
+                if (
+                    sym_name is not None
+                    and sym_name.qualified_name is not None
+                    and len(sym_name.qualified_name) > 1
+                    and final_name not in CxxSymbol.STATIC_FUNCTIONS
+                ):
+                    class_type = type_for_class(sym_name.qualified_name[:-1])
+                    # NB: This assumes `this` is passed as the first arg, which is true
+                    # for most thiscall methods on PPC. However, this is incorrect for
+                    # static member functions, functions returning structs, and other ABIs.
+                    params.append(FunctionParam(type=Type.ptr(class_type), name="this"))
+                if final_name == "__dt":
+                    params.append(FunctionParam(type=Type.s16(), name="destroyFlag"))
+                # TODO: Classes with virtual bases may also have an implicit `int vbasearg` arg
+                is_variadic = False
+                for i, param_type in enumerate(term.function_params):
+                    name = f"arg{i}"
+                    if param_type.terms[0].kind == CxxTerm.Kind.VOID:
+                        assert len(term.function_params) == 1
+                    elif param_type.terms[0].kind == CxxTerm.Kind.ELLIPSIS:
+                        assert i == len(term.function_params) - 1
+                        is_variadic = True
+                    else:
+                        params.append(
+                            FunctionParam(
+                                type=Type.demangled_type(typemap, typepool, param_type),
+                                name=name,
+                            )
+                        )
+                return_type = Type.any()
+                if term.function_return is not None:
+                    return_type = Type.demangled_type(
+                        typemap, typepool, term.function_return
+                    )
+                elif final_name in ("__ct", "__dt"):
+                    return_type = Type.ptr()
+                type = Type.function(
+                    FunctionSignature(
+                        params=params,
+                        params_known=True,
+                        is_variadic=is_variadic,
+                        return_type=return_type,
+                    )
+                )
+            elif term.kind == CxxTerm.Kind.QUALIFIED:
+                assert term.qualified_name is not None
+                type = type_for_class(term.qualified_name)
+            elif term.kind == CxxTerm.Kind.VOID:
+                type = Type.void()
+            elif term.kind == CxxTerm.Kind.ELLIPSIS:
+                # This should be handled by the FUNCTION iterator above
+                assert False, term.kind
+            else:
+                assert False, term.kind
+        return type
 
 
 @dataclass(eq=False)
@@ -1020,7 +1218,7 @@ class StructDeclaration:
         name: str
         known: bool
 
-    size: int
+    size: Optional[int]
     align: int
     new_field_prefix: str
     tag_name: Optional[str] = None
@@ -1029,6 +1227,17 @@ class StructDeclaration:
     has_bitfields: bool = False
     is_union: bool = False
     is_stack: bool = False
+
+    def min_size(self) -> int:
+        if self.size is not None:
+            return self.size
+        return max(
+            (
+                field.offset + (field.type.get_size_bytes() or 1)
+                for field in self.fields
+            ),
+            default=0,
+        )
 
     def unify(
         self,
@@ -1068,7 +1277,7 @@ class StructDeclaration:
             return None
 
         # Check that the offset is within the struct bounds
-        if not (0 <= offset < self.size):
+        if self.size is not None and not (0 <= offset < self.size):
             return None
 
         # Do not allow the new field to overlap with any other field
@@ -1098,6 +1307,19 @@ class StructDeclaration:
         # Sort by offset, with bigger fields at the same offset first
         self.fields.sort(key=lambda f: (f.offset, -(f.type.get_size_bytes() or 0)))
 
+        # Use a fake field to mark the end of the struct if it has a known size
+        if self.size is not None:
+            end_pseudofield = [
+                StructDeclaration.StructField(
+                    offset=self.size,
+                    type=Type.void(),
+                    known=True,
+                    name="",
+                )
+            ]
+        else:
+            end_pseudofield = []
+
         fields_to_remove: Set[StructDeclaration.StructField] = set()
         for i, field in enumerate(self.fields):
             # Skip fields provided by the context or marked for removal
@@ -1108,7 +1330,7 @@ class StructDeclaration:
             field_size = field.type.get_size_bytes() or 1
 
             conflicting_fields: List[StructDeclaration.StructField] = []
-            for f2 in self.fields[i + 1 :]:
+            for f2 in self.fields[i + 1 :] + end_pseudofield:
                 assert f2.offset >= field.offset
                 # If `f2` is after the end of `field`, we're done
                 if f2.offset >= field.offset + field_size:
@@ -1152,6 +1374,23 @@ class StructDeclaration:
             fields_to_remove |= set(conflicting_fields)
         self.fields = [f for f in self.fields if f not in fields_to_remove]
 
+    def rename_inferred_vtables(self) -> None:
+        """Rename inferred fields that are pointers to vtables"""
+        sep = "_" if self.new_field_prefix.endswith("_") else ""
+        for field in self.fields:
+            if field.known or not field.name.startswith(self.new_field_prefix):
+                continue
+            type_ptr = field.type.get_pointer_target()
+            if type_ptr is None:
+                continue
+            struct = type_ptr.get_struct_declaration()
+            if struct is None or struct.tag_name is None:
+                continue
+            if struct.tag_name.startswith("__vt__"):
+                name = field.name.replace(self.new_field_prefix, f"vtable{sep}", 1)
+                if not any(f.name == name for f in self.fields):
+                    field.name = name
+
     def format(self, fmt: Formatter) -> str:
         """
         Return the C representation of the struct/union.
@@ -1172,7 +1411,7 @@ class StructDeclaration:
         lines = []
         lines.append(fmt.indent(head))
         with fmt.indented():
-            offset_str_digits = len(fmt.format_hex(self.size))
+            offset_str_digits = len(fmt.format_hex(self.min_size()))
 
             def offset_comment(offset: int) -> str:
                 # Indicate the offset of the field (in hex), written to the *left* of the field
@@ -1208,6 +1447,7 @@ class StructDeclaration:
                             comments,
                         )
                     )
+                    position = offset
 
             for field in self.fields:
                 pad_to(field.offset, is_final=False)
@@ -1224,21 +1464,26 @@ class StructDeclaration:
                 if not field.known:
                     comments.append("inferred")
                 lines.append(fmt.with_comments(field_decl, comments))
+                # Hack to recompute field.type's size
+                s = field.type.get_struct_declaration()
+                if s is not None:
+                    field.type.unify(Type.struct(s))
                 position = max(
                     position, field.offset + (field.type.get_size_bytes() or 0)
                 )
                 prev_field = field
-            pad_to(self.size, is_final=True)
-        lines.append(fmt.with_comments(tail, [f"size = 0x{fmt.format_hex(self.size)}"]))
+            pad_to(self.min_size(), is_final=True)
+        compare = ">=" if self.size is None else "="
+        lines.append(
+            fmt.with_comments(tail, [f"size {compare} 0x{fmt.format_hex(position)}"])
+        )
         return "\n".join(lines)
 
     @staticmethod
-    def unknown_of_size(
-        typepool: TypePool, size: int, tag_name: str, align: int = 1
+    def unknown(
+        typepool: TypePool, size: Optional[int], tag_name: str, align: int = 1
     ) -> "StructDeclaration":
-        """
-        Return an StructDeclaration of a given size, but without any known fields
-        """
+        """Return an StructDeclaration without any known fields"""
         decl = StructDeclaration(
             size=size,
             align=align,
