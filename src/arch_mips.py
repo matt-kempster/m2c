@@ -1,3 +1,4 @@
+from dataclasses import replace
 import typing
 from typing import (
     Dict,
@@ -11,7 +12,6 @@ from typing import (
 from .error import DecompFailure
 from .options import Target
 from .parse_instruction import (
-    Access,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -20,8 +20,9 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
-    MemoryAccess,
+    Location,
     Register,
+    StackLocation,
     get_jump_target,
 )
 from .asm_pattern import (
@@ -61,6 +62,7 @@ from .translate import (
     as_type,
     as_u32,
     as_u64,
+    error_stmt,
     fn_op,
     fold_divmod,
     fold_mul_chains,
@@ -465,7 +467,9 @@ class MipsArch(Arch):
 
     base_return_regs = [Register(r) for r in ["v0", "f0"]]
     all_return_regs = [Register(r) for r in ["v0", "v1", "f0", "f1"]]
-    argument_regs = [Register(r) for r in ["a0", "a1", "a2", "a3", "f12", "f14"]]
+    argument_regs = [
+        Register(r) for r in ["a0", "a1", "a2", "a3", "f12", "f13", "f14", "f15"]
+    ]
     simple_temp_regs = [
         Register(r)
         for r in [
@@ -493,8 +497,6 @@ class MipsArch(Arch):
             "f9",
             "f10",
             "f11",
-            "f13",
-            "f15",
             "f16",
             "f17",
             "f18",
@@ -543,7 +545,7 @@ class MipsArch(Arch):
             "gp",
         ]
     ]
-    all_regs = saved_regs + temp_regs
+    all_regs = saved_regs + temp_regs + [stack_pointer_reg]
 
     aliased_gp_regs = {
         "s8": Register("fp"),
@@ -663,9 +665,9 @@ class MipsArch(Arch):
     def parse(
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
-        inputs: List[Access] = []
-        clobbers: List[Access] = []
-        outputs: List[Access] = []
+        inputs: List[Location] = []
+        clobbers: List[Location] = []
+        outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         has_delay_slot = False
@@ -681,20 +683,18 @@ class MipsArch(Arch):
         }
         size = memory_sizes.get(mnemonic[1:2])
 
-        def make_memory_access(arg: Argument) -> Access:
+        def make_memory_access(arg: Argument) -> List[Location]:
             assert size is not None
-            assert not isinstance(arg, Register)
-            if isinstance(arg, AsmAddressMode):
-                return MemoryAccess(
-                    base_reg=arg.rhs,
-                    offset=arg.lhs,
-                    size=size,
-                )
-            return MemoryAccess(
-                base_reg=Register("zero"),
-                offset=arg,
-                size=size,
-            )
+            if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
+                loc = StackLocation.from_offset(arg.lhs)
+                if loc is None:
+                    return []
+                elif size == 8:
+                    return [loc, replace(loc, offset=loc.offset + 4)]
+                else:
+                    assert size <= 4
+                    return [loc]
+            return []
 
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
@@ -715,7 +715,6 @@ class MipsArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
             function_target = args[0]
             has_delay_slot = True
         elif mnemonic == "jalr":
@@ -729,7 +728,6 @@ class MipsArch(Arch):
             inputs.append(args[1])
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
             function_target = args[1]
             has_delay_slot = True
         elif mnemonic in ("b", "j"):
@@ -797,13 +795,19 @@ class MipsArch(Arch):
             jump_target = get_jump_target(args[-1])
             has_delay_slot = True
             is_conditional = True
+        elif mnemonic == "mfc0":
+            assert len(args) == 2 and isinstance(args[0], Register)
+            outputs = [args[0]]
+        elif mnemonic == "mtc0":
+            assert len(args) == 2 and isinstance(args[0], Register)
+            inputs = [args[0]]
         elif mnemonic in cls.instrs_no_dest:
             assert not any(isinstance(a, AsmAddressMode) for a in args)
             inputs = [r for r in args if isinstance(r, Register)]
         elif mnemonic in cls.instrs_store:
             assert isinstance(args[0], Register)
             inputs = [args[0]]
-            outputs = [make_memory_access(args[1])]
+            outputs = make_memory_access(args[1])
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].rhs)
             if mnemonic == "sdc1":
@@ -848,7 +852,7 @@ class MipsArch(Arch):
             elif mnemonic.startswith("l") and size is not None:
                 # Load instructions
                 assert len(args) == 2
-                inputs = [make_memory_access(args[1])]
+                inputs = make_memory_access(args[1])
                 if isinstance(args[1], AsmAddressMode):
                     inputs.append(args[1].rhs)
                 if mnemonic == "lwr":
@@ -1029,6 +1033,7 @@ class MipsArch(Arch):
             "MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
         ),
         "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
+        "mtc0": lambda a: error_stmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}"),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
     }
     instrs_float_comp: CmpInstrMap = {
@@ -1252,6 +1257,7 @@ class MipsArch(Arch):
         ),
         # Move pseudoinstruction
         "move": lambda a: a.reg(1),
+        "move.fictive": lambda a: a.reg(1),
         # Floating point moving instructions
         "mfc1": lambda a: a.reg(1),
         "mov.s": lambda a: a.reg(1),
@@ -1261,6 +1267,8 @@ class MipsArch(Arch):
         "movz": lambda a: handle_conditional_move(a, False),
         # FCSR get
         "cfc1": lambda a: ErrorExpr("cfc1"),
+        # Read from coprocessor 0
+        "mfc0": lambda a: ErrorExpr(f"mfc0 {a.raw_arg(1)}"),
         # Immediates
         "li": lambda a: a.full_imm(1),
         "lui": lambda a: load_upper(a),
@@ -1376,6 +1384,7 @@ class MipsArch(Arch):
                 AbiArgSlot(0, Register("f12"), Type.floatish()),
                 AbiArgSlot(4, Register("f13"), Type.floatish()),
                 AbiArgSlot(4, Register("f14"), Type.floatish()),
+                AbiArgSlot(12, Register("f15"), Type.floatish()),
                 AbiArgSlot(0, Register("a0"), Type.intptr()),
                 AbiArgSlot(4, Register("a1"), Type.any_reg()),
                 AbiArgSlot(8, Register("a2"), Type.any_reg()),
@@ -1404,6 +1413,8 @@ class MipsArch(Arch):
                 pass
             elif slot.reg == Register("f13") or slot.reg == Register("f14"):
                 require = ["f12"]
+            elif slot.reg == Register("f15"):
+                require = ["f14"]
             elif slot.reg == Register("a1"):
                 require = ["a0", "f12"]
             elif slot.reg == Register("a2"):
@@ -1415,12 +1426,14 @@ class MipsArch(Arch):
 
             valid_extra_regs.add(slot.reg)
 
-            if slot.reg == Register("f13"):
+            if (
+                slot.reg == Register("f13") or slot.reg == Register("f15")
+            ) and for_call:
                 # We don't pass in f13 or f15 because they will often only
                 # contain SecondF64Half(), and otherwise would need to be
                 # merged with f12/f14 which we don't have logic for right
                 # now. However, f13 can still matter for whether a2 should
-                # be passed, and so is kept in possible_regs.
+                # be passed, and so is kept in valid_extra_regs
                 continue
 
             # Skip registers that are untouched from the initial parameter

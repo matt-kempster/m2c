@@ -11,11 +11,11 @@ from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options, Target
 from .parse_file import AsmData, Function, parse_file
+from .parse_instruction import InstrProcessingFailure
 from .translate import (
     Arch,
     FunctionInfo,
     GlobalInfo,
-    InstrProcessingFailure,
     translate_to_ast,
     narrow_func_call_outputs,
 )
@@ -128,7 +128,14 @@ def run(options: Options) -> int:
     for function in functions:
         try:
             narrow_func_call_outputs(function, global_info)
-            flow_graphs.append(build_flowgraph(function, global_info.asm_data, arch))
+            graph = build_flowgraph(
+                function,
+                global_info.asm_data,
+                arch,
+                fragment=False,
+                print_warnings=options.debug,
+            )
+            flow_graphs.append(graph)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
             flow_graphs.append(e)

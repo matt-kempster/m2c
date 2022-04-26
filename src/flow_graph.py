@@ -1,12 +1,14 @@
 import abc
 import copy
+from collections import defaultdict
 from dataclasses import dataclass, field
-import typing
 from typing import (
     Any,
     Callable,
     Counter,
+    DefaultDict,
     Dict,
+    ItemsView,
     Iterator,
     List,
     Optional,
@@ -20,14 +22,15 @@ from .options import Formatter, Target
 from .parse_file import AsmData, Function, Label
 from .parse_instruction import (
     ArchAsm,
-    Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
+    AsmInstruction,
     AsmLiteral,
     BinOp,
     Instruction,
     InstructionMeta,
     JumpTarget,
+    Location,
     Macro,
     Register,
 )
@@ -37,18 +40,80 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
+    def simplify_ir(self, flow_graph: "FlowGraph") -> None:
+        ...
+
+
+class Reference(abc.ABC):
+    """
+    Reference acts as a pointer to either a specific Instruction, or one of the function's
+    bounds (either before the function is called, or after the function returns)
+    """
+
+
+@dataclass(frozen=True)
+class PrologueRef(Reference):
+    """Reference to a Location's value before the start of a function (e.g. constants, args)"""
+
+    location: Location
+
+
+@dataclass(frozen=True)
+class EpilogueRef(Reference):
+    """Reference to return values of a function"""
+
+    location: Location
+
+
+@dataclass(eq=False)
+class InstrRef(Reference):
+    """
+    Pointer to an Instruction as part of a Block. Allows other datastructures
+    to hold references to a spot in the assembly that remains valid even as
+    the Instruction is replaced or other Instructions are added to the Block.
+    """
+
+    instruction: Instruction
+    block: "Block" = field(repr=False)
+
+    def add_instruction_before(
+        self, asm: AsmInstruction, arch: ArchFlowGraph
+    ) -> "InstrRef":
+        """Add `asm` into the parent assembly before this instruction."""
+        instr = arch.parse(asm.mnemonic, asm.args, self.instruction.meta.derived())
+        ref = InstrRef(instr, self.block)
+        index = self.block.instruction_refs.index(self)
+        self.block.instruction_refs.insert(index, ref)
+        return ref
+
+    def replace_instruction(self, new_asm: AsmInstruction, arch: ArchFlowGraph) -> None:
+        """Replace the existing instruciton with `new_asm`.
+        Previous ouputs & clobbers are added to the new Instruction's clobbers list."""
+        old_instr = self.instruction
+        new_instr = arch.parse(new_asm.mnemonic, new_asm.args, old_instr.meta.derived())
+
+        # Copy over old outputs/clobbers into new_instr.clobbers
+        for loc in old_instr.outputs + old_instr.clobbers:
+            if loc not in new_instr.clobbers:
+                new_instr.clobbers.append(loc)
+        self.instruction = new_instr
+
 
 @dataclass(eq=False)
 class Block:
     index: int
     label: Optional[Label]
     approx_label_name: str
-    instructions: List[Instruction]
+    instruction_refs: List[InstrRef] = field(default_factory=list)
 
     # block_info is actually an Optional[BlockInfo], set by translate.py for
     # non-TerminalNode's, but due to circular dependencies we cannot type it
     # correctly. To access it, use the get_block_info method from translate.py.
     block_info: object = None
+
+    @property
+    def instructions(self) -> Iterator[Instruction]:
+        return (r.instruction for r in self.instruction_refs)
 
     def add_block_info(self, block_info: object) -> None:
         assert self.block_info is None
@@ -79,8 +144,9 @@ class BlockBuilder:
         label_name = self.last_label_name
         if self.label_counter > 0:
             label_name += f".{self.label_counter}"
-        block = Block(
-            self.curr_index, self.curr_label, label_name, self.curr_instructions
+        block = Block(self.curr_index, self.curr_label, label_name)
+        block.instruction_refs.extend(
+            InstrRef(i, block) for i in self.curr_instructions
         )
         self.blocks.append(block)
 
@@ -288,7 +354,7 @@ def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Funct
 
 
 def build_blocks(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
 ) -> List[Block]:
     if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
@@ -433,6 +499,12 @@ def build_blocks(
             process_mips(item)
         else:
             process_no_delay_slots(item)
+
+    if fragment:
+        # If we're parsing an asm fragment instead of a full function,
+        # then it does not need to end in a return or jump
+        block_builder.new_block()
+        return block_builder.get_blocks()
 
     if block_builder.curr_label:
         # As an easy-to-implement safeguard, check that the current block is
@@ -788,7 +860,12 @@ def reachable_without(start: Node, end: Node, without: Node) -> bool:
 
 
 def build_nodes(
-    function: Function, blocks: List[Block], asm_data: AsmData, arch: ArchFlowGraph
+    function: Function,
+    blocks: List[Block],
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
 ) -> List[Node]:
     terminal_node = TerminalNode.terminal()
     graph: List[Node] = [terminal_node]
@@ -797,6 +874,10 @@ def build_nodes(
         raise DecompFailure(
             f"Function {function.name} contains no instructions. Maybe it is rodata?"
         )
+
+    # Fragments do not need a ReturnNode, they can directly fall through to the TerminalNode
+    if fragment:
+        blocks.append(terminal_node.block)
 
     # Traverse through the block tree.
     entry_block = blocks[0]
@@ -1013,9 +1094,106 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
         compute_relations(nodes)
 
 
+@dataclass
+class RefSet:
+    """A set of References, backed by a list to avoid non-determinism"""
+
+    refs: List[Reference] = field(default_factory=list)
+
+    @staticmethod
+    def empty() -> "RefSet":
+        """Represent a missing reference, such as an unset register"""
+        return RefSet(refs=[])
+
+    def is_empty(self) -> bool:
+        return not self
+
+    def get_unique(self) -> Optional[Reference]:
+        if len(self.refs) == 1:
+            return self.refs[0]
+        return None
+
+    def add(self, ref: Reference) -> None:
+        if ref not in self.refs:
+            self.refs.append(ref)
+
+    def update(self, other: "RefSet") -> None:
+        for ref in other.refs:
+            self.add(ref)
+
+    def remove(self, ref: Reference) -> None:
+        self.refs.remove(ref)
+
+    def copy(self) -> "RefSet":
+        return RefSet(refs=self.refs.copy())
+
+    def __contains__(self, ref: Reference) -> bool:
+        return ref in self.refs
+
+    def __iter__(self) -> Iterator[Reference]:
+        return iter(self.refs)
+
+    def __len__(self) -> int:
+        return len(self.refs)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RefSet):
+            return NotImplemented
+        return len(self) == len(other) and all(x in other for x in self)
+
+
+@dataclass
+class LocationRefSetDict:
+    """
+    A map from Locations to RefSets.
+    If a key is missing, it is equivalent to mapping to an empty RefSet.
+    """
+
+    refs: Dict[Location, RefSet] = field(default_factory=dict)
+
+    def get(self, loc: Location) -> RefSet:
+        # Missing keys map to an empty RefSet
+        return self.refs.get(loc, RefSet.empty())
+
+    def add(self, loc: Location, ref: Reference) -> None:
+        if loc not in self:
+            self.refs[loc] = RefSet([ref])
+        else:
+            self.refs[loc].add(ref)
+
+    def remove(self, loc: Location) -> None:
+        self.refs.pop(loc, None)
+
+    def copy(self) -> "LocationRefSetDict":
+        return LocationRefSetDict(refs=self.refs.copy())
+
+    def items(self) -> ItemsView[Location, RefSet]:
+        return self.refs.items()
+
+    def is_empty(self) -> bool:
+        return all(not v for v in self.refs.values())
+
+    def __contains__(self, key: Location) -> bool:
+        return bool(self.get(key))
+
+    def __setitem__(self, key: Location, value: RefSet) -> None:
+        self.refs[key] = value
+
+
 @dataclass(frozen=True)
 class FlowGraph:
     nodes: List[Node]
+
+    # For each Reference (typically an instruction), track the source References for
+    # each of its input Locations (typically registers)
+    instr_inputs: DefaultDict[Reference, LocationRefSetDict] = field(
+        default_factory=lambda: defaultdict(LocationRefSetDict)
+    )
+    # The set of all downstream References whose inputs depend on outputs from other
+    # References. This is the same information as `instr_inputs`, but reversed.
+    instr_uses: DefaultDict[Reference, LocationRefSetDict] = field(
+        default_factory=lambda: defaultdict(LocationRefSetDict)
+    )
 
     def entry_node(self) -> Node:
         return self.nodes[0]
@@ -1095,16 +1273,216 @@ class FlowGraph:
         for node in self.nodes:
             node.block.block_info = None
 
+    def add_instruction_use(
+        self, *, use: Reference, loc: Location, src: Reference
+    ) -> None:
+        """Update instr_inputs/instr_uses that `use` depends on `loc` from `src`"""
+        self.instr_inputs[use].add(loc, src)
+        self.instr_uses[src].add(loc, use)
+
+    def clear_instruction_inputs(self, ref: Reference) -> None:
+        """Remove all inputs for `ref` from instr_inputs/instr_uses"""
+        for loc, uses in self.instr_inputs[ref].items():
+            for use in uses:
+                self.instr_uses[use].get(loc).remove(ref)
+        self.instr_inputs.pop(ref)
+
+    def validate_instruction_graph(self) -> None:
+        """Verify that the instr_inputs & instr_uses dicts are consistent"""
+        # Recompute instr_uses from instr_inputs as new_uses
+        new_uses: DefaultDict[Reference, LocationRefSetDict] = defaultdict(
+            LocationRefSetDict
+        )
+        for ref, inputs in self.instr_inputs.items():
+            for reg, deps in inputs.items():
+                for dep in deps:
+                    new_uses[dep].add(reg, ref)
+
+        # Assert that new_uses is equivalent to instr_uses
+        for ref, uses in new_uses.items():
+            for reg, deps in uses.items():
+                assert deps == self.instr_uses[ref].get(reg)
+
+
+def phi_loc_sources(node: Node, loc: Location, imdom_srcs: RefSet) -> RefSet:
+    """
+    Return the RefSet of all of the places `loc` is assigned to, if it is a valid phi.
+
+    Otherwise, return an empty set. This analysis is accurate when `loc` is a Register,
+    but is only best-effort for local variables: it will miss local array accesses and
+    stack pointers passed to functions.
+    """
+    assert node.immediate_dominator is not None
+
+    seen = set()
+    stack = node.parents[:]
+    sources = RefSet()
+
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+
+        # As an optimization, we only need to iterate up until the immediate dominator,
+        # because its phi sources have already been computed (`imdom_srcs`).
+        if n == node.immediate_dominator:
+            # If `loc` was unset on the path to `node` via its imdom, it's not a valid phi
+            if not imdom_srcs:
+                return RefSet.empty()
+
+            sources.update(imdom_srcs)
+            continue
+
+        # Find the last instruction in the node that either writes or clobbers to `loc`
+        for ref in n.block.instruction_refs[::-1]:
+            if loc in ref.instruction.outputs:
+                sources.add(ref)
+                break
+            if loc in ref.instruction.clobbers:
+                return RefSet.empty()
+        else:
+            # This node didn't touch `loc`, so iterate by checking its parents.
+            stack.extend(n.parents)
+
+    return sources
+
+
+def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
+    assert node.immediate_dominator is not None
+
+    seen = {node.immediate_dominator}
+    stack = node.parents[:]
+    clobbered = set()
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        for instr in n.block.instructions:
+            clobbered.update(instr.outputs)
+            clobbered.update(instr.clobbers)
+        stack.extend(n.parents)
+    return clobbered
+
+
+def nodes_to_flowgraph(
+    nodes: List[Node],
+    function: Function,
+    arch: ArchFlowGraph,
+    *,
+    print_warnings: bool = False,
+) -> FlowGraph:
+    flow_graph = FlowGraph(nodes)
+    missing_regs = []
+
+    def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
+        def add_use_sources(*, use: Reference, input_loc: Location) -> RefSet:
+            sources = loc_srcs.get(input_loc)
+            for src in sources:
+                flow_graph.add_instruction_use(use=use, loc=input_loc, src=src)
+            return sources
+
+        # Calculate register usage for each instruction in this node
+        for ref in node.block.instruction_refs:
+            ir = ref.instruction
+
+            # Calculate the source of each location
+            for inp in ir.inputs:
+                sources = add_use_sources(use=ref, input_loc=inp)
+                # Registers must be written to before being read.
+                # Function calls are known to list all possible argument registers,
+                # so they're a common false positive here.
+                # Otherwise, this may indicate that the instruction's inputs were
+                # incorrectly specified (or the instruction isn't fully implemented).
+                if (
+                    isinstance(inp, Register)
+                    and sources.is_empty()
+                    and (ir.function_target is None or inp not in arch.argument_regs)
+                ):
+                    missing_regs.append((inp, ref))
+
+            # Remove any clobbered locations
+            for clob in ir.clobbers + ir.outputs:
+                if clob in loc_srcs:
+                    loc_srcs.remove(clob)
+
+            # Mark outputs as coming from this instruction
+            for out in ir.outputs:
+                loc_srcs.add(out, ref)
+
+        # If this is a TerminalNode, it has no instructions; instead add dependencies
+        # for the (potential) return registers of the function
+        if isinstance(node, TerminalNode):
+            assert not node.block.instruction_refs
+            for reg in arch.all_return_regs:
+                add_use_sources(use=EpilogueRef(reg), input_loc=reg)
+
+        # Process everything dominated by this node, now that we know our own
+        # register sources. This will eventually reach every node.
+        for child in node.immediately_dominates:
+            child_loc_srcs = loc_srcs.copy()
+
+            for loc in locs_clobbered_until_dominator(child):
+                phi_reg_srcs = phi_loc_sources(child, loc, loc_srcs.get(loc))
+                if phi_reg_srcs:
+                    # If phi_reg_srcs is non-empty, then loc is set in every control flow path
+                    # to the child node (but it may have a phi value)
+                    child_loc_srcs[loc] = phi_reg_srcs
+                elif loc in child_loc_srcs:
+                    # Otherwise, it's not always set, and cannot be used by the child node
+                    child_loc_srcs.remove(loc)
+
+            process_node(child, child_loc_srcs)
+
+    # Set all the registers that are valid to access at the start of a function
+    entry_reg_srcs = LocationRefSetDict()
+    for r in arch.all_regs:
+        entry_reg_srcs.refs[r] = RefSet(refs=[PrologueRef(r)])
+
+    # Recursively traverse every node, starting with the entry node, populating instr_inputs
+    entry_node = flow_graph.entry_node()
+    process_node(entry_node, entry_reg_srcs)
+
+    if print_warnings and missing_regs:
+        print("/*")
+        print(f"Warning: in {function.name}, regs were read before being written to:")
+        for reg, ref in missing_regs:
+            print(f"   {reg} at {ref}: {ref.instruction}")
+        print(f"*/")
+
+    return flow_graph
+
 
 def build_flowgraph(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
+    print_warnings: bool = False,
 ) -> FlowGraph:
-    blocks = build_blocks(function, asm_data, arch)
-    nodes = build_nodes(function, blocks, asm_data, arch)
-    nodes = duplicate_premature_returns(nodes)
+    """
+    Build the FlowGraph for the given Function.
+    If `fragment` is True, do not treat the asm as a full function: this is used
+    for analyzing IR patterns which do not need to be normalized in the same way.
+    """
+    blocks = build_blocks(function, asm_data, arch, fragment=fragment)
+    nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
+    if not fragment:
+        nodes = duplicate_premature_returns(nodes)
+
     compute_relations(nodes)
-    terminate_infinite_loops(nodes)
-    return FlowGraph(nodes)
+    if not fragment:
+        terminate_infinite_loops(nodes)
+
+    flow_graph = nodes_to_flowgraph(
+        nodes, function, arch, print_warnings=print_warnings or fragment
+    )
+    if not fragment:
+        arch.simplify_ir(flow_graph)
+
+    return flow_graph
 
 
 def visualize_flowgraph(flow_graph: FlowGraph) -> str:

@@ -1,3 +1,5 @@
+from dataclasses import replace
+import typing
 from typing import (
     ClassVar,
     Dict,
@@ -7,10 +9,12 @@ from typing import (
     Tuple,
     Union,
 )
+
 from .error import DecompFailure
+from .flow_graph import FlowGraph
+from .ir_pattern import IrMatch, IrPattern
 from .options import Target
 from .parse_instruction import (
-    Access,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -19,9 +23,10 @@ from .parse_instruction import (
     Instruction,
     InstructionMeta,
     JumpTarget,
+    Location,
     Macro,
-    MemoryAccess,
     Register,
+    StackLocation,
     get_jump_target,
 )
 from .asm_pattern import (
@@ -173,6 +178,87 @@ class BranchCtrPattern(AsmPattern):
         return None
 
 
+class FloatishToUintPattern(SimpleAsmPattern):
+    pattern = make_pattern("bl __cvt_fp2unsigned")
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        return Replacement(
+            [AsmInstruction("cvt.u.d.fictive", [Register("r3"), Register("f1")])],
+            len(m.body),
+        )
+
+
+class FloatishToSintIrPattern(IrPattern):
+    # This pattern handles converting either f32 or f64 into a signed int
+    # The `fctiwz` instruction does all the work; this pattern is just to
+    # elide the stack store/load pair.
+    replacement = "fctiwz.fictive $i, $f"
+    parts = [
+        "fctiwz $t, $f",
+        "stfd $t, (N-4)($r1)",
+        "lwz $i, N($r1)",
+    ]
+
+
+class CheckConstantMixin:
+    def check(self, m: IrMatch) -> bool:
+        # TODO: Also validate that `K($k)` is the expected constant in rodata
+        return m.symbolic_registers["k"] in (Register("r2"), Register("r13"))
+
+
+class SintToDoubleIrPattern(IrPattern, CheckConstantMixin):
+    # The replacement asm for these patterns reference the float constant `K($k)`
+    # as an input, even though the value is ignored. This is needed to mark `$k`
+    # as an input to the pattern for matching.
+    replacement = "cvt.d.i.fictive $f, $i, K($k)"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "xoris $b, $i, 0x8000",
+        "stw $b, (N+4)($r1)",
+        "lfd $d, N($r1)",
+        "lfd $c, K($k)",
+        "fsub $f, $d, $c",
+    ]
+
+
+class UintToDoubleIrPattern(IrPattern, CheckConstantMixin):
+    replacement = "cvt.d.u.fictive $f, $i, K($k)"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "stw $i, (N+4)($r1)",
+        "lfd $d, N($r1)",
+        "lfd $c, K($k)",
+        "fsub $f, $d, $c",
+    ]
+
+
+class SintToFloatIrPattern(IrPattern, CheckConstantMixin):
+    replacement = "cvt.s.i.fictive $f, $i, K($k)"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "xoris $b, $i, 0x8000",
+        "stw $b, (N+4)($r1)",
+        "lfd $d, N($r1)",
+        "lfd $c, K($k)",
+        "fsubs $f, $d, $c",
+    ]
+
+
+class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
+    replacement = "cvt.s.u.fictive $f, $i, K($k)"
+    parts = [
+        "lis $a, 0x4330",
+        "stw $a, N($r1)",
+        "stw $i, (N+4)($r1)",
+        "lfd $d, N($r1)",
+        "lfd $c, K($k)",
+        "fsubs $f, $d, $c",
+    ]
+
+
 class PpcArch(Arch):
     arch = Target.ArchEnum.PPC
 
@@ -279,6 +365,8 @@ class PpcArch(Arch):
         + [
             Register(r)
             for r in [
+                # `zero` isn't a "real" PPC register; it's a normalized form of `r0`
+                "zero",
                 # TODO: These `crX` registers are only used to parse instructions, but
                 # the instructions that use these registers aren't implemented yet.
                 "cr0",
@@ -414,15 +502,15 @@ class PpcArch(Arch):
     def parse(
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
-        inputs: List[Access] = []
-        clobbers: List[Access] = []
-        outputs: List[Access] = []
+        inputs: List[Location] = []
+        clobbers: List[Location] = []
+        outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
         is_return = False
 
-        cr0_bits: List[Access] = [
+        cr0_bits: List[Location] = [
             Register("cr0_lt"),
             Register("cr0_gt"),
             Register("cr0_eq"),
@@ -442,19 +530,18 @@ class PpcArch(Arch):
             psq_imms = 2
             size = 8
 
-        def make_memory_access(arg: Argument, size: int) -> Access:
-            assert not isinstance(arg, Register)
-            if isinstance(arg, AsmAddressMode):
-                return MemoryAccess(
-                    base_reg=arg.rhs,
-                    offset=arg.lhs,
-                    size=size,
-                )
-            return MemoryAccess(
-                base_reg=Register("zero"),
-                offset=arg,
-                size=size,
-            )
+        def make_memory_access(arg: Argument, size: int) -> List[Location]:
+            assert size is not None
+            if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
+                loc = StackLocation.from_offset(arg.lhs)
+                if loc is None:
+                    return []
+                elif size == 8:
+                    return [loc, replace(loc, offset=loc.offset + 4)]
+                else:
+                    assert size <= 4
+                    return [loc]
+            return []
 
         if mnemonic == "blr":
             # Return
@@ -491,7 +578,6 @@ class PpcArch(Arch):
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
             function_target = args[0]
         elif mnemonic == "bctrl":
             # Function call to pointer in $ctr
@@ -500,7 +586,6 @@ class PpcArch(Arch):
             inputs.append(Register("ctr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
             function_target = Register("ctr")
         elif mnemonic == "blrl":
             # Function call to pointer in $lr
@@ -509,7 +594,6 @@ class PpcArch(Arch):
             inputs.append(Register("lr"))
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            clobbers.append(MemoryAccess.arbitrary())
             function_target = Register("lr")
         elif mnemonic == "b":
             # Unconditional jump
@@ -548,11 +632,10 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                outputs = [MemoryAccess(args[1], args[2], size)]
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
-                outputs = [make_memory_access(args[1], size)]
+                outputs = make_memory_access(args[1], size)
         elif mnemonic in cls.instrs_store_update:
             assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
@@ -562,11 +645,11 @@ class PpcArch(Arch):
                     and isinstance(args[2], Register)
                 )
                 inputs = [args[0], args[1], args[2]]
-                outputs = [MemoryAccess(args[1], args[2], size), args[1]]
+                outputs = [args[1]]
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
-                outputs = [make_memory_access(args[1], size), args[1].rhs]
+                outputs = make_memory_access(args[1], size) + [args[1].rhs]
         elif mnemonic in cls.instrs_load:
             assert isinstance(args[0], Register) and size is not None
             if mnemonic.endswith("x"):
@@ -575,10 +658,10 @@ class PpcArch(Arch):
                     and isinstance(args[1], Register)
                     and isinstance(args[2], Register)
                 )
-                inputs = [args[1], args[2], MemoryAccess(args[1], args[2], size)]
+                inputs = [args[1], args[2]]
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = [args[1].rhs, make_memory_access(args[1], size)]
+                inputs = make_memory_access(args[1], size) + [args[1].rhs]
             outputs = [args[0]]
         elif mnemonic in cls.instrs_load_update:
             assert isinstance(args[0], Register) and size is not None
@@ -588,11 +671,11 @@ class PpcArch(Arch):
                     and isinstance(args[1], Register)
                     and isinstance(args[2], Register)
                 )
-                inputs = [MemoryAccess(args[1], args[2], size), args[1], args[2]]
+                inputs = [args[1], args[2]]
                 outputs = [args[0], args[1]]
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = [make_memory_access(args[1], size), args[1].rhs]
+                inputs = make_memory_access(args[1], size) + [args[1].rhs]
                 outputs = [args[0], args[1].rhs]
         elif mnemonic in ("stmw", "lmw"):
             assert (
@@ -610,10 +693,10 @@ class PpcArch(Arch):
                 )
                 if mnemonic == "stmw":
                     inputs.append(reg)
-                    outputs.append(mem)
+                    outputs.extend(mem)
                 else:
                     outputs.append(reg)
-                    inputs.append(mem)
+                    inputs.extend(mem)
                 index += 1
                 offset += 4
             inputs.append(args[1].rhs)
@@ -637,6 +720,14 @@ class PpcArch(Arch):
                     and not isinstance(args[4], (Register, AsmAddressMode))
                 )
                 inputs = [args[0], args[1]]
+            elif mnemonic.startswith("cvt."):
+                assert isinstance(args[1], Register)
+                if len(args) == 2:
+                    inputs = [args[1]]
+                else:
+                    assert isinstance(args[2], AsmAddressMode)
+                    size = 8
+                    inputs = make_memory_access(args[2], size) + [args[1], args[2].rhs]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
@@ -672,11 +763,20 @@ class PpcArch(Arch):
             is_return=is_return,
         )
 
+    ir_patterns = [
+        FloatishToSintIrPattern(),
+        SintToDoubleIrPattern(),
+        UintToDoubleIrPattern(),
+        SintToFloatIrPattern(),
+        UintToFloatIrPattern(),
+    ]
+
     asm_patterns = [
         FcmpoCrorPattern(),
         TailCallPattern(),
         BoolCastPattern(),
         BranchCtrPattern(),
+        FloatishToUintPattern(),
     ]
 
     instrs_ignore: InstrSet = {
@@ -902,7 +1002,9 @@ class PpcArch(Arch):
         # Move from Special Register
         "mflr": lambda a: a.regs[Register("lr")],
         "mfctr": lambda a: a.regs[Register("ctr")],
+        # Move pseudoinstructions
         "mr": lambda a: a.reg(1),
+        "move.fictive": lambda a: a.reg(1),
         # Floating Point Arithmetic
         "fadd": lambda a: handle_add_double(a),
         "fadds": lambda a: handle_add_float(a),
@@ -915,10 +1017,25 @@ class PpcArch(Arch):
         "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
         "fmr": lambda a: a.reg(1),
         "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
-        # TODO: This yields some awkward-looking C code, often in the form:
-        # `sp100 = (bitwise f64) (s32) x; y = sp104;` instead of `y = (s32) x;`.
-        # We should try to detect these idioms, along with int-to-float
-        "fctiwz": lambda a: handle_convert(a.reg(1), Type.s32(), Type.floatish()),
+        "fctiwz": lambda a: handle_convert(a.reg(1), Type.sintish(), Type.floatish()),
+        "fctiwz.fictive": lambda a: handle_convert(
+            a.reg(1), Type.sintish(), Type.floatish()
+        ),
+        "cvt.u.d.fictive": lambda a: handle_convert(
+            a.reg(1), Type.uintish(), Type.floatish()
+        ),
+        "cvt.d.i.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f64(), Type.sintish()
+        ),
+        "cvt.d.u.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f64(), Type.uintish()
+        ),
+        "cvt.s.i.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f32(), Type.sintish()
+        ),
+        "cvt.s.u.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f32(), Type.uintish()
+        ),
         # Floating Poing Fused Multiply-{Add,Sub}
         "fmadd": lambda a: BinaryOp.f64(
             BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
@@ -1079,8 +1196,7 @@ class PpcArch(Arch):
             # without access to function signatures, or when dealing with
             # varargs functions. Decompiling multiple functions at once
             # would help.
-            # TODO: don't do this in the middle of the argument list,
-            # except for f12 if a0 is passed and such.
+            # TODO: don't do this in the middle of the argument list
             if not likely_regs[slot.reg]:
                 continue
 

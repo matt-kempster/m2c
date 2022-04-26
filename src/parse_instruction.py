@@ -1,9 +1,10 @@
 """Functions and classes useful for parsing an arbitrary MIPS instruction.
 """
 import abc
-from dataclasses import dataclass, replace, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 import string
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, Iterator, List, Optional, Set, Union
 
 from .error import DecompFailure
 from .options import Target
@@ -104,22 +105,69 @@ class JumpTarget:
         return f".{self.target}"
 
 
-@dataclass(frozen=True)
-class MemoryAccess:
-    base_reg: Register
-    offset: "Argument"
-    size: int
-
-    @staticmethod
-    def arbitrary() -> "MemoryAccess":
-        """Placeholder value used to mark that some arbitrary memory may be clobbered"""
-        return MemoryAccess(Register("zero"), AsmLiteral(0), 0)
-
-
 Argument = Union[
     Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp, JumpTarget
 ]
-Access = Union[Register, MemoryAccess]
+
+
+@dataclass(frozen=True)
+class StackLocation:
+    """
+    Represents a word on the stack. Currently only used for pattern matching.
+    `symbolic_offset` represents a label offset that is only used in patterns,
+    to represent the "N" in arguments such as `(N+4)($sp)`.
+    """
+
+    offset: int
+    symbolic_offset: Optional[str]
+
+    def __str__(self) -> str:
+        prefix = "" if self.symbolic_offset is None else f"{self.symbolic_offset}+"
+        return f"{prefix}{self.offset}($sp)"
+
+    def offset_as_arg(self) -> Argument:
+        if self.symbolic_offset is None:
+            return AsmLiteral(self.offset)
+        if self.offset == 0:
+            return AsmGlobalSymbol(self.symbolic_offset)
+        return BinOp(
+            lhs=AsmGlobalSymbol(self.symbolic_offset),
+            op="+",
+            rhs=AsmLiteral(self.offset),
+        )
+
+    @staticmethod
+    def from_offset(offset: Argument) -> Optional["StackLocation"]:
+        def align(x: int) -> int:
+            return x & ~3
+
+        if isinstance(offset, AsmLiteral):
+            return StackLocation(
+                offset=align(offset.value),
+                symbolic_offset=None,
+            )
+        if isinstance(offset, AsmGlobalSymbol):
+            return StackLocation(
+                offset=0,
+                symbolic_offset=offset.symbol_name,
+            )
+        if (
+            isinstance(offset, BinOp)
+            and offset.op in ("+", "-")
+            and isinstance(offset.lhs, AsmGlobalSymbol)
+            and isinstance(offset.rhs, AsmLiteral)
+        ):
+            base = offset.rhs.value
+            if offset.op == "-":
+                base = -base
+            return StackLocation(
+                offset=align(base),
+                symbolic_offset=offset.lhs.symbol_name,
+            )
+        return None
+
+
+Location = Union[Register, StackLocation]
 
 
 @dataclass(frozen=True)
@@ -127,12 +175,21 @@ class AsmInstruction:
     mnemonic: str
     args: List[Argument]
 
+    def __str__(self) -> str:
+        if not self.args:
+            return self.mnemonic
+        args = ", ".join(str(arg) for arg in self.args)
+        return f"{self.mnemonic} {args}"
+
 
 @dataclass(frozen=True)
 class InstructionMeta:
+    # True if the original asm line was marked with a goto pattern
     emit_goto: bool
+    # Asm source filename & line number
     filename: str
     lineno: int
+    # True if the Instruction is not directly from the source asm
     synthetic: bool
 
     @staticmethod
@@ -155,12 +212,12 @@ class Instruction:
     args: List[Argument]
     meta: InstructionMeta
 
-    # Track register and memory dependencies
+    # Track register and stack dependencies
     # An Instruction evaluates by reading from `inputs`, invalidating `clobbers`,
     # then writing to `outputs` (in that order)
-    inputs: List[Access]
-    clobbers: List[Access]
-    outputs: List[Access]
+    inputs: List[Location]
+    clobbers: List[Location]
+    outputs: List[Location]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
@@ -172,6 +229,9 @@ class Instruction:
     # bools should be merged into a 3-valued enum?)
     has_delay_slot: bool = False
     is_branch_likely: bool = False
+
+    # True if the Instruction was part of a matched IR pattern, but not elided
+    in_pattern: bool = False
 
     def is_jump(self) -> bool:
         return self.jump_target is not None or self.is_return
@@ -509,3 +569,21 @@ def parse_instruction(
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception:
         raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
+
+
+@dataclass
+class InstrProcessingFailure(Exception):
+    instr: Instruction
+
+    def __str__(self) -> str:
+        return f"Error while processing instruction:\n{self.instr}"
+
+
+@contextmanager
+def current_instr(instr: Instruction) -> Iterator[None]:
+    """Mark an instruction as being the one currently processed, for the
+    purposes of error messages. Use like |with current_instr(instr): ...|"""
+    try:
+        yield
+    except Exception as e:
+        raise InstrProcessingFailure(instr) from e

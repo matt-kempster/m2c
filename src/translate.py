@@ -33,7 +33,9 @@ from .flow_graph import (
     ReturnNode,
     SwitchNode,
     TerminalNode,
+    locs_clobbered_until_dominator,
 )
+from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import CodingStyle, Formatter, Options, Target
 from .parse_file import AsmData, AsmDataEntry
 from .parse_instruction import (
@@ -44,9 +46,11 @@ from .parse_instruction import (
     AsmLiteral,
     BinOp,
     Instruction,
-    MemoryAccess,
+    InstrProcessingFailure,
     Macro,
     Register,
+    StackLocation,
+    current_instr,
 )
 from .types import (
     AccessPath,
@@ -113,28 +117,16 @@ class Arch(ArchFlowGraph):
         """
         ...
 
+    # These are defined here to avoid a circular import in flow_graph.py
+    ir_patterns: List[IrPattern] = []
+
+    def simplify_ir(self, flow_graph: FlowGraph) -> None:
+        simplify_ir_patterns(self, flow_graph, self.ir_patterns)
+
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
 PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI", "CLZ"}
-
-
-@dataclass
-class InstrProcessingFailure(Exception):
-    instr: Instruction
-
-    def __str__(self) -> str:
-        return f"Error while processing instruction:\n{self.instr}"
-
-
-@contextmanager
-def current_instr(instr: Instruction) -> Iterator[None]:
-    """Mark an instruction as being the one currently processed, for the
-    purposes of error messages. Use like |with current_instr(instr): ...|"""
-    try:
-        yield
-    except Exception as e:
-        raise InstrProcessingFailure(instr) from e
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
@@ -213,12 +205,13 @@ def as_function_ptr(expr: "Expression") -> "Expression":
 class StackInfo:
     function: Function
     global_info: "GlobalInfo"
+    flow_graph: FlowGraph
     allocated_stack_size: int = 0
     is_leaf: bool = True
     is_variadic: bool = False
     uses_framepointer: bool = False
     subroutine_arg_top: int = 0
-    callee_save_reg_locations: Dict[Register, int] = field(default_factory=dict)
+    callee_save_regs: Set[Register] = field(default_factory=set)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
     unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
     local_vars: List["LocalVar"] = field(default_factory=list)
@@ -454,7 +447,7 @@ class StackInfo:
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
                 f"Bounds of callee-saved vars region: {self.callee_save_reg_region}",
-                f"Locations of callee save registers: {self.callee_save_reg_locations}",
+                f"Callee save registers: {self.callee_save_regs}",
             ]
         )
 
@@ -464,8 +457,8 @@ def get_stack_info(
     global_info: "GlobalInfo",
     flow_graph: FlowGraph,
 ) -> StackInfo:
-    info = StackInfo(function, global_info)
     arch = global_info.arch
+    info = StackInfo(function, global_info, flow_graph)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -478,7 +471,7 @@ def get_stack_info(
     # assumes that the compiler will never reuse a section of stack for *both*
     # a local variable *and* a subroutine argument.) Anything within the stack frame,
     # but outside of these two regions, is considered a local variable.
-    callee_saved_offset_and_size: List[Tuple[int, int]] = []
+    callee_saved_offsets: List[int] = []
     # Track simple literal values stored into registers: MIPS compilers need a temp
     # reg to move the stack pointer more than 0x7FFF bytes.
     temp_reg_values: Dict[Register, int] = {}
@@ -530,7 +523,7 @@ def get_stack_info(
             and isinstance(inst.args[1], AsmAddressMode)
             and inst.args[1].rhs == arch.stack_pointer_reg
             and (
-                inst.args[0] not in info.callee_save_reg_locations
+                inst.args[0] not in info.callee_save_regs
                 or arch_mnemonic == "ppc:psq_st"
             )
         ):
@@ -540,18 +533,14 @@ def get_stack_info(
                 info.is_leaf = False
             # The registers & their stack accesses must be matched up in ArchAsm.parse
             for reg, mem in zip(inst.inputs, inst.outputs):
-                if (
-                    isinstance(reg, Register)
-                    and isinstance(mem, MemoryAccess)
-                    and mem.base_reg == arch.stack_pointer_reg
-                    and isinstance(mem.offset, AsmLiteral)
-                ):
-                    stack_offset = mem.offset.value
+                if isinstance(reg, Register) and isinstance(mem, StackLocation):
+                    assert mem.symbolic_offset is None
+                    stack_offset = mem.offset
                     if arch_mnemonic != "ppc:psq_st":
                         # psq_st instructions store the same register as stfd, just
                         # as packed singles instead. Prioritize the stfd.
-                        info.callee_save_reg_locations[reg] = stack_offset
-                    callee_saved_offset_and_size.append((stack_offset, mem.size))
+                        info.callee_save_regs.add(reg)
+                    callee_saved_offsets.append(stack_offset)
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
@@ -595,9 +584,9 @@ def get_stack_info(
                     )
 
         # Compute the bounds of the callee-saved register region, including padding
-        if callee_saved_offset_and_size:
-            callee_saved_offset_and_size.sort()
-            bottom, last_size = callee_saved_offset_and_size[0]
+        if callee_saved_offsets:
+            callee_saved_offsets.sort()
+            bottom = callee_saved_offsets[0]
 
             # Both IDO & GCC save registers in two subregions:
             # (a) One for double-sized registers
@@ -607,22 +596,17 @@ def get_stack_info(
             # 4-byte word between subregions.
             top = bottom
             internal_padding_added = False
-            for offset, size in callee_saved_offset_and_size:
+            for offset in callee_saved_offsets:
                 if offset != top:
-                    if (
-                        not internal_padding_added
-                        and size != last_size
-                        and offset == top + 4
-                    ):
+                    if not internal_padding_added and offset == top + 4:
                         internal_padding_added = True
                     else:
                         raise DecompFailure(
                             f"Gap in callee-saved word stack region. "
-                            f"Saved: {callee_saved_offset_and_size}, "
+                            f"Saved: {callee_saved_offsets}, "
                             f"gap at: {offset} != {top}."
                         )
-                top = offset + size
-                last_size = size
+                top = offset + 4
             info.callee_save_reg_region = (bottom, top)
 
             # Subroutine arguments must be at the very bottom of the stack, so they
@@ -1926,6 +1910,10 @@ class CommentStmt(Statement):
         return f"// {self.contents}"
 
 
+def error_stmt(msg: str) -> ExprStmt:
+    return ExprStmt(ErrorExpr(msg))
+
+
 @dataclass(frozen=True)
 class AddressMode:
     offset: int
@@ -1968,6 +1956,10 @@ class RegMeta:
     # True if the regdata must be replaced by variable if it is ever read
     force: bool = False
 
+    # True if the regdata was assigned by an Instruction marked as in_pattern;
+    # it was part of a matched IR pattern but couldn't be elided at the time
+    in_pattern: bool = False
+
 
 @dataclass
 class RegData:
@@ -1984,7 +1976,8 @@ class RegInfo:
 
     def __getitem__(self, key: Register) -> Expression:
         if self._active_instr is not None and key not in self._active_instr.inputs:
-            raise DecompFailure(f"Undeclared read from {key} in {self._active_instr}")
+            lineno = self._active_instr.meta.lineno
+            return ErrorExpr(f"Read from unset register {key} on line {lineno}")
         if key == Register("zero"):
             return Literal(0)
         data = self.contents.get(key)
@@ -3641,25 +3634,6 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
-def regs_clobbered_until_dominator(node: Node) -> Set[Register]:
-    if node.immediate_dominator is None:
-        return set()
-    seen = {node.immediate_dominator}
-    stack = node.parents[:]
-    clobbered = set()
-    while stack:
-        n = stack.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-        for instr in n.block.instructions:
-            for r in instr.outputs + instr.clobbers:
-                if isinstance(r, Register):
-                    clobbered.add(r)
-        stack.extend(n.parents)
-    return clobbered
-
-
 def reg_always_set(node: Node, reg: Register, *, dom_set: bool) -> bool:
     if node.immediate_dominator is None:
         return False
@@ -3799,17 +3773,20 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
                 par_meta.is_read = True
                 todo.append(p)
 
-    # Set `uninteresting` and propagate it and `function_return` forwards. Start by
-    # assuming inherited values are all set; they will get unset iteratively, but for
-    # cyclic dependency purposes we want to assume them set.
+    # Set `uninteresting` and propagate it, `function_return`, and `in_pattern` forwards.
+    # Start by assuming inherited values are all set; they will get unset iteratively,
+    # but for cyclic dependency purposes we want to assume them set.
     for n in non_terminal:
         meta = get_block_info(n).final_register_states.get_meta(reg)
         if meta:
             if meta.inherited:
                 meta.uninteresting = True
                 meta.function_return = True
+                meta.in_pattern = True
             else:
-                meta.uninteresting |= meta.is_read or meta.function_return
+                meta.uninteresting |= (
+                    meta.is_read or meta.function_return or meta.in_pattern
+                )
 
     todo = non_terminal[:]
     while todo:
@@ -3821,16 +3798,21 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
             continue
         all_uninteresting = True
         all_function_return = True
+        all_in_pattern = True
         for p in n.parents:
             par_meta = get_block_info(p).final_register_states.get_meta(reg)
             if par_meta:
                 all_uninteresting &= par_meta.uninteresting
                 all_function_return &= par_meta.function_return
+                all_in_pattern &= par_meta.in_pattern
         if meta.uninteresting and not all_uninteresting and not meta.is_read:
             meta.uninteresting = False
             todo.extend(n.children())
         if meta.function_return and not all_function_return:
             meta.function_return = False
+            todo.extend(n.children())
+        if meta.in_pattern and not all_in_pattern:
+            meta.in_pattern = False
             todo.extend(n.children())
 
 
@@ -3843,12 +3825,14 @@ def determine_return_register(
     def priority(block_info: BlockInfo, reg: Register) -> int:
         meta = block_info.final_register_states.get_meta(reg)
         if not meta:
-            return 3
+            return 4
         if meta.uninteresting:
+            return 2
+        if meta.in_pattern:
             return 1
         if meta.function_return:
             return 0
-        return 2
+        return 3
 
     if not return_blocks:
         return None
@@ -3858,10 +3842,10 @@ def determine_return_register(
     for reg in arch.base_return_regs:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
-        if max_prio == 3:
+        if max_prio == 4:
             # Register is not always set, skip it
             continue
-        if max_prio <= 1 and not fn_decl_provided:
+        if max_prio <= 2 and not fn_decl_provided:
             # Register is always read after being written, or comes from a
             # function call; seems unlikely to be an intentional return.
             # Skip it, unless we have a known non-void return type.
@@ -3885,6 +3869,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     switch_expr: Optional[Expression] = None
     has_custom_return: bool = False
     has_function_call: bool = False
+    in_pattern: bool = False
     arch = stack_info.global_info.arch
 
     def eval_once(
@@ -3898,6 +3883,11 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         if emit_exactly_once:
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
+        elif "_fictive_" in prefix and isinstance(expr, EvalOnceExpr):
+            # Avoid creating additional EvalOnceExprs for fictive Registers
+            # so they're less likely to appear in the output
+            return expr
+
         assert reuse_var or prefix
         if prefix == "condition_bit":
             prefix = "cond"
@@ -3961,7 +3951,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
         prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
     def set_reg_maybe_return(reg: Register, expr: Expression) -> None:
-        regs[reg] = expr
+        regs.set_with_meta(reg, expr, RegMeta(in_pattern=in_pattern))
 
     def set_reg(reg: Register, expr: Optional[Expression]) -> Optional[Expression]:
         if expr is None:
@@ -3973,7 +3963,8 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
             if (
                 isinstance(node, ReturnNode)
                 and stack_info.maybe_get_register_var(reg)
-                and (stack_info.callee_save_reg_locations.get(reg) == expr.value)
+                and stack_info.in_callee_save_reg_region(expr.value)
+                and reg in stack_info.callee_save_regs
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
@@ -4030,8 +4021,9 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 return
 
     def process_instr(instr: Instruction) -> None:
-        nonlocal branch_condition, switch_expr, has_function_call
+        nonlocal branch_condition, switch_expr, has_function_call, in_pattern
 
+        in_pattern = instr.in_pattern
         mnemonic = instr.mnemonic
         arch_mnemonic = instr.arch_mnemonic(arch)
         args = InstrArgs(instr.args, regs, stack_info)
@@ -4177,6 +4169,10 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
                 if arch.arch == Target.ArchEnum.PPC and (
                     data.meta.inherited or data.meta.function_return
                 ):
+                    likely_regs[reg] = False
+                elif data.meta.in_pattern:
+                    # Like `meta.function_return` mentioned above, `meta.in_pattern` will only be
+                    # accurate for registers set within this basic block.
                     likely_regs[reg] = False
                 elif isinstance(data.value, PassedInArg) and not data.value.copied:
                     likely_regs[reg] = False
@@ -4470,7 +4466,9 @@ def translate_graph_from_block(
                 reg, data.value, RegMeta(inherited=True, force=data.meta.force)
             )
 
-        phi_regs = regs_clobbered_until_dominator(child)
+        phi_regs = (
+            r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
+        )
         for reg in phi_regs:
             if reg_always_set(child, reg, dom_set=(reg in regs)):
                 expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
