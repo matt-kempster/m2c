@@ -13,7 +13,7 @@ Right now the decompiler is fairly functional, though it sometimes generates sub
 The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
 See the `tests/` directory for some example input and output.
 
-[An online version is also available](https://simonsoftware.se/other/m2c.py).
+[An online version is also available](https://simonsoftware.se/other/m2c.html).
 
 ## Install
 
