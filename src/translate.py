@@ -1343,6 +1343,9 @@ class StructAccess(Expression):
 
         if self.field_path is None and not self.checked_late_field_path:
             var = late_unwrap(self.struct_var)
+            # Format var to recursively resolve any late_field_path it has to
+            # potentially improve var.type before we look up our field name
+            var.format(Formatter())
             field_path, field_type, _ = var.type.get_deref_field(
                 self.offset, target_size=self.target_size
             )
