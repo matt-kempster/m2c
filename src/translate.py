@@ -173,10 +173,6 @@ def as_uintish(expr: "Expression") -> "Expression":
     return as_type(expr, Type.uintish(), False)
 
 
-def as_s32(expr: "Expression", *, silent: bool = False) -> "Expression":
-    return as_type(expr, Type.s32(), silent)
-
-
 def as_u32(expr: "Expression") -> "Expression":
     return as_type(expr, Type.u32(), False)
 
@@ -3035,6 +3031,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
             left=left_expr.left,
             op="/",
             right=Literal(new_denom),
+            silent=True,
         )
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)
