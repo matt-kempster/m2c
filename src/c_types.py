@@ -213,7 +213,7 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
         if declname.startswith("unk_") or declname.startswith("pad"):
             return True
 
-    # Check for types which are typedefs starting with "UNK_" or "MIPS2C_UNK",
+    # Check for types which are typedefs starting with "UNK_" or "M2C_UNK",
     # or are arrays/pointers to one of these types.
     while True:
         if (
@@ -223,7 +223,7 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
             and type.type.names[0] in typemap.typedefs
         ):
             type_name = type.type.names[0]
-            if type_name.startswith("UNK_") or type_name.startswith("MIPS2C_UNK"):
+            if type_name.startswith("UNK_") or type_name.startswith("M2C_UNK"):
                 return True
             type = typemap.typedefs[type_name]
         elif isinstance(type, (PtrDecl, ArrayDecl)):
@@ -543,7 +543,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
 
 
 def add_builtin_typedefs(source: str) -> str:
-    """Add built-in typedefs to the source code (mips_to_c emits those, so it makes
+    """Add built-in typedefs to the source code (m2c emits those, so it makes
     sense to pre-define them to simplify hand-written C contexts)."""
     typedefs = {
         "u8": "unsigned char",
@@ -578,7 +578,7 @@ def strip_comments(text: str) -> str:
 
 
 def strip_macro_defs(text: str) -> str:
-    """Strip macro definitions from C source. mips_to_c does not run the preprocessor,
+    """Strip macro definitions from C source. m2c does not run the preprocessor,
     for a bunch of reasons:
 
     - we don't know what include directories to use

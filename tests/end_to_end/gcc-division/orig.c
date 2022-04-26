@@ -3,8 +3,7 @@ void func_00400090(unsigned int a) {
 }
 
 // If there are too many cases in a single function, GCC starts putting
-// the MULT_HI constants on the stack to reuse them, which mips_to_c
-// won't fold.
+// the MULT_HI constants on the stack to reuse them, which m2c won't fold.
 //
 // `volatile` prevents some optimizations, so GCC can't re-use the result
 // of the division to compute the modulo. It's only needed on the 32-bit types?

@@ -946,7 +946,7 @@ class MipsArch(Arch):
 
     instrs_ignore: InstrSet = {
         # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
-        # FCSR gets are as well, but it's fine to read MIPS2C_ERROR for those.
+        # FCSR gets are as well, but it's fine to read M2C_ERROR for those.
         "ctc1",
         "nop",
         "b",
@@ -992,47 +992,47 @@ class MipsArch(Arch):
     }
     instrs_no_dest: StmtInstrMap = {
         # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
-        # output than MIPS2C_ERROR(...))
+        # output than M2C_ERROR(...))
         "teq": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.reg(1))]
         ),
         "tne": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.reg(1))]
         ),
         "tlt": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.reg(1))]
         ),
         "tltu": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.reg(1))]
         ),
         "tge": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.reg(1))]
         ),
         "tgeu": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
         ),
         "teqi": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
         ),
         "tnei": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
         ),
         "tlti": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
         ),
         "tltiu": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
         ),
         "tgei": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
         ),
         "tgeiu": lambda a: void_fn_op(
-            "MIPS2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
         ),
         "break": lambda a: void_fn_op(
-            "MIPS2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
+            "M2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
         ),
-        "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
+        "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "mtc0": lambda a: error_stmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}"),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
     }

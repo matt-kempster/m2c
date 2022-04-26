@@ -514,7 +514,7 @@ def parse_arg_elems(
                     constant_fold(rhs), AsmLiteral
                 ):
                     raise DecompFailure(
-                        "Math is too complicated for mips_to_c. Try adding parentheses."
+                        "Math is too complicated for m2c. Try adding parentheses."
                     )
                 if isinstance(rhs, AsmLiteral) and isinstance(
                     value, AsmSectionGlobalSymbol

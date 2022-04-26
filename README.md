@@ -1,20 +1,18 @@
-# `mips_to_c`
-Given some MIPS or PPC assembly, this program will attempt to convert it to C.
+# `m2c`
+`m2c` ("*Machine to Code*") is a decompiler for MIPS and PPC assembly that produces C code, with partial support for C++.
 
-The goal of this project is to support decompilation projects, which aim to write C code that yields byte-identical output when compiled with a particular build system.
-It primarily focuses on supporting popular compilers of the late 1990's.
+The goal of this project is to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
+It primarily focuses on supporting popular compilers of the late 1990's & early 2000's.
 However, it may also work with other compilers or hand-written assembly.
 
-The focus of `mips_to_c` is to aid in the process of producing "matching" C source files.
+The focus of `m2c` is to aid in the process of producing "matching" source files.
 This differentiates it from other decompilation suites, such as IDA or Ghidra.
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
 
 The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
 See the `tests/` directory for some example input and output.
 
-Despite the project's name, `mips_to_c` also has **experimental support** for PowerPC (PPC) as well.
-
-[An online version is also available](https://simonsoftware.se/other/mips_to_c.py).
+[An online version is also available](https://simonsoftware.se/other/m2c.py).
 
 ## Install
 
@@ -35,7 +33,7 @@ sudo apt install python3-pip
 ## Usage
 
 ```bash
-python3 mips_to_c.py [options] [-t <target>] [--context <context file>] [-f <function name>] <asmfile>...
+python3 m2c.py [options] [-t <target>] [--context <context file>] [-f <function name>] <asmfile>...
 ```
 
 Run with `--help` to see which options are available.
@@ -44,7 +42,7 @@ Context files provided with `--context` are parsed and cached, so subsequent run
 
 ### Target Architecture / Compiler / Language
 
-Despite the name, `mips_to_c` has support for both MIPS and PPC assembly.
+`m2c` has support for both MIPS and PPC assembly.
 It also has some compiler-specific heuristics and language-specific behavior.
 For example, it can demangle C++ symbol names as used by CodeWarrior.
 
@@ -58,19 +56,19 @@ The following target triples are supported:
 
 ### Multiple functions
 
-By default, `mips_to_c` decompiles all functions in the text sections from the input assembly files.
-`mips_to_c` is able to perform a small amount of cross-function type inference, if the functions call each other.
+By default, `m2c` decompiles all functions in the text sections from the input assembly files.
+`m2c` is able to perform a small amount of cross-function type inference, if the functions call each other.
 
 You can limit the function(s) that decompiled by providing the `-f <function name>` flags (or the "Function" dropdown on the website).
 
 ### Global Declarations & Initializers
 
-When provided input files with `data`, `rodata`, and/or `bss` sections, `mips_to_c` can generate the initializers for variables it knows the types of.
+When provided input files with `data`, `rodata`, and/or `bss` sections, `m2c` can generate the initializers for variables it knows the types of.
 
 Qualifier hints such as `const`, `static`, and `extern` are based on which sections the symbols appear in, or if they aren't provided at all.
 The output also includes prototypes for functions not declared in the context.
 
-`mips_to_c` cannot generate initializers for structs with bitfields (e.g. `unsigned foo: 3;`) or for symbols that it cannot infer the type of.
+`m2c` cannot generate initializers for structs with bitfields (e.g. `unsigned foo: 3;`) or for symbols that it cannot infer the type of.
 For the latter, you can provide a type for the symbol the context.
 
 This feature is controlled with the `--globals` option (or "Global declarations" on the website):
@@ -81,7 +79,7 @@ This feature is controlled with the `--globals` option (or "Global declarations"
 
 ### Struct Field Inference
 
-By default, `mips_to_c` can use type information from decompiled functions to help fill in unknown struct fields.
+By default, `m2c` can use type information from decompiled functions to help fill in unknown struct fields.
 This behavior can be disabled with `--no-unk-inference` ("Disable unknown struct/type inference" on the website).
 
 For structs in the context, the following fields treated as "unknown" space that can be inferred:
@@ -95,24 +93,24 @@ The output will include declarations for any struct with at least one inferred f
 
 ### Specifying stack variables
 
-By default, `mips_to_c` infers the types of stack (local) variables, and names them with the `sp` prefix based on their offset.
+By default, `m2c` infers the types of stack (local) variables, and names them with the `sp` prefix based on their offset.
 
-Internally, the stack is represented as a struct, so it is possible to manually specify the names & types of stack variables by providing a struct declaration in the context. `mips_to_c` looks in the context for a struct with the tag name `_mips2c_stack_<function name>` (e.g. `struct _mips2c_stack_test` for a function `test()`).
+Internally, the stack is represented as a struct, so it is possible to manually specify the names & types of stack variables by providing a struct declaration in the context. `m2c` looks in the context for a struct with the tag name `_m2c_stack_<function name>` (e.g. `struct _m2c_stack_test` for a function `test()`).
 
-The size of the stack must exactly match the detected frame size, or `mips_to_c` will return an error.
-If you run `mips_to_c` with the `--stack-structs` option ("Stack struct templates" on the website), the output will include the inferred stack declaration, which can then be edited and provided as context by re-running `mips_to_c`.
+The size of the stack must exactly match the detected frame size, or `m2c` will return an error.
+If you run `m2c` with the `--stack-structs` option ("Stack struct templates" on the website), the output will include the inferred stack declaration, which can then be edited and provided as context by re-running `m2c`.
 
 #### Example
 
 Here is an example for specifying the stack for the `custom_stack` end-to-end test.
 
-First, run `mips_to_c` with the `--stack-structs` option to get the inferred struct for the `test()` function:
+First, run `m2c` with the `--stack-structs` option to get the inferred struct for the `test()` function:
 
 <details>
-    <summary><code>python3 mips_to_c.py tests/end_to_end/custom_stack/irix-o2.s -f test --stack-structs</code></summary>
+    <summary><code>python3 m2c.py tests/end_to_end/custom_stack/irix-o2.s -f test --stack-structs</code></summary>
 
 ```c
-struct _mips2c_stack_test {
+struct _m2c_stack_test {
     /* 0x00 */ char pad0[0x20];
     /* 0x20 */ s8 sp20;                             /* inferred */
     /* 0x21 */ char pad21[0x3];                     /* maybe part of sp20[4]? */
@@ -170,7 +168,7 @@ struct Vec {
     s32 x, y, z;
 };
 
-struct _mips2c_stack_test {
+struct _m2c_stack_test {
     char pad0[0x20];
     struct Vec vec;
     struct Vec *vec_ptr;
@@ -183,10 +181,10 @@ struct _mips2c_stack_test {
 int test(struct Vec *vec_arg);
 ```
 
-Finally, re-run `mips_to_c` with our custom stack as part of the `--context`. The `--context` option can be specified multiple times to combine files.
+Finally, re-run `m2c` with our custom stack as part of the `--context`. The `--context` option can be specified multiple times to combine files.
 
 <details>
-    <summary><code>python3 mips_to_c.py tests/end_to_end/custom_stack/irix-o2.s -f test --context test_context.c</code></summary>
+    <summary><code>python3 m2c.py tests/end_to_end/custom_stack/irix-o2.s -f test --context test_context.c</code></summary>
 
 ```c
 ? func_00400090(s8 *);                              /* static */
@@ -223,7 +221,7 @@ s32 test(struct Vec *vec_arg) {
 
 ### Formatting
 
-The following options control the formatting details of the output, such as braces style or numeric format. See `./mips_to_c.py --help` for more details. 
+The following options control the formatting details of the output, such as braces style or numeric format. See `./m2c.py --help` for more details. 
 
 (The option name on the website, if available, is in parentheses.)
 
@@ -241,7 +239,7 @@ Note: `--valid-syntax` is used to produce output that is less human-readable, bu
 
 ### Debugging poor results (Advanced)
 
-There are several options to `mips_to_c` which can be used to troubleshoot poor results. Many of these options produce more "primitive" output or debugging information.
+There are several options to `m2c` which can be used to troubleshoot poor results. Many of these options produce more "primitive" output or debugging information.
 
 - `--no-andor` ("Disable &&/||"): Disable complex conditional detection, such as `if (a && b)`. Instead, emit each part of the conditional as a separate `if` statement. Ands, ors, nots, etc. are usually represented with `goto`s.
 - `--no-switches` ("Disable irregular switch detection"): Disable "irregular" `switch` statements, where the compiler emits a single `switch` as a series of branches and/or jump tables. By default, these are coalesced into a single `switch` and marked with an `/* irregular */` comment.
@@ -253,14 +251,14 @@ There are several options to `mips_to_c` which can be used to troubleshoot poor 
 
 #### Visualization
 
-`mips_to_c` can generate an SVG representation of the control flow of a function, which can sometimes be helpful to untangle complex loops or early returns.
+`m2c` can generate an SVG representation of the control flow of a function, which can sometimes be helpful to untangle complex loops or early returns.
 
 Pass `--visualize` on the command line, or use the "Visualize" button on the website. The output will be an SVG file.
 
 Example to produce `my_fn.svg` of `my_fn()`:
 
 ```sh
-python3 ./mips_to_c.py --visualize --context ctx.c -f my_fn my_asm.s > my_fn.svg
+python3 ./m2c.py --visualize --context ctx.c -f my_fn my_asm.s > my_fn.svg
 ```
 
 ## Contributing
@@ -293,7 +291,7 @@ It's possible to use the entire corpus of assembly files from decompilation proj
 For now, the output of these tests are not tracked in version control.
 You need to run `./run_tests.py --overwrite ...` **before** making any code changes to create the baseline output.
 
-As an example, if you have the `oot` project cloned locally in the parent directory containing `mips_to_c`, the following will decompile all of its assembly files.
+As an example, if you have the `oot` project cloned locally in the parent directory containing `m2c`, the following will decompile all of its assembly files.
 
 ```bash
 ./run_tests.py --project ../oot --project-with-context ../oot

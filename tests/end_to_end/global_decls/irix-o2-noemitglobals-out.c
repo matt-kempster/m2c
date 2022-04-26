@@ -1,4 +1,4 @@
-struct _mips2c_stack_test {
+struct _m2c_stack_test {
     /* 0x00 */ char pad0[0x18];
 };                                                  /* size = 0x18 */
 

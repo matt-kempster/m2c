@@ -38,7 +38,7 @@ int test(struct Vec *v) {
 }
 
 // This stack only matches the -O2 build, -g makes a different size
-struct _mips2c_stack_test {
+struct _m2c_stack_test {
     char pad0[32];
     struct Vec e;
     struct Vec *d;

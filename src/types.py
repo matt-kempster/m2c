@@ -651,7 +651,7 @@ class Type:
                 align=[],
             )
 
-        unk_symbol = "MIPS2C_UNK" if fmt.valid_syntax else "?"
+        unk_symbol = "M2C_UNK" if fmt.valid_syntax else "?"
 
         data = self.data()
         if data in seen:

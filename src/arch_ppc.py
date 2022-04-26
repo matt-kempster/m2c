@@ -882,8 +882,8 @@ class PpcArch(Arch):
         "bctrl",
     }
     instrs_no_dest: StmtInstrMap = {
-        "sync": lambda a: void_fn_op("MIPS2C_SYNC", []),
-        "isync": lambda a: void_fn_op("MIPS2C_SYNC", []),
+        "sync": lambda a: void_fn_op("M2C_SYNC", []),
+        "isync": lambda a: void_fn_op("M2C_SYNC", []),
     }
 
     instrs_dest_first_non_load: InstrMap = {

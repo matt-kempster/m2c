@@ -100,7 +100,7 @@ class AsmData:
 
 
 @dataclass
-class MIPSFile:
+class AsmFile:
     filename: str
     functions: List[Function] = field(default_factory=list)
     asm_data: AsmData = field(default_factory=AsmData)
@@ -276,9 +276,9 @@ def parse_incbin(
     return None
 
 
-def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> MIPSFile:
+def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     filename = Path(f.name).name
-    mips_file: MIPSFile = MIPSFile(filename)
+    mips_file: AsmFile = AsmFile(filename)
     defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0
     ifdef_levels: List[int] = []

@@ -411,7 +411,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "extra_flags",
         nargs=argparse.REMAINDER,
-        help="Additional arguments to pass to mips_to_c. Use `--` to separate them from run_tests's flags.",
+        help="Additional arguments to pass to m2c. Use `--` to separate them from run_tests's flags.",
     )
     parser.add_argument(
         "--project-with-context",

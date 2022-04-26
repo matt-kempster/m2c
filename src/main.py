@@ -322,7 +322,7 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
         help=(
             "Include template structs for each function's stack. These can be modified and passed back "
-            "into mips_to_c with --context to set the types & names of stack vars."
+            "into m2c with --context to set the types & names of stack vars."
         ),
     )
     group.add_argument(
@@ -363,7 +363,7 @@ def parse_flags(flags: List[str]) -> Options:
         dest="valid_syntax",
         action="store_true",
         help="Emit valid C syntax, using macros to indicate unknown types or other "
-        "unusual statements. Macro definitions are in `mips2c_macros.h`.",
+        "unusual statements. Macro definitions are in `m2c_macros.h`.",
     )
     group.add_argument(
         "--allman",
