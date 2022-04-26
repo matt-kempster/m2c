@@ -15,7 +15,7 @@ void test(s32 arg0, s32 arg1) {
     if (arg1 > 0) {
         temp_r5 = arg1 - 8;
         if (arg1 > 8) {
-            phi_ctr = (temp_r5 + 7) >> 3U;
+            phi_ctr = (u32) (temp_r5 + 7) >> 3U;
             if (temp_r5 > 0) {
                 do {
                     temp_r5_2 = arg0 + phi_r6;

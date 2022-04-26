@@ -65,9 +65,10 @@ from .translate import (
     as_intish,
     as_intptr,
     as_ptr,
-    as_s32,
+    as_sintish,
     as_type,
     as_u32,
+    as_uintish,
     fn_op,
     fold_divmod,
     fold_mul_chains,
@@ -909,11 +910,9 @@ class PpcArch(Arch):
             BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
         ),
         "subfze": lambda a: CarryBit.sub_from(
-            fold_mul_chains(UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32()))
+            fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         ),
-        "neg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s32(a.reg(1)), type=Type.s32())
-        ),
+        "neg": lambda a: fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         "divw": lambda a: BinaryOp.s32(a.reg(1), "/", a.reg(2)),
         "divwu": lambda a: BinaryOp.u32(a.reg(1), "/", a.reg(2)),
         "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
@@ -976,7 +975,7 @@ class PpcArch(Arch):
         ),
         "srw": lambda a: fold_divmod(
             BinaryOp(
-                left=as_u32(a.reg(1)),
+                left=as_uintish(a.reg(1)),
                 op=">>",
                 right=as_intish(a.reg(2)),
                 type=Type.u32(),
@@ -984,7 +983,7 @@ class PpcArch(Arch):
         ),
         "sraw": lambda a: fold_divmod(
             BinaryOp(
-                left=as_s32(a.reg(1)),
+                left=as_sintish(a.reg(1)),
                 op=">>",
                 right=as_intish(a.reg(2)),
                 type=Type.s32(),

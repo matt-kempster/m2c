@@ -165,20 +165,20 @@ def as_f64(expr: "Expression") -> "Expression":
     return as_type(expr, Type.f64(), True)
 
 
-def as_sintish(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.sintish(), True)
+def as_sintish(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.sintish(), silent)
 
 
 def as_uintish(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.uintish(), True)
+    return as_type(expr, Type.uintish(), False)
 
 
-def as_s32(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.s32(), True)
+def as_s32(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.s32(), silent)
 
 
 def as_u32(expr: "Expression") -> "Expression":
-    return as_type(expr, Type.u32(), True)
+    return as_type(expr, Type.u32(), False)
 
 
 def as_s64(expr: "Expression", *, silent: bool = False) -> "Expression":
@@ -857,9 +857,9 @@ class BinaryOp(Condition):
     @staticmethod
     def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
-            left=as_sintish(left),
+            left=as_sintish(left, silent=True),
             op=op,
-            right=as_sintish(right),
+            right=as_sintish(right, silent=True),
             type=Type.bool(),
         )
 
@@ -906,11 +906,13 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def s32(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def s32(
+        left: Expression, op: str, right: Expression, silent: bool = False
+    ) -> "BinaryOp":
         return BinaryOp(
-            left=as_s32(left),
+            left=as_s32(left, silent=silent),
             op=op,
-            right=as_s32(right),
+            right=as_s32(right, silent=silent),
             type=Type.s32(),
         )
 
@@ -1061,7 +1063,7 @@ class UnaryOp(Condition):
 
     @staticmethod
     def sint(op: str, expr: Expression) -> "UnaryOp":
-        expr = as_sintish(expr)
+        expr = as_sintish(expr, silent=True)
         return UnaryOp(
             op=op,
             expr=expr,
@@ -3031,6 +3033,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
             left=left_expr.left,
             op="/",
             right=Literal(new_denom),
+            silent=True,
         )
 
     # Fold `/` with `>>`: ((x / N) >> M) --> x / (N << M)

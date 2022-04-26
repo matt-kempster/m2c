@@ -30,7 +30,7 @@ loop_9:
         phi_r29_2 = 0;
         if (arg0 > 0) {
             if (arg0 > 8) {
-                phi_ctr = (temp_r10 + 7) >> 3U;
+                phi_ctr = (u32) (temp_r10 + 7) >> 3U;
                 phi_r11 = 0;
                 if (temp_r10 > 0) {
                     do {
