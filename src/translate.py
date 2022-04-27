@@ -37,18 +37,19 @@ from .flow_graph import (
 )
 from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import CodingStyle, Formatter, Options, Target
-from .parse_file import AsmData, AsmDataEntry
-from .parse_instruction import (
-    ArchAsm,
+from .asm_file import AsmData, AsmDataEntry
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
     BinOp,
-    Instruction,
-    InstrProcessingFailure,
     Macro,
     Register,
+)
+from .instruction import (
+    Instruction,
+    InstrProcessingFailure,
     StackLocation,
     current_instr,
 )
@@ -165,8 +166,12 @@ def as_f64(expr: "Expression") -> "Expression":
     return as_type(expr, Type.f64(), True)
 
 
-def as_s32(expr: "Expression", *, silent: bool = False) -> "Expression":
-    return as_type(expr, Type.s32(), silent)
+def as_sintish(expr: "Expression", *, silent: bool = False) -> "Expression":
+    return as_type(expr, Type.sintish(), silent)
+
+
+def as_uintish(expr: "Expression") -> "Expression":
+    return as_type(expr, Type.uintish(), False)
 
 
 def as_u32(expr: "Expression") -> "Expression":
@@ -849,9 +854,9 @@ class BinaryOp(Condition):
     @staticmethod
     def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
         return BinaryOp(
-            left=as_s32(left, silent=True),
+            left=as_sintish(left, silent=True),
             op=op,
-            right=as_s32(right, silent=True),
+            right=as_sintish(right, silent=True),
             type=Type.bool(),
         )
 
@@ -866,7 +871,9 @@ class BinaryOp(Condition):
 
     @staticmethod
     def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.bool())
+        return BinaryOp(
+            left=as_uintish(left), op=op, right=as_uintish(right), type=Type.bool()
+        )
 
     @staticmethod
     def uintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -896,19 +903,21 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def s32(
-        left: Expression, op: str, right: Expression, silent: bool = False
+    def sint(
+        left: Expression, op: str, right: Expression, *, silent: bool = False
     ) -> "BinaryOp":
         return BinaryOp(
-            left=as_s32(left, silent=silent),
+            left=as_sintish(left, silent=silent),
             op=op,
-            right=as_s32(right, silent=silent),
+            right=as_sintish(right, silent=silent),
             type=Type.s32(),
         )
 
     @staticmethod
-    def u32(left: Expression, op: str, right: Expression) -> "BinaryOp":
-        return BinaryOp(left=as_u32(left), op=op, right=as_u32(right), type=Type.u32())
+    def uint(left: Expression, op: str, right: Expression) -> "BinaryOp":
+        return BinaryOp(
+            left=as_uintish(left), op=op, right=as_uintish(right), type=Type.u32()
+        )
 
     @staticmethod
     def s64(left: Expression, op: str, right: Expression) -> "BinaryOp":
@@ -988,6 +997,12 @@ class BinaryOp(Condition):
                 type=self.type,
             ).format(fmt)
 
+        # For comparisons to a Literal, cast the Literal to the type of the lhs
+        # (This is not done with complex expressions to avoid propagating incorrect
+        # type information: end-of-array pointers are particularly bad.)
+        if self.op in ("==", "!=") and isinstance(right_expr, Literal):
+            right_expr = elide_literal_casts(as_type(right_expr, left_expr.type, True))
+
         if (
             not self.is_floating()
             and isinstance(right_expr, Literal)
@@ -1050,6 +1065,15 @@ class UnaryOp(Condition):
 
     def dependencies(self) -> List[Expression]:
         return [self.expr]
+
+    @staticmethod
+    def sint(op: str, expr: Expression) -> "UnaryOp":
+        expr = as_sintish(expr, silent=True)
+        return UnaryOp(
+            op=op,
+            expr=expr,
+            type=expr.type,
+        )
 
     def negated(self) -> "Condition":
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
@@ -1842,7 +1866,7 @@ class EvalOnceStmt(Statement):
             return self.need_decl()
 
     def format(self, fmt: Formatter) -> str:
-        val_str = format_expr(elide_casts_for_store(self.expr.wrapped_expr), fmt)
+        val_str = format_expr(elide_literal_casts(self.expr.wrapped_expr), fmt)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
         return f"{self.expr.var.format(fmt)} = {val_str};"
@@ -1896,7 +1920,7 @@ class StoreStmt(Statement):
             isinstance(dest, StructAccess) and dest.late_has_known_type()
         ) or isinstance(dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
-            source = elide_casts_for_store(source)
+            source = elide_literal_casts(source)
         return format_assignment(dest, source, fmt)
 
 
@@ -2423,12 +2447,12 @@ def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     return s
 
 
-def elide_casts_for_store(expr: Expression) -> Expression:
+def elide_literal_casts(expr: Expression) -> Expression:
     uw_expr = late_unwrap(expr)
     if isinstance(uw_expr, Cast) and not uw_expr.needed_for_store():
-        return elide_casts_for_store(uw_expr.expr)
-    if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
-        # Avoid suffixes for unsigned ints
+        return elide_literal_casts(uw_expr.expr)
+    if isinstance(uw_expr, Literal) and uw_expr.type.is_int() and uw_expr.value >= 0:
+        # Avoid suffixes for non-negative unsigned ints
         return replace(uw_expr, elide_cast=True)
     return uw_expr
 
@@ -2898,7 +2922,9 @@ def handle_sra(args: InstrArgs) -> Expression:
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
-    return fold_divmod(BinaryOp(as_s32(lhs), ">>", as_intish(shift), type=Type.s32()))
+    return fold_divmod(
+        BinaryOp(as_sintish(lhs), ">>", as_intish(shift), type=Type.s32())
+    )
 
 
 def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
@@ -3009,7 +3035,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         and isinstance(right_expr, CarryBit)
     ):
         new_denom = 1 << left_expr.right.value
-        return BinaryOp.s32(
+        return BinaryOp.sint(
             left=left_expr.left,
             op="/",
             right=Literal(new_denom),
@@ -3305,7 +3331,7 @@ def array_access_from_add(
 
     if scale < 0:
         scale = -scale
-        index = UnaryOp("-", as_s32(index, silent=True), type=Type.s32())
+        index = UnaryOp.sint("-", index)
 
     target_type = base.type.get_pointer_target()
     if target_type is None:
@@ -3531,7 +3557,7 @@ def handle_rlwinm(
     if right_mask == 0:
         lower_bits = None
     else:
-        lower_bits = BinaryOp.u32(left=source, op=">>", right=Literal(right_shift))
+        lower_bits = BinaryOp.uint(left=source, op=">>", right=Literal(right_shift))
 
         if simplify:
             lower_bits = replace_clz_shift(fold_divmod(lower_bits))
@@ -4700,7 +4726,7 @@ class GlobalInfo:
                     if enum_name is not None:
                         return enum_name
                     expr = as_type(Literal(value), type, True)
-                    return elide_casts_for_store(expr).format(fmt)
+                    return elide_literal_casts(expr).format(fmt)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None

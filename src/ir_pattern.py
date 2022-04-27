@@ -16,20 +16,22 @@ from .flow_graph import (
     TerminalNode,
     build_flowgraph,
 )
-from .parse_file import AsmData, Function
-from .parse_instruction import (
+from .asm_file import AsmData, Function
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
     BinOp,
-    Instruction,
-    InstructionMeta,
     JumpTarget,
-    Location,
     RegFormatter,
     Register,
+)
+from .instruction import (
+    Instruction,
+    InstructionMeta,
+    Location,
     StackLocation,
     parse_instruction,
 )

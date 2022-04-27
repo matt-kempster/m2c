@@ -11,19 +11,21 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Target
-from .parse_instruction import (
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    JumpTarget,
+    Register,
+    get_jump_target,
+)
+from .instruction import (
     Instruction,
     InstructionMeta,
-    JumpTarget,
     Location,
-    Register,
     StackLocation,
-    get_jump_target,
 )
 from .asm_pattern import (
     AsmMatch,
@@ -57,11 +59,12 @@ from .translate import (
     as_intish,
     as_intptr,
     as_ptr,
-    as_s32,
     as_s64,
+    as_sintish,
     as_type,
     as_u32,
     as_u64,
+    as_uintish,
     error_stmt,
     fn_op,
     fold_divmod,
@@ -1085,12 +1088,12 @@ class MipsArch(Arch):
     instrs_hi_lo: PairInstrMap = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
         "div": lambda a: (
-            BinaryOp.s32(a.reg(0), "%", a.reg(1)),
-            BinaryOp.s32(a.reg(0), "/", a.reg(1)),
+            BinaryOp.sint(a.reg(0), "%", a.reg(1)),
+            BinaryOp.sint(a.reg(0), "/", a.reg(1)),
         ),
         "divu": lambda a: (
-            BinaryOp.u32(a.reg(0), "%", a.reg(1)),
-            BinaryOp.u32(a.reg(0), "/", a.reg(1)),
+            BinaryOp.uint(a.reg(0), "%", a.reg(1)),
+            BinaryOp.uint(a.reg(0), "/", a.reg(1)),
         ),
         "ddiv": lambda a: (
             BinaryOp.s64(a.reg(0), "%", a.reg(1)),
@@ -1135,13 +1138,13 @@ class MipsArch(Arch):
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
         "negu": lambda a: fold_mul_chains(
-            UnaryOp("-", as_s32(a.reg(1), silent=True), type=Type.s32())
+            UnaryOp.sint(op="-", expr=a.reg(1)),
         ),
         "neg": lambda a: fold_mul_chains(
-            UnaryOp("-", as_s32(a.reg(1), silent=True), type=Type.s32())
+            UnaryOp.sint(op="-", expr=a.reg(1)),
         ),
-        "div.fictive": lambda a: BinaryOp.s32(a.reg(1), "/", a.full_imm(2)),
-        "mod.fictive": lambda a: BinaryOp.s32(a.reg(1), "%", a.full_imm(2)),
+        "div.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.full_imm(2)),
+        "mod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.full_imm(2)),
         # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
         "daddi": lambda a: handle_addi(a),
         "daddiu": lambda a: handle_addi(a),
@@ -1204,7 +1207,7 @@ class MipsArch(Arch):
         ),
         "srl": lambda a: fold_divmod(
             BinaryOp(
-                left=as_u32(a.reg(1)),
+                left=as_uintish(a.reg(1)),
                 op=">>",
                 right=as_intish(a.imm(2)),
                 type=Type.u32(),
@@ -1212,7 +1215,7 @@ class MipsArch(Arch):
         ),
         "srlv": lambda a: fold_divmod(
             BinaryOp(
-                left=as_u32(a.reg(1)),
+                left=as_uintish(a.reg(1)),
                 op=">>",
                 right=as_intish(a.reg(2)),
                 type=Type.u32(),
@@ -1221,7 +1224,7 @@ class MipsArch(Arch):
         "sra": lambda a: handle_sra(a),
         "srav": lambda a: fold_divmod(
             BinaryOp(
-                left=as_s32(a.reg(1)),
+                left=as_sintish(a.reg(1)),
                 op=">>",
                 right=as_intish(a.reg(2)),
                 type=Type.s32(),
