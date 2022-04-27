@@ -19,7 +19,7 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Formatter, Target
-from .parse_file import AsmData, Function, Label
+from .asm_file import AsmData, Function, Label
 from .parse_instruction import (
     ArchAsm,
     AsmAddressMode,

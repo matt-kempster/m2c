@@ -16,7 +16,7 @@ from .flow_graph import (
     TerminalNode,
     build_flowgraph,
 )
-from .parse_file import AsmData, Function
+from .asm_file import AsmData, Function
 from .parse_instruction import (
     Argument,
     AsmAddressMode,
