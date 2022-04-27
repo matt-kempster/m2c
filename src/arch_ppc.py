@@ -14,20 +14,22 @@ from .error import DecompFailure
 from .flow_graph import FlowGraph
 from .ir_pattern import IrMatch, IrPattern
 from .options import Target
-from .parse_instruction import (
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
-    Instruction,
-    InstructionMeta,
     JumpTarget,
-    Location,
     Macro,
     Register,
-    StackLocation,
     get_jump_target,
+)
+from .instruction import (
+    Instruction,
+    InstructionMeta,
+    Location,
+    StackLocation,
 )
 from .asm_pattern import (
     AsmMatch,

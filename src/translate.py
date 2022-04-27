@@ -37,18 +37,19 @@ from .flow_graph import (
 )
 from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import CodingStyle, Formatter, Options, Target
-from .parse_file import AsmData, AsmDataEntry
-from .parse_instruction import (
-    ArchAsm,
+from .asm_file import AsmData, AsmDataEntry
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
     BinOp,
-    Instruction,
-    InstrProcessingFailure,
     Macro,
     Register,
+)
+from .instruction import (
+    Instruction,
+    InstrProcessingFailure,
     StackLocation,
     current_instr,
 )
