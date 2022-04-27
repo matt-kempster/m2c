@@ -32,7 +32,7 @@ void test(s32 arg0, s32 arg1) {
                     phi_r6 = temp_r6;
                     phi_ctr = temp_ctr;
                     phi_r6_2 = temp_r6;
-                } while (temp_ctr != 0U);
+                } while (temp_ctr != 0);
             }
         }
         phi_r3 = arg0 + phi_r6_2;
