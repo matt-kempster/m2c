@@ -76,12 +76,12 @@ def run(options: Options) -> int:
     try:
         for filename in options.filenames:
             if filename == "-":
-                mips_file = parse_file(sys.stdin, arch, options)
+                asm_file = parse_file(sys.stdin, arch, options)
             else:
                 with open(filename, "r", encoding="utf-8-sig") as f:
-                    mips_file = parse_file(f, arch, options)
-            all_functions.update((fn.name, fn) for fn in mips_file.functions)
-            mips_file.asm_data.merge_into(asm_data)
+                    asm_file = parse_file(f, arch, options)
+            all_functions.update((fn.name, fn) for fn in asm_file.functions)
+            asm_file.asm_data.merge_into(asm_data)
 
         typemap = build_typemap(options.c_contexts, use_cache=options.use_cache)
     except Exception as e:

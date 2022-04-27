@@ -278,7 +278,7 @@ def parse_incbin(
 
 def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     filename = Path(f.name).name
-    mips_file: AsmFile = AsmFile(filename)
+    asm_file: AsmFile = AsmFile(filename)
     defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
@@ -320,18 +320,18 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
         def process_label(label: str, *, glabel: bool) -> None:
             if curr_section == ".rodata":
-                mips_file.new_data_label(label, is_readonly=True, is_bss=False)
+                asm_file.new_data_label(label, is_readonly=True, is_bss=False)
             elif curr_section == ".data":
-                mips_file.new_data_label(label, is_readonly=False, is_bss=False)
+                asm_file.new_data_label(label, is_readonly=False, is_bss=False)
             elif curr_section == ".bss":
-                mips_file.new_data_label(label, is_readonly=False, is_bss=True)
+                asm_file.new_data_label(label, is_readonly=False, is_bss=True)
             elif curr_section == ".text":
                 re_local = re_local_glabel if glabel else re_local_label
                 if label.startswith("."):
-                    if mips_file.current_function is None:
+                    if asm_file.current_function is None:
                         raise DecompFailure(f"Label {label} is not within a function!")
-                    mips_file.new_label(label.lstrip("."))
-                elif re_local.match(label) and mips_file.current_function is not None:
+                    asm_file.new_label(label.lstrip("."))
+                elif re_local.match(label) and asm_file.current_function is not None:
                     # Don't treat labels as new functions if they follow a
                     # specific naming pattern. This is used for jump table
                     # targets in both IDA and old n64split output.
@@ -339,9 +339,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     # file though, to avoid crashes due to unidentified
                     # functions. (Should possibly be generalized to cover any
                     # glabel that has a branch that goes across?)
-                    mips_file.new_label(label)
+                    asm_file.new_label(label)
                 else:
-                    mips_file.new_function(label)
+                    asm_file.new_function(label)
 
         # Check for labels
         while True:
@@ -425,32 +425,32 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                                 ival = (
                                     try_parse(lambda: int(w, 0), directive) & 0xFFFFFFFF
                                 )
-                                mips_file.new_data_bytes(struct.pack(">I", ival))
+                                asm_file.new_data_bytes(struct.pack(">I", ival))
                             elif w == "NULL":
                                 # NULL is a non-standard but common asm macro
                                 # that expands to 0
-                                mips_file.new_data_bytes(b"\0\0\0\0")
+                                asm_file.new_data_bytes(b"\0\0\0\0")
                             else:
-                                mips_file.new_data_sym(w)
+                                asm_file.new_data_sym(w)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
                             ival = try_parse(lambda: int(w, 0), directive) & 0xFFFF
-                            mips_file.new_data_bytes(struct.pack(">H", ival))
+                            asm_file.new_data_bytes(struct.pack(">H", ival))
                     elif directive == ".byte":
                         for w in args:
                             ival = try_parse(lambda: int(w, 0), directive) & 0xFF
-                            mips_file.new_data_bytes(bytes([ival]))
+                            asm_file.new_data_bytes(bytes([ival]))
                     elif directive == ".float":
                         for w in args:
                             fval = try_parse(lambda: float(w), directive)
-                            mips_file.new_data_bytes(struct.pack(">f", fval))
+                            asm_file.new_data_bytes(struct.pack(">f", fval))
                     elif directive == ".double":
                         for w in args:
                             fval = try_parse(lambda: float(w), directive)
-                            mips_file.new_data_bytes(struct.pack(">d", fval))
+                            asm_file.new_data_bytes(struct.pack(">d", fval))
                     elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
                         z = directive.endswith("z")
-                        mips_file.new_data_bytes(
+                        asm_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
                     elif directive in (".space", ".skip"):
@@ -463,11 +463,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
                         size = try_parse(lambda: int(args[0], 0), directive)
-                        mips_file.new_data_bytes(bytes([fill] * size))
+                        asm_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
                         data = parse_incbin(args, options, warnings)
                         if data is not None:
-                            mips_file.new_data_bytes(data)
+                            asm_file.new_data_bytes(data)
 
         elif ifdef_level == 0:
             parts = line.split()
@@ -482,16 +482,16 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                if mips_file.current_function is not None:
-                    reg_formatter = mips_file.current_function.reg_formatter
+                if asm_file.current_function is not None:
+                    reg_formatter = asm_file.current_function.reg_formatter
                 else:
                     reg_formatter = RegFormatter()
                 instr = parse_instruction(line, meta, arch, reg_formatter)
-                mips_file.new_instruction(instr)
+                asm_file.new_instruction(instr)
 
     if warnings:
         print("/*")
         print("\n".join(warnings))
         print("*/")
 
-    return mips_file
+    return asm_file

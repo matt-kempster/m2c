@@ -1,5 +1,4 @@
-"""Functions and classes useful for parsing an arbitrary MIPS instruction.
-"""
+"""Functions and classes useful for parsing an arbitrary assembly instruction."""
 import abc
 from dataclasses import dataclass, field
 import string
