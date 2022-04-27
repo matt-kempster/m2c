@@ -107,6 +107,7 @@ class Block:
     label: Optional[Label]
     approx_label_name: str
     instruction_refs: List[InstrRef] = field(default_factory=list)
+    is_safeguard: bool = False
 
     # block_info is actually an Optional[BlockInfo], set by translate.py for
     # non-TerminalNode's, but due to circular dependencies we cannot type it
@@ -139,9 +140,9 @@ class BlockBuilder:
     curr_instructions: List[Instruction] = field(default_factory=list)
     blocks: List[Block] = field(default_factory=list)
 
-    def new_block(self) -> Optional[Block]:
+    def new_block(self) -> None:
         if len(self.curr_instructions) == 0:
-            return None
+            return
 
         label_name = self.last_label_name
         if self.label_counter > 0:
@@ -156,8 +157,6 @@ class BlockBuilder:
         self.curr_label = None
         self.label_counter += 1
         self.curr_instructions = []
-
-        return block
 
     def add_instruction(self, instruction: Instruction) -> None:
         self.curr_instructions.append(instruction)
@@ -177,6 +176,9 @@ class BlockBuilder:
         self.curr_label = label
         self.last_label_name = label.name
         self.label_counter = 0
+
+    def is_empty(self) -> bool:
+        return not self.blocks and not self.curr_instructions
 
     def get_blocks(self) -> List[Block]:
         return self.blocks
@@ -502,22 +504,23 @@ def build_blocks(
         else:
             process_no_delay_slots(item)
 
+    if block_builder.is_empty():
+        raise DecompFailure(
+            f"Function {function.name} contains no instructions. Maybe it is rodata?"
+        )
+
     if fragment:
         # If we're parsing an asm fragment instead of a full function,
         # then it does not need to end in a return or jump
         block_builder.new_block()
         return block_builder.get_blocks()
 
-    if block_builder.curr_label:
-        # As an easy-to-implement safeguard, check that the current block is
-        # anonymous (jump instructions create new anonymous blocks, so if it's
-        # not we must be missing a return instruction).
-        label = block_builder.curr_label.name
-        return_instrs = arch.missing_return()
-        print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
-        for instr in return_instrs:
-            block_builder.add_instruction(instr)
-        block_builder.new_block()
+    # Add an extra return statement as a safeguard. We emit a warning later on if
+    # this is reachable.
+    for instr in arch.missing_return():
+        block_builder.add_instruction(instr)
+    block_builder.new_block()
+    block_builder.blocks[-1].is_safeguard = True
 
     if cond_return_target is not None:
         # Add an empty return block at the end of the function
@@ -526,7 +529,6 @@ def build_blocks(
             block_builder.add_instruction(instr)
         block_builder.new_block()
 
-    # Throw away whatever is past the last return instruction and return what we have.
     return block_builder.get_blocks()
 
 
@@ -872,11 +874,6 @@ def build_nodes(
     terminal_node = TerminalNode.terminal()
     graph: List[Node] = [terminal_node]
 
-    if not blocks:
-        raise DecompFailure(
-            f"Function {function.name} contains no instructions. Maybe it is rodata?"
-        )
-
     # Fragments do not need a ReturnNode, they can directly fall through to the TerminalNode
     if fragment:
         blocks.append(terminal_node.block)
@@ -892,6 +889,14 @@ def build_nodes(
     # Sort the nodes by index.
     graph.sort(key=lambda node: node.block.index)
     return graph
+
+
+def warn_on_safeguard_use(nodes: List[Node], arch: ArchFlowGraph) -> None:
+    node = next((node for node in nodes if node.block.is_safeguard), None)
+    if node:
+        label = node.block.approx_label_name
+        return_instrs = arch.missing_return()
+        print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
 
 
 def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
@@ -1470,7 +1475,9 @@ def build_flowgraph(
     for analyzing IR patterns which do not need to be normalized in the same way.
     """
     blocks = build_blocks(function, asm_data, arch, fragment=fragment)
+
     nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
+    warn_on_safeguard_use(nodes, arch)
     if not fragment:
         nodes = duplicate_premature_returns(nodes)
 
