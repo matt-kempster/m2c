@@ -4243,12 +4243,12 @@ class NodeState:
             self.in_pattern = False
 
 
-def process_instruction(instr: Instruction, node_state: NodeState) -> None:
-    stack_info = node_state.stack_info
+def process_instruction(instr: Instruction, state: NodeState) -> None:
+    stack_info = state.stack_info
     arch = stack_info.global_info.arch
     mnemonic = instr.mnemonic
     arch_mnemonic = instr.arch_mnemonic(arch)
-    args = InstrArgs(instr.args, node_state.regs, stack_info)
+    args = InstrArgs(instr.args, state.regs, stack_info)
     expr: Expression
 
     # Figure out what code to generate!
@@ -4270,47 +4270,47 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
                 raise DecompFailure(
                     f"Unhandled store-and-update arg in {instr}: {update!r}"
                 )
-            node_state.set_reg(
+            state.set_reg(
                 update.rhs,
                 add_imm(args.regs[update.rhs], Literal(update.offset), stack_info),
             )
 
         # `to_store` is None for preserving registers in function preludes (which are elided)
         if to_store is not None:
-            node_state.store_memory(
+            state.store_memory(
                 source=to_store.source, dest=to_store.dest, reg=args.reg_ref(0)
             )
 
     elif mnemonic in arch.instrs_source_first:
         # Just 'mtc1'. It's reversed, so we have to specially handle it.
-        node_state.set_reg(args.reg_ref(1), arch.instrs_source_first[mnemonic](args))
+        state.set_reg(args.reg_ref(1), arch.instrs_source_first[mnemonic](args))
 
     elif mnemonic in arch.instrs_branches:
-        node_state.set_branch_condition(arch.instrs_branches[mnemonic](args))
+        state.set_branch_condition(arch.instrs_branches[mnemonic](args))
 
     elif mnemonic in arch.instrs_float_branches:
         cond_bit = args.regs[Register("condition_bit")]
         if not isinstance(cond_bit, BinaryOp):
             cond_bit = ExprCondition(cond_bit, type=cond_bit.type)
         if arch_mnemonic == "mips:bc1t":
-            node_state.set_branch_condition(cond_bit)
+            state.set_branch_condition(cond_bit)
         elif arch_mnemonic == "mips:bc1f":
-            node_state.set_branch_condition(cond_bit.negated())
+            state.set_branch_condition(cond_bit.negated())
 
     elif mnemonic in arch.instrs_jumps:
         if arch_mnemonic == "ppc:bctr":
             # Switch jump
-            node_state.set_switch_expr(args.regs[Register("ctr")])
+            state.set_switch_expr(args.regs[Register("ctr")])
         elif arch_mnemonic == "mips:jr":
             # MIPS:
             if args.reg_ref(0) == arch.return_address_reg:
                 # Return from the function.
-                assert isinstance(node_state.node, ReturnNode)
+                assert isinstance(state.node, ReturnNode)
             else:
                 # Switch jump.
-                node_state.set_switch_expr(args.reg(0))
+                state.set_switch_expr(args.reg(0))
         elif arch_mnemonic == "ppc:blr":
-            assert isinstance(node_state.node, ReturnNode)
+            assert isinstance(state.node, ReturnNode)
         else:
             assert False, f"Unhandled jump mnemonic {arch_mnemonic}"
 
@@ -4335,7 +4335,7 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
             fn_target = args.reg(1)
         else:
             assert False, f"Unhandled fn call mnemonic {arch_mnemonic}"
-        node_state.make_function_call(fn_target, instr.outputs)
+        state.make_function_call(fn_target, instr.outputs)
 
     elif mnemonic in arch.instrs_float_comp:
         expr = arch.instrs_float_comp[mnemonic](args)
@@ -4343,12 +4343,12 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
 
     elif mnemonic in arch.instrs_hi_lo:
         hi, lo = arch.instrs_hi_lo[mnemonic](args)
-        node_state.set_reg(Register("hi"), hi)
-        node_state.set_reg(Register("lo"), lo)
+        state.set_reg(Register("hi"), hi)
+        state.set_reg(Register("lo"), lo)
 
     elif mnemonic in arch.instrs_implicit_destination:
         reg, expr_fn = arch.instrs_implicit_destination[mnemonic]
-        node_state.set_reg(reg, expr_fn(args))
+        state.set_reg(reg, expr_fn(args))
 
     elif mnemonic in arch.instrs_ppc_compare:
         if instr.args[0] != Register("cr0"):
@@ -4356,20 +4356,14 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
                 f"Instruction {instr} not supported (first arg is not $cr0)"
             )
 
-        node_state.set_reg(
-            Register("cr0_eq"), arch.instrs_ppc_compare[mnemonic](args, "==")
-        )
-        node_state.set_reg(
-            Register("cr0_gt"), arch.instrs_ppc_compare[mnemonic](args, ">")
-        )
-        node_state.set_reg(
-            Register("cr0_lt"), arch.instrs_ppc_compare[mnemonic](args, "<")
-        )
-        node_state.set_reg(Register("cr0_so"), Literal(0))
+        state.set_reg(Register("cr0_eq"), arch.instrs_ppc_compare[mnemonic](args, "=="))
+        state.set_reg(Register("cr0_gt"), arch.instrs_ppc_compare[mnemonic](args, ">"))
+        state.set_reg(Register("cr0_lt"), arch.instrs_ppc_compare[mnemonic](args, "<"))
+        state.set_reg(Register("cr0_so"), Literal(0))
 
     elif mnemonic in arch.instrs_no_dest:
         stmt = arch.instrs_no_dest[mnemonic](args)
-        node_state.to_write.append(stmt)
+        state.to_write.append(stmt)
 
     elif mnemonic.rstrip(".") in arch.instrs_destination_first:
         target = args.reg_ref(0)
@@ -4377,13 +4371,13 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
         # TODO: IDO tends to keep variables within single registers. Thus,
         # if source = target, maybe we could overwrite that variable instead
         # of creating a new one?
-        target_val = node_state.set_reg(target, val)
+        target_val = state.set_reg(target, val)
         mn_parts = arch_mnemonic.split(".")
         if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
             # PPC instructions suffixed with . set condition bits (CR0) based on the result value
             if target_val is None:
                 target_val = val
-            node_state.set_reg(
+            state.set_reg(
                 Register("cr0_eq"),
                 BinaryOp.icmp(target_val, "==", Literal(0, type=target_val.type)),
             )
@@ -4392,15 +4386,15 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
             target_s32 = Cast(
                 target_val, reinterpret=True, silent=True, type=Type.s32()
             )
-            node_state.set_reg(
+            state.set_reg(
                 Register("cr0_gt"),
                 BinaryOp(target_s32, ">", Literal(0), type=Type.s32()),
             )
-            node_state.set_reg(
+            state.set_reg(
                 Register("cr0_lt"),
                 BinaryOp(target_s32, "<", Literal(0), type=Type.s32()),
             )
-            node_state.set_reg(
+            state.set_reg(
                 Register("cr0_so"),
                 fn_op("MIPS2C_OVERFLOW", [target_val], type=Type.s32()),
             )
@@ -4410,12 +4404,12 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
             and mn_parts[0].startswith("mips:")
             and mn_parts[1] == "d"
         ) or arch_mnemonic == "mips:ldc1":
-            node_state.set_reg(target.other_f64_reg(), SecondF64Half())
+            state.set_reg(target.other_f64_reg(), SecondF64Half())
 
     elif mnemonic in arch.instrs_load_update:
         target = args.reg_ref(0)
         val = arch.instrs_load_update[mnemonic](args)
-        node_state.set_reg(target, val)
+        state.set_reg(target, val)
 
         if arch_mnemonic in ["ppc:lwzux", "ppc:lhzux", "ppc:lbzux"]:
             # In `rD, rA, rB`, update `rA = rA + rB`
@@ -4436,22 +4430,20 @@ def process_instruction(instr: Instruction, node_state: NodeState) -> None:
                 f"Invalid instruction, rA and rD must be different in {instr}"
             )
 
-        node_state.set_reg(
-            update_reg, add_imm(args.regs[update_reg], offset, stack_info)
-        )
+        state.set_reg(update_reg, add_imm(args.regs[update_reg], offset, stack_info))
 
     else:
         expr = ErrorExpr(f"unknown instruction: {instr}")
         if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
             # Unimplemented PPC instructions that modify CR0
-            node_state.set_reg(Register("cr0_eq"), expr)
-            node_state.set_reg(Register("cr0_gt"), expr)
-            node_state.set_reg(Register("cr0_lt"), expr)
-            node_state.set_reg(Register("cr0_so"), expr)
+            state.set_reg(Register("cr0_eq"), expr)
+            state.set_reg(Register("cr0_gt"), expr)
+            state.set_reg(Register("cr0_lt"), expr)
+            state.set_reg(Register("cr0_so"), expr)
         if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
-            node_state.set_reg_with_error(args.reg_ref(0), expr)
+            state.set_reg_with_error(args.reg_ref(0), expr)
         else:
-            node_state.to_write.append(ExprStmt(expr))
+            state.to_write.append(ExprStmt(expr))
 
 
 def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
@@ -4459,24 +4451,24 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
     Given a node and current register contents, return a BlockInfo containing
     the translated AST for that node.
     """
-    node_state = NodeState(node=node, regs=regs, stack_info=stack_info)
+    state = NodeState(node=node, regs=regs, stack_info=stack_info)
 
     for instr in node.block.instructions:
-        with node_state.current_instr(instr):
-            process_instruction(instr, node_state)
+        with state.current_instr(instr):
+            process_instruction(instr, state)
 
-    if node_state.branch_condition is not None:
-        node_state.branch_condition.use()
-    if node_state.switch_control is not None:
-        node_state.switch_control.control_expr.use()
+    if state.branch_condition is not None:
+        state.branch_condition.use()
+    if state.switch_control is not None:
+        state.switch_control.control_expr.use()
 
     return BlockInfo(
-        to_write=node_state.to_write,
+        to_write=state.to_write,
         return_value=None,
-        switch_control=node_state.switch_control,
-        branch_condition=node_state.branch_condition,
-        final_register_states=node_state.regs,
-        has_function_call=node_state.has_function_call,
+        switch_control=state.switch_control,
+        branch_condition=state.branch_condition,
+        final_register_states=state.regs,
+        has_function_call=state.has_function_call,
     )
 
 
