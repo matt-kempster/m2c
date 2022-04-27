@@ -11,7 +11,7 @@ from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options, Target
 from .asm_file import AsmData, Function, parse_file
-from .parse_instruction import InstrProcessingFailure
+from .instruction import InstrProcessingFailure
 from .translate import (
     Arch,
     FunctionInfo,

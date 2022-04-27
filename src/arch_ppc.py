@@ -20,14 +20,16 @@ from .parse_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
-    Instruction,
-    InstructionMeta,
     JumpTarget,
-    Location,
     Macro,
     Register,
-    StackLocation,
     get_jump_target,
+)
+from .instruction import (
+    Instruction,
+    InstructionMeta,
+    Location,
+    StackLocation,
 )
 from .asm_pattern import (
     AsmMatch,

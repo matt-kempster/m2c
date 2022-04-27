@@ -24,12 +24,14 @@ from .parse_instruction import (
     AsmInstruction,
     AsmLiteral,
     BinOp,
-    Instruction,
-    InstructionMeta,
     JumpTarget,
-    Location,
     RegFormatter,
     Register,
+)
+from .instruction import (
+    Instruction,
+    InstructionMeta,
+    Location,
     StackLocation,
     parse_instruction,
 )

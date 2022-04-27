@@ -17,13 +17,15 @@ from .parse_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    JumpTarget,
+    Register,
+    get_jump_target,
+)
+from .instruction import (
     Instruction,
     InstructionMeta,
-    JumpTarget,
     Location,
-    Register,
     StackLocation,
-    get_jump_target,
 )
 from .asm_pattern import (
     AsmMatch,

@@ -21,18 +21,20 @@ from .error import DecompFailure
 from .options import Formatter, Target
 from .asm_file import AsmData, Function, Label
 from .parse_instruction import (
-    ArchAsm,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
     BinOp,
-    Instruction,
-    InstructionMeta,
     JumpTarget,
-    Location,
     Macro,
     Register,
+)
+from .instruction import (
+    ArchAsm,
+    Instruction,
+    InstructionMeta,
+    Location,
 )
 from .asm_pattern import simplify_patterns, AsmPattern
 

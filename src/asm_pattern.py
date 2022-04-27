@@ -5,19 +5,21 @@ from typing import Dict, List, Optional, Tuple, TypeVar, Union
 from .asm_file import Label
 from .parse_instruction import (
     Argument,
-    ArchAsm,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
     BinOp,
-    Instruction,
-    InstructionMeta,
     JumpTarget,
     NaiveParsingArch,
     Register,
     RegFormatter,
     parse_asm_instruction,
+)
+from .instruction import (
+    ArchAsm,
+    Instruction,
+    InstructionMeta,
 )
 
 

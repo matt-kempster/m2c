@@ -8,11 +8,11 @@ from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, U
 
 from .error import DecompFailure
 from .options import Options
-from .parse_instruction import (
+from .parse_instruction import RegFormatter
+from .instruction import (
     ArchAsm,
     Instruction,
     InstructionMeta,
-    RegFormatter,
     parse_instruction,
 )
 
