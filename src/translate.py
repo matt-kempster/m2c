@@ -38,7 +38,7 @@ from .flow_graph import (
 from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import CodingStyle, Formatter, Options, Target
 from .asm_file import AsmData, AsmDataEntry
-from .parse_instruction import (
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,

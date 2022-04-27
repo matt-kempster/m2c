@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, TypeVar, Union
 
 from .asm_file import Label
-from .parse_instruction import (
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,

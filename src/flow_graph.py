@@ -20,7 +20,7 @@ from typing import (
 from .error import DecompFailure
 from .options import Formatter, Target
 from .asm_file import AsmData, Function, Label
-from .parse_instruction import (
+from .asm_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,

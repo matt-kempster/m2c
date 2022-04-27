@@ -11,7 +11,7 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Target
-from .parse_instruction import (
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,

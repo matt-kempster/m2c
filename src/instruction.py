@@ -5,7 +5,7 @@ from typing import Iterator, List, Optional, Union
 
 from .error import DecompFailure
 from .options import Target
-from .parse_instruction import (
+from .asm_instruction import (
     ArchAsmParsing,
     Argument,
     AsmGlobalSymbol,

@@ -17,7 +17,7 @@ from .flow_graph import (
     build_flowgraph,
 )
 from .asm_file import AsmData, Function
-from .parse_instruction import (
+from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
