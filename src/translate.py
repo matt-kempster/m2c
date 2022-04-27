@@ -999,12 +999,8 @@ class BinaryOp(Condition):
         # For comparisons to a Literal, cast the Literal to the type of the lhs
         # (This is not done with complex expressions to avoid propagating incorrect
         # type information: end-of-array pointers are particularly bad.)
-        if self.is_comparison() and isinstance(right_expr, Literal):
-            right_expr = as_type(right_expr, left_expr.type, True)
-
-            # Casts & suffixes for (in)equality comparisons are too verbose
-            if self.op in ("==", "!="):
-                right_expr = elide_literal_casts(right_expr)
+        if self.op in ("==", "!=") and isinstance(right_expr, Literal):
+            right_expr = elide_literal_casts(as_type(right_expr, left_expr.type, True))
 
         if (
             not self.is_floating()

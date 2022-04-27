@@ -1,6 +1,6 @@
 enum my_enum test(enum my_enum x) {
     if (x != TWO_TOO) {
-        if (x < TWO_TOO) {
+        if (x < 2) {
             if (x != ZERO) {
                 return ZERO;
             }
