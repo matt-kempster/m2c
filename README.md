@@ -1,4 +1,4 @@
-# `m2c`
+# `m2c` Decompiler
 `m2c` ("*Machine code to C*") is a decompiler for MIPS and PPC assembly that produces C code, with partial support for C++.
 
 The goal of this project is to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
@@ -261,6 +261,18 @@ Example to produce `my_fn.svg` of `my_fn()`:
 ```sh
 python3 ./m2c.py --visualize --context ctx.c -f my_fn my_asm.s > my_fn.svg
 ```
+
+### Migrating from `mips_to_c.py`
+
+This tool was originally known as `mips_to_c`. As part of the rename, deprecated command line arguments were removed.
+
+When migrating to `m2c`, note the following changes to the CLI:
+
+- Entrypoint rename: `./mips_to_c.py` becomes `./m2c.py`
+- To limit decompilation to a [single function](#multiple-function): use `-f FN, --function FN`
+- `--rodata` is [no longer needed](#multiple-functions): `my_text.s --rodata my_data.s` becomes `my_text.s my_data.s`
+- `--compiler` has been replaced by [`--target`](#target-architecture--compiler--language): `--compiler gcc` becomes `--target mips-gcc-c`
+- `--structs` is now the [default behavior](#struct-field-inference): remove `--structs` from the arguments
 
 ## Contributing
 
