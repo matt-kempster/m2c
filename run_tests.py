@@ -220,14 +220,14 @@ def create_project_tests(
     asm_dir = base_dir / "asm"
     if "oot" in base_dir.parts:
         file_iter = find_tests_oot(asm_dir)
-        base_flags = ["--compiler=ido", "--stack-structs", "--unk-underscore"]
+        base_flags = ["--target=mips-ido-c", "--stack-structs", "--unk-underscore"]
     elif "mm" in base_dir.parts:
         file_iter = find_tests_mm(asm_dir)
-        base_flags = ["--compiler=ido", "--stack-structs", "--unk-underscore"]
+        base_flags = ["--target=mips-ido-c", "--stack-structs", "--unk-underscore"]
     elif "papermario" in base_dir.parts:
         file_iter = find_tests_splat(asm_dir)
         base_flags = [
-            "--compiler=gcc",
+            "--target=mips-gcc-c",
             "--stack-structs",
             "--unk-underscore",
             "--pointer-style=left",
