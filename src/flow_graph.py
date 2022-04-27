@@ -133,55 +133,57 @@ class Block:
 
 @dataclass(eq=False)
 class BlockBuilder:
-    curr_index: int = 0
-    curr_label: Optional[Label] = None
-    last_label_name: str = "initial"
-    label_counter: int = 0
-    curr_instructions: List[Instruction] = field(default_factory=list)
-    blocks: List[Block] = field(default_factory=list)
+    _curr_index: int = 0
+    _curr_label: Optional[Label] = None
+    _last_label_name: str = "initial"
+    _label_counter: int = 0
+    _curr_instructions: List[Instruction] = field(default_factory=list)
+    _blocks: List[Block] = field(default_factory=list)
 
-    def new_block(self) -> None:
-        if len(self.curr_instructions) == 0:
-            return
+    def new_block(self) -> Optional[Block]:
+        if len(self._curr_instructions) == 0:
+            return None
 
-        label_name = self.last_label_name
-        if self.label_counter > 0:
-            label_name += f".{self.label_counter}"
-        block = Block(self.curr_index, self.curr_label, label_name)
+        label_name = self._last_label_name
+        if self._label_counter > 0:
+            label_name += f".{self._label_counter}"
+        block = Block(self._curr_index, self._curr_label, label_name)
         block.instruction_refs.extend(
-            InstrRef(i, block) for i in self.curr_instructions
+            InstrRef(i, block) for i in self._curr_instructions
         )
-        self.blocks.append(block)
+        self._blocks.append(block)
 
-        self.curr_index += 1
-        self.curr_label = None
-        self.label_counter += 1
-        self.curr_instructions = []
+        self._curr_index += 1
+        self._curr_label = None
+        self._label_counter += 1
+        self._curr_instructions = []
+
+        return block
 
     def add_instruction(self, instruction: Instruction) -> None:
-        self.curr_instructions.append(instruction)
+        self._curr_instructions.append(instruction)
 
     def set_label(self, label: Label) -> None:
-        if label == self.curr_label:
+        if label == self._curr_label:
             # It's okay to repeat a label (e.g. once with glabel, once as a
             # standard label -- this often occurs for switches).
             return
         # We could support multiple labels at the same position, and output
         # empty blocks. For now we don't, however.
-        if self.curr_label:
+        if self._curr_label:
             raise DecompFailure(
                 "A block is currently not allowed to have more than one label,\n"
-                f"but {self.curr_label.name}/{label.name} is given two."
+                f"but {self._curr_label.name}/{label.name} is given two."
             )
-        self.curr_label = label
-        self.last_label_name = label.name
-        self.label_counter = 0
+        self._curr_label = label
+        self._last_label_name = label.name
+        self._label_counter = 0
 
     def is_empty(self) -> bool:
-        return not self.blocks and not self.curr_instructions
+        return not self._blocks and not self._curr_instructions
 
     def get_blocks(self) -> List[Block]:
-        return self.blocks
+        return self._blocks
 
 
 def verify_no_trailing_delay_slot(function: Function) -> None:
@@ -519,8 +521,9 @@ def build_blocks(
     # this is reachable.
     for instr in arch.missing_return():
         block_builder.add_instruction(instr)
-    block_builder.new_block()
-    block_builder.blocks[-1].is_safeguard = True
+    emitted_block = block_builder.new_block()
+    assert emitted_block is not None
+    emitted_block.is_safeguard = True
 
     if cond_return_target is not None:
         # Add an empty return block at the end of the function
