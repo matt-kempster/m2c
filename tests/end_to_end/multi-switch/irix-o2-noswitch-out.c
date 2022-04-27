@@ -13,7 +13,7 @@ s32 test(s32 arg0) {
     phi_a0_5 = arg0;
     if (arg0 >= 0x33) {
         if (arg0 >= 0x6C) {
-            if (arg0 != 0xC8) {
+            if (arg0 != 0x000000C8) {
                 goto block_23;
             }
             // Duplicate return node #16. Try simplifying control flow for better match
@@ -28,7 +28,7 @@ s32 test(s32 arg0) {
         }
     } else {
         if (arg0 >= 8) {
-            if (arg0 != 0x32) {
+            if (arg0 != 0x00000032) {
                 goto block_23;
             }
             phi_a0 = arg0 + 1;
@@ -65,7 +65,7 @@ s32 test(s32 arg0) {
                 return 2;
             }
         } else {
-            if (arg0 != -0x32) {
+            if (arg0 != -0x00000032) {
             default: // switch 2
             default: // switch 1
 block_23:

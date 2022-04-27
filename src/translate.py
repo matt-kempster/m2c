@@ -997,6 +997,12 @@ class BinaryOp(Condition):
                 type=self.type,
             ).format(fmt)
 
+        # For comparisons to a Literal, cast the Literal to the type of the lhs
+        # (This is not done with complex expressions to avoid propagating incorrect
+        # type information: end-of-array pointers are particularly bad.)
+        if self.op in ("==", "!=") and isinstance(right_expr, Literal):
+            right_expr = elide_literal_casts(as_type(right_expr, left_expr.type, True))
+
         if (
             not self.is_floating()
             and isinstance(right_expr, Literal)
@@ -1862,7 +1868,7 @@ class EvalOnceStmt(Statement):
             return self.need_decl()
 
     def format(self, fmt: Formatter) -> str:
-        val_str = format_expr(elide_casts_for_store(self.expr.wrapped_expr), fmt)
+        val_str = format_expr(elide_literal_casts(self.expr.wrapped_expr), fmt)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
             return f"{val_str};"
         return f"{self.expr.var.format(fmt)} = {val_str};"
@@ -1916,7 +1922,7 @@ class StoreStmt(Statement):
             isinstance(dest, StructAccess) and dest.late_has_known_type()
         ) or isinstance(dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
-            source = elide_casts_for_store(source)
+            source = elide_literal_casts(source)
         return format_assignment(dest, source, fmt)
 
 
@@ -2443,12 +2449,12 @@ def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
     return s
 
 
-def elide_casts_for_store(expr: Expression) -> Expression:
+def elide_literal_casts(expr: Expression) -> Expression:
     uw_expr = late_unwrap(expr)
     if isinstance(uw_expr, Cast) and not uw_expr.needed_for_store():
-        return elide_casts_for_store(uw_expr.expr)
-    if isinstance(uw_expr, Literal) and uw_expr.type.is_int():
-        # Avoid suffixes for unsigned ints
+        return elide_literal_casts(uw_expr.expr)
+    if isinstance(uw_expr, Literal) and uw_expr.type.is_int() and uw_expr.value >= 0:
+        # Avoid suffixes for non-negative unsigned ints
         return replace(uw_expr, elide_cast=True)
     return uw_expr
 
@@ -4722,7 +4728,7 @@ class GlobalInfo:
                     if enum_name is not None:
                         return enum_name
                     expr = as_type(Literal(value), type, True)
-                    return elide_casts_for_store(expr).format(fmt)
+                    return elide_literal_casts(expr).format(fmt)
 
             # Type kinds K_FN and K_VOID do not have initializers
             return None
