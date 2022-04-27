@@ -11,8 +11,8 @@ s32 test(s32 arg0) {
     phi_r3_3 = arg0;
     phi_r3_4 = arg0;
     phi_r3_5 = arg0;
-    if (arg0 != 0x32) {
-        if (arg0 < 0x32) {
+    if (arg0 != 0x00000032) {
+        if (arg0 < 0x00000032) {
             switch (arg0) { // switch 1; irregular
             case 1: // switch 1
                 return arg0 * arg0;

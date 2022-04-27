@@ -43,7 +43,7 @@ loop_9:
                         phi_r30_2 = temp_r30;
                         phi_r30_4 = temp_r30;
                         phi_r11 += phi_r12;
-                    } while (temp_ctr != 0);
+                    } while (temp_ctr != 0U);
                 }
             }
             phi_r30 = phi_r30_2;

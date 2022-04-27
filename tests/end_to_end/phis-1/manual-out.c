@@ -5,7 +5,7 @@ void test(void) {
     void *temp_ret;
 
     temp_ret = foo();
-    if (*NULL == 0) {
+    if (*NULL == 0U) {
         sp10C = temp_ret;
     }
     temp_ret->unk3 = 0;
