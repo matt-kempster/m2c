@@ -779,12 +779,11 @@ class MipsArch(Arch):
             is_branch_likely = True
             is_conditional = True
 
-            def _eval(s: NodeState, a: InstrArgs) -> None:
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 assert (
                     False
                 ), "Branch-likely instructions should be rewritten by flow_graph.py"
 
-            eval_fn = _eval
         elif mnemonic in (
             "beq",
             "bne",
@@ -815,7 +814,7 @@ class MipsArch(Arch):
             has_delay_slot = True
             is_conditional = True
 
-            def _eval(s: NodeState, a: InstrArgs) -> None:
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 if mnemonic in ("bc1t", "bc1f"):
                     cond = a.regs[Register("condition_bit")]
                     if not isinstance(cond, BinaryOp):
@@ -826,7 +825,6 @@ class MipsArch(Arch):
                     cond = cls.instrs_branches[mnemonic](a)
                 s.set_branch_condition(cond)
 
-            eval_fn = _eval
         elif mnemonic == "mfc0":
             assert len(args) == 2 and isinstance(args[0], Register)
             outputs = [args[0]]
@@ -852,14 +850,13 @@ class MipsArch(Arch):
             if mnemonic == "sdc1":
                 inputs.append(args[0].other_f64_reg())
 
-            def _eval(s: NodeState, a: InstrArgs) -> None:
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
                 if store is not None:
                     s.store_memory(
                         source=store.source, dest=store.dest, reg=a.reg_ref(0)
                     )
 
-            eval_fn = _eval
         elif mnemonic in cls.instrs_source_first:
             assert (
                 len(args) == 2
@@ -931,13 +928,12 @@ class MipsArch(Arch):
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
 
-            def _eval(s: NodeState, a: InstrArgs) -> None:
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 target = a.reg_ref(0)
                 s.set_reg(target, cls.instrs_destination_first[mnemonic](a))
                 if len(outputs) == 2:
                     s.set_reg(target.other_f64_reg(), SecondF64Half())
 
-            eval_fn = _eval
         elif mnemonic in cls.instrs_float_comp:
             assert (
                 len(args) == 2
@@ -966,12 +962,11 @@ class MipsArch(Arch):
             inputs = [args[0], args[1]]
             outputs = [Register("hi"), Register("lo")]
 
-            def _eval(s: NodeState, a: InstrArgs) -> None:
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 hi, lo = cls.instrs_hi_lo[mnemonic](a)
                 s.set_reg(Register("hi"), hi)
                 s.set_reg(Register("lo"), lo)
 
-            eval_fn = _eval
         elif mnemonic in cls.instrs_ignore:
             # TODO: There might be some instrs to handle here
             pass
@@ -981,14 +976,12 @@ class MipsArch(Arch):
             inputs = [r for r in args[1:] if isinstance(r, Register)]
             outputs = [args[0]]
 
-            def _eval(s: NodeState, a: InstrArgs) -> None:
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 error = f"unknown instruction: {AsmInstruction(mnemonic, args)}"
                 if a.count() >= 1 and isinstance(a.raw_arg(0), Register):
                     s.set_reg_with_error(a.reg_ref(0), ErrorExpr(error))
                 else:
                     s.to_write.append(error_stmt(error))
-
-            eval_fn = _eval
 
         return Instruction(
             mnemonic=mnemonic,
