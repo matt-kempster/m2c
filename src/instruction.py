@@ -1,7 +1,7 @@
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Iterator, List, Optional, Union
+from typing import Callable, Iterator, List, Optional, Union
 
 from .error import DecompFailure
 from .options import Target
@@ -128,6 +128,9 @@ class Instruction:
 
     # True if the Instruction was part of a matched IR pattern, but not elided
     in_pattern: bool = False
+
+    # TODO: Document
+    eval_fn: Optional[Callable[..., object]] = None
 
     def is_jump(self) -> bool:
         return self.jump_target is not None or self.is_return

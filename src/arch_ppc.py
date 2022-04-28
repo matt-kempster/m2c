@@ -1,6 +1,7 @@
 from dataclasses import replace
 import typing
 from typing import (
+    Callable,
     ClassVar,
     Dict,
     List,
@@ -51,11 +52,13 @@ from .translate import (
     ErrorExpr,
     Expression,
     ImplicitInstrMap,
+    InstrArgs,
     InstrMap,
     InstrSet,
     Literal,
-    PpcCmpInstrMap,
+    NodeState,
     PairInstrMap,
+    PpcCmpInstrMap,
     SecondF64Half,
     StmtInstrMap,
     StoreInstrMap,
@@ -512,6 +515,7 @@ class PpcArch(Arch):
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
         is_return = False
+        eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         cr0_bits: List[Location] = [
             Register("cr0_lt"),
@@ -764,6 +768,7 @@ class PpcArch(Arch):
             function_target=function_target,
             is_conditional=is_conditional,
             is_return=is_return,
+            eval_fn=eval_fn,
         )
 
     ir_patterns = [

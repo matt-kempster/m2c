@@ -76,6 +76,7 @@ PpcCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
 class Arch(ArchFlowGraph):
+    # All of these `instrs_` could be removed from the Arch interface
     instrs_ignore: InstrSet = set()
     instrs_store: StoreInstrMap = {}
     instrs_store_update: StoreInstrMap = {}
@@ -484,7 +485,7 @@ def get_stack_info(
     temp_reg_values: Dict[Register, int] = {}
     for inst in flow_graph.entry_node().block.instructions:
         arch_mnemonic = inst.arch_mnemonic(arch)
-        if inst.mnemonic in arch.instrs_fn_call:
+        if inst.function_target:
             break
         elif arch_mnemonic == "mips:addiu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on MIPS
@@ -4241,6 +4242,41 @@ class NodeState:
             self.in_pattern = False
 
 
+def evaluate_instruction(instr: Instruction, state: NodeState) -> None:
+    # Check that instr's attributes are consistent
+    if instr.is_return:
+        assert isinstance(state.node, ReturnNode)
+    if instr.is_conditional:
+        assert state.branch_condition is None and state.switch_control is None
+
+    # Handle function_targets here, instead of inside eval_fn
+    if instr.function_target is not None:
+        if isinstance(instr.function_target, Register):
+            fn_target = state.regs[instr.function_target]
+        elif isinstance(instr.function_target, AsmGlobalSymbol):
+            fn_target = state.stack_info.global_info.address_of_gsym(
+                instr.function_target.symbol_name
+            )
+        else:
+            static_assert_unreachable(instr.function_target)
+        state.make_function_call(fn_target, instr.outputs)
+
+    elif state.stack_info.global_info.arch.arch == Target.ArchEnum.MIPS:
+        # For now, only MIPS has eval_fn implemented
+        if instr.eval_fn is None:
+            return
+        args = InstrArgs(instr.args, state.regs, state.stack_info)
+        eval_fn = typing.cast(Callable[[NodeState, InstrArgs], None], instr.eval_fn)
+        eval_fn(state, args)
+    else:
+        # Fall back to old implementation (the process_instruction function would be deleted)
+        process_instruction(instr, state)
+
+    # Check that conditional instructions set at least one of branch_condition or switch_control
+    if instr.is_conditional:
+        assert state.branch_condition is not None or state.switch_control is not None
+
+
 def process_instruction(instr: Instruction, state: NodeState) -> None:
     stack_info = state.stack_info
     arch = stack_info.global_info.arch
@@ -4453,7 +4489,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
     for instr in node.block.instructions:
         with state.current_instr(instr):
-            process_instruction(instr, state)
+            evaluate_instruction(instr, state)
 
     if state.branch_condition is not None:
         state.branch_condition.use()
