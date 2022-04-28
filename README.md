@@ -2,11 +2,10 @@
 `m2c` ("*Machine code to C*") is a decompiler for MIPS and PPC assembly that produces C code, with partial support for C++.
 
 This project, initially named `mips_to_c`, has the goal to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
-It was originally focused on supporting popular compilers of the late 1990's.
-However, it also works well with newer compilers or hand-written assembly.
+It originally targeted popular compilers of the late 1990's, but it also works well with newer compilers or hand-written assembly.
 
-The focus of `m2c` is to aid in the process of producing "matching" source files.
-This differentiates it from other decompilation suites, such as IDA or Ghidra.
+`m2c` is often used in decompilation workflows with [`splat`](https://github.com/ethteck/splat), [`asm-differ`](https://github.com/simonlindholm/asm-differ), and [`decomp-permuter`](https://github.com/simonlindholm/decomp-permuter).
+Its focus on finding "matching" C source differentiates it from other decompilation suites, such as IDA or Ghidra.
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
 
 The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
