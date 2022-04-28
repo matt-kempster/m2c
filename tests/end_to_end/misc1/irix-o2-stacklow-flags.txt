@@ -1,1 +1,1 @@
---compiler=gcc
+--target=mips-gcc-c

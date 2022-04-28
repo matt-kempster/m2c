@@ -1,4 +1,4 @@
-struct _mips2c_stack_test {
+struct _m2c_stack_test {
     /* 0x00 */ char pad0[0x18];
     /* 0x18 */ s8 sp18;                             /* inferred */
     /* 0x19 */ char pad19[3];                       /* maybe part of sp18[4]? */

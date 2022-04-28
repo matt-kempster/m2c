@@ -24,14 +24,14 @@ if "source" in form:
     if "glabel" not in source:
         source = "glabel foo\n" + source
     source = bytes(source, "utf-8")
-    script_path = os.path.join(os.path.dirname(__file__), "mips_to_c.py")
+    script_path = os.path.join(os.path.dirname(__file__), "m2c.py")
     cmd = ["python3", script_path, "/dev/stdin"]
     if "debug" in form:
         cmd.append("--debug")
     if "void" in form:
         cmd.append("--void")
     if "noifs" in form:
-        cmd.append("--no-ifs")
+        cmd.append("--gotos-only")
     if "noswitches" in form:
         cmd.append("--no-switches")
     if "noandor" in form:

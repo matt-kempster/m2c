@@ -622,7 +622,7 @@ def get_stack_info(
 
     # Use a struct to represent the stack layout. If the struct is provided in the context,
     # its fields will be used for variable types & names.
-    stack_struct_name = f"_mips2c_stack_{function.name}"
+    stack_struct_name = f"_m2c_stack_{function.name}"
     stack_struct = global_info.typepool.get_struct_by_tag_name(
         stack_struct_name, global_info.typemap
     )
@@ -759,8 +759,8 @@ class ErrorExpr(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if self.desc is not None:
-            return f"MIPS2C_ERROR({self.desc})"
-        return "MIPS2C_ERROR()"
+            return f"M2C_ERROR({self.desc})"
+        return "M2C_ERROR()"
 
 
 @dataclass(frozen=True)
@@ -811,7 +811,7 @@ class CarryBit(Expression):
         return []
 
     def format(self, fmt: Formatter) -> str:
-        return "MIPS2C_CARRY"
+        return "M2C_CARRY"
 
     @staticmethod
     def add_to(expr: Expression) -> "BinaryOp":
@@ -1162,9 +1162,7 @@ class Cast(Expression):
         if self.reinterpret and self.expr.type.is_float() != self.type.is_float():
             # This shouldn't happen, but mark it in the output if it does.
             if fmt.valid_syntax:
-                return (
-                    f"MIPS2C_BITWISE({self.type.format(fmt)}, {self.expr.format(fmt)})"
-                )
+                return f"M2C_BITWISE({self.type.format(fmt)}, {self.expr.format(fmt)})"
             return f"(bitwise {self.type.format(fmt)}) {self.expr.format(fmt)}"
         if self.reinterpret and (
             self.silent
@@ -1395,7 +1393,7 @@ class StructAccess(Expression):
             has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = fmt.format_int(self.offset)
-            return f"MIPS2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
+            return f"M2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
         else:
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [0, prefix + format_hex(self.offset)]
@@ -1598,7 +1596,7 @@ class Lwl(Expression):
         return [self.load_expr]
 
     def format(self, fmt: Formatter) -> str:
-        return f"MIPS2C_LWL({self.load_expr.format(fmt)})"
+        return f"M2C_LWL({self.load_expr.format(fmt)})"
 
 
 @dataclass(frozen=True)
@@ -1611,7 +1609,7 @@ class Load3Bytes(Expression):
 
     def format(self, fmt: Formatter) -> str:
         if fmt.valid_syntax:
-            return f"MIPS2C_FIRST3BYTES({self.load_expr.format(fmt)})"
+            return f"M2C_FIRST3BYTES({self.load_expr.format(fmt)})"
         return f"(first 3 bytes) {self.load_expr.format(fmt)}"
 
 
@@ -1625,7 +1623,7 @@ class UnalignedLoad(Expression):
 
     def format(self, fmt: Formatter) -> str:
         if fmt.valid_syntax:
-            return f"MIPS2C_UNALIGNED32({self.load_expr.format(fmt)})"
+            return f"M2C_UNALIGNED32({self.load_expr.format(fmt)})"
         return f"(unaligned s32) {self.load_expr.format(fmt)}"
 
 
@@ -2160,7 +2158,7 @@ class InstrArgs:
         if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
             raise DecompFailure(
                 f"Unable to determine a value for double-precision register {reg} "
-                "whose second half is non-static. This is a mips_to_c restriction "
+                "whose second half is non-static. This is a m2c restriction "
                 "which may be lifted in the future."
             )
         value = ret.value | (other.value << 32)
@@ -2716,7 +2714,7 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
         return source
     elif source.type.is_pointer_or_array():
         # Pointer addition (this may miss some pointers that get detected later;
-        # unfortunately that's hard to do anything about with mips_to_c's single-pass
+        # unfortunately that's hard to do anything about with m2c's single-pass
         # architecture).
         if isinstance(imm, Literal) and not imm.likely_partial_offset():
             array_access = array_access_from_add(
@@ -3024,7 +3022,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     right_expr = early_unwrap_ints(expr.right)
     divisor_shift = 0
 
-    # Detect signed power-of-two division: (x >> N) + MIPS2C_CARRY --> x / (1 << N)
+    # Detect signed power-of-two division: (x >> N) + M2C_CARRY --> x / (1 << N)
     if (
         isinstance(left_expr, BinaryOp)
         and left_expr.op == ">>"
@@ -4855,7 +4853,7 @@ class GlobalInfo:
                     # Skip externally-declared symbols that are defined in other files
                     continue
 
-                # TODO: Use original MIPSFile ordering for variables
+                # TODO: Use original AsmFile ordering for variables
                 sort_order = (
                     not sym.type.is_function(),
                     is_global,
