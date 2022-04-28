@@ -1,9 +1,8 @@
 # `m2c` Decompiler
 `m2c` ("*Machine code to C*") is a decompiler for MIPS and PPC assembly that produces C code, with partial support for C++.
 
-The goal of this project is to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
-
-This tool was originally known as `mips_to_c` and focused on supporting compilers of the late 1990's.
+This project, initially named `mips_to_c`, has the goal to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
+It was originally focused on supporting popular compilers of the late 1990's.
 However, it also works well with newer compilers or hand-written assembly.
 
 The focus of `m2c` is to aid in the process of producing "matching" source files.
