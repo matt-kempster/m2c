@@ -543,8 +543,8 @@ class Bounds:
     conditional branches.
     """
 
-    lower: int = -(2 ** 31)  # `INT32_MAX`
-    upper: int = (2 ** 32) - 1  # `UINT32_MAX`
+    lower: int = -(2**31)  # `INT32_MAX`
+    upper: int = (2**32) - 1  # `UINT32_MAX`
     holes: Set[int] = field(default_factory=set)
 
     def __post_init__(self) -> None:

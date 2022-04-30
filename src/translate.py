@@ -1549,7 +1549,7 @@ class Literal(Expression):
                 and size_bits
                 and v & (1 << (size_bits - 1))
                 and v > (3 << (size_bits - 2))
-                and v < 2 ** size_bits
+                and v < 2**size_bits
             ):
                 v -= 1 << size_bits
             value = fmt.format_int(v, size_bits=size_bits)
@@ -1557,7 +1557,7 @@ class Literal(Expression):
         return prefix + value + suffix
 
     def likely_partial_offset(self) -> bool:
-        return self.value % 2 ** 15 in (0, 2 ** 15 - 1) and self.value < 0x1000000
+        return self.value % 2**15 in (0, 2**15 - 1) and self.value < 0x1000000
 
 
 @dataclass(frozen=True, eq=True)
@@ -2259,7 +2259,7 @@ def deref(
     # Struct member is being dereferenced.
 
     # Cope slightly better with raw pointers.
-    if isinstance(var, Literal) and var.value % (2 ** 16) == 0:
+    if isinstance(var, Literal) and var.value % (2**16) == 0:
         var = Literal(var.value + offset, type=var.type)
         offset = 0
 
@@ -2935,7 +2935,7 @@ def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
 
 
 def format_f32_imm(num: int) -> str:
-    packed = struct.pack(">I", num & (2 ** 32 - 1))
+    packed = struct.pack(">I", num & (2**32 - 1))
     value = struct.unpack(">f", packed)[0]
 
     if not value or value == 4294967296.0:
@@ -2990,7 +2990,7 @@ def format_f32_imm(num: int) -> str:
 
 
 def format_f64_imm(num: int) -> str:
-    (value,) = struct.unpack(">d", struct.pack(">Q", num & (2 ** 64 - 1)))
+    (value,) = struct.unpack(">d", struct.pack(">Q", num & (2**64 - 1)))
     return str(value)
 
 
@@ -4313,7 +4313,7 @@ def process_instruction(instr: Instruction, state: NodeState) -> None:
             assert False, f"Unhandled jump mnemonic {arch_mnemonic}"
 
     elif mnemonic in arch.instrs_fn_call:
-        if arch_mnemonic in ["mips:jal", "ppc:bl"]:
+        if arch_mnemonic in ["mips:jal", "mips:bal", "ppc:bl"]:
             fn_target = args.imm(0)
             if not (
                 (

@@ -244,16 +244,12 @@ def instruction_to_text(insn: CsInsn, raw: int, section: ElfSection) -> Optional
             )
 
     # Sign-extend immediate values (Capstone doesn't do that automatically)
-    if (
-        insn.id
-        in {
-            cs.ppc.PPC_INS_ADDI,
-            cs.ppc.PPC_INS_ADDIC,
-            cs.ppc.PPC_INS_SUBFIC,
-            cs.ppc.PPC_INS_MULLI,
-        }
-        and (insn.operands[2].imm & 0x8000)
-    ):
+    if insn.id in {
+        cs.ppc.PPC_INS_ADDI,
+        cs.ppc.PPC_INS_ADDIC,
+        cs.ppc.PPC_INS_SUBFIC,
+        cs.ppc.PPC_INS_MULLI,
+    } and (insn.operands[2].imm & 0x8000):
         return "%s %s, %s, %i" % (
             insn.mnemonic,
             insn.reg_name(insn.operands[0].reg),
