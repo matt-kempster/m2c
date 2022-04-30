@@ -111,9 +111,11 @@ LENGTH_THREE: Set[str] = {
     "slti",
     "sltu",
     "sltiu",
+    "add",
     "addi",
     "addiu",
     "addu",
+    "sub",
     "subu",
     "daddi",
     "daddiu",
@@ -254,7 +256,7 @@ class DivP2Pattern1(SimpleAsmPattern):
     def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
         div = AsmInstruction(
-            "div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2 ** shift)]
+            "div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2**shift)]
         )
         return Replacement([div], len(m.body) - 1)
 
@@ -273,7 +275,7 @@ class DivP2Pattern2(SimpleAsmPattern):
     def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
         div = AsmInstruction(
-            "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2 ** shift)]
+            "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2**shift)]
         )
         return Replacement([div], len(m.body))
 
@@ -712,7 +714,7 @@ class MipsArch(Arch):
             jump_target = args[0]
             is_conditional = True
             has_delay_slot = True
-        elif mnemonic == "jal":
+        elif mnemonic == "jal" or mnemonic == "bal":
             # Function call to label
             assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
             inputs = list(cls.argument_regs)
@@ -990,6 +992,7 @@ class MipsArch(Arch):
     }
     instrs_fn_call: InstrSet = {
         # Function call
+        "bal",
         "jal",
         "jalr",
     }
@@ -1133,7 +1136,11 @@ class MipsArch(Arch):
         # Integer arithmetic
         "addi": lambda a: handle_addi(a),
         "addiu": lambda a: handle_addi(a),
+        "add": lambda a: handle_add(a),
         "addu": lambda a: handle_add(a),
+        "sub": lambda a: (
+            fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
+        ),
         "subu": lambda a: (
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
