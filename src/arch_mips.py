@@ -44,16 +44,14 @@ from .translate import (
     Cast,
     CmpInstrMap,
     CommentStmt,
+    ErrorExpr,
     ExprCondition,
     ExprStmt,
-    ErrorExpr,
     Expression,
     InstrArgs,
     InstrMap,
-    InstrSet,
     Literal,
     NodeState,
-    PairInstrMap,
     SecondF64Half,
     StmtInstrMap,
     StoreInstrMap,
@@ -686,6 +684,8 @@ class MipsArch(Arch):
         is_return = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
+        instr_str = str(AsmInstruction(mnemonic, args))
+
         memory_sizes = {
             "b": 1,
             "h": 2,
@@ -706,6 +706,11 @@ class MipsArch(Arch):
                     assert size <= 4
                     return [loc]
             return []
+
+        def unreachable_eval(s: NodeState, a: InstrArgs) -> None:
+            raise DecompFailure(
+                f"Instruction {instr_str} should be replaced before eval"
+            )
 
         if mnemonic == "jr" and args[0] == Register("ra"):
             # Return
@@ -778,11 +783,8 @@ class MipsArch(Arch):
             has_delay_slot = True
             is_branch_likely = True
             is_conditional = True
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                assert (
-                    False
-                ), "Branch-likely instructions should be rewritten by flow_graph.py"
+            # Branch-likely instructions should be rewritten by flow_graph.py
+            eval_fn = unreachable_eval
 
         elif mnemonic in (
             "beq",
@@ -834,9 +836,7 @@ class MipsArch(Arch):
         elif mnemonic == "mtc0":
             assert len(args) == 2 and isinstance(args[0], Register)
             inputs = [args[0]]
-            eval_fn = lambda s, a: s.to_write.append(
-                error_stmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}")
-            )
+            eval_fn = lambda s, a: s.to_write.append(error_stmt(instr_str))
         elif mnemonic in cls.instrs_no_dest:
             assert not any(isinstance(a, AsmAddressMode) for a in args)
             inputs = [r for r in args if isinstance(r, Register)]
@@ -857,7 +857,8 @@ class MipsArch(Arch):
                         source=store.source, dest=store.dest, reg=a.reg_ref(0)
                     )
 
-        elif mnemonic in cls.instrs_source_first:
+        elif mnemonic in "mtc1":
+            # Floating point moving instruction, source first
             assert (
                 len(args) == 2
                 and isinstance(args[0], Register)
@@ -865,9 +866,7 @@ class MipsArch(Arch):
             )
             inputs = [args[0]]
             outputs = [args[1]]
-            eval_fn = lambda s, a: s.set_reg(
-                a.reg_ref(1), cls.instrs_source_first[mnemonic](a)
-            )
+            eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.reg(0))
         elif mnemonic in cls.instrs_destination_first:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
@@ -968,17 +967,19 @@ class MipsArch(Arch):
                 s.set_reg(Register("lo"), lo)
 
         elif mnemonic in cls.instrs_ignore:
-            # TODO: There might be some instrs to handle here
             pass
-        elif args and isinstance(args[0], Register):
-            # If the mnemonic is unsupported, guess
-            assert not any(isinstance(a, AsmAddressMode) for a in args)
-            inputs = [r for r in args[1:] if isinstance(r, Register)]
-            outputs = [args[0]]
+        else:
+            # If the mnemonic is unsupported, guess if it is destination-first
+            if args and isinstance(args[0], Register):
+                inputs = [r for r in args[1:] if isinstance(r, Register)]
+                outputs = [args[0]]
+                maybe_dest_first = True
+            else:
+                maybe_dest_first = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                error = f"unknown instruction: {AsmInstruction(mnemonic, args)}"
-                if a.count() >= 1 and isinstance(a.raw_arg(0), Register):
+                error = f"unknown instruction: {instr_str}"
+                if maybe_dest_first:
                     s.set_reg_with_error(a.reg_ref(0), ErrorExpr(error))
                 else:
                     s.to_write.append(error_stmt(error))
@@ -1016,7 +1017,7 @@ class MipsArch(Arch):
         TrapuvPattern(),
     ]
 
-    instrs_ignore: InstrSet = {
+    instrs_ignore: Set[str] = {
         # Ignore FCSR sets; they are leftovers from float->unsigned conversions.
         # FCSR gets are as well, but it's fine to read M2C_ERROR for those.
         "ctc1",
@@ -1047,21 +1048,6 @@ class MipsArch(Arch):
         "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
         "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
         "bgez": lambda a: handle_bgez(a),
-    }
-    instrs_float_branches: InstrSet = {
-        # Floating-point branch instructions
-        "bc1t",
-        "bc1f",
-    }
-    instrs_jumps: InstrSet = {
-        # Unconditional jump
-        "jr"
-    }
-    instrs_fn_call: InstrSet = {
-        # Function call
-        "bal",
-        "jal",
-        "jalr",
     }
     instrs_no_dest: StmtInstrMap = {
         # Conditional traps (happen with Pascal code sometimes, might as well give a nicer
@@ -1106,10 +1092,9 @@ class MipsArch(Arch):
             "M2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
         ),
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
-        # "mtc0": lambda a: error_stmt(f"mtc0 {a.raw_arg(0)}, {a.raw_arg(1)}"),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
     }
-    instrs_float_comp: CmpInstrMap = {
+    instrs_float_comp: InstrMap = {
         # Float comparisons that don't raise exception on nan
         "c.eq.s": lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)),
         "c.olt.s": lambda a: BinaryOp.fcmp(a.reg(0), "<", a.reg(1)),
@@ -1155,7 +1140,7 @@ class MipsArch(Arch):
         "c.nge.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1)).negated(),
         "c.ngt.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1)).negated(),
     }
-    instrs_hi_lo: PairInstrMap = {
+    instrs_hi_lo: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
         "div": lambda a: (
             BinaryOp.sint(a.reg(0), "%", a.reg(1)),
@@ -1189,10 +1174,6 @@ class MipsArch(Arch):
             BinaryOp.int64(a.reg(0), "DMULTU_HI", a.reg(1)),
             BinaryOp.int64(a.reg(0), "*", a.reg(1)),
         ),
-    }
-    instrs_source_first: InstrMap = {
-        # Floating point moving instruction
-        "mtc1": lambda a: a.reg(0)
     }
     instrs_destination_first: InstrMap = {
         # Flag-setting instructions
@@ -1344,8 +1325,6 @@ class MipsArch(Arch):
         "movz": lambda a: handle_conditional_move(a, False),
         # FCSR get
         "cfc1": lambda a: ErrorExpr("cfc1"),
-        # Read from coprocessor 0
-        # "mfc0": lambda a: ErrorExpr(f"mfc0 {a.raw_arg(1)}"),
         # Immediates
         "li": lambda a: a.full_imm(1),
         "lui": lambda a: load_upper(a),

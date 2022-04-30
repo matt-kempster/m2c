@@ -64,37 +64,13 @@ from .types import (
     TypePool,
 )
 
-InstrSet = Collection[str]
 InstrMap = Mapping[str, Callable[["InstrArgs"], "Expression"]]
 StmtInstrMap = Mapping[str, Callable[["InstrArgs"], "Statement"]]
 CmpInstrMap = Mapping[str, Callable[["InstrArgs"], "Condition"]]
 StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
-MaybeInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["Expression"]]]
-PairInstrMap = Mapping[str, Callable[["InstrArgs"], Tuple["Expression", "Expression"]]]
-ImplicitInstrMap = Mapping[str, Tuple[Register, Callable[["InstrArgs"], "Expression"]]]
-PpcCmpInstrMap = Mapping[str, Callable[["InstrArgs", str], "Expression"]]
 
 
 class Arch(ArchFlowGraph):
-    # All of these `instrs_` could be removed from the Arch interface
-    instrs_ignore: InstrSet = set()
-    instrs_store: StoreInstrMap = {}
-    instrs_store_update: StoreInstrMap = {}
-    instrs_load_update: InstrMap = {}
-
-    instrs_branches: CmpInstrMap = {}
-    instrs_float_branches: InstrSet = set()
-    instrs_float_comp: CmpInstrMap = {}
-    instrs_ppc_compare: PpcCmpInstrMap = {}
-    instrs_jumps: InstrSet = set()
-    instrs_fn_call: InstrSet = set()
-
-    instrs_no_dest: StmtInstrMap = {}
-    instrs_hi_lo: PairInstrMap = {}
-    instrs_source_first: InstrMap = {}
-    instrs_destination_first: InstrMap = {}
-    instrs_implicit_destination: ImplicitInstrMap = {}
-
     @abc.abstractmethod
     def function_abi(
         self,
@@ -4249,7 +4225,8 @@ def evaluate_instruction(instr: Instruction, state: NodeState) -> None:
     if instr.is_conditional:
         assert state.branch_condition is None and state.switch_control is None
 
-    # Handle function_targets here, instead of inside eval_fn
+    # Handle function_targets here, instead of inside eval_fn, because we all the
+    # information we need is already encoded in the Instruction
     if instr.function_target is not None:
         if isinstance(instr.function_target, Register):
             fn_target = state.regs[instr.function_target]
@@ -4261,223 +4238,14 @@ def evaluate_instruction(instr: Instruction, state: NodeState) -> None:
             static_assert_unreachable(instr.function_target)
         state.make_function_call(fn_target, instr.outputs)
 
-    elif state.stack_info.global_info.arch.arch == Target.ArchEnum.MIPS:
-        # For now, only MIPS has eval_fn implemented
-        if instr.eval_fn is None:
-            return
+    if instr.eval_fn is not None:
         args = InstrArgs(instr.args, state.regs, state.stack_info)
-        eval_fn = typing.cast(Callable[[NodeState, InstrArgs], None], instr.eval_fn)
+        eval_fn = typing.cast(Callable[[NodeState, InstrArgs], object], instr.eval_fn)
         eval_fn(state, args)
-    else:
-        # Fall back to old implementation (the process_instruction function would be deleted)
-        process_instruction(instr, state)
 
     # Check that conditional instructions set at least one of branch_condition or switch_control
     if instr.is_conditional:
         assert state.branch_condition is not None or state.switch_control is not None
-
-
-def process_instruction(instr: Instruction, state: NodeState) -> None:
-    stack_info = state.stack_info
-    arch = stack_info.global_info.arch
-    mnemonic = instr.mnemonic
-    arch_mnemonic = instr.arch_mnemonic(arch)
-    args = InstrArgs(instr.args, state.regs, stack_info)
-    expr: Expression
-
-    # Figure out what code to generate!
-    if mnemonic in arch.instrs_ignore:
-        pass
-
-    elif mnemonic in arch.instrs_store or mnemonic in arch.instrs_store_update:
-        # Store a value in a permanent place.
-        if mnemonic in arch.instrs_store:
-            to_store = arch.instrs_store[mnemonic](args)
-        else:
-            # PPC specific store-and-update instructions
-            # `stwu r3, 8(r4)` is equivalent to `$r3 = *($r4 + 8); $r4 += 8;`
-            to_store = arch.instrs_store_update[mnemonic](args)
-
-            # Update the register in the second argument
-            update = args.memory_ref(1)
-            if not isinstance(update, AddressMode):
-                raise DecompFailure(
-                    f"Unhandled store-and-update arg in {instr}: {update!r}"
-                )
-            state.set_reg(
-                update.rhs,
-                add_imm(args.regs[update.rhs], Literal(update.offset), stack_info),
-            )
-
-        # `to_store` is None for preserving registers in function preludes (which are elided)
-        if to_store is not None:
-            state.store_memory(
-                source=to_store.source, dest=to_store.dest, reg=args.reg_ref(0)
-            )
-
-    elif mnemonic in arch.instrs_source_first:
-        # Just 'mtc1'. It's reversed, so we have to specially handle it.
-        state.set_reg(args.reg_ref(1), arch.instrs_source_first[mnemonic](args))
-
-    elif mnemonic in arch.instrs_branches:
-        state.set_branch_condition(arch.instrs_branches[mnemonic](args))
-
-    elif mnemonic in arch.instrs_float_branches:
-        cond_bit = args.regs[Register("condition_bit")]
-        if not isinstance(cond_bit, BinaryOp):
-            cond_bit = ExprCondition(cond_bit, type=cond_bit.type)
-        if arch_mnemonic == "mips:bc1t":
-            state.set_branch_condition(cond_bit)
-        elif arch_mnemonic == "mips:bc1f":
-            state.set_branch_condition(cond_bit.negated())
-
-    elif mnemonic in arch.instrs_jumps:
-        if arch_mnemonic == "ppc:bctr":
-            # Switch jump
-            state.set_switch_expr(args.regs[Register("ctr")])
-        elif arch_mnemonic == "mips:jr":
-            # MIPS:
-            if args.reg_ref(0) == arch.return_address_reg:
-                # Return from the function.
-                assert isinstance(state.node, ReturnNode)
-            else:
-                # Switch jump.
-                state.set_switch_expr(args.reg(0))
-        elif arch_mnemonic == "ppc:blr":
-            assert isinstance(state.node, ReturnNode)
-        else:
-            assert False, f"Unhandled jump mnemonic {arch_mnemonic}"
-
-    elif mnemonic in arch.instrs_fn_call:
-        if arch_mnemonic in ["mips:jal", "mips:bal", "ppc:bl"]:
-            fn_target = args.imm(0)
-            if not (
-                (
-                    isinstance(fn_target, AddressOf)
-                    and isinstance(fn_target.expr, GlobalSymbol)
-                )
-                or isinstance(fn_target, Literal)
-            ):
-                raise DecompFailure(
-                    f"Target of function call must be a symbol, not {fn_target}"
-                )
-        elif arch_mnemonic == "ppc:blrl":
-            fn_target = args.regs[Register("lr")]
-        elif arch_mnemonic == "ppc:bctrl":
-            fn_target = args.regs[Register("ctr")]
-        elif arch_mnemonic == "mips:jalr":
-            fn_target = args.reg(1)
-        else:
-            assert False, f"Unhandled fn call mnemonic {arch_mnemonic}"
-        state.make_function_call(fn_target, instr.outputs)
-
-    elif mnemonic in arch.instrs_float_comp:
-        expr = arch.instrs_float_comp[mnemonic](args)
-        args.regs[Register("condition_bit")] = expr
-
-    elif mnemonic in arch.instrs_hi_lo:
-        hi, lo = arch.instrs_hi_lo[mnemonic](args)
-        state.set_reg(Register("hi"), hi)
-        state.set_reg(Register("lo"), lo)
-
-    elif mnemonic in arch.instrs_implicit_destination:
-        reg, expr_fn = arch.instrs_implicit_destination[mnemonic]
-        state.set_reg(reg, expr_fn(args))
-
-    elif mnemonic in arch.instrs_ppc_compare:
-        if instr.args[0] != Register("cr0"):
-            raise DecompFailure(
-                f"Instruction {instr} not supported (first arg is not $cr0)"
-            )
-
-        state.set_reg(Register("cr0_eq"), arch.instrs_ppc_compare[mnemonic](args, "=="))
-        state.set_reg(Register("cr0_gt"), arch.instrs_ppc_compare[mnemonic](args, ">"))
-        state.set_reg(Register("cr0_lt"), arch.instrs_ppc_compare[mnemonic](args, "<"))
-        state.set_reg(Register("cr0_so"), Literal(0))
-
-    elif mnemonic in arch.instrs_no_dest:
-        stmt = arch.instrs_no_dest[mnemonic](args)
-        state.to_write.append(stmt)
-
-    elif mnemonic.rstrip(".") in arch.instrs_destination_first:
-        target = args.reg_ref(0)
-        val = arch.instrs_destination_first[mnemonic.rstrip(".")](args)
-        # TODO: IDO tends to keep variables within single registers. Thus,
-        # if source = target, maybe we could overwrite that variable instead
-        # of creating a new one?
-        target_val = state.set_reg(target, val)
-        mn_parts = arch_mnemonic.split(".")
-        if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
-            # PPC instructions suffixed with . set condition bits (CR0) based on the result value
-            if target_val is None:
-                target_val = val
-            state.set_reg(
-                Register("cr0_eq"),
-                BinaryOp.icmp(target_val, "==", Literal(0, type=target_val.type)),
-            )
-            # Use manual casts for cr0_gt/cr0_lt so that the type of target_val is not modified
-            # until the resulting bit is .use()'d.
-            target_s32 = Cast(
-                target_val, reinterpret=True, silent=True, type=Type.s32()
-            )
-            state.set_reg(
-                Register("cr0_gt"),
-                BinaryOp(target_s32, ">", Literal(0), type=Type.s32()),
-            )
-            state.set_reg(
-                Register("cr0_lt"),
-                BinaryOp(target_s32, "<", Literal(0), type=Type.s32()),
-            )
-            state.set_reg(
-                Register("cr0_so"),
-                fn_op("MIPS2C_OVERFLOW", [target_val], type=Type.s32()),
-            )
-
-        elif (
-            len(mn_parts) >= 2
-            and mn_parts[0].startswith("mips:")
-            and mn_parts[1] == "d"
-        ) or arch_mnemonic == "mips:ldc1":
-            state.set_reg(target.other_f64_reg(), SecondF64Half())
-
-    elif mnemonic in arch.instrs_load_update:
-        target = args.reg_ref(0)
-        val = arch.instrs_load_update[mnemonic](args)
-        state.set_reg(target, val)
-
-        if arch_mnemonic in ["ppc:lwzux", "ppc:lhzux", "ppc:lbzux"]:
-            # In `rD, rA, rB`, update `rA = rA + rB`
-            update_reg = args.reg_ref(1)
-            offset = args.reg(2)
-        else:
-            # In `rD, rA(N)`, update `rA = rA + N`
-            update = args.memory_ref(1)
-            if not isinstance(update, AddressMode):
-                raise DecompFailure(
-                    f"Unhandled store-and-update arg in {instr}: {update!r}"
-                )
-            update_reg = update.rhs
-            offset = Literal(update.offset)
-
-        if update_reg == target:
-            raise DecompFailure(
-                f"Invalid instruction, rA and rD must be different in {instr}"
-            )
-
-        state.set_reg(update_reg, add_imm(args.regs[update_reg], offset, stack_info))
-
-    else:
-        expr = ErrorExpr(f"unknown instruction: {instr}")
-        if arch_mnemonic.startswith("ppc:") and arch_mnemonic.endswith("."):
-            # Unimplemented PPC instructions that modify CR0
-            state.set_reg(Register("cr0_eq"), expr)
-            state.set_reg(Register("cr0_gt"), expr)
-            state.set_reg(Register("cr0_lt"), expr)
-            state.set_reg(Register("cr0_so"), expr)
-        if args.count() >= 1 and isinstance(args.raw_arg(0), Register):
-            state.set_reg_with_error(args.reg_ref(0), expr)
-        else:
-            state.to_write.append(ExprStmt(expr))
 
 
 def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:

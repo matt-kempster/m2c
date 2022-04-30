@@ -83,6 +83,7 @@ class IrPattern(abc.ABC):
                     inputs=[],
                     clobbers=[],
                     outputs=[inp],
+                    eval_fn=None,
                 )
             )
         for part in self.parts:

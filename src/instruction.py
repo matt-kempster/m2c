@@ -115,6 +115,13 @@ class Instruction:
     clobbers: List[Location]
     outputs: List[Location]
 
+    # This should be typed as `eval_fn: Optional[Callable[[NodeState, InstrArgs], object]]`
+    # but this use classes that are defined in translate.py. We're unable to use correct
+    # types here without creating circular dependencies.
+    # The return value is ignored, but is typed as `object` so lambdas are more ergonomic.
+    # This member should only be accessed by `evaluate_instruction`.
+    eval_fn: Optional[Callable[..., object]]
+
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
     is_conditional: bool = False
@@ -128,9 +135,6 @@ class Instruction:
 
     # True if the Instruction was part of a matched IR pattern, but not elided
     in_pattern: bool = False
-
-    # TODO: Document
-    eval_fn: Optional[Callable[..., object]] = None
 
     def is_jump(self) -> bool:
         return self.jump_target is not None or self.is_return
