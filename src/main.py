@@ -251,7 +251,8 @@ def parse_flags(flags: List[str]) -> Options:
         "--context",
         metavar="C_FILE",
         dest="c_contexts",
-        action="append",
+        action="extend",
+        nargs="+",
         type=Path,
         default=[],
         help="Read variable types/function signatures/structs from an existing C file. "
