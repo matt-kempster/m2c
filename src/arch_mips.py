@@ -836,11 +836,11 @@ class MipsArch(Arch):
         elif mnemonic == "mtc0":
             assert len(args) == 2 and isinstance(args[0], Register)
             inputs = [args[0]]
-            eval_fn = lambda s, a: s.to_write.append(error_stmt(instr_str))
+            eval_fn = lambda s, a: s.write_statement(error_stmt(instr_str))
         elif mnemonic in cls.instrs_no_dest:
             assert not any(isinstance(a, AsmAddressMode) for a in args)
             inputs = [r for r in args if isinstance(r, Register)]
-            eval_fn = lambda s, a: s.to_write.append(cls.instrs_no_dest[mnemonic](a))
+            eval_fn = lambda s, a: s.write_statement(cls.instrs_no_dest[mnemonic](a))
         elif mnemonic in cls.instrs_store:
             assert isinstance(args[0], Register)
             inputs = [args[0]]
@@ -982,7 +982,7 @@ class MipsArch(Arch):
                 if maybe_dest_first:
                     s.set_reg_with_error(a.reg_ref(0), ErrorExpr(error))
                 else:
-                    s.to_write.append(error_stmt(error))
+                    s.write_statement(error_stmt(error))
 
         return Instruction(
             mnemonic=mnemonic,

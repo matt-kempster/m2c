@@ -3904,7 +3904,7 @@ class NodeState:
         )
         var.num_usages += 1
         stmt = EvalOnceStmt(expr)
-        self.to_write.append(stmt)
+        self.write_statement(stmt)
         self.stack_info.temp_vars.append(stmt)
         return expr
 
@@ -4012,7 +4012,7 @@ class NodeState:
         if reg == Register("zero"):
             # Emit the expression as is. It's probably a volatile load.
             expr.use()
-            self.to_write.append(ExprStmt(expr))
+            self.write_statement(ExprStmt(expr))
         else:
             dest = self.stack_info.maybe_get_register_var(reg)
             if dest is not None:
@@ -4021,7 +4021,7 @@ class NodeState:
                 if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
                     source = as_type(expr, dest.type, True)
                     source.use()
-                    self.to_write.append(StoreStmt(source=source, dest=dest))
+                    self.write_statement(StoreStmt(source=source, dest=dest))
                 expr = dest
             self.set_reg_without_eval(reg, expr)
         return expr
@@ -4053,6 +4053,9 @@ class NodeState:
         assert isinstance(self.node, SwitchNode)
         assert self.switch_control is None
         self.switch_control = SwitchControl.from_expr(expr)
+
+    def write_statement(self, stmt: Statement) -> None:
+        self.to_write.append(stmt)
 
     def store_memory(
         self, *, source: Expression, dest: Expression, reg: Register
@@ -4093,7 +4096,7 @@ class NodeState:
         dest.use()
         self.prevent_later_value_uses(dest)
         self.prevent_later_function_calls()
-        self.to_write.append(StoreStmt(source=source, dest=dest))
+        self.write_statement(StoreStmt(source=source, dest=dest))
 
     def make_function_call(
         self, fn_target: Expression, outputs: List[Location]

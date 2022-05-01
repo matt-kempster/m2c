@@ -781,7 +781,7 @@ class PpcArch(Arch):
             eval_fn = None
         elif mnemonic in cls.instrs_no_dest:
             assert not any(isinstance(a, (Register, AsmAddressMode)) for a in args)
-            eval_fn = lambda s, a: s.to_write.append(cls.instrs_no_dest[mnemonic](a))
+            eval_fn = lambda s, a: s.write_statement(cls.instrs_no_dest[mnemonic](a))
         elif mnemonic.rstrip(".") in cls.instrs_destination_first:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
@@ -894,7 +894,7 @@ class PpcArch(Arch):
                 if maybe_dest_first:
                     s.set_reg_with_error(a.reg_ref(0), ErrorExpr(error))
                 else:
-                    s.to_write.append(error_stmt(error))
+                    s.write_statement(error_stmt(error))
 
         return Instruction(
             mnemonic=mnemonic,
