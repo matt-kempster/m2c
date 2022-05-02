@@ -198,11 +198,13 @@ def parse_number(elems: List[str]) -> int:
     return ret
 
 
-def constant_fold(arg: Argument) -> Argument:
+def constant_fold(arg: Argument, defines: Dict[str, int]) -> Argument:
+    if isinstance(arg, AsmGlobalSymbol) and arg.symbol_name in defines:
+        return AsmLiteral(defines[arg.symbol_name])
     if not isinstance(arg, BinOp):
         return arg
-    lhs = constant_fold(arg.lhs)
-    rhs = constant_fold(arg.rhs)
+    lhs = constant_fold(arg.lhs, defines)
+    rhs = constant_fold(arg.rhs, defines)
     if isinstance(lhs, AsmLiteral) and isinstance(rhs, AsmLiteral):
         if arg.op == "+":
             return AsmLiteral(lhs.value + rhs.value)
@@ -240,7 +242,10 @@ def get_jump_target(label: Argument) -> JumpTarget:
 
 # Main parser.
 def parse_arg_elems(
-    arg_elems: List[str], arch: ArchAsmParsing, reg_formatter: RegFormatter
+    arg_elems: List[str],
+    arch: ArchAsmParsing,
+    reg_formatter: RegFormatter,
+    defines: Dict[str, int],
 ) -> Optional[Argument]:
     value: Optional[Argument] = None
 
@@ -286,9 +291,9 @@ def parse_arg_elems(
             assert macro_name in ("hi", "lo")
             expect("(")
             # Get the argument of the macro (which must exist).
-            m = parse_arg_elems(arg_elems, arch, reg_formatter)
+            m = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
             assert m is not None
-            m = constant_fold(m)
+            m = constant_fold(m, defines)
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
             value = Macro(macro_name, m)
@@ -303,20 +308,21 @@ def parse_arg_elems(
             # Address mode or binary operation.
             expect("(")
             # Get what is being dereferenced.
-            rhs = parse_arg_elems(arg_elems, arch, reg_formatter)
+            rhs = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
             assert rhs is not None
             expect(")")
             if isinstance(rhs, BinOp):
                 # Binary operation.
                 assert value is None
-                value = constant_fold(rhs)
+                value = constant_fold(rhs, defines)
             else:
                 # Address mode.
                 rhs = replace_bare_reg(rhs, arch, reg_formatter)
                 if rhs == AsmLiteral(0):
                     rhs = Register("zero")
                 assert isinstance(rhs, Register)
-                value = AsmAddressMode(value or AsmLiteral(0), rhs)
+                value = constant_fold(value or AsmLiteral(0), defines)
+                value = AsmAddressMode(value, rhs)
         elif tok == '"':
             # Quoted global symbol.
             expect('"')
@@ -350,12 +356,12 @@ def parse_arg_elems(
                     )
                 value = Macro("sda21", value)
             else:
-                rhs = parse_arg_elems(arg_elems, arch, reg_formatter)
+                rhs = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
                 assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
-                    rhs = constant_fold(rhs)
+                    rhs = constant_fold(rhs, defines)
                 if isinstance(rhs, BinOp) and isinstance(
-                    constant_fold(rhs), AsmLiteral
+                    constant_fold(rhs, defines), AsmLiteral
                 ):
                     raise DecompFailure(
                         "Math is too complicated for m2c. Try adding parentheses."
@@ -382,24 +388,32 @@ def parse_arg_elems(
 
 
 def parse_args(
-    args: str, arch: ArchAsmParsing, reg_formatter: RegFormatter
+    args: str,
+    arch: ArchAsmParsing,
+    reg_formatter: RegFormatter,
+    defines: Dict[str, int],
 ) -> List[Argument]:
     arg_elems: List[str] = list(args.strip())
     output = []
     while arg_elems:
-        ret = parse_arg_elems(arg_elems, arch, reg_formatter)
+        ret = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
         assert ret is not None
-        output.append(replace_bare_reg(constant_fold(ret), arch, reg_formatter))
+        output.append(
+            replace_bare_reg(constant_fold(ret, defines), arch, reg_formatter)
+        )
     return output
 
 
 def parse_asm_instruction(
-    line: str, arch: ArchAsmParsing, reg_formatter: RegFormatter
+    line: str,
+    arch: ArchAsmParsing,
+    reg_formatter: RegFormatter,
+    defines: Dict[str, int],
 ) -> AsmInstruction:
     # First token is instruction name, rest is args.
     line = line.strip()
     mnemonic, _, args_str = line.partition(" ")
     # Parse arguments.
-    args = parse_args(args_str, arch, reg_formatter)
+    args = parse_args(args_str, arch, reg_formatter, defines)
     instr = AsmInstruction(mnemonic, args)
     return arch.normalize_instruction(instr)
