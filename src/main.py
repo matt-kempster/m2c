@@ -268,17 +268,19 @@ def parse_flags(flags: List[str]) -> Options:
     )
     group.add_argument(
         "-D",
+        metavar="SYM[=VALUE]",
         dest="defined",
         action="append",
         default=[],
-        help="Mark preprocessor constant as defined",
+        help="Mark preprocessor symbol as defined",
     )
     group.add_argument(
         "-U",
+        metavar="SYM",
         dest="undefined",
         action="append",
         default=[],
-        help="Mark preprocessor constant as undefined",
+        help="Mark preprocessor symbol as undefined",
     )
     group.add_argument(
         "--incbin-dir",
@@ -515,10 +517,11 @@ def parse_flags(flags: List[str]) -> Options:
 
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
-    preproc_defines = {
-        **{d: 0 for d in args.undefined},
-        **{d.split("=")[0]: 1 for d in args.defined},
-    }
+    preproc_defines: Dict[str, Optional[int]] = {d: None for d in args.undefined}
+    for d in args.defined:
+        parts = d.split("=", 1)
+        preproc_defines[parts[0]] = int(parts[1], 0) if len(parts) >= 2 else 1
+
     coding_style = CodingStyle(
         newline_after_function=args.allman,
         newline_after_if=args.allman,

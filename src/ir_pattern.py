@@ -63,7 +63,7 @@ class IrPattern(abc.ABC):
         missing_meta = InstructionMeta.missing()
         regf = RegFormatter()
         replacement_instr = parse_instruction(
-            self.replacement, missing_meta, arch, regf
+            self.replacement, missing_meta, arch, regf, {}
         )
 
         name = f"__pattern_{self.__class__.__name__}"
@@ -87,7 +87,7 @@ class IrPattern(abc.ABC):
                 )
             )
         for part in self.parts:
-            func.new_instruction(parse_instruction(part, missing_meta, arch, regf))
+            func.new_instruction(parse_instruction(part, missing_meta, arch, regf, {}))
 
         asm_data = AsmData()
         flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)

@@ -107,7 +107,7 @@ class Options:
     use_cache: bool
     dump_typemap: bool
     pdb_translate: bool
-    preproc_defines: Dict[str, int]
+    preproc_defines: Dict[str, Optional[int]]  # None = explicitly unset
     coding_style: CodingStyle
     sanitize_tracebacks: bool
     valid_syntax: bool

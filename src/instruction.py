@@ -1,7 +1,7 @@
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Callable, Iterator, List, Optional, Union
+from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
 from .options import Target
@@ -179,13 +179,20 @@ class ArchAsm(ArchAsmParsing):
 
 
 def parse_instruction(
-    line: str, meta: InstructionMeta, arch: ArchAsm, reg_formatter: RegFormatter
+    line: str,
+    meta: InstructionMeta,
+    arch: ArchAsm,
+    reg_formatter: RegFormatter,
+    defines: Dict[str, int],
 ) -> Instruction:
     try:
-        base = parse_asm_instruction(line, arch, reg_formatter)
+        base = parse_asm_instruction(line, arch, reg_formatter, defines)
         return arch.parse(base.mnemonic, base.args, meta)
-    except Exception:
-        raise DecompFailure(f"Failed to parse instruction {meta.loc_str()}: {line}")
+    except Exception as e:
+        msg = f"Failed to parse instruction {meta.loc_str()}: {line}"
+        if isinstance(e, DecompFailure):
+            msg += "\n\n" + e.message
+        raise DecompFailure(msg)
 
 
 @dataclass

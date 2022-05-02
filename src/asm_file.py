@@ -279,11 +279,15 @@ def parse_incbin(
 def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     filename = Path(f.name).name
     asm_file: AsmFile = AsmFile(filename)
-    defines: Dict[str, int] = options.preproc_defines
     ifdef_level: int = 0
     ifdef_levels: List[int] = []
     curr_section = ".text"
     warnings: List[str] = []
+    defines: Dict[str, Optional[int]] = {
+        # NULL is a non-standard but common asm macro that expands to 0
+        "NULL": 0,
+        **options.preproc_defines,
+    }
 
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
@@ -301,13 +305,19 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     T = TypeVar("T")
 
-    def try_parse(parser: Callable[[], T], directive: str) -> T:
+    def try_parse(parser: Callable[[], T]) -> T:
         try:
             return parser()
         except ValueError:
             raise DecompFailure(
                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
             )
+
+    def parse_int(w: str) -> int:
+        var_value = defines.get(w)
+        if var_value is not None:
+            return var_value
+        return int(w, 0)
 
     for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
@@ -358,23 +368,24 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         if not line:
             continue
 
-        if line.startswith("."):
+        directive = line.split()[0]
+        if directive.startswith("."):
             # Assembler directive.
-            if line.startswith(".ifdef") or line.startswith(".ifndef"):
+            if directive == ".ifdef" or directive == ".ifndef":
                 macro_name = line.split()[1]
                 if macro_name not in defines:
-                    defines[macro_name] = 0
+                    defines[macro_name] = None
                     add_warning(
                         warnings,
                         f"Note: assuming {macro_name} is unset for .ifdef, "
                         f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.",
                     )
-                level = defines[macro_name]
-                if line.startswith(".ifdef"):
+                level = 1 if defines[macro_name] is not None else 0
+                if directive == ".ifdef":
                     level = 1 - level
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif line.startswith(".if"):
+            elif directive.startswith(".if"):
                 macro_name = line.split()[1]
                 if macro_name == "0":
                     level = 1
@@ -385,68 +396,72 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     add_warning(warnings, f"Note: ignoring .if {macro_name} directive")
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif line.startswith(".else"):
+            elif directive == ".else":
                 level = ifdef_levels.pop()
                 ifdef_level -= level
                 level = 1 - level
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif line.startswith(".endif"):
+            elif directive == ".endif":
                 ifdef_level -= ifdef_levels.pop()
-            elif line.startswith(".macro"):
+            elif directive == ".macro":
                 ifdef_level += 1
-            elif line.startswith(".endm"):
+            elif directive == ".endm":
                 ifdef_level -= 1
             elif ifdef_level == 0:
-                if line.startswith(".section"):
-                    curr_section = line.split(" ")[1].split(",")[0]
+                if directive == ".section":
+                    curr_section = line.split()[1].split(",")[0]
                     if curr_section in (".rdata", ".late_rodata", ".sdata2"):
                         curr_section = ".rodata"
                     if curr_section.startswith(".text"):
                         curr_section = ".text"
                 elif (
-                    line.startswith(".rdata")
-                    or line.startswith(".rodata")
-                    or line.startswith(".late_rodata")
+                    directive == ".rdata"
+                    or directive == ".rodata"
+                    or directive == ".late_rodata"
                 ):
                     curr_section = ".rodata"
-                elif line.startswith(".data"):
+                elif directive == ".data":
                     curr_section = ".data"
-                elif line.startswith(".bss"):
+                elif directive == ".bss":
                     curr_section = ".bss"
-                elif line.startswith(".text"):
+                elif directive == ".text":
                     curr_section = ".text"
+                elif directive == ".set":
+                    _, _, args_str = line.partition(" ")
+                    args = split_arg_list(args_str)
+                    if len(args) == 1:
+                        # ".set noreorder" or similar, just ignore
+                        pass
+                    elif len(args) == 2:
+                        defines[args[0]] = try_parse(lambda: parse_int(args[1]))
+                    else:
+                        raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif curr_section in (".rodata", ".data", ".bss"):
-                    directive, _, args_str = line.partition(" ")
+                    _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
                     if directive in (".word", ".4byte"):
                         for w in args:
-                            if not w or w[0].isdigit() or w[0] == "-":
-                                ival = (
-                                    try_parse(lambda: int(w, 0), directive) & 0xFFFFFFFF
-                                )
+                            if not w or w[0].isdigit() or w[0] == "-" or w in defines:
+                                ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
                                 asm_file.new_data_bytes(struct.pack(">I", ival))
-                            elif w == "NULL":
-                                # NULL is a non-standard but common asm macro
-                                # that expands to 0
-                                asm_file.new_data_bytes(b"\0\0\0\0")
                             else:
                                 asm_file.new_data_sym(w)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
-                            ival = try_parse(lambda: int(w, 0), directive) & 0xFFFF
+                            ival = try_parse(lambda: parse_int(w)) & 0xFFFF
                             asm_file.new_data_bytes(struct.pack(">H", ival))
                     elif directive == ".byte":
                         for w in args:
-                            ival = try_parse(lambda: int(w, 0), directive) & 0xFF
+                            ival = try_parse(lambda: parse_int(w)) & 0xFF
                             asm_file.new_data_bytes(bytes([ival]))
                     elif directive == ".float":
                         for w in args:
-                            fval = try_parse(lambda: float(w), directive)
+                            fval = try_parse(lambda: float(w))
                             asm_file.new_data_bytes(struct.pack(">f", fval))
                     elif directive == ".double":
                         for w in args:
-                            fval = try_parse(lambda: float(w), directive)
+                            fval = try_parse(lambda: float(w))
                             asm_file.new_data_bytes(struct.pack(">d", fval))
                     elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
                         z = directive.endswith("z")
@@ -455,14 +470,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         )
                     elif directive in (".space", ".skip"):
                         if len(args) == 2:
-                            fill = try_parse(lambda: int(args[1], 0), directive) & 0xFF
+                            fill = try_parse(lambda: parse_int(args[1])) & 0xFF
                         elif len(args) == 1:
                             fill = 0
                         else:
                             raise DecompFailure(
                                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
-                        size = try_parse(lambda: int(args[0], 0), directive)
+                        size = try_parse(lambda: parse_int(args[0]))
                         asm_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
                         data = parse_incbin(args, options, warnings)
@@ -470,8 +485,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             asm_file.new_data_bytes(data)
 
         elif ifdef_level == 0:
-            parts = line.split()
-            if parts and parts[0] in ("glabel", "dlabel"):
+            if directive in ("glabel", "dlabel"):
+                parts = line.split()
                 if len(parts) >= 2:
                     process_label(parts[1], glabel=True)
 
@@ -486,7 +501,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     reg_formatter = asm_file.current_function.reg_formatter
                 else:
                     reg_formatter = RegFormatter()
-                instr = parse_instruction(line, meta, arch, reg_formatter)
+                defined_vars = {k: v for k, v in defines.items() if v is not None}
+                instr = parse_instruction(line, meta, arch, reg_formatter, defined_vars)
                 asm_file.new_instruction(instr)
 
     if warnings:
