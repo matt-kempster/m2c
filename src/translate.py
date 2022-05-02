@@ -2178,6 +2178,11 @@ class InstrArgs:
         assert isinstance(raw_imm, Literal)
         return Literal(raw_imm.value << 16)
 
+    def sym_imm(self, index: int) -> AddressOf:
+        arg = self.raw_arg(index)
+        assert isinstance(arg, AsmGlobalSymbol)
+        return self.stack_info.global_info.address_of_gsym(arg.symbol_name)
+
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))
 
@@ -4227,19 +4232,6 @@ def evaluate_instruction(instr: Instruction, state: NodeState) -> None:
         assert isinstance(state.node, ReturnNode)
     if instr.is_conditional:
         assert state.branch_condition is None and state.switch_control is None
-
-    # Handle function_targets here, instead of inside eval_fn, because we all the
-    # information we need is already encoded in the Instruction
-    if instr.function_target is not None:
-        if isinstance(instr.function_target, Register):
-            fn_target = state.regs[instr.function_target]
-        elif isinstance(instr.function_target, AsmGlobalSymbol):
-            fn_target = state.stack_info.global_info.address_of_gsym(
-                instr.function_target.symbol_name
-            )
-        else:
-            static_assert_unreachable(instr.function_target)
-        state.make_function_call(fn_target, instr.outputs)
 
     if instr.eval_fn is not None:
         args = InstrArgs(instr.args, state.regs, state.stack_info)

@@ -595,22 +595,17 @@ class PpcArch(Arch):
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             function_target = args[0]
-        elif mnemonic == "bctrl":
-            # Function call to pointer in $ctr
+            eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
+        elif mnemonic in ("bctrl", "blrl"):
+            # Function call to pointer in special reg ($ctr or $lr)
             assert len(args) == 0
+            reg = Register(mnemonic[1:-1])
             inputs = list(cls.argument_regs)
-            inputs.append(Register("ctr"))
+            inputs.append(reg)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
-            function_target = Register("ctr")
-        elif mnemonic == "blrl":
-            # Function call to pointer in $lr
-            assert len(args) == 0
-            inputs = list(cls.argument_regs)
-            inputs.append(Register("lr"))
-            outputs = list(cls.all_return_regs)
-            clobbers = list(cls.temp_regs)
-            function_target = Register("lr")
+            function_target = reg
+            eval_fn = lambda s, a: s.make_function_call(a.regs[reg], outputs)
         elif mnemonic == "b":
             # Unconditional jump
             assert len(args) == 1
@@ -863,9 +858,9 @@ class PpcArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 base_reg = a.reg_ref(0)
                 if base_reg != Register("cr0"):
-                    raise DecompFailure(
-                        f"Instruction {instr_str} not supported (first arg is not $cr0)"
-                    )
+                    error = f'"{instr_str}" is not supported, the first arg is not $cr0'
+                    s.write_statement(error_stmt(error))
+                    return
 
                 s.set_reg(Register("cr0_eq"), cls.instrs_ppc_compare[mnemonic](a, "=="))
                 s.set_reg(Register("cr0_gt"), cls.instrs_ppc_compare[mnemonic](a, ">"))

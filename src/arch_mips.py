@@ -734,6 +734,7 @@ class MipsArch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[0]
             has_delay_slot = True
+            eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
         elif mnemonic == "jalr":
             # Function call to pointer
             assert (
@@ -747,6 +748,7 @@ class MipsArch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[1]
             has_delay_slot = True
+            eval_fn = lambda s, a: s.make_function_call(a.reg(1), outputs)
         elif mnemonic in ("b", "j"):
             # Unconditional jump
             assert len(args) == 1
@@ -857,7 +859,7 @@ class MipsArch(Arch):
                         source=store.source, dest=store.dest, reg=a.reg_ref(0)
                     )
 
-        elif mnemonic in "mtc1":
+        elif mnemonic == "mtc1":
             # Floating point moving instruction, source first
             assert (
                 len(args) == 2
