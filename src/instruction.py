@@ -1,7 +1,7 @@
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Iterator, List, Optional, Union
+from typing import Callable, Iterator, List, Optional, Union
 
 from .error import DecompFailure
 from .options import Target
@@ -114,6 +114,13 @@ class Instruction:
     inputs: List[Location]
     clobbers: List[Location]
     outputs: List[Location]
+
+    # This should be typed as `eval_fn: Optional[Callable[[NodeState, InstrArgs], object]]`
+    # but this use classes that are defined in translate.py. We're unable to use correct
+    # types here without creating circular dependencies.
+    # The return value is ignored, but is typed as `object` so lambdas are more ergonomic.
+    # This member should only be accessed by `evaluate_instruction`.
+    eval_fn: Optional[Callable[..., object]]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
