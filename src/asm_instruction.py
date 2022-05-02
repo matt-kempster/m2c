@@ -218,7 +218,7 @@ def constant_fold(arg: Argument, defines: Dict[str, int]) -> Argument:
             return AsmLiteral(lhs.value << rhs.value)
         if arg.op == "&":
             return AsmLiteral(lhs.value & rhs.value)
-    return arg
+    return BinOp(arg.op, lhs, rhs)
 
 
 def replace_bare_reg(

@@ -7,5 +7,7 @@ sw $zero, sym3($zero)
 sw $zero, (sym3 * 2)($zero)
 li $a0, ((sym3 * 2) + 0x10)
 sw $a0, ($zero)
+lui $a0, %hi(sym + (2 + 6))
+sw $zero, %lo(sym + (2 + 6))($a0)
 jr $ra
 nop
