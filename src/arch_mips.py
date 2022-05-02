@@ -68,6 +68,8 @@ from .translate import (
     as_u32,
     as_u64,
     as_uintish,
+)
+from .evaluate import (
     error_stmt,
     fn_op,
     fold_divmod,

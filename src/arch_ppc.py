@@ -46,7 +46,6 @@ from .translate import (
     AddressMode,
     Arch,
     BinaryOp,
-    CarryBit,
     Cast,
     CmpInstrMap,
     CommentStmt,
@@ -61,7 +60,6 @@ from .translate import (
     StoreInstrMap,
     TernaryOp,
     UnaryOp,
-    add_imm,
     as_f32,
     as_f64,
     as_int64,
@@ -72,6 +70,11 @@ from .translate import (
     as_type,
     as_u32,
     as_uintish,
+)
+from .evaluate import (
+    add_imm,
+    carry_add_to,
+    carry_sub_from,
     error_stmt,
     fn_op,
     fold_divmod,
@@ -1023,8 +1026,8 @@ class PpcArch(Arch):
         # TODO: Read XER_CA in extended instrs, instead of using CarryBit
         "add": lambda a: handle_add(a),
         "addc": lambda a: handle_add(a),
-        "adde": lambda a: CarryBit.add_to(handle_add(a)),
-        "addze": lambda a: CarryBit.add_to(a.reg(1)),
+        "adde": lambda a: carry_add_to(handle_add(a)),
+        "addze": lambda a: carry_add_to(a.reg(1)),
         "addi": lambda a: handle_addi(a),
         "addic": lambda a: handle_addi(a),
         "addis": lambda a: handle_addis(a),
@@ -1034,13 +1037,13 @@ class PpcArch(Arch):
         "subfc": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
         ),
-        "subfe": lambda a: CarryBit.sub_from(
+        "subfe": lambda a: carry_sub_from(
             fold_divmod(BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)))
         ),
         "subfic": lambda a: fold_divmod(
             BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
         ),
-        "subfze": lambda a: CarryBit.sub_from(
+        "subfze": lambda a: carry_sub_from(
             fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         ),
         "neg": lambda a: fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
