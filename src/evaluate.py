@@ -8,6 +8,7 @@ from typing import (
     Tuple,
     Union,
 )
+
 from .asm_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
@@ -16,14 +17,7 @@ from .asm_instruction import (
     Register,
 )
 from .error import DecompFailure
-from .types import (
-    FunctionParam,
-    FunctionSignature,
-    StructDeclaration,
-    Type,
-)
-from .translate import (
-    AddressMode,
+from .expression import (
     AddressOf,
     ArrayAccess,
     BinaryOp,
@@ -36,14 +30,10 @@ from .translate import (
     Expression,
     FuncCall,
     GlobalSymbol,
-    InstrArgs,
     Literal,
     Load3Bytes,
     LocalVar,
     Lwl,
-    RawSymbolRef,
-    RegInfo,
-    StackInfo,
     StoreStmt,
     StructAccess,
     TernaryOp,
@@ -56,6 +46,19 @@ from .translate import (
     early_unwrap,
     early_unwrap_ints,
     is_trivial_expression,
+)
+from .translate import (
+    AddressMode,
+    InstrArgs,
+    RawSymbolRef,
+    RegInfo,
+    StackInfo,
+)
+from .types import (
+    FunctionParam,
+    FunctionSignature,
+    StructDeclaration,
+    Type,
 )
 
 

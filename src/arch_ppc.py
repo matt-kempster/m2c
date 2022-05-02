@@ -26,12 +26,6 @@ from .asm_instruction import (
     Register,
     get_jump_target,
 )
-from .instruction import (
-    Instruction,
-    InstructionMeta,
-    Location,
-    StackLocation,
-)
 from .asm_pattern import (
     AsmMatch,
     AsmMatcher,
@@ -39,37 +33,6 @@ from .asm_pattern import (
     Replacement,
     SimpleAsmPattern,
     make_pattern,
-)
-from .translate import (
-    Abi,
-    AbiArgSlot,
-    AddressMode,
-    Arch,
-    BinaryOp,
-    Cast,
-    CmpInstrMap,
-    CommentStmt,
-    ErrorExpr,
-    Expression,
-    InstrArgs,
-    InstrMap,
-    Literal,
-    NodeState,
-    SecondF64Half,
-    StmtInstrMap,
-    StoreInstrMap,
-    TernaryOp,
-    UnaryOp,
-    as_f32,
-    as_f64,
-    as_int64,
-    as_intish,
-    as_intptr,
-    as_ptr,
-    as_sintish,
-    as_type,
-    as_u32,
-    as_uintish,
 )
 from .evaluate import (
     add_imm,
@@ -95,6 +58,45 @@ from .evaluate import (
     make_store,
     make_storex,
     void_fn_op,
+)
+from .expression import (
+    BinaryOp,
+    Cast,
+    CommentStmt,
+    ErrorExpr,
+    Expression,
+    Literal,
+    SecondF64Half,
+    TernaryOp,
+    UnaryOp,
+    as_f32,
+    as_f64,
+    as_int64,
+    as_intish,
+    as_intptr,
+    as_ptr,
+    as_sintish,
+    as_type,
+    as_u32,
+    as_uintish,
+)
+from .instruction import (
+    Instruction,
+    InstructionMeta,
+    Location,
+    StackLocation,
+)
+from .translate import (
+    Abi,
+    AbiArgSlot,
+    AddressMode,
+    Arch,
+    CmpInstrMap,
+    InstrArgs,
+    InstrMap,
+    NodeState,
+    StmtInstrMap,
+    StoreInstrMap,
 )
 from .types import FunctionSignature, Type
 

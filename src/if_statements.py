@@ -2,6 +2,18 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+from .expression import (
+    BinaryOp,
+    CommaConditionExpr,
+    Condition,
+    Expression,
+    Literal,
+    Statement as TrStatement,
+    SwitchControl,
+    early_unwrap_ints,
+    format_expr,
+    simplify_condition,
+)
 from .flow_graph import (
     BasicNode,
     ConditionalNode,
@@ -11,22 +23,11 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Options, Target
+from .options import Formatter, Options, Target
 from .translate import (
-    BinaryOp,
     BlockInfo,
-    CommaConditionExpr,
-    Condition,
-    Expression,
-    Formatter,
     FunctionInfo,
-    Literal,
-    Statement as TrStatement,
-    SwitchControl,
-    early_unwrap_ints,
-    format_expr,
     get_block_info,
-    simplify_condition,
 )
 from .types import Type
 
