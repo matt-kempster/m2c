@@ -386,7 +386,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 ifdef_level += level
                 ifdef_levels.append(level)
             elif directive.startswith(".if"):
-                macro_name = directive.split()[1]
+                macro_name = line.split()[1]
                 if macro_name == "0":
                     level = 1
                 elif macro_name == "1":
@@ -428,11 +428,15 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 elif directive == ".text":
                     curr_section = ".text"
                 elif directive == ".set":
-                    # Either a directive like ".set noreorder", or defining a variable
                     _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
-                    if len(args) == 2:
+                    if len(args) == 1:
+                        # ".set noreorder" or similar, just ignore
+                        pass
+                    elif len(args) == 2:
                         defines[args[0]] = try_parse(lambda: parse_int(args[1]))
+                    else:
+                        raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif curr_section in (".rodata", ".data", ".bss"):
                     _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
