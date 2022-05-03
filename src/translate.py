@@ -334,10 +334,8 @@ class StackInfo:
             expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
         ):
             return True
-        if (
-            isinstance(expr, PassedInArg)
-            and not expr.copied
-            and (offset is None or offset == self.allocated_stack_size + expr.value)
+        if isinstance(expr, PassedInArg) and (
+            offset is None or offset == self.allocated_stack_size + expr.value
         ):
             return True
         return False
