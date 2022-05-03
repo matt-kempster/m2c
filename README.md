@@ -293,7 +293,7 @@ To get pretty graph visualizations, install `graphviz` using `pip` and globally 
 
 There is a small test suite, which works as follows:
  - As you develop your commit, occasionally run `./run_tests.py` to see if any tests have changed output.
-   These tests run the decompiler on a small corpus of IDO 5.3-compiled MIPS assembly.
+   These tests run the decompiler on a small corpus of assembly.
  - Before pushing your commit, run `./run_tests.py --overwrite` to write changed tests to disk, and commit resultant changes.
 
 ### Running Decompilation Project Tests
