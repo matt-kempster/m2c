@@ -2456,6 +2456,18 @@ def late_unwrap(expr: Expression) -> Expression:
     return expr
 
 
+def trivial_unwrap(expr: Expression) -> Expression:
+    """
+    Unwrap trivial EvalOnceExpr's (e.g. EvalOnceExpr's that wrap other EvalOnceExpr's).
+
+    This is safe to use but may result in suboptimal codegen if used pervasively.
+    Mainly useful for equality comparisons.
+    """
+    if isinstance(expr, EvalOnceExpr) and expr.trivial:
+        return trivial_unwrap(expr.wrapped_expr)
+    return expr
+
+
 def early_unwrap(expr: Expression) -> Expression:
     """
     Unwrap EvalOnceExpr's, even past variable boundaries.
@@ -3686,7 +3698,7 @@ def pick_phi_assignment_nodes(
         meta = regs.get_meta(reg)
         if raw is None or meta is None or meta.force:
             continue
-        if raw == expr:
+        if trivial_unwrap(raw) == expr:
             return [node]
 
     # We couldn't find anything, so fall back to the naive solution
@@ -3708,7 +3720,7 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
         for node in phi.node.parents:
             expr = get_block_info(node).final_register_states[phi.reg]
             expr.type.unify(phi.type)
-            equivalent_nodes[expr].append(node)
+            equivalent_nodes[trivial_unwrap(expr)].append(node)
 
         exprs = list(equivalent_nodes.keys())
         first_uw = early_unwrap(exprs[0])
@@ -3722,9 +3734,13 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
             # eager unwrapping, and/or to emit an EvalOnceExpr at this point
             # (though it's too late for it to be able to participate in the
             # prevent_later_uses machinery).
-            phi.replacement_expr = as_type(first_uw, phi.type, silent=True)
+            # If there is just a single unique value, use that without unwrapping
+            # to avoid the aforementioned problems. (This check is why we need
+            # trivial_unwrap -- without it len(exprs) would never be 1.)
+            phi_expr = exprs[0] if len(exprs) == 1 else first_uw
+            phi.replacement_expr = as_type(phi_expr, phi.type, silent=True)
             for _ in range(phi.num_usages):
-                first_uw.use()
+                phi_expr.use()
         else:
             for expr, nodes in equivalent_nodes.items():
                 for node in pick_phi_assignment_nodes(phi.reg, nodes, expr):
