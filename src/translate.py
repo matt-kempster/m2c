@@ -1102,10 +1102,10 @@ class CommaConditionExpr(Condition):
         return f"({comma_joined}, {self.condition.format(fmt)})"
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=True)
 class Cast(Expression):
     expr: Expression
-    type: Type
+    type: Type = field(compare=False)
     reinterpret: bool = False
     silent: bool = True
 
