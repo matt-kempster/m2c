@@ -117,6 +117,7 @@ class Options:
     unk_inference: bool
     passes: int
     incbin_dirs: List[Path]
+    deterministic_vars: bool
 
     def formatter(self) -> "Formatter":
         return Formatter(

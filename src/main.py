@@ -121,7 +121,13 @@ def run(options: Options) -> int:
         unk_inference=options.unk_inference,
     )
     global_info = GlobalInfo(
-        asm_data, arch, options.target, function_names, typemap, typepool
+        asm_data,
+        arch,
+        options.target,
+        function_names,
+        typemap,
+        typepool,
+        deterministic_vars=options.deterministic_vars,
     )
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
@@ -421,6 +427,13 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
         help="Pad hex constants with 0's to fill their type's width.",
     )
+    group.add_argument(
+        "--deterministic-vars",
+        dest="deterministic_vars",
+        action="store_true",
+        help="Name temp and phi vars after their location in the source asm, "
+        "rather than using an incrementing suffix. Can help reduce diff size in tests.",
+    )
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
@@ -573,6 +586,7 @@ def parse_flags(flags: List[str]) -> Options:
         unk_inference=args.unk_inference,
         passes=args.passes,
         incbin_dirs=args.incbin_dirs,
+        deterministic_vars=args.deterministic_vars,
     )
 
 

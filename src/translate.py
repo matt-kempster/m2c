@@ -1978,7 +1978,7 @@ class RegInfo:
 
     def __getitem__(self, key: Register) -> Expression:
         if self._active_instr is not None and key not in self._active_instr.inputs:
-            lineno = self._active_instr.meta.lineno
+            lineno = self.get_instruction_lineno()
             return ErrorExpr(f"Read from unset register {key} on line {lineno}")
         if key == Register("zero"):
             return Literal(0)
@@ -2033,6 +2033,11 @@ class RegInfo:
 
     def set_active_instruction(self, instr: Optional[Instruction]) -> None:
         self._active_instr = instr
+
+    def get_instruction_lineno(self) -> int:
+        if self._active_instr is None:
+            return 0
+        return self._active_instr.meta.lineno
 
     def __str__(self) -> str:
         return ", ".join(
@@ -3756,13 +3761,15 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
                     block_info.to_write.append(SetPhiStmt(phi, typed_expr))
         i += 1
 
-    name_counter: Dict[Register, int] = {}
+    name_counter: Dict[str, int] = {}
     for phi in used_phis:
         if not phi.replacement_expr and phi.propagates_to() == phi:
-            counter = name_counter.get(phi.reg, 0) + 1
-            name_counter[phi.reg] = counter
             output_reg_name = stack_info.function.reg_formatter.format(phi.reg)
             prefix = f"phi_{output_reg_name}"
+            if stack_info.global_info.deterministic_vars:
+                prefix = f"{prefix}_{phi.node.block.index}"
+            counter = name_counter.get(prefix, 0) + 1
+            name_counter[prefix] = counter
             phi.name = f"{prefix}_{counter}" if counter > 1 else prefix
             stack_info.phi_vars.append(phi)
 
@@ -3909,11 +3916,17 @@ class NodeState:
             # so they're less likely to appear in the output
             return expr
 
-        assert reuse_var or prefix
-        if prefix == "condition_bit":
-            prefix = "cond"
+        if reuse_var is not None:
+            var = reuse_var
+        else:
+            assert prefix
+            if prefix == "condition_bit":
+                prefix = "cond"
+            temp_name = f"temp_{prefix}"
+            if self.stack_info.global_info.deterministic_vars:
+                temp_name = f"{temp_name}_{self.regs.get_instruction_lineno()}"
+            var = Var(self.stack_info, temp_name)
 
-        var = reuse_var or Var(self.stack_info, "temp_" + prefix)
         expr = EvalOnceExpr(
             wrapped_expr=expr,
             var=var,
@@ -4407,6 +4420,7 @@ class GlobalInfo:
     local_functions: Set[str]
     typemap: TypeMap
     typepool: TypePool
+    deterministic_vars: bool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:

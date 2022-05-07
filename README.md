@@ -233,6 +233,7 @@ The following options control the formatting details of the output, such as brac
 - `--comment-column N` ("Comment style")
 - `--no-casts`
 - `--zfill-constants` ("0-fill constants")
+- `--deterministic-vars`
 
 Note: `--valid-syntax` is used to produce output that is less human-readable, but is likely to directly compile without edits. This can be used to go directly from assembly to the permuter without human intervention.
 
