@@ -245,7 +245,7 @@ def create_project_tests(
         if not file_list:
             continue
 
-        flags = base_flags[:]
+        flags = base_flags + ["--deterministic-vars"]
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 
