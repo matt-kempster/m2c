@@ -113,7 +113,7 @@ def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     type = type.weaken_void_ptr()
     ptr_target_type = type.get_pointer_target()
     if expr.type.unify(type):
-        if silent or isinstance(early_unwrap(expr), Literal):
+        if silent or isinstance(expr, Literal):
             return expr
     elif ptr_target_type is not None:
         ptr_target_type_size = ptr_target_type.get_size_bytes()
@@ -2006,14 +2006,15 @@ class RegInfo:
         meta.is_read = True
         if meta.inherited:
             self.read_inherited.add(key)
-        if (
-            isinstance(ret, EvalOnceExpr)
-            and isinstance(ret.wrapped_expr, PassedInArg)
-            and meta.initial
-        ):
+        uw_ret = early_unwrap(ret)
+        if isinstance(uw_ret, Literal):
+            # Requiring early_unwrap at every place that wants to check if an input
+            # is a literal is a bit noisy, so we unwrap here instead.
+            return uw_ret
+        if isinstance(uw_ret, PassedInArg) and meta.initial:
             # Use accessed argument registers as a signal for determining which
             # arguments actually exist.
-            val, arg = self.stack_info.get_argument(ret.wrapped_expr.value)
+            val, arg = self.stack_info.get_argument(uw_ret.value)
             self.stack_info.add_argument(arg)
             val.type.unify(ret.type)
         if meta.force:
@@ -2142,8 +2143,7 @@ class InstrArgs:
             return ret
 
         # MIPS: Look at the paired FPR to get the full 64-bit value
-        uw_ret = early_unwrap(ret)
-        if not isinstance(uw_ret, Literal) or uw_ret.type.get_size_bits() == 64:
+        if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
             return ret
         reg_num = int(reg.register_name[1:])
         if reg_num % 2 != 0:
@@ -2151,14 +2151,14 @@ class InstrArgs:
                 "Tried to use a double-precision instruction with odd-numbered float "
                 f"register {reg}"
             )
-        other = early_unwrap(self.regs[Register(f"f{reg_num+1}")])
+        other = self.regs[Register(f"f{reg_num+1}")]
         if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
             raise DecompFailure(
                 f"Unable to determine a value for double-precision register {reg} "
                 "whose second half is non-static. This is a m2c restriction "
                 "which may be lifted in the future."
             )
-        value = uw_ret.value | (other.value << 32)
+        value = ret.value | (other.value << 32)
         return Literal(value, type=Type.f64())
 
     def cmp_reg(self, key: str) -> Condition:
@@ -2261,12 +2261,12 @@ def deref(
     # Struct member is being dereferenced.
 
     # Cope slightly better with raw pointers.
-    uw_var = early_unwrap(var)
-    if isinstance(uw_var, Literal) and uw_var.value % (2**16) == 0:
-        uw_var = var = Literal(uw_var.value + offset, type=uw_var.type)
+    if isinstance(var, Literal) and var.value % (2**16) == 0:
+        var = Literal(var.value + offset, type=var.type)
         offset = 0
 
     # Handle large struct offsets.
+    uw_var = early_unwrap(var)
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             if isinstance(addend, Literal) and addend.likely_partial_offset():
@@ -2639,13 +2639,11 @@ def handle_or(left: Expression, right: Expression) -> Expression:
         # `or $rD, $rS, $rS` can be used to move $rS into $rD
         return left
 
-    uw_left = early_unwrap(left)
-    uw_right = early_unwrap(right)
-    if isinstance(uw_left, Literal) and isinstance(uw_right, Literal):
-        if (((uw_left.value & 0xFFFF) == 0 and (uw_right.value & 0xFFFF0000) == 0)) or (
-            (uw_right.value & 0xFFFF) == 0 and (uw_left.value & 0xFFFF0000) == 0
+    if isinstance(left, Literal) and isinstance(right, Literal):
+        if (((left.value & 0xFFFF) == 0 and (right.value & 0xFFFF0000) == 0)) or (
+            (right.value & 0xFFFF) == 0 and (left.value & 0xFFFF0000) == 0
         ):
-            return Literal(value=(uw_left.value | uw_right.value))
+            return Literal(value=(left.value | right.value))
     # Regular bitwise OR.
     return BinaryOp.int(left=left, op="|", right=right)
 
@@ -2690,16 +2688,16 @@ def handle_addi(args: InstrArgs) -> Expression:
     # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
     # i.e. as an `addis` followed by an `addi`
     uw_source = early_unwrap(source)
-    if isinstance(uw_source, BinaryOp) and uw_source.op == "+":
-        uw_right = early_unwrap(uw_source.right)
-        if (
-            isinstance(uw_right, Literal)
-            and uw_right.value % 0x10000 == 0
-            and isinstance(imm, Literal)
-        ):
-            return add_imm(
-                uw_source.left, Literal(imm.value + uw_right.value), stack_info
-            )
+    if (
+        isinstance(uw_source, BinaryOp)
+        and uw_source.op == "+"
+        and isinstance(uw_source.right, Literal)
+        and uw_source.right.value % 0x10000 == 0
+        and isinstance(imm, Literal)
+    ):
+        return add_imm(
+            uw_source.left, Literal(imm.value + uw_source.right.value), stack_info
+        )
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
 
 
@@ -2774,13 +2772,11 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
                         left=source, op="+", right=as_intish(imm), type=source.type
                     )
         return BinaryOp(left=source, op="+", right=as_intish(imm), type=Type.ptr())
+    elif isinstance(source, Literal) and isinstance(imm, Literal):
+        return Literal(source.value + imm.value)
     else:
-        uw_source = early_unwrap(source)
-        if isinstance(uw_source, Literal) and isinstance(imm, Literal):
-            return Literal(uw_source.value + imm.value)
-        else:
-            # Regular binary addition.
-            return BinaryOp.intptr(left=source, op="+", right=imm)
+        # Regular binary addition.
+        return BinaryOp.intptr(left=source, op="+", right=imm)
 
 
 def handle_load(args: InstrArgs, type: Type) -> Expression:
@@ -3335,13 +3331,15 @@ def array_access_from_add(
     index = addend
     scale = 1
     uw_addend = early_unwrap(addend)
-    if isinstance(uw_addend, BinaryOp) and uw_addend.op in ("*", "<<"):
-        uw_right = early_unwrap(uw_addend.right)
-        if isinstance(uw_right, Literal):
-            index = uw_addend.left
-            scale = uw_right.value
-            if uw_addend.op == "<<":
-                scale = 1 << scale
+    if (
+        isinstance(uw_addend, BinaryOp)
+        and uw_addend.op in ("*", "<<")
+        and isinstance(uw_addend.right, Literal)
+    ):
+        index = uw_addend.left
+        scale = uw_addend.right.value
+        if uw_addend.op == "<<":
+            scale = 1 << scale
 
     if scale < 0:
         scale = -scale
@@ -3461,16 +3459,10 @@ def handle_add(args: InstrArgs) -> Expression:
 
     # addiu instructions can sometimes be emitted as addu instead, when the
     # offset is too large.
-    uw_lhs = early_unwrap(lhs)
-    uw_rhs = early_unwrap(rhs)
-    if isinstance(uw_rhs, Literal):
-        return handle_addi_real(
-            args.reg_ref(0), args.reg_ref(1), lhs, uw_rhs, stack_info
-        )
-    if isinstance(uw_lhs, Literal):
-        return handle_addi_real(
-            args.reg_ref(0), args.reg_ref(2), rhs, uw_lhs, stack_info
-        )
+    if isinstance(rhs, Literal):
+        return handle_addi_real(args.reg_ref(0), args.reg_ref(1), lhs, rhs, stack_info)
+    if isinstance(lhs, Literal):
+        return handle_addi_real(args.reg_ref(0), args.reg_ref(2), rhs, lhs, stack_info)
 
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)
@@ -3550,10 +3542,9 @@ def handle_rlwinm(
     # resulting expression. If there is an `|`, the expression is best left as bitwise math
     simplify = simplify and not (left_mask and right_mask)
 
-    uw_source = early_unwrap(source)
-    if isinstance(uw_source, Literal):
-        upper_value = (uw_source.value << left_shift) & mask
-        lower_value = (uw_source.value >> right_shift) & mask
+    if isinstance(source, Literal):
+        upper_value = (source.value << left_shift) & mask
+        lower_value = (source.value >> right_shift) & mask
         return Literal(upper_value | lower_value)
 
     upper_bits: Optional[Expression]
@@ -3613,7 +3604,7 @@ def handle_rlwimi(
     mask_literal = Literal(rlwi_mask(mask_begin, mask_end))
     mask = UnaryOp("~", mask_literal, type=Type.u32())
     masked_base = BinaryOp.int(left=base, op="&", right=mask)
-    if early_unwrap(source) == Literal(0):
+    if source == Literal(0):
         # If the source is 0, there are no bits inserted. (This may look like `x &= ~0x10`)
         return masked_base
     # Set `simplify=False` to keep the `inserted` expression as bitwise math instead of `*` or `/`
