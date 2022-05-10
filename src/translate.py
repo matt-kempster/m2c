@@ -1975,9 +1975,12 @@ class RegMeta:
     in_pattern: bool = False
 
 
+RegExpression = Union[EvalOnceExpr, RegisterVar, PhiExpr]
+
+
 @dataclass
 class RegData:
-    value: Expression
+    value: RegExpression
     meta: RegMeta
 
 
@@ -2020,13 +2023,13 @@ class RegInfo:
     def __contains__(self, key: Register) -> bool:
         return key in self.contents
 
-    def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
+    def set_with_meta(self, key: Register, value: RegExpression, meta: RegMeta) -> None:
         if self._active_instr is not None and key not in self._active_instr.outputs:
             raise DecompFailure(f"Undeclared write to {key} in {self._active_instr}")
         self.unchecked_set_with_meta(key, value, meta)
 
     def unchecked_set_with_meta(
-        self, key: Register, value: Expression, meta: RegMeta
+        self, key: Register, value: RegExpression, meta: RegMeta
     ) -> None:
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
@@ -3972,18 +3975,12 @@ class NodeState:
         for r in self.regs.contents.keys():
             data = self.regs.contents[r]
             expr = data.value
+            if isinstance(expr, (RegisterVar, PhiExpr)):
+                continue
             if not data.meta.force and expr_filter(expr):
-                # Mark the register as "if used, emit the expression's once
-                # var". We usually always have a once var at this point,
-                # but if we don't, create one.
-                # TODO
+                # Mark the register as "if used, emit the expression's once var".
                 if not isinstance(expr, EvalOnceExpr):
-                    expr = self._eval_once(
-                        expr,
-                        emit_exactly_once=False,
-                        trivial=False,
-                        prefix=self._format_reg(r),
-                    )
+                    static_assert_unreachable(expr)
 
                 # This write isn't changing the value of the register; it didn't need
                 # to be declared as part of the current instruction's inputs/outputs.
@@ -4007,8 +4004,8 @@ class NodeState:
         contains_read = lambda e: isinstance(e, (StructAccess, ArrayAccess))
         self._prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
-    def set_reg_without_eval(
-        self, reg: Register, expr: Expression, *, function_return: bool = False
+    def _set_reg_raw(
+        self, reg: Register, expr: RegExpression, *, function_return: bool = False
     ) -> None:
         self.regs.set_with_meta(
             reg,
@@ -4024,10 +4021,10 @@ class NodeState:
             prefix=self._format_reg(reg),
         )
         if reg != Register("zero"):
-            self.set_reg_without_eval(reg, expr)
+            self._set_reg_raw(reg, expr)
 
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
-        self.regs.unchecked_set_with_meta(
+        self.regs.set_with_meta(
             reg,
             self._eval_once(
                 expr,
@@ -4064,14 +4061,12 @@ class NodeState:
                     expr = orig_expr
 
         uw_expr = expr
-        # TODO
-        if True or not isinstance(expr, Literal):
-            expr = self._eval_once(
-                expr,
-                emit_exactly_once=False,
-                trivial=is_trivial_expression(expr),
-                prefix=self._format_reg(reg),
-            )
+        expr = self._eval_once(
+            expr,
+            emit_exactly_once=False,
+            trivial=is_trivial_expression(expr),
+            prefix=self._format_reg(reg),
+        )
 
         if reg == Register("zero"):
             # Emit the expression as is. It's probably a volatile load.
@@ -4087,7 +4082,7 @@ class NodeState:
                     source.use()
                     self.write_statement(StoreStmt(source=source, dest=dest))
                 expr = dest
-            self.set_reg_without_eval(reg, expr)
+            self._set_reg_raw(reg, expr)
         return expr
 
     def clear_caller_save_regs(self) -> None:
@@ -4267,7 +4262,7 @@ class NodeState:
                 trivial=False,
                 prefix=self._format_reg(out),
             )
-            self.set_reg_without_eval(out, val, function_return=True)
+            self._set_reg_raw(out, val, function_return=True)
 
         self.has_function_call = True
 
@@ -4405,7 +4400,7 @@ def translate_graph_from_block(
             # sources = ...
             # if sources is not None:
             if reg_always_set(child, reg, dom_set=(reg in state.regs)):
-                expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
+                expr: Optional[RegExpression] = stack_info.maybe_get_register_var(reg)
                 if expr is None:
                     expr = PhiExpr(
                         reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
