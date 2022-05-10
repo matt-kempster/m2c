@@ -651,6 +651,7 @@ def escape_byte(b: int) -> bytes:
 class Var:
     stack_info: StackInfo = field(repr=False)
     prefix: str
+    num_usages: int = 0
     name: Optional[str] = None
 
     def format(self, fmt: Formatter) -> str:
@@ -3935,8 +3936,8 @@ class NodeState:
         *,
         emit_exactly_once: bool,
         trivial: bool,
-        prefix: str,
-        # reuse_var: Optional[Var] = None,
+        prefix: str = "",
+        reuse_var: Optional[Var] = None,
     ) -> EvalOnceExpr:
         if emit_exactly_once:
             # (otherwise this will be marked used once num_usages reaches 1)
@@ -3946,10 +3947,9 @@ class NodeState:
             # so they're less likely to appear in the output
             return expr
 
-        # if reuse_var is not None:
-        #     var = reuse_var
-        # else:
-        if True:
+        if reuse_var is not None:
+            var = reuse_var
+        else:
             assert prefix
             if prefix == "condition_bit":
                 prefix = "cond"
@@ -3965,6 +3965,7 @@ class NodeState:
             emit_exactly_once=emit_exactly_once,
             trivial=trivial,
         )
+        var.num_usages += 1
         stmt = EvalOnceStmt(expr)
         self.write_statement(stmt)
         self.stack_info.temp_vars.append(stmt)
@@ -4397,8 +4398,6 @@ def translate_graph_from_block(
             r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
         )
         for reg in phi_regs:
-            # sources = ...
-            # if sources is not None:
             if reg_always_set(child, reg, dom_set=(reg in state.regs)):
                 expr: Optional[RegExpression] = stack_info.maybe_get_register_var(reg)
                 if expr is None:
