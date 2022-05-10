@@ -2311,6 +2311,7 @@ def is_trivial_expression(expr: Expression) -> bool:
             PassedInArg,
             PhiExpr,
             RegisterVar,
+            SecondF64Half,
             SubroutineArg,
         ),
     ):
@@ -4260,14 +4261,12 @@ class NodeState:
         for out in outputs:
             if not isinstance(out, Register):
                 continue
-            val = return_reg_vals[out]
-            if not isinstance(val, SecondF64Half):
-                val = self._eval_once(
-                    val,
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix=self._format_reg(out),
-                )
+            val = self._eval_once(
+                return_reg_vals[out],
+                emit_exactly_once=False,
+                trivial=False,
+                prefix=self._format_reg(out),
+            )
             self.set_reg_without_eval(out, val, function_return=True)
 
         self.has_function_call = True
