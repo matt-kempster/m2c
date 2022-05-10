@@ -68,6 +68,7 @@ from .translate import (
     as_u32,
     as_u64,
     as_uintish,
+    condition_from_expr,
     error_stmt,
     fn_op,
     fold_divmod,
@@ -820,9 +821,7 @@ class MipsArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 if mnemonic in ("bc1t", "bc1f"):
-                    cond = a.regs[Register("condition_bit")]
-                    if not isinstance(cond, BinaryOp):
-                        cond = ExprCondition(cond, type=cond.type)
+                    cond = condition_from_expr(a.regs[Register("condition_bit")])
                     if mnemonic == "bc1f":
                         cond = cond.negated()
                 else:
@@ -951,7 +950,7 @@ class MipsArch(Arch):
             else:
                 inputs = [args[0], args[1]]
             outputs = [Register("condition_bit")]
-            eval_fn = lambda s, a: s.set_reg_without_eval(
+            eval_fn = lambda s, a: s.set_reg(
                 Register("condition_bit"), cls.instrs_float_comp[mnemonic](a)
             )
         elif mnemonic in cls.instrs_hi_lo:

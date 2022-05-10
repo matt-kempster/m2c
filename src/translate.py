@@ -2389,6 +2389,15 @@ def simplify_condition(expr: Expression) -> Expression:
     return expr
 
 
+def condition_from_expr(expr: Expression) -> Condition:
+    uw_expr = early_unwrap(expr)
+    if isinstance(uw_expr, Condition) and not (
+        isinstance(uw_expr, BinaryOp) and not uw_expr.is_comparison()
+    ):
+        return uw_expr
+    return ExprCondition(expr, type=expr.type)
+
+
 def balanced_parentheses(string: str) -> bool:
     """
     Check if parentheses in a string are balanced, ignoring any non-parenthesis
