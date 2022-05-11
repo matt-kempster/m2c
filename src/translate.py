@@ -240,7 +240,7 @@ class StackInfo:
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
 
-    def add_known_param(self, offset: int, name: Optional[str], type: Type) -> None:
+    def add_known_param(self, offset: int, name: Optional[str], type: Type) -> Type:
         # A common pattern in C for OOP-style polymorphism involves casting a general "base" struct
         # to a specific "class" struct, where the first member of the class struct is the base struct.
         #
@@ -279,6 +279,7 @@ class StackInfo:
         _, arg = self.get_argument(offset)
         self.add_argument(arg)
         arg.type.unify(type)
+        return type
 
     def get_param_name(self, offset: int) -> Optional[str]:
         return self.param_names.get(offset)
@@ -1947,8 +1948,9 @@ class RegMeta:
     is determined dynamically based on type info.
 
     Except for a few properties, metadata is propagated across blocks only
-    after translation is done (because parent block metadata is not generally
-    available when constructing reg metas)."""
+    after block translation is done, as part of propagate_register_meta.
+    (Parent block metadata is not generally available when constructing reg
+    metas, due to cycles)."""
 
     # True if this regdata is unchanged from the start of the block
     inherited: bool = False
@@ -4883,11 +4885,11 @@ def translate_to_ast(
         for_call=False,
     )
     for slot in abi.arg_slots:
-        stack_info.add_known_param(slot.offset, slot.name, slot.type)
+        type = stack_info.add_known_param(slot.offset, slot.name, slot.type)
         if slot.reg is not None:
             state.set_initial_reg(
                 slot.reg,
-                make_arg(slot.offset, slot.type),
+                make_arg(slot.offset, type),
                 RegMeta(uninteresting=True, initial=True),
             )
     for slot in abi.possible_slots:
