@@ -240,7 +240,7 @@ class StackInfo:
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
 
-    def add_known_param(self, offset: int, name: Optional[str], type: Type) -> None:
+    def add_known_param(self, offset: int, name: Optional[str], type: Type) -> Type:
         # A common pattern in C for OOP-style polymorphism involves casting a general "base" struct
         # to a specific "class" struct, where the first member of the class struct is the base struct.
         #
@@ -279,6 +279,7 @@ class StackInfo:
         _, arg = self.get_argument(offset)
         self.add_argument(arg)
         arg.type.unify(type)
+        return type
 
     def get_param_name(self, offset: int) -> Optional[str]:
         return self.param_names.get(offset)
@@ -300,7 +301,6 @@ class StackInfo:
         real_location = location & -4
         arg = PassedInArg(
             real_location,
-            copied=True,
             stack_info=self,
             type=self.unique_type_for("arg", real_location, Type.any_reg()),
         )
@@ -1230,7 +1230,6 @@ class RegisterVar(Expression):
 @dataclass(frozen=True, eq=True)
 class PassedInArg(Expression):
     value: int
-    copied: bool = field(compare=False)
     stack_info: StackInfo = field(compare=False, repr=False)
     type: Type = field(compare=False)
 
@@ -1942,8 +1941,23 @@ class RawSymbolRef:
 
 @dataclass
 class RegMeta:
+    """Metadata associated with a register value assignment.
+
+    This could largely be computed ahead of time based on instr_inputs/
+    instr_uses, except for the fact that function pointer argument passing
+    is determined dynamically based on type info.
+
+    Except for a few properties, metadata is propagated across blocks only
+    after block translation is done, as part of propagate_register_meta.
+    (Parent block metadata is not generally available when constructing reg
+    metas, due to cycles)."""
+
     # True if this regdata is unchanged from the start of the block
     inherited: bool = False
+
+    # True if this regdata is unchanged from the start of the function
+    # Propagated early
+    initial: bool = False
 
     # True if this regdata is read by some later node
     is_read: bool = False
@@ -1956,6 +1970,7 @@ class RegMeta:
     uninteresting: bool = False
 
     # True if the regdata must be replaced by variable if it is ever read
+    # Propagated early
     force: bool = False
 
     # True if the regdata was assigned by an Instruction marked as in_pattern;
@@ -1963,9 +1978,12 @@ class RegMeta:
     in_pattern: bool = False
 
 
+RegExpression = Union[EvalOnceExpr, RegisterVar, PhiExpr]
+
+
 @dataclass
 class RegData:
-    value: Expression
+    value: RegExpression
     meta: RegMeta
 
 
@@ -1986,18 +2004,22 @@ class RegInfo:
         if data is None:
             return ErrorExpr(f"Read from unset register {key}")
         ret = data.value
-        data.meta.is_read = True
-        if data.meta.inherited:
+        meta = data.meta
+        meta.is_read = True
+        if meta.inherited:
             self.read_inherited.add(key)
-        if isinstance(ret, PassedInArg) and not ret.copied:
-            # Create a new argument object to better distinguish arguments we
-            # are called with from arguments passed to subroutines. Also, unify
-            # the argument's type with what we can guess from the register used.
-            val, arg = self.stack_info.get_argument(ret.value)
+        uw_ret = early_unwrap(ret)
+        if isinstance(uw_ret, Literal):
+            # Requiring early_unwrap at every place that wants to check if an input
+            # is a literal is a bit noisy, so we unwrap here instead.
+            return uw_ret
+        if isinstance(uw_ret, PassedInArg) and meta.initial:
+            # Use accessed argument registers as a signal for determining which
+            # arguments actually exist.
+            val, arg = self.stack_info.get_argument(uw_ret.value)
             self.stack_info.add_argument(arg)
             val.type.unify(ret.type)
-            return val
-        if data.meta.force:
+        if meta.force:
             assert isinstance(ret, EvalOnceExpr)
             ret.force()
         return ret
@@ -2005,16 +2027,13 @@ class RegInfo:
     def __contains__(self, key: Register) -> bool:
         return key in self.contents
 
-    def __setitem__(self, key: Register, value: Expression) -> None:
-        self.set_with_meta(key, value, RegMeta())
-
-    def set_with_meta(self, key: Register, value: Expression, meta: RegMeta) -> None:
+    def set_with_meta(self, key: Register, value: RegExpression, meta: RegMeta) -> None:
         if self._active_instr is not None and key not in self._active_instr.outputs:
             raise DecompFailure(f"Undeclared write to {key} in {self._active_instr}")
         self.unchecked_set_with_meta(key, value, meta)
 
     def unchecked_set_with_meta(
-        self, key: Register, value: Expression, meta: RegMeta
+        self, key: Register, value: RegExpression, meta: RegMeta
     ) -> None:
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
@@ -2298,6 +2317,7 @@ def is_trivial_expression(expr: Expression) -> bool:
             PassedInArg,
             PhiExpr,
             RegisterVar,
+            SecondF64Half,
             SubroutineArg,
         ),
     ):
@@ -2374,6 +2394,15 @@ def simplify_condition(expr: Expression) -> Expression:
             )
         return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
     return expr
+
+
+def condition_from_expr(expr: Expression) -> Condition:
+    uw_expr = early_unwrap(expr)
+    if isinstance(uw_expr, Condition) and not (
+        isinstance(uw_expr, BinaryOp) and not uw_expr.is_comparison()
+    ):
+        return uw_expr
+    return ExprCondition(expr, type=expr.type)
 
 
 def balanced_parentheses(string: str) -> bool:
@@ -3301,26 +3330,18 @@ def array_access_from_add(
     if addend.type.is_pointer_or_array() and not base.type.is_pointer_or_array():
         base, addend = addend, base
 
-    index: Expression
-    scale: int
+    index = addend
+    scale = 1
     uw_addend = early_unwrap(addend)
     if (
         isinstance(uw_addend, BinaryOp)
-        and uw_addend.op == "*"
+        and uw_addend.op in ("*", "<<")
         and isinstance(uw_addend.right, Literal)
     ):
         index = uw_addend.left
         scale = uw_addend.right.value
-    elif (
-        isinstance(uw_addend, BinaryOp)
-        and uw_addend.op == "<<"
-        and isinstance(uw_addend.right, Literal)
-    ):
-        index = uw_addend.left
-        scale = 1 << uw_addend.right.value
-    else:
-        index = addend
-        scale = 1
+        if uw_addend.op == "<<":
+            scale = 1 << scale
 
     if scale < 0:
         scale = -scale
@@ -3899,6 +3920,9 @@ class NodeState:
     switch_control: Optional[SwitchControl] = None
     has_function_call: bool = False
 
+    def _format_reg(self, reg: Register) -> str:
+        return self.stack_info.function.reg_formatter.format(reg)
+
     def _eval_once(
         self,
         expr: Expression,
@@ -3943,20 +3967,14 @@ class NodeState:
     def _prevent_later_uses(self, expr_filter: Callable[[Expression], bool]) -> None:
         """Prevent later uses of registers whose contents match a callback filter."""
         for r in self.regs.contents.keys():
-            data = self.regs.contents.get(r)
-            assert data is not None
+            data = self.regs.contents[r]
             expr = data.value
+            if isinstance(expr, (RegisterVar, PhiExpr)):
+                continue
             if not data.meta.force and expr_filter(expr):
-                # Mark the register as "if used, emit the expression's once
-                # var". We usually always have a once var at this point,
-                # but if we don't, create one.
+                # Mark the register as "if used, emit the expression's once var".
                 if not isinstance(expr, EvalOnceExpr):
-                    expr = self._eval_once(
-                        expr,
-                        emit_exactly_once=False,
-                        trivial=False,
-                        prefix=self.stack_info.function.reg_formatter.format(r),
-                    )
+                    static_assert_unreachable(expr)
 
                 # This write isn't changing the value of the register; it didn't need
                 # to be declared as part of the current instruction's inputs/outputs.
@@ -3967,15 +3985,7 @@ class NodeState:
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
         subexpression."""
-        # Unused PassedInArg are fine; they can pass the uses_expr test simply based
-        # on having the same variable name. If we didn't filter them out here it could
-        # cause them to be incorrectly passed as function arguments -- the function
-        # call logic sees an opaque wrapper and doesn't realize that they are unused
-        # arguments that should not be passed on.
-        self._prevent_later_uses(
-            lambda e: uses_expr(e, lambda e2: e2 == sub_expr)
-            and not (isinstance(e, PassedInArg) and not e.copied)
-        )
+        self._prevent_later_uses(lambda e: uses_expr(e, lambda e2: e2 == sub_expr))
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
@@ -3988,8 +3998,8 @@ class NodeState:
         contains_read = lambda e: isinstance(e, (StructAccess, ArrayAccess))
         self._prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
-    def set_reg_without_eval(
-        self, reg: Register, expr: Expression, *, function_return: bool = False
+    def _set_reg_raw(
+        self, reg: Register, expr: RegExpression, *, function_return: bool = False
     ) -> None:
         self.regs.set_with_meta(
             reg,
@@ -4002,10 +4012,22 @@ class NodeState:
             error,
             emit_exactly_once=True,
             trivial=False,
-            prefix=self.stack_info.function.reg_formatter.format(reg),
+            prefix=self._format_reg(reg),
         )
         if reg != Register("zero"):
-            self.set_reg_without_eval(reg, expr)
+            self._set_reg_raw(reg, expr)
+
+    def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
+        self.regs.set_with_meta(
+            reg,
+            self._eval_once(
+                expr,
+                emit_exactly_once=False,
+                trivial=True,
+                prefix=self._format_reg(reg),
+            ),
+            meta,
+        )
 
     def set_reg(
         self, reg: Register, expr: Optional[Expression]
@@ -4033,13 +4055,12 @@ class NodeState:
                     expr = orig_expr
 
         uw_expr = expr
-        if not isinstance(expr, Literal):
-            expr = self._eval_once(
-                expr,
-                emit_exactly_once=False,
-                trivial=is_trivial_expression(expr),
-                prefix=self.stack_info.function.reg_formatter.format(reg),
-            )
+        expr = self._eval_once(
+            expr,
+            emit_exactly_once=False,
+            trivial=is_trivial_expression(expr),
+            prefix=self._format_reg(reg),
+        )
 
         if reg == Register("zero"):
             # Emit the expression as is. It's probably a volatile load.
@@ -4055,7 +4076,7 @@ class NodeState:
                     source.use()
                     self.write_statement(StoreStmt(source=source, dest=dest))
                 expr = dest
-            self.set_reg_without_eval(reg, expr)
+            self._set_reg_raw(reg, expr)
         return expr
 
     def clear_caller_save_regs(self) -> None:
@@ -4157,7 +4178,7 @@ class NodeState:
                 # Like `meta.function_return` mentioned above, `meta.in_pattern` will only be
                 # accurate for registers set within this basic block.
                 likely_regs[reg] = False
-            elif isinstance(data.value, PassedInArg) and not data.value.copied:
+            elif data.meta.initial:
                 likely_regs[reg] = False
             else:
                 likely_regs[reg] = True
@@ -4229,15 +4250,13 @@ class NodeState:
         for out in outputs:
             if not isinstance(out, Register):
                 continue
-            val = return_reg_vals[out]
-            if not isinstance(val, SecondF64Half):
-                val = self._eval_once(
-                    val,
-                    emit_exactly_once=False,
-                    trivial=False,
-                    prefix=self.stack_info.function.reg_formatter.format(out),
-                )
-            self.set_reg_without_eval(out, val, function_return=True)
+            val = self._eval_once(
+                return_reg_vals[out],
+                emit_exactly_once=False,
+                trivial=False,
+                prefix=self._format_reg(out),
+            )
+            self._set_reg_raw(out, val, function_return=True)
 
         self.has_function_call = True
 
@@ -4270,14 +4289,12 @@ def evaluate_instruction(instr: Instruction, state: NodeState) -> None:
         assert state.branch_condition is not None or state.switch_control is not None
 
 
-def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> BlockInfo:
+def translate_node_body(state: NodeState) -> BlockInfo:
     """
     Given a node and current register contents, return a BlockInfo containing
     the translated AST for that node.
     """
-    state = NodeState(node=node, regs=regs, stack_info=stack_info)
-
-    for instr in node.block.instructions:
+    for instr in state.node.block.instructions:
         with state.current_instr(instr):
             evaluate_instruction(instr, state)
 
@@ -4297,9 +4314,7 @@ def translate_node_body(node: Node, regs: RegInfo, stack_info: StackInfo) -> Blo
 
 
 def translate_graph_from_block(
-    node: Node,
-    regs: RegInfo,
-    stack_info: StackInfo,
+    state: NodeState,
     used_phis: List[PhiExpr],
     return_blocks: List[BlockInfo],
     options: Options,
@@ -4309,12 +4324,13 @@ def translate_graph_from_block(
     its appropriate BlockInfo (which contains the AST of its code).
     """
 
+    node = state.node
     if options.debug:
         print(f"\nNode in question: {node}")
 
     # Translate the given node and discover final register states.
     try:
-        block_info = translate_node_body(node, regs, stack_info)
+        block_info = translate_node_body(state)
         if options.debug:
             print(block_info)
     except Exception as e:  # TODO: handle issues better
@@ -4347,7 +4363,7 @@ def translate_graph_from_block(
             return_value=None,
             switch_control=None,
             branch_condition=ErrorExpr(),
-            final_register_states=regs,
+            final_register_states=state.regs,
             has_function_call=False,
         )
 
@@ -4360,18 +4376,23 @@ def translate_graph_from_block(
     for child in node.immediately_dominates:
         if isinstance(child, TerminalNode):
             continue
+        stack_info = state.stack_info
         new_regs = RegInfo(stack_info=stack_info)
-        for reg, data in regs.contents.items():
+        for reg, data in state.regs.contents.items():
             new_regs.set_with_meta(
-                reg, data.value, RegMeta(inherited=True, force=data.meta.force)
+                reg,
+                data.value,
+                RegMeta(
+                    inherited=True, force=data.meta.force, initial=data.meta.initial
+                ),
             )
 
         phi_regs = (
             r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
         )
         for reg in phi_regs:
-            if reg_always_set(child, reg, dom_set=(reg in regs)):
-                expr: Optional[Expression] = stack_info.maybe_get_register_var(reg)
+            if reg_always_set(child, reg, dom_set=(reg in state.regs)):
+                expr: Optional[RegExpression] = stack_info.maybe_get_register_var(reg)
                 if expr is None:
                     expr = PhiExpr(
                         reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
@@ -4379,9 +4400,9 @@ def translate_graph_from_block(
                 new_regs.set_with_meta(reg, expr, RegMeta(inherited=True))
             elif reg in new_regs:
                 del new_regs[reg]
-        translate_graph_from_block(
-            child, new_regs, stack_info, used_phis, return_blocks, options
-        )
+
+        child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
+        translate_graph_from_block(child_state, used_phis, return_blocks, options)
 
 
 def resolve_types_late(stack_info: StackInfo) -> None:
@@ -4827,12 +4848,22 @@ def translate_to_ast(
     """
     # Initialize info about the function.
     stack_info = get_stack_info(function, global_info, flow_graph)
-    start_regs: RegInfo = RegInfo(stack_info=stack_info)
+    state = NodeState(
+        node=flow_graph.entry_node(),
+        regs=RegInfo(stack_info=stack_info),
+        stack_info=stack_info,
+    )
 
     arch = global_info.arch
-    start_regs[arch.stack_pointer_reg] = GlobalSymbol("sp", type=Type.ptr())
+    state.set_initial_reg(
+        arch.stack_pointer_reg,
+        GlobalSymbol("sp", type=Type.ptr()),
+        RegMeta(initial=True),
+    )
     for reg in arch.saved_regs:
-        start_regs[reg] = stack_info.saved_reg_symbol(reg.register_name)
+        state.set_initial_reg(
+            reg, stack_info.saved_reg_symbol(reg.register_name), RegMeta(initial=True)
+        )
 
     fn_sym = global_info.address_of_gsym(function.name).expr
     assert isinstance(fn_sym, GlobalSymbol)
@@ -4846,7 +4877,7 @@ def translate_to_ast(
 
     def make_arg(offset: int, type: Type) -> PassedInArg:
         assert offset % 4 == 0
-        return PassedInArg(offset, copied=False, stack_info=stack_info, type=type)
+        return PassedInArg(offset, stack_info=stack_info, type=type)
 
     abi = arch.function_abi(
         fn_sig,
@@ -4854,15 +4885,19 @@ def translate_to_ast(
         for_call=False,
     )
     for slot in abi.arg_slots:
-        stack_info.add_known_param(slot.offset, slot.name, slot.type)
+        type = stack_info.add_known_param(slot.offset, slot.name, slot.type)
         if slot.reg is not None:
-            start_regs.set_with_meta(
-                slot.reg, make_arg(slot.offset, slot.type), RegMeta(uninteresting=True)
+            state.set_initial_reg(
+                slot.reg,
+                make_arg(slot.offset, type),
+                RegMeta(uninteresting=True, initial=True),
             )
     for slot in abi.possible_slots:
         if slot.reg is not None:
-            start_regs.set_with_meta(
-                slot.reg, make_arg(slot.offset, slot.type), RegMeta(uninteresting=True)
+            state.set_initial_reg(
+                slot.reg,
+                make_arg(slot.offset, slot.type),
+                RegMeta(uninteresting=True, initial=True),
             )
 
     if options.reg_vars == ["saved"]:
@@ -4886,9 +4921,7 @@ def translate_to_ast(
     used_phis: List[PhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
-        flow_graph.entry_node(),
-        start_regs,
-        stack_info,
+        state,
         used_phis,
         return_blocks,
         options,
