@@ -2028,15 +2028,22 @@ class RegInfo:
         return key in self.contents
 
     def set_with_meta(self, key: Register, value: RegExpression, meta: RegMeta) -> None:
-        if self._active_instr is not None and key not in self._active_instr.outputs:
+        assert self._active_instr is not None
+        if key not in self._active_instr.outputs:
             raise DecompFailure(f"Undeclared write to {key} in {self._active_instr}")
-        self.unchecked_set_with_meta(key, value, meta)
-
-    def unchecked_set_with_meta(
-        self, key: Register, value: RegExpression, meta: RegMeta
-    ) -> None:
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
+
+    def global_set_with_meta(
+        self, key: Register, value: RegExpression, meta: RegMeta
+    ) -> None:
+        assert self._active_instr is None
+        assert key != Register("zero")
+        self.contents[key] = RegData(value, meta)
+
+    def update_meta(self, key: Register, meta: RegMeta) -> None:
+        assert key != Register("zero")
+        self.contents[key] = RegData(self.contents[key].value, meta)
 
     def __delitem__(self, key: Register) -> None:
         assert key != Register("zero")
@@ -3920,30 +3927,29 @@ class NodeState:
     switch_control: Optional[SwitchControl] = None
     has_function_call: bool = False
 
-    def _format_reg(self, reg: Register) -> str:
-        return self.stack_info.function.reg_formatter.format(reg)
-
     def _eval_once(
         self,
         expr: Expression,
         *,
         emit_exactly_once: bool,
         trivial: bool,
-        prefix: str = "",
-        reuse_var: Optional[Var] = None,
+        reg: Register,
+        source: Optional[Instruction],
     ) -> EvalOnceExpr:
         if emit_exactly_once:
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
-        elif "_fictive_" in prefix and isinstance(expr, EvalOnceExpr):
+        elif "_fictive_" in reg.register_name and isinstance(expr, EvalOnceExpr):
             # Avoid creating additional EvalOnceExprs for fictive Registers
             # so they're less likely to appear in the output
             return expr
 
-        if reuse_var is not None:
-            var = reuse_var
-        else:
-            assert prefix
+        prefix = self.stack_info.function.reg_formatter.format(reg)
+        # if reuse_var is not None:
+        #     var = reuse_var
+        # else:
+        #     assert prefix
+        if True:
             if prefix == "condition_bit":
                 prefix = "cond"
             temp_name = f"temp_{prefix}"
@@ -3976,11 +3982,7 @@ class NodeState:
                 if not isinstance(expr, EvalOnceExpr):
                     static_assert_unreachable(expr)
 
-                # This write isn't changing the value of the register; it didn't need
-                # to be declared as part of the current instruction's inputs/outputs.
-                self.regs.unchecked_set_with_meta(
-                    r, expr, replace(data.meta, force=True)
-                )
+                self.regs.update_meta(r, replace(data.meta, force=True))
 
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -3998,39 +4000,24 @@ class NodeState:
         contains_read = lambda e: isinstance(e, (StructAccess, ArrayAccess))
         self._prevent_later_uses(lambda e: uses_expr(e, contains_read))
 
-    def _set_reg_raw(
-        self, reg: Register, expr: RegExpression, *, function_return: bool = False
-    ) -> None:
-        self.regs.set_with_meta(
-            reg,
-            expr,
-            RegMeta(in_pattern=self.in_pattern, function_return=function_return),
-        )
-
-    def set_reg_with_error(self, reg: Register, error: ErrorExpr) -> None:
-        expr = self._eval_once(
-            error,
-            emit_exactly_once=True,
-            trivial=False,
-            prefix=self._format_reg(reg),
-        )
-        if reg != Register("zero"):
-            self._set_reg_raw(reg, expr)
-
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
-        self.regs.set_with_meta(
+        assert self.regs._active_instr is None
+        self.regs.global_set_with_meta(
             reg,
             self._eval_once(
                 expr,
                 emit_exactly_once=False,
                 trivial=True,
-                prefix=self._format_reg(reg),
+                reg=reg,
+                source=None,
             ),
             meta,
         )
 
     def set_reg(
-        self, reg: Register, expr: Optional[Expression]
+        self,
+        reg: Register,
+        expr: Optional[Expression],
     ) -> Optional[Expression]:
         if expr is None:
             if reg in self.regs:
@@ -4054,12 +4041,29 @@ class NodeState:
                 if orig_reg == reg:
                     expr = orig_expr
 
-        uw_expr = expr
-        expr = self._eval_once(
-            expr,
-            emit_exactly_once=False,
-            trivial=is_trivial_expression(expr),
-            prefix=self._format_reg(reg),
+        return self.set_reg_raw(reg, expr)
+
+    def set_reg_raw(
+        self,
+        reg: Register,
+        uw_expr: Expression,
+        *,
+        trivial: Optional[bool] = None,
+        emit_exactly_once: bool = False,
+        function_return: bool = False,
+    ) -> Optional[Expression]:
+        assert self.regs._active_instr is not None
+        source = self.regs._active_instr
+
+        if trivial is None:
+            trivial = is_trivial_expression(uw_expr)
+
+        expr: RegExpression = self._eval_once(
+            uw_expr,
+            emit_exactly_once=emit_exactly_once,
+            trivial=trivial,
+            reg=reg,
+            source=source,
         )
 
         if reg == Register("zero"):
@@ -4072,11 +4076,15 @@ class NodeState:
                 self.stack_info.use_register_var(dest)
                 # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
                 if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
-                    source = as_type(expr, dest.type, True)
-                    source.use()
-                    self.write_statement(StoreStmt(source=source, dest=dest))
+                    st_source = as_type(expr, dest.type, True)
+                    st_source.use()
+                    self.write_statement(StoreStmt(source=st_source, dest=dest))
                 expr = dest
-            self._set_reg_raw(reg, expr)
+            self.regs.set_with_meta(
+                reg,
+                expr,
+                RegMeta(in_pattern=self.in_pattern, function_return=function_return),
+            )
         return expr
 
     def clear_caller_save_regs(self) -> None:
@@ -4223,11 +4231,17 @@ class NodeState:
         # Reset subroutine_args, for the next potential function call.
         self.subroutine_args.clear()
 
+        source = self.regs._active_instr
+        assert source is not None
         call: Expression = FuncCall(
             fn_target, func_args, fn_sig.return_type.weaken_void_ptr()
         )
         call = self._eval_once(
-            call, emit_exactly_once=True, trivial=False, prefix="ret"
+            call,
+            emit_exactly_once=True,
+            trivial=False,
+            reg=Register("ret"),
+            source=source,
         )
 
         # Clear out caller-save registers, for clarity and to ensure that
@@ -4254,9 +4268,10 @@ class NodeState:
                 return_reg_vals[out],
                 emit_exactly_once=False,
                 trivial=False,
-                prefix=self._format_reg(out),
+                reg=out,
+                source=source,
             )
-            self._set_reg_raw(out, val, function_return=True)
+            self.set_reg_raw(out, val, trivial=False, function_return=True)
 
         self.has_function_call = True
 
@@ -4379,7 +4394,7 @@ def translate_graph_from_block(
         stack_info = state.stack_info
         new_regs = RegInfo(stack_info=stack_info)
         for reg, data in state.regs.contents.items():
-            new_regs.set_with_meta(
+            new_regs.global_set_with_meta(
                 reg,
                 data.value,
                 RegMeta(
@@ -4397,7 +4412,7 @@ def translate_graph_from_block(
                     expr = PhiExpr(
                         reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
                     )
-                new_regs.set_with_meta(reg, expr, RegMeta(inherited=True))
+                new_regs.global_set_with_meta(reg, expr, RegMeta(inherited=True))
             elif reg in new_regs:
                 del new_regs[reg]
 
