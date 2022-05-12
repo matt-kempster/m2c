@@ -199,10 +199,13 @@ class StackInfo:
     callee_save_reg_region: Tuple[int, int] = (0, 0)
     unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
     local_vars: List["LocalVar"] = field(default_factory=list)
-    temp_vars: List["EvalOnceStmt"] = field(default_factory=list)
-    phi_vars: List["PhiExpr"] = field(default_factory=list)
-    reg_vars: Dict[Register, "RegisterVar"] = field(default_factory=dict)
+    temp_vars: List["Var"] = field(default_factory=list)
+    naive_phi_vars: List["NaivePhiExpr"] = field(default_factory=list)
+    reg_vars: Dict[Register, "Var"] = field(default_factory=dict)
     used_reg_vars: Set[Register] = field(default_factory=set)
+    planned_vars: Dict[Tuple[Register, Optional[Instruction]], "Var"] = field(
+        default_factory=dict
+    )
     arguments: List["PassedInArg"] = field(default_factory=list)
     temp_name_counter: Dict[str, int] = field(default_factory=dict)
     nonzero_accesses: Set["Expression"] = field(default_factory=set)
@@ -367,7 +370,7 @@ class StackInfo:
             # TODO: Because the types are tracked in StackInfo instead of RegInfo, it is
             # possible that a load could incorrectly use a weak type from a sibling node
             # instead of a parent node. A more correct implementation would use similar
-            # logic to the PhiExpr system. In practice however, storing types in StackInfo
+            # logic to the phi system. In practice however, storing types in StackInfo
             # works well enough because nodes are traversed approximately depth-first.
             # TODO: Maybe only do this for certain configurable regions?
 
@@ -393,15 +396,20 @@ class StackInfo:
 
             return LocalVar(location, type=field_type, path=field_path)
 
-    def maybe_get_register_var(self, reg: Register) -> Optional["RegisterVar"]:
+    def maybe_get_register_var(self, reg: Register) -> Optional["Var"]:
         return self.reg_vars.get(reg)
 
     def add_register_var(self, reg: Register, name: str) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        self.reg_vars[reg] = RegisterVar(reg=reg, type=type, name=name)
+        var = Var(self, prefix=name, type=type)
+        self.reg_vars[reg] = var
+        self.temp_vars.append(var)
 
-    def use_register_var(self, var: "RegisterVar") -> None:
-        self.used_reg_vars.add(var.reg)
+    def get_planned_var(
+        self, reg: Register, source: Optional[Instruction]
+    ) -> Optional["Var"]:
+        reg_var = self.reg_vars.get(reg)
+        return reg_var or self.planned_vars.get((reg, source))
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg == self.global_info.arch.stack_pointer_reg:
@@ -652,16 +660,21 @@ def escape_byte(b: int) -> bytes:
 class Var:
     stack_info: StackInfo = field(repr=False)
     prefix: str
-    num_usages: int = 0
+    type: Type
+    is_used: bool = False
     name: Optional[str] = None
+    debug_exprs: List["Expression"] = field(repr=False, default_factory=list)
 
     def format(self, fmt: Formatter) -> str:
+        # Assign names lazily, hopefully in approximate output source order.
+        # (TODO: use asm order instead?)
+        assert self.is_used
         if self.name is None:
             self.name = self.stack_info.temp_var(self.prefix)
         return self.name
 
     def __str__(self) -> str:
-        return "<temp>"
+        return "<var>"
 
 
 class Expression(abc.ABC):
@@ -1216,15 +1229,15 @@ class LocalVar(Expression):
 
 @dataclass(frozen=True, eq=False)
 class RegisterVar(Expression):
-    reg: Register
-    name: str
+    var: Var
     type: Type
+    sources: List[Optional[Instruction]]
 
     def dependencies(self) -> List[Expression]:
         return []
 
     def format(self, fmt: Formatter) -> str:
-        return self.name
+        return self.var.format(fmt)
 
 
 @dataclass(frozen=True, eq=True)
@@ -1607,26 +1620,28 @@ class EvalOnceExpr(Expression):
     var: Var
     type: Type
 
+    source: Optional[Instruction]
+
     # True for function calls/errors
     emit_exactly_once: bool
 
     # Mutable state:
 
-    # True if this EvalOnceExpr should be totally transparent and not emit a variable,
+    # True if this EvalOnceExpr should be totally transparent and not use a variable,
     # It may dynamically change from true to false due to forced emissions.
-    # Initially, it is based on is_trivial_expression.
+    # Initially, it is based on is_trivial_expression (except for function returns).
     trivial: bool
 
-    # True if this EvalOnceExpr must emit a variable (see RegMeta.force)
+    # True if this EvalOnceExpr must use a variable (see RegMeta.force)
     forced_emit: bool = False
 
-    # The number of expressions that depend on this EvalOnceExpr; we emit a variable
+    # The number of expressions that depend on this EvalOnceExpr; we use a variable
     # if this is > 1.
     num_usages: int = 0
 
     def dependencies(self) -> List[Expression]:
         # (this is a bit iffy since state can change over time, but improves uses_expr)
-        if self.need_decl():
+        if self.uses_var():
             return []
         return [self.wrapped_expr]
 
@@ -1634,6 +1649,8 @@ class EvalOnceExpr(Expression):
         self.num_usages += 1
         if self.trivial or (self.num_usages == 1 and not self.emit_exactly_once):
             self.wrapped_expr.use()
+        if self.num_usages > 1 and not self.trivial:
+            self.var.is_used = True
 
     def force(self) -> None:
         # Transition to non-trivial, and mark as used multiple times to force a var.
@@ -1643,31 +1660,33 @@ class EvalOnceExpr(Expression):
         # trivial EvalOnceExpr's to the very end. At least the consequences of
         # getting this wrong are pretty mild -- it just causes extraneous var
         # emission in rare cases.
-        self.trivial = False
-        self.forced_emit = True
-        self.use()
-        self.use()
+        if not self.forced_emit:
+            self.forced_emit = True
+            self.trivial = False
+            self.use()
+            self.use()
 
-    def need_decl(self) -> bool:
-        return self.num_usages > 1 and not self.trivial
+    def uses_var(self) -> bool:
+        return self.var.is_used and not self.trivial
 
     def format(self, fmt: Formatter) -> str:
-        if not self.need_decl():
+        if not self.uses_var():
             return self.wrapped_expr.format(fmt)
         else:
             return self.var.format(fmt)
 
 
 @dataclass(frozen=False, eq=False)
-class PhiExpr(Expression):
+class NaivePhiExpr(Expression):
     reg: Register
     node: Node
     type: Type
-    used_phis: List["PhiExpr"]
+    sources: List[Optional[Instruction]]
+    used_naive_phis: List["NaivePhiExpr"]
     name: Optional[str] = None
     num_usages: int = 0
     replacement_expr: Optional[Expression] = None
-    used_by: Optional["PhiExpr"] = None
+    used_by: Optional["NaivePhiExpr"] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1675,9 +1694,9 @@ class PhiExpr(Expression):
     def get_var_name(self) -> str:
         return self.name or f"unnamed-phi({self.reg.register_name})"
 
-    def use(self, from_phi: Optional["PhiExpr"] = None) -> None:
+    def use(self, from_phi: Optional["NaivePhiExpr"] = None) -> None:
         if self.num_usages == 0:
-            self.used_phis.append(self)
+            self.used_naive_phis.append(self)
             self.used_by = from_phi
         self.num_usages += 1
         if self.used_by != from_phi:
@@ -1685,7 +1704,7 @@ class PhiExpr(Expression):
         if self.replacement_expr is not None:
             self.replacement_expr.use()
 
-    def propagates_to(self) -> "PhiExpr":
+    def propagates_to(self) -> "NaivePhiExpr":
         """Compute the phi that stores to this phi should propagate to. This is
         usually the phi itself, but if the phi is only once for the purpose of
         computing another phi, we forward the store there directly. This is
@@ -1832,14 +1851,10 @@ class SwitchControl:
 class EvalOnceStmt(Statement):
     expr: EvalOnceExpr
 
-    def need_decl(self) -> bool:
-        return self.expr.need_decl()
-
     def should_write(self) -> bool:
-        if self.expr.emit_exactly_once:
-            return self.expr.num_usages != 1
-        else:
-            return self.need_decl()
+        return self.expr.var.is_used or (
+            self.expr.emit_exactly_once and self.expr.num_usages == 0
+        )
 
     def format(self, fmt: Formatter) -> str:
         val_str = format_expr(elide_literal_casts(self.expr.wrapped_expr), fmt)
@@ -1849,15 +1864,15 @@ class EvalOnceStmt(Statement):
 
 
 @dataclass
-class SetPhiStmt(Statement):
-    phi: PhiExpr
+class SetNaivePhiStmt(Statement):
+    phi: NaivePhiExpr
     expr: Expression
 
     def should_write(self) -> bool:
         expr = self.expr
-        if isinstance(expr, PhiExpr) and expr.propagates_to() != expr:
+        if isinstance(expr, NaivePhiExpr) and expr.propagates_to() != expr:
             # When we have phi1 = phi2, and phi2 is only used in this place,
-            # the SetPhiStmt for phi2 will store directly to phi1 and we can
+            # the SetNaivePhiStmt for phi2 will store directly to phi1 and we can
             # skip this store.
             assert expr.propagates_to() == self.phi.propagates_to()
             return False
@@ -1894,7 +1909,7 @@ class StoreStmt(Statement):
         source = self.source
         if (
             isinstance(dest, StructAccess) and dest.late_has_known_type()
-        ) or isinstance(dest, (ArrayAccess, LocalVar, RegisterVar, SubroutineArg)):
+        ) or isinstance(dest, (ArrayAccess, LocalVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_literal_casts(source)
         return format_assignment(dest, source, fmt)
@@ -1978,7 +1993,7 @@ class RegMeta:
     in_pattern: bool = False
 
 
-RegExpression = Union[EvalOnceExpr, RegisterVar, PhiExpr]
+RegExpression = Union[EvalOnceExpr, RegisterVar, NaivePhiExpr]
 
 
 @dataclass
@@ -2049,7 +2064,7 @@ class RegInfo:
         assert key != Register("zero")
         del self.contents[key]
 
-    def get_raw(self, key: Register) -> Optional[Expression]:
+    def get_raw(self, key: Register) -> Optional[RegExpression]:
         data = self.contents.get(key)
         return data.value if data is not None else None
 
@@ -2322,7 +2337,7 @@ def is_trivial_expression(expr: Expression) -> bool:
             GlobalSymbol,
             LocalVar,
             PassedInArg,
-            PhiExpr,
+            NaivePhiExpr,
             RegisterVar,
             SecondF64Half,
             SubroutineArg,
@@ -2352,7 +2367,7 @@ def is_type_obvious(expr: Expression) -> bool:
             Literal,
             AddressOf,
             LocalVar,
-            PhiExpr,
+            NaivePhiExpr,
             PassedInArg,
             RegisterVar,
             FuncCall,
@@ -2360,7 +2375,7 @@ def is_type_obvious(expr: Expression) -> bool:
     ):
         return True
     if isinstance(expr, EvalOnceExpr):
-        if expr.need_decl():
+        if expr.uses_var():
             return True
         return is_type_obvious(expr.wrapped_expr)
     return False
@@ -2373,7 +2388,7 @@ def simplify_condition(expr: Expression) -> Expression:
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
+    if isinstance(expr, EvalOnceExpr) and not expr.uses_var():
         return simplify_condition(expr.wrapped_expr)
     if isinstance(expr, UnaryOp):
         inner = simplify_condition(expr.expr)
@@ -2490,9 +2505,9 @@ def late_unwrap(expr: Expression) -> Expression:
     This function may produce wrong results while code is being generated,
     since at that point we don't know the final status of EvalOnceExpr's.
     """
-    if isinstance(expr, EvalOnceExpr) and not expr.need_decl():
+    if isinstance(expr, EvalOnceExpr) and not expr.uses_var():
         return late_unwrap(expr.wrapped_expr)
-    if isinstance(expr, PhiExpr) and expr.replacement_expr is not None:
+    if isinstance(expr, NaivePhiExpr) and expr.replacement_expr is not None:
         return late_unwrap(expr.replacement_expr)
     return expr
 
@@ -3682,38 +3697,40 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
-def reg_always_set(node: Node, reg: Register, *, dom_set: bool) -> bool:
-    if node.immediate_dominator is None:
-        return False
+def reg_sources(
+    node: Node, reg: Register, dom_sources: List[Optional[Instruction]]
+) -> List[Optional[Instruction]]:
+    assert node.immediate_dominator is not None
     seen = {node.immediate_dominator}
     stack = node.parents[:]
+    sources: List[Optional[Instruction]] = []
     while stack:
         n = stack.pop()
-        if n == node.immediate_dominator and not dom_set:
-            return False
+        if n == node.immediate_dominator:
+            if not dom_sources:
+                return []
+            sources += dom_sources
         if n in seen:
             continue
         seen.add(n)
         clobbered: Optional[bool] = None
-        for instr in n.block.instructions:
-            with current_instr(instr):
-                if reg in instr.outputs:
-                    clobbered = False
-                elif reg in instr.clobbers:
-                    clobbered = True
-        if clobbered == True:
-            return False
-        if clobbered is None:
+        for instr in reversed(list(n.block.instructions)):
+            if reg in instr.outputs:
+                sources.append(instr)
+                break
+            elif reg in instr.clobbers:
+                return []
+        else:
             stack.extend(n.parents)
-    return True
+    return sources
 
 
-def pick_phi_assignment_nodes(
+def pick_naive_phi_assignment_nodes(
     reg: Register, nodes: List[Node], expr: Expression
 ) -> List[Node]:
     """
-    As part of `assign_phis()`, we need to pick a set of nodes where we can emit a
-    `SetPhiStmt` that assigns the phi for `reg` to `expr`.
+    As part of `assign_naive_phis()`, we need to pick a set of nodes where we
+    can emit a `SetNaivePhiStmt` that assigns the phi for `reg` to `expr`.
     The final register state for `reg` for each node in `nodes` is `expr`,
     so the best case would be finding a single dominating node for the assignment.
     """
@@ -3739,12 +3756,14 @@ def pick_phi_assignment_nodes(
     return nodes
 
 
-def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
+def assign_naive_phis(
+    used_naive_phis: List[NaivePhiExpr], stack_info: StackInfo
+) -> None:
     i = 0
     # Iterate over used phis until there are no more remaining. New ones may
     # appear during iteration, hence the while loop.
-    while i < len(used_phis):
-        phi = used_phis[i]
+    while i < len(used_naive_phis):
+        phi = used_naive_phis[i]
         assert phi.num_usages > 0
         assert len(phi.node.parents) >= 2
 
@@ -3776,30 +3795,27 @@ def assign_phis(used_phis: List[PhiExpr], stack_info: StackInfo) -> None:
                 phi_expr.use()
         else:
             for expr, nodes in equivalent_nodes.items():
-                for node in pick_phi_assignment_nodes(phi.reg, nodes, expr):
+                for node in pick_naive_phi_assignment_nodes(phi.reg, nodes, expr):
                     block_info = get_block_info(node)
                     expr = block_info.final_register_states[phi.reg]
-                    if isinstance(expr, PhiExpr):
+                    if isinstance(expr, NaivePhiExpr):
                         # Explicitly mark how the expression is used if it's a phi,
                         # so we can propagate phi sets (to get rid of temporaries).
                         expr.use(from_phi=phi)
                     else:
                         expr.use()
                     typed_expr = as_type(expr, phi.type, silent=True)
-                    block_info.to_write.append(SetPhiStmt(phi, typed_expr))
+                    block_info.to_write.append(SetNaivePhiStmt(phi, typed_expr))
         i += 1
 
-    name_counter: Dict[str, int] = {}
-    for phi in used_phis:
+    for phi in used_naive_phis:
         if not phi.replacement_expr and phi.propagates_to() == phi:
             output_reg_name = stack_info.function.reg_formatter.format(phi.reg)
             prefix = f"phi_{output_reg_name}"
             if stack_info.global_info.deterministic_vars:
                 prefix = f"{prefix}_{phi.node.block.index}"
-            counter = name_counter.get(prefix, 0) + 1
-            name_counter[prefix] = counter
-            phi.name = f"{prefix}_{counter}" if counter > 1 else prefix
-            stack_info.phi_vars.append(phi)
+            phi.name = stack_info.temp_var(prefix)
+            stack_info.naive_phi_vars.append(phi)
 
 
 def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
@@ -3936,38 +3952,55 @@ class NodeState:
         reg: Register,
         source: Optional[Instruction],
     ) -> EvalOnceExpr:
+        planned_var = self.stack_info.get_planned_var(reg, source)
+
+        if "_fictive_" in reg.register_name and isinstance(expr, EvalOnceExpr):
+            # Avoid creating additional EvalOnceExprs for fictive Registers
+            # so they're less likely to appear in the output. These are only
+            # used as inputs to single instructions, so there's no risk of
+            # missing phi assignments.
+            assert not emit_exactly_once
+            assert not planned_var
+            return expr
+
         if emit_exactly_once:
             # (otherwise this will be marked used once num_usages reaches 1)
             expr.use()
-        elif "_fictive_" in reg.register_name and isinstance(expr, EvalOnceExpr):
-            # Avoid creating additional EvalOnceExprs for fictive Registers
-            # so they're less likely to appear in the output
-            return expr
 
-        prefix = self.stack_info.function.reg_formatter.format(reg)
-        # if reuse_var is not None:
-        #     var = reuse_var
-        # else:
-        #     assert prefix
-        if True:
+        if planned_var is not None:
+            var = planned_var
+        else:
+            prefix = self.stack_info.function.reg_formatter.format(reg)
             if prefix == "condition_bit":
                 prefix = "cond"
             temp_name = f"temp_{prefix}"
             if self.stack_info.global_info.deterministic_vars:
                 temp_name = f"{temp_name}_{self.regs.get_instruction_lineno()}"
-            var = Var(self.stack_info, temp_name)
+            var = Var(self.stack_info, temp_name, expr.type)
+            self.stack_info.temp_vars.append(var)
 
+        # TODO: cast to the type of the Var?
         expr = EvalOnceExpr(
             wrapped_expr=expr,
             var=var,
             type=expr.type,
+            source=source,
             emit_exactly_once=emit_exactly_once,
             trivial=trivial,
         )
-        var.num_usages += 1
         stmt = EvalOnceStmt(expr)
         self.write_statement(stmt)
-        self.stack_info.temp_vars.append(stmt)
+        var.debug_exprs.append(expr)
+
+        if planned_var is not None:
+            # Count the pre-planned var assignment as a use. (We could make
+            # this lazy until the consuming RegisterVar is used, to avoid dead
+            # assignments for phis that appear due to function call heuristics
+            # but later vanish when type information improves. For now, we
+            # don't.)
+            assert var.is_used
+            expr.use()
+
         return expr
 
     def _prevent_later_uses(self, expr_filter: Callable[[Expression], bool]) -> None:
@@ -3975,7 +4008,7 @@ class NodeState:
         for r in self.regs.contents.keys():
             data = self.regs.contents[r]
             expr = data.value
-            if isinstance(expr, (RegisterVar, PhiExpr)):
+            if isinstance(expr, (RegisterVar, NaivePhiExpr)):
                 continue
             if not data.meta.force and expr_filter(expr):
                 # Mark the register as "if used, emit the expression's once var".
@@ -4025,15 +4058,16 @@ class NodeState:
             return None
 
         if isinstance(expr, LocalVar):
-            if (
-                isinstance(self.node, ReturnNode)
-                and self.stack_info.maybe_get_register_var(reg)
-                and self.stack_info.in_callee_save_reg_region(expr.value)
-                and reg in self.stack_info.callee_save_regs
-            ):
-                # Elide saved register restores with --reg-vars (it doesn't
-                # matter in other cases).
-                return None
+            # TODO
+            # if (
+            #     isinstance(self.node, ReturnNode)
+            #     and self.stack_info.maybe_get_register_var(reg)
+            #     and self.stack_info.in_callee_save_reg_region(expr.value)
+            #     and reg in self.stack_info.callee_save_regs
+            # ):
+            #     # Elide saved register restores with --reg-vars (it doesn't
+            #     # matter in other cases).
+            #     return None
             if expr in self.local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
@@ -4052,8 +4086,8 @@ class NodeState:
         emit_exactly_once: bool = False,
         function_return: bool = False,
     ) -> Optional[Expression]:
-        assert self.regs._active_instr is not None
         source = self.regs._active_instr
+        assert source is not None
 
         if trivial is None:
             trivial = is_trivial_expression(uw_expr)
@@ -4071,15 +4105,15 @@ class NodeState:
             expr.use()
             self.write_statement(ExprStmt(expr))
         else:
-            dest = self.stack_info.maybe_get_register_var(reg)
-            if dest is not None:
-                self.stack_info.use_register_var(dest)
-                # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
-                if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
-                    st_source = as_type(expr, dest.type, True)
-                    st_source.use()
-                    self.write_statement(StoreStmt(source=st_source, dest=dest))
-                expr = dest
+            # dest = self.stack_info.maybe_get_register_var(reg)
+            # if dest is not None:
+            #     self.stack_info.use_register_var(dest)
+            #     # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
+            #     if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
+            #         st_source = as_type(expr, dest.type, True)
+            #         st_source.use()
+            #         self.write_statement(StoreStmt(source=st_source, dest=dest))
+            #     expr = dest
             self.regs.set_with_meta(
                 reg,
                 expr,
@@ -4264,19 +4298,14 @@ class NodeState:
         for out in outputs:
             if not isinstance(out, Register):
                 continue
-            val = self._eval_once(
-                return_reg_vals[out],
-                emit_exactly_once=False,
-                trivial=False,
-                reg=out,
-                source=source,
-            )
+            val = return_reg_vals[out]
             self.set_reg_raw(out, val, trivial=False, function_return=True)
 
         self.has_function_call = True
 
     @contextmanager
     def current_instr(self, instr: Instruction) -> Iterator[None]:
+        assert self.regs._active_instr is None
         self.regs.set_active_instruction(instr)
         self.in_pattern = instr.in_pattern
         try:
@@ -4330,7 +4359,7 @@ def translate_node_body(state: NodeState) -> BlockInfo:
 
 def translate_graph_from_block(
     state: NodeState,
-    used_phis: List[PhiExpr],
+    used_naive_phis: List[NaivePhiExpr],
     return_blocks: List[BlockInfo],
     options: Options,
 ) -> None:
@@ -4406,18 +4435,41 @@ def translate_graph_from_block(
             r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
         )
         for reg in phi_regs:
-            if reg_always_set(child, reg, dom_set=(reg in state.regs)):
-                expr: Optional[RegExpression] = stack_info.maybe_get_register_var(reg)
-                if expr is None:
-                    expr = PhiExpr(
-                        reg=reg, node=child, used_phis=used_phis, type=Type.any_reg()
+            dom_expr = state.regs.get_raw(reg)
+            dom_sources: List[Optional[Instruction]]
+            if dom_expr is None:
+                dom_sources = []
+            elif isinstance(dom_expr, EvalOnceExpr):
+                dom_sources = [dom_expr.source]
+            elif isinstance(dom_expr, RegisterVar):
+                dom_sources = dom_expr.sources
+            elif isinstance(dom_expr, NaivePhiExpr):
+                dom_sources = dom_expr.sources
+            else:
+                static_assert_unreachable(dom_expr)
+            sources = reg_sources(child, reg, dom_sources)
+
+            if sources:
+                var = stack_info.get_planned_var(reg, sources[0])
+                expr: RegExpression
+                if var is not None and all(
+                    stack_info.get_planned_var(reg, s) == var for s in sources[1:]
+                ):
+                    expr = RegisterVar(var, var.type, sources)
+                else:
+                    expr = NaivePhiExpr(
+                        reg=reg,
+                        node=child,
+                        type=Type.any_reg(),
+                        sources=sources,
+                        used_naive_phis=used_naive_phis,
                     )
                 new_regs.global_set_with_meta(reg, expr, RegMeta(inherited=True))
             elif reg in new_regs:
                 del new_regs[reg]
 
         child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
-        translate_graph_from_block(child_state, used_phis, return_blocks, options)
+        translate_graph_from_block(child_state, used_naive_phis, return_blocks, options)
 
 
 def resolve_types_late(stack_info: StackInfo) -> None:
@@ -4933,11 +4985,11 @@ def translate_to_ast(
         print(stack_info)
         print("\nNow, we attempt to translate:")
 
-    used_phis: List[PhiExpr] = []
+    used_naive_phis: List[NaivePhiExpr] = []
     return_blocks: List[BlockInfo] = []
     translate_graph_from_block(
         state,
-        used_phis,
+        used_naive_phis,
         return_blocks,
         options,
     )
@@ -4970,7 +5022,7 @@ def translate_to_ast(
             if not param.name:
                 param.name = arg.format(Formatter())
 
-    assign_phis(used_phis, stack_info)
+    assign_naive_phis(used_naive_phis, stack_info)
     resolve_types_late(stack_info)
 
     if options.pdb_translate:
@@ -4981,11 +5033,12 @@ def translate_to_ast(
         for local in stack_info.local_vars:
             var_name = local.format(fmt)
             v[var_name] = local
-        for temp in stack_info.temp_vars:
-            if temp.need_decl():
-                var_name = temp.expr.var.format(fmt)
-                v[var_name] = temp.expr
-        for phi in stack_info.phi_vars:
+        for var in stack_info.temp_vars:
+            if var.is_used:
+                var_name = var.format(fmt)
+                exprs = var.debug_exprs
+                v[var_name] = exprs[0] if len(exprs) == 1 else exprs
+        for phi in stack_info.naive_phi_vars:
             assert phi.name is not None
             v[phi.name] = phi
         pdb.set_trace()

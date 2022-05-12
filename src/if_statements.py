@@ -1438,27 +1438,17 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
                 )
                 any_decl = True
 
-        # With reused temps (no longer used), we can get duplicate declarations,
-        # hence the use of a set here.
-        temp_decls = set()
-        for temp_var in function_info.stack_info.temp_vars:
-            if temp_var.need_decl():
-                expr = temp_var.expr
-                type_decl = expr.type.to_decl(expr.var.format(fmt), fmt)
-                temp_decls.add(f"{type_decl};")
+        temp_decls = []
+        for var in function_info.stack_info.temp_vars:
+            if var.is_used:
+                type_decl = var.type.to_decl(var.format(fmt), fmt)
+                temp_decls.append(f"{type_decl};")
                 any_decl = True
         for decl in sorted(temp_decls):
             function_lines.append(SimpleStatement(decl).format(fmt))
 
-        for phi_var in function_info.stack_info.phi_vars:
+        for phi_var in function_info.stack_info.naive_phi_vars:
             type_decl = phi_var.type.to_decl(phi_var.get_var_name(), fmt)
-            function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
-            any_decl = True
-
-        for reg_var in function_info.stack_info.reg_vars.values():
-            if reg_var.reg not in function_info.stack_info.used_reg_vars:
-                continue
-            type_decl = reg_var.type.to_decl(reg_var.format(fmt), fmt)
             function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
             any_decl = True
 

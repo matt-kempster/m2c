@@ -102,7 +102,7 @@ class InstructionMeta:
         return f"{adj} {self.filename} line {self.lineno}"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Instruction:
     mnemonic: str
     args: List[Argument]
