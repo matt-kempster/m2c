@@ -5,6 +5,7 @@ import struct
 import typing
 from pathlib import Path
 from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
+from typing import Any
 
 from .error import DecompFailure
 from .options import Options
@@ -30,6 +31,10 @@ class Function:
     name: str
     body: List[Union[Instruction, Label]] = field(default_factory=list)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
+
+    # TODO: move this somewhere closer to translate.py, where we can type it.
+    # Dict[Tuple[Register, Optional[Instruction]], "Var"]
+    planned_vars: Dict[Any, Any] = field(default_factory=dict)
 
     def new_label(self, name: str) -> None:
         label = Label(name)

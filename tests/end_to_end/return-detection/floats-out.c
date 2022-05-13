@@ -1,13 +1,10 @@
 f32 bar();                                          /* extern */
 
 f32 test(void) {
-    f32 temp_f0;
     f32 phi_f0;
 
     /* Flowgraph is not reducible, falling back to gotos-only mode. */
-    temp_f0 = bar();
-    phi_f0 = temp_f0;
-    phi_f0 = temp_f0;
+    phi_f0 = bar();
     if (4 == 0) {
         goto block_3;
     }

@@ -1,7 +1,7 @@
 ? test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
+    ? phi_v1;
     s32 phi_t0;
     s32 phi_t0_2;
-    ? phi_v1;
 
     phi_v1 = 0;
     if (((arg0 + arg1) != 0) || (((arg1 + arg2) != 0) && ((arg0 * arg1) != 0)) || ((arg3 != 0) && (arg0 != 0))) {

@@ -1,8 +1,8 @@
 ? foo(s32);                                         /* static */
 
 s32 test(s32 arg0) {
-    s32 temp_r31;
     s32 phi_r31;
+    s32 temp_r31;
 
     phi_r31 = arg0;
 loop_2:

@@ -203,9 +203,6 @@ class StackInfo:
     naive_phi_vars: List["NaivePhiExpr"] = field(default_factory=list)
     reg_vars: Dict[Register, "Var"] = field(default_factory=dict)
     used_reg_vars: Set[Register] = field(default_factory=set)
-    planned_vars: Dict[Tuple[Register, Optional[Instruction]], "Var"] = field(
-        default_factory=dict
-    )
     arguments: List["PassedInArg"] = field(default_factory=list)
     temp_name_counter: Dict[str, int] = field(default_factory=dict)
     nonzero_accesses: Set["Expression"] = field(default_factory=set)
@@ -409,7 +406,18 @@ class StackInfo:
         self, reg: Register, source: Optional[Instruction]
     ) -> Optional["Var"]:
         reg_var = self.reg_vars.get(reg)
-        return reg_var or self.planned_vars.get((reg, source))
+        return reg_var or self.function.planned_vars.get((reg, source))
+
+    def get_or_create_planned_var(
+        self, reg: Register, source: Optional[Instruction]
+    ) -> "Var":
+        assert reg not in self.reg_vars
+        ret = self.function.planned_vars.get((reg, source))
+        if not ret:
+            reg_name = self.function.reg_formatter.format(reg)
+            ret = Var(self, prefix=f"phi_{reg_name}", type=Type.any_reg())
+            self.function.planned_vars[(reg, source)] = ret
+        return ret
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg == self.global_info.arch.stack_pointer_reg:
@@ -674,7 +682,7 @@ class Var:
         return self.name
 
     def __str__(self) -> str:
-        return "<var>"
+        return f"<var: {id(self)}>"
 
 
 class Expression(abc.ABC):
@@ -972,9 +980,32 @@ class BinaryOp(Condition):
     def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
+    def normalize_for_formatting(self) -> "BinaryOp":
+        right_expr = late_unwrap(self.right)
+        if (
+            not self.is_floating()
+            and isinstance(right_expr, Literal)
+            and right_expr.value < 0
+        ):
+            if self.op == "+":
+                neg = Literal(value=-right_expr.value, type=right_expr.type)
+                sub = BinaryOp(op="-", left=self.left, right=neg, type=self.type)
+                return sub
+            if self.op in ("&", "|"):
+                neg = Literal(value=~right_expr.value, type=right_expr.type)
+                right = UnaryOp("~", neg, type=Type.any_reg())
+                expr = BinaryOp(op=self.op, left=self.left, right=right, type=self.type)
+                return expr
+        return self
+
     def format(self, fmt: Formatter) -> str:
         left_expr = late_unwrap(self.left)
         right_expr = late_unwrap(self.right)
+
+        adj = self.normalize_for_formatting()
+        if adj is not self:
+            return adj.format(fmt)
+
         if (
             self.is_comparison()
             and isinstance(left_expr, Literal)
@@ -992,21 +1023,6 @@ class BinaryOp(Condition):
         # type information: end-of-array pointers are particularly bad.)
         if self.op in ("==", "!=") and isinstance(right_expr, Literal):
             right_expr = elide_literal_casts(as_type(right_expr, left_expr.type, True))
-
-        if (
-            not self.is_floating()
-            and isinstance(right_expr, Literal)
-            and right_expr.value < 0
-        ):
-            if self.op == "+":
-                neg = Literal(value=-right_expr.value, type=right_expr.type)
-                sub = BinaryOp(op="-", left=left_expr, right=neg, type=self.type)
-                return sub.format(fmt)
-            if self.op in ("&", "|"):
-                neg = Literal(value=~right_expr.value, type=right_expr.type)
-                right = UnaryOp("~", neg, type=Type.any_reg())
-                expr = BinaryOp(op=self.op, left=left_expr, right=right, type=self.type)
-                return expr.format(fmt)
 
         # For commutative, left-associative operations, strip unnecessary parentheses.
         lhs = left_expr.format(fmt)
@@ -1857,10 +1873,11 @@ class EvalOnceStmt(Statement):
         )
 
     def format(self, fmt: Formatter) -> str:
-        val_str = format_expr(elide_literal_casts(self.expr.wrapped_expr), fmt)
+        val = elide_literal_casts(self.expr.wrapped_expr)
         if self.expr.emit_exactly_once and self.expr.num_usages == 0:
+            val_str = format_expr(val, fmt)
             return f"{val_str};"
-        return f"{self.expr.var.format(fmt)} = {val_str};"
+        return format_var_assignment(self.expr.var, val, fmt)
 
 
 @dataclass
@@ -2456,6 +2473,7 @@ def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> s
     dest = late_unwrap(dest)
     source = late_unwrap(source)
     if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
+        source = source.normalize_for_formatting()
         rhs = None
         if late_unwrap(source.left) == dest:
             rhs = source.right
@@ -2464,6 +2482,34 @@ def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> s
         if rhs is not None:
             return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
     return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
+
+
+def expr_to_var(expr: Expression) -> Optional[Var]:
+    if isinstance(expr, RegisterVar):
+        return expr.var
+    if isinstance(expr, EvalOnceExpr) and expr.uses_var():
+        return expr.var
+    return None
+
+
+def format_var_assignment(dest: Var, source: Expression, fmt: Formatter) -> str:
+    """Stringify `dest = source;`."""
+
+    dest_str = dest.format(fmt)
+    source = late_unwrap(source)
+    if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
+        source = source.normalize_for_formatting()
+        rhs = None
+        if expr_to_var(late_unwrap(source.left)) == dest:
+            rhs = source.right
+        elif (
+            expr_to_var(late_unwrap(source.right)) == dest
+            and source.op in ASSOCIATIVE_OPS
+        ):
+            rhs = source.left
+        if rhs is not None:
+            return f"{dest_str} {source.op}= {format_expr(rhs, fmt)};"
+    return f"{dest_str} = {format_expr(source, fmt)};"
 
 
 def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
@@ -3725,6 +3771,29 @@ def reg_sources(
     return sources
 
 
+@dataclass
+class VarJoiner:
+    """Union-find-based data structure used to merge Var's together."""
+
+    uf_parents: Dict[Var, Var] = field(default_factory=dict)
+
+    def canonicalize(self, v: Var) -> Var:
+        root = v
+        while root in self.uf_parents:
+            root = self.uf_parents[root]
+        while v != root:
+            new_v = self.uf_parents[v]
+            self.uf_parents[v] = root
+            v = new_v
+        return root
+
+    def join(self, a: Var, b: Var) -> None:
+        a = self.canonicalize(a)
+        b = self.canonicalize(b)
+        if a != b:
+            self.uf_parents[a] = b
+
+
 def pick_naive_phi_assignment_nodes(
     reg: Register, nodes: List[Node], expr: Expression
 ) -> List[Node]:
@@ -3757,7 +3826,7 @@ def pick_naive_phi_assignment_nodes(
 
 
 def assign_naive_phis(
-    used_naive_phis: List[NaivePhiExpr], stack_info: StackInfo
+    used_naive_phis: List[NaivePhiExpr], var_joiner: VarJoiner, stack_info: StackInfo
 ) -> None:
     i = 0
     # Iterate over used phis until there are no more remaining. New ones may
@@ -3816,6 +3885,19 @@ def assign_naive_phis(
                 prefix = f"{prefix}_{phi.node.block.index}"
             phi.name = stack_info.temp_var(prefix)
             stack_info.naive_phi_vars.append(phi)
+            join_planned_vars(var_joiner, stack_info, phi.reg, phi.sources)
+
+
+def join_planned_vars(
+    var_joiner: VarJoiner,
+    stack_info: StackInfo,
+    reg: Register,
+    sources: List[Optional[Instruction]],
+) -> None:
+    var = stack_info.get_or_create_planned_var(reg, sources[0])
+    for source in sources[1:]:
+        var2 = stack_info.get_or_create_planned_var(reg, source)
+        var_joiner.join(var, var2)
 
 
 def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
@@ -3969,6 +4051,8 @@ class NodeState:
 
         if planned_var is not None:
             var = planned_var
+            expr = as_type(expr, var.type, silent=True)
+            self._prevent_later_uses(lambda e: expr_to_var(e) == var)
         else:
             prefix = self.stack_info.function.reg_formatter.format(reg)
             if prefix == "condition_bit":
@@ -3979,7 +4063,6 @@ class NodeState:
             var = Var(self.stack_info, temp_name, expr.type)
             self.stack_info.temp_vars.append(var)
 
-        # TODO: cast to the type of the Var?
         expr = EvalOnceExpr(
             wrapped_expr=expr,
             var=var,
@@ -4035,17 +4118,18 @@ class NodeState:
 
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
         assert self.regs._active_instr is None
-        self.regs.global_set_with_meta(
-            reg,
-            self._eval_once(
-                expr,
-                emit_exactly_once=False,
-                trivial=True,
-                reg=reg,
-                source=None,
-            ),
-            meta,
+        assert meta.initial
+        expr = self._eval_once(
+            expr,
+            emit_exactly_once=False,
+            trivial=True,
+            reg=reg,
+            source=None,
         )
+        self.regs.global_set_with_meta(reg, expr, meta)
+        if expr.var.is_used:
+            # TODO: hack to treat argument phis as accessed PassedInArg's
+            self.regs[reg]
 
     def set_reg(
         self,
@@ -4921,6 +5005,17 @@ def translate_to_ast(
         stack_info=stack_info,
     )
 
+    # TODO hack
+    seen_planned_vars: Set[Var] = set()
+    for k, var in function.planned_vars.items():
+        if var not in seen_planned_vars:
+            seen_planned_vars.add(var)
+            var.stack_info = stack_info
+            var.name = None
+            var.debug_exprs = []
+            var.is_used = True
+            stack_info.temp_vars.append(var)
+
     arch = global_info.arch
     state.set_initial_reg(
         arch.stack_pointer_reg,
@@ -5022,8 +5117,13 @@ def translate_to_ast(
             if not param.name:
                 param.name = arg.format(Formatter())
 
-    assign_naive_phis(used_naive_phis, stack_info)
+    var_joiner = VarJoiner()
+    assign_naive_phis(used_naive_phis, var_joiner, stack_info)
     resolve_types_late(stack_info)
+
+    # TODO hack
+    for k, var in function.planned_vars.items():
+        function.planned_vars[k] = var_joiner.canonicalize(var)
 
     if options.pdb_translate:
         import pdb
