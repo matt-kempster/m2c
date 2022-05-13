@@ -3,8 +3,8 @@ void test(s32 arg0, s32 arg1) {
     s32 phi_r6;
     s32 temp_r5;
     s8 *phi_r3;
+    s8 *temp_r5_2;
     u32 phi_ctr;
-    void *temp_r5_2;
 
     phi_r6 = 0;
     if (arg1 > 0) {

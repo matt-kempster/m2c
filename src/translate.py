@@ -4052,7 +4052,7 @@ class NodeState:
         if planned_var is not None:
             var = planned_var
             expr = as_type(expr, var.type, silent=True)
-            self._prevent_later_uses(lambda e: expr_to_var(e) == var)
+            self.prevent_later_var_uses(var)
         else:
             prefix = self.stack_info.function.reg_formatter.format(reg)
             if prefix == "condition_bit":
@@ -4087,13 +4087,14 @@ class NodeState:
         return expr
 
     def _prevent_later_uses(self, expr_filter: Callable[[Expression], bool]) -> None:
-        """Prevent later uses of registers whose contents match a callback filter."""
+        """Prevent later uses of registers that recursively contain something that
+        matches a callback filter."""
         for r in self.regs.contents.keys():
             data = self.regs.contents[r]
             expr = data.value
             if isinstance(expr, (RegisterVar, NaivePhiExpr)):
                 continue
-            if not data.meta.force and expr_filter(expr):
+            if not data.meta.force and uses_expr(expr, expr_filter):
                 # Mark the register as "if used, emit the expression's once var".
                 if not isinstance(expr, EvalOnceExpr):
                     static_assert_unreachable(expr)
@@ -4103,18 +4104,18 @@ class NodeState:
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
         subexpression."""
-        self._prevent_later_uses(lambda e: uses_expr(e, lambda e2: e2 == sub_expr))
+        self._prevent_later_uses(lambda e: e == sub_expr)
+
+    def prevent_later_var_uses(self, var: Var) -> None:
+        self._prevent_later_uses(lambda e: expr_to_var(e) == var)
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
-        self._prevent_later_uses(
-            lambda e: uses_expr(e, lambda e2: isinstance(e2, FuncCall))
-        )
+        self._prevent_later_uses(lambda e: isinstance(e, FuncCall))
 
     def prevent_later_reads(self) -> None:
         """Prevent later uses of registers that recursively contain a read."""
-        contains_read = lambda e: isinstance(e, (StructAccess, ArrayAccess))
-        self._prevent_later_uses(lambda e: uses_expr(e, contains_read))
+        self._prevent_later_uses(lambda e: isinstance(e, (StructAccess, ArrayAccess)))
 
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
         assert self.regs._active_instr is None

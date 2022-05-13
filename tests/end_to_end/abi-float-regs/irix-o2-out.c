@@ -7,6 +7,8 @@ f32 test(s32 arg0) {
     f64 phi_fv1;
     s32 phi_v0;
     s32 temp_a1;
+    s32 temp_ft0;
+    s32 temp_ft3;
     s32 temp_t6;
     s32 temp_t7;
     s32 temp_t8;
@@ -41,12 +43,14 @@ loop_6:
                 if (temp_t6 < 0) {
                     phi_ft2 += 4294967296.0;
                 }
+                temp_ft3 = temp_t7;
+                temp_ft0 = temp_t8;
                 phi_v0 -= 4;
-                phi_ft5 = (f64) temp_t7;
+                phi_ft5 = (f64) temp_ft3;
                 if (temp_t7 < 0) {
                     phi_ft5 += 4294967296.0;
                 }
-                phi_ft1_2 = (f64) temp_t8;
+                phi_ft1_2 = (f64) temp_ft0;
                 if (temp_t8 < 0) {
                     phi_ft1_2 += 4294967296.0;
                 }

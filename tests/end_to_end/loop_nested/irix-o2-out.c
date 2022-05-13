@@ -26,7 +26,7 @@ s32 test(s32 arg0) {
                         phi_a2 += phi_v0;
                         phi_a3 += 1;
                     } while (temp_t1 != phi_a3);
-                    if (phi_a3 != arg0) {
+                    if (phi_a1 != arg0) {
                         goto block_6;
                     }
                 } else {
