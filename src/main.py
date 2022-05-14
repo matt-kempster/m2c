@@ -186,11 +186,11 @@ def run(options: Options) -> int:
 
     return_code = 0
     try:
-        if options.visualize_flowgraph:
+        if options.visualize_flowgraph is not None:
             fn_info = function_infos[0]
             if isinstance(fn_info, Exception):
                 raise fn_info
-            print(visualize_flowgraph(fn_info.flow_graph))
+            print(visualize_flowgraph(fn_info.flow_graph, options.visualize_flowgraph))
             return 0
 
         type_decls = typepool.format_type_declarations(
@@ -348,8 +348,12 @@ def parse_flags(flags: List[str]) -> Options:
     )
     group.add_argument(
         "--visualize",
-        dest="visualize",
-        action="store_true",
+        dest="visualize_flowgraph",
+        nargs="?",
+        default=None,
+        const=Options.VisualizeTypeEnum.C,
+        type=Options.VisualizeTypeEnum,
+        choices=list(Options.VisualizeTypeEnum),
         help="Print an SVG visualization of the control flow graph using graphviz",
     )
     group.add_argument(
@@ -554,7 +558,7 @@ def parse_flags(flags: List[str]) -> Options:
             functions.append(fn)
 
     # The debug output interferes with the visualize output
-    if args.visualize:
+    if args.visualize_flowgraph is not None:
         args.debug = False
 
     return Options(
@@ -571,7 +575,7 @@ def parse_flags(flags: List[str]) -> Options:
         goto_patterns=args.goto_patterns,
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
-        visualize_flowgraph=args.visualize,
+        visualize_flowgraph=args.visualize_flowgraph,
         c_contexts=args.c_contexts,
         use_cache=args.use_cache,
         dump_typemap=args.dump_typemap,

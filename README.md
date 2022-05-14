@@ -255,10 +255,11 @@ There are several options to `m2c` which can be used to troubleshoot poor result
 
 Pass `--visualize` on the command line, or use the "Visualize" button on the website. The output will be an SVG file.
 
-Example to produce `my_fn.svg` of `my_fn()`:
+Example to produce C & assembly visualizations of `my_fn()`:
 
 ```sh
-python3 ./m2c.py --visualize --context ctx.c -f my_fn my_asm.s > my_fn.svg
+python3 ./m2c.py --visualize=c --context ctx.c -f my_fn my_asm.s > my_fn_c.svg
+python3 ./m2c.py --visualize=asm --context ctx.c -f my_fn my_asm.s > my_fn_asm.svg
 ```
 
 ### Migrating from `mips_to_c.py`
