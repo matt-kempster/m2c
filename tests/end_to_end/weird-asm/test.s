@@ -12,7 +12,7 @@ nop
 
 test:
 addiu $sp, $sp, -0x34
-sw $s0, 0X30($sp)
+sw $s0, 0X20+16($sp)
 beq $zero, $zero, .label
 loc_whatever:
 lui $v0, (0x12345678 >> (8 + 0x4 * 2))
