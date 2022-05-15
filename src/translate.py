@@ -3743,6 +3743,27 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
+def vars_clobbered_until_dominator(stack_info: StackInfo, node: Node) -> Set[Var]:
+    assert node.immediate_dominator is not None
+
+    seen = {node.immediate_dominator}
+    stack = node.parents[:]
+    clobbered = set()
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        for instr in n.block.instructions:
+            for loc in instr.outputs:
+                if isinstance(loc, Register):
+                    var = stack_info.get_planned_var(loc, instr)
+                    if var is not None:
+                        clobbered.add(var)
+        stack.extend(n.parents)
+    return clobbered
+
+
 def reg_sources(
     node: Node, reg: Register, dom_sources: List[Optional[Instruction]]
 ) -> List[Optional[Instruction]]:
@@ -4052,7 +4073,7 @@ class NodeState:
         if planned_var is not None:
             var = planned_var
             expr = as_type(expr, var.type, silent=True)
-            self.prevent_later_var_uses(var)
+            self.prevent_later_var_uses({var})
         else:
             prefix = self.stack_info.function.reg_formatter.format(reg)
             if prefix == "condition_bit":
@@ -4106,8 +4127,8 @@ class NodeState:
         subexpression."""
         self._prevent_later_uses(lambda e: e == sub_expr)
 
-    def prevent_later_var_uses(self, var: Var) -> None:
-        self._prevent_later_uses(lambda e: expr_to_var(e) == var)
+    def prevent_later_var_uses(self, vars: Set[Var]) -> None:
+        self._prevent_later_uses(lambda e: expr_to_var(e) in vars)
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
@@ -4553,7 +4574,10 @@ def translate_graph_from_block(
             elif reg in new_regs:
                 del new_regs[reg]
 
+        clobbered_vars = vars_clobbered_until_dominator(stack_info, child)
         child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
+        child_state.prevent_later_var_uses(clobbered_vars)
+
         translate_graph_from_block(child_state, used_naive_phis, return_blocks, options)
 
 
