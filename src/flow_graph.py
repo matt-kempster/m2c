@@ -17,8 +17,8 @@ from typing import (
     Union,
 )
 
-from .error import DecompFailure
-from .options import Formatter, Target
+from .error import DecompFailure, static_assert_unreachable
+from .options import Formatter, Options, Target
 from .asm_file import AsmData, Function, Label
 from .asm_instruction import (
     AsmAddressMode,
@@ -1497,7 +1497,9 @@ def build_flowgraph(
     return flow_graph
 
 
-def visualize_flowgraph(flow_graph: FlowGraph) -> str:
+def visualize_flowgraph(
+    flow_graph: FlowGraph, viz_type: Options.VisualizeTypeEnum
+) -> str:
     import graphviz as g
 
     fmt = Formatter(debug=True)
@@ -1510,32 +1512,40 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> str:
             "fontname": "Monospace",
         },
     )
+
     for node in flow_graph.nodes:
         block_info: Optional[Any] = node.block.block_info
+        asm_label = ""
+        c_label = ""
+
         # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
-        label = f"// Node {node.name()}\l"
         if block_info:
-            label += "".join(
+            asm_label = "".join(
+                f"{'*' if i.meta.synthetic else '&nbsp;'} {i}\l"
+                for i in node.block.instructions
+            )
+            c_label = "".join(
                 w.format(fmt) + "\l" for w in block_info.to_write if w.should_write()
             )
+
         dot.node(node.name())
         if isinstance(node, BasicNode):
             dot.edge(node.name(), node.successor.name(), color="black")
         elif isinstance(node, ConditionalNode):
             if block_info:
-                label += f"if ({block_info.branch_condition.format(fmt)})\l"
+                c_label += f"if ({block_info.branch_condition.format(fmt)})\l"
             dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
             dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
         elif isinstance(node, ReturnNode):
             if block_info and block_info.return_value:
-                label += f"return ({block_info.return_value.format(fmt)});\l"
+                c_label += f"return ({block_info.return_value.format(fmt)});\l"
             else:
-                label += "return;\l"
+                c_label += "return;\l"
             dot.edge(node.name(), node.terminal.name())
         elif isinstance(node, SwitchNode):
             assert block_info is not None
             switch_control = block_info.switch_control
-            label += f"switch ({switch_control.control_expr.format(fmt)})\l"
+            c_label += f"switch ({switch_control.control_expr.format(fmt)})\l"
             for i, case in enumerate(node.cases):
                 dot.edge(
                     node.name(),
@@ -1545,7 +1555,22 @@ def visualize_flowgraph(flow_graph: FlowGraph) -> str:
                 )
         else:
             assert isinstance(node, TerminalNode)
-            label += "// exit\l"
+            asm_label += "// exit\l"
+            c_label += "// exit\l"
+
+        line_label = ""
+        first_instr = next(node.block.instructions, None)
+        if first_instr is not None and first_instr.meta.lineno > 0:
+            line_label = f" (line {first_instr.meta.lineno})"
+
+        label = f"// Node {node.name()}{line_label}\l"
+        if viz_type == Options.VisualizeTypeEnum.ASM:
+            label += asm_label
+        elif viz_type == Options.VisualizeTypeEnum.C:
+            label += c_label
+        else:
+            raise ValueError("Invalid viz_type: {viz_type!r}")
+
         dot.node(node.name(), label=label)
     svg_bytes: bytes = dot.pipe("svg")
     return svg_bytes.decode("utf-8", "replace")

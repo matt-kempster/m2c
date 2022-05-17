@@ -89,6 +89,10 @@ class Options:
         USED = "used"
         NONE = "none"
 
+    class VisualizeTypeEnum(ChoicesEnum):
+        ASM = "asm"
+        C = "c"
+
     filenames: List[str]
     function_indexes_or_names: List[Union[int, str]]
     debug: bool
@@ -102,7 +106,7 @@ class Options:
     goto_patterns: List[str]
     stop_on_error: bool
     print_assembly: bool
-    visualize_flowgraph: bool
+    visualize_flowgraph: Optional[VisualizeTypeEnum]
     c_contexts: List[Path]
     use_cache: bool
     dump_typemap: bool

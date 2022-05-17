@@ -246,6 +246,8 @@ def parse_arg_elems(
     arch: ArchAsmParsing,
     reg_formatter: RegFormatter,
     defines: Dict[str, int],
+    *,
+    top_level: bool,
 ) -> Optional[Argument]:
     value: Optional[Argument] = None
 
@@ -291,7 +293,9 @@ def parse_arg_elems(
             assert macro_name in ("hi", "lo")
             expect("(")
             # Get the argument of the macro (which must exist).
-            m = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
+            m = parse_arg_elems(
+                arg_elems, arch, reg_formatter, defines, top_level=False
+            )
             assert m is not None
             m = constant_fold(m, defines)
             expect(")")
@@ -305,10 +309,16 @@ def parse_arg_elems(
             assert value is None
             value = AsmLiteral(parse_number(arg_elems))
         elif tok == "(":
+            if value is not None and not top_level:
+                # Only allow parsing AsmAddressMode at top level. This makes us parse
+                # a+b(c) as (a+b)(c) instead of a+(b(c)).
+                break
             # Address mode or binary operation.
             expect("(")
             # Get what is being dereferenced.
-            rhs = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
+            rhs = parse_arg_elems(
+                arg_elems, arch, reg_formatter, defines, top_level=False
+            )
             assert rhs is not None
             expect(")")
             if isinstance(rhs, BinOp):
@@ -317,6 +327,7 @@ def parse_arg_elems(
                 value = constant_fold(rhs, defines)
             else:
                 # Address mode.
+                assert top_level
                 rhs = replace_bare_reg(rhs, arch, reg_formatter)
                 if rhs == AsmLiteral(0):
                     rhs = Register("zero")
@@ -356,7 +367,9 @@ def parse_arg_elems(
                     )
                 value = Macro("sda21", value)
             else:
-                rhs = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
+                rhs = parse_arg_elems(
+                    arg_elems, arch, reg_formatter, defines, top_level=False
+                )
                 assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs, defines)
@@ -396,7 +409,7 @@ def parse_args(
     arg_elems: List[str] = list(args.strip())
     output = []
     while arg_elems:
-        ret = parse_arg_elems(arg_elems, arch, reg_formatter, defines)
+        ret = parse_arg_elems(arg_elems, arch, reg_formatter, defines, top_level=True)
         assert ret is not None
         output.append(
             replace_bare_reg(constant_fold(ret, defines), arch, reg_formatter)

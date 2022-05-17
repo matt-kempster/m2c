@@ -110,13 +110,15 @@ class SwitchStatement:
             comments.append("unable to parse jump table")
         elif body_is_empty:
             comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
-        suffix = ";" if body_is_empty else " {"
-        lines.append(
-            fmt.with_comments(
-                f"switch ({format_expr(self.jump.control_expr, fmt)}){suffix}", comments
-            )
-        )
-        if not body_is_empty:
+        head = f"switch ({format_expr(self.jump.control_expr, fmt)})"
+        if body_is_empty:
+            lines.append(fmt.with_comments(f"{head};", comments))
+        else:
+            if fmt.coding_style.newline_after_if:
+                lines.append(fmt.with_comments(f"{head}", comments))
+                lines.append(fmt.indent("{"))
+            else:
+                lines.append(fmt.with_comments(f"{head} {{", comments))
             with fmt.indented():
                 lines.append(self.body.format(fmt))
             lines.append(fmt.indent("}"))

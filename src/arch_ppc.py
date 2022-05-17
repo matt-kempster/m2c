@@ -695,8 +695,9 @@ class PpcArch(Arch):
                 )
                 inputs = [args[1], args[2]]
             else:
-                assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = make_memory_access(args[1], size) + [args[1].rhs]
+                assert len(args) == 2 + psq_imms
+                if isinstance(args[1], AsmAddressMode):
+                    inputs = make_memory_access(args[1], size) + [args[1].rhs]
             outputs = [args[0]]
             eval_fn = lambda s, a: s.set_reg(a.reg_ref(0), cls.instrs_load[mnemonic](a))
         elif mnemonic in cls.instrs_load_update:
