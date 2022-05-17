@@ -11,16 +11,14 @@ void test(void) {
     s32 sp8;
     u16 spC;
     u8 spE;
-    s32 *temp_r3;
     s32 temp_r5;
     u16 temp_r4;
 
-    temp_r3 = &sp8;
     temp_r4 = (u16) $$22;
     sp8 = $$22;
     spC = temp_r4;
     spE = (u8) $$22;
-    foo(temp_r3, temp_r4);
+    foo(&sp8, temp_r4);
     a1.unk1 = (s32) a2.unk1;
     temp_r5 = a1.unk0;
     a3 = temp_r5;

@@ -2467,11 +2467,15 @@ def elide_literal_casts(expr: Expression) -> Expression:
     return uw_expr
 
 
-def uses_expr(expr: Expression, expr_filter: Callable[[Expression], bool]) -> bool:
-    if expr_filter(expr):
+def uses_expr(
+    expr: Expression,
+    expr_filter: Callable[[Expression], bool],
+    parent: Optional[Expression] = None,
+) -> bool:
+    if expr_filter(expr) and not isinstance(parent, AddressOf):
         return True
     for e in expr.dependencies():
-        if uses_expr(e, expr_filter):
+        if uses_expr(e, expr_filter, expr):
             return True
     return False
 
