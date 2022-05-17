@@ -2608,7 +2608,7 @@ def transparent_unwrap(expr: Expression) -> Expression:
     This is safe to use but may result in suboptimal codegen if used pervasively.
     Mainly useful for equality comparisons.
     """
-    if isinstance(expr, EvalOnceExpr) and expr.transparent and not expr.var.is_emitted:
+    if isinstance(expr, EvalOnceExpr) and expr.transparent and not expr.uses_var():
         return transparent_unwrap(expr.wrapped_expr)
     return expr
 
