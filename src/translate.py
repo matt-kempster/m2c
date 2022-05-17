@@ -398,7 +398,7 @@ class StackInfo:
 
     def add_register_var(self, reg: Register, name: str) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        var = Var(self, prefix=name, type=type)
+        var = Var(self, prefix=name, type=type, is_planned=True)
         self.reg_vars[reg] = var
         self.temp_vars.append(var)
 
@@ -415,7 +415,9 @@ class StackInfo:
         ret = self.function.planned_vars.get((reg, source))
         if not ret:
             reg_name = self.function.reg_formatter.format(reg)
-            ret = Var(self, prefix=f"phi_{reg_name}", type=Type.any_reg())
+            ret = Var(
+                self, prefix=f"phi_{reg_name}", type=Type.any_reg(), is_planned=True
+            )
             self.function.planned_vars[(reg, source)] = ret
         return ret
 
@@ -669,14 +671,15 @@ class Var:
     stack_info: StackInfo = field(repr=False)
     prefix: str
     type: Type
-    is_used: bool = False
+    is_planned: bool
+    is_emitted: bool = False
     name: Optional[str] = None
     debug_exprs: List["Expression"] = field(repr=False, default_factory=list)
 
     def format(self, fmt: Formatter) -> str:
         # Assign names lazily, hopefully in approximate output source order.
         # (TODO: use asm order instead?)
-        assert self.is_used
+        assert self.is_emitted
         if self.name is None:
             self.name = self.stack_info.temp_var(self.prefix)
         return self.name
@@ -1155,11 +1158,11 @@ class Cast(Expression):
             return True
         return False
 
-    def is_trivial(self) -> bool:
+    def should_wrap_transparently(self) -> bool:
         return (
             self.reinterpret
             and self.expr.type.is_float() == self.type.is_float()
-            and is_trivial_expression(self.expr)
+            and should_wrap_transparently(self.expr)
         )
 
     def format(self, fmt: Formatter) -> str:
@@ -1641,19 +1644,28 @@ class EvalOnceExpr(Expression):
     # True for function calls/errors
     emit_exactly_once: bool
 
-    # Mutable state:
-
-    # True if this EvalOnceExpr should be totally transparent and not use a variable,
-    # It may dynamically change from true to false due to forced emissions.
-    # Initially, it is based on is_trivial_expression (except for function returns).
+    # True if this EvalOnceExpr should be totally transparent and not use a variable
+    # even it gets assigned to a planned phi var. Based on is_trivial_expression.
     trivial: bool
+
+    # True if this EvalOnceExpr should be totally transparent and not use a variable.
+    # If 'var.is_emitted' is true it is ignored (this may happen dynamically, due to
+    # forced emissions).
+    # Initially, it is based on should_wrap_transparently (except for function returns).
+    # Always true if 'trivial' is true.
+    transparent: bool
+
+    # Mutable state:
 
     # True if this EvalOnceExpr must use a variable (see RegMeta.force)
     forced_emit: bool = False
 
-    # The number of expressions that depend on this EvalOnceExpr; we use a variable
-    # if this is > 1.
-    num_usages: int = 0
+    # True if this EvalOnceExpr has been use()d. If var.is_emitted is true, this will
+    # also be: either because this EvalOnceExpr was used twice and that triggered
+    # var.is_emitted to be set to true, or because the var is a planned phi, and then
+    # this EvalOnceExpr will be use()d as part of its creation, for the assignment to
+    # the phi.
+    is_used: bool = False
 
     def dependencies(self) -> List[Expression]:
         # (this is a bit iffy since state can change over time, but improves uses_expr)
@@ -1662,28 +1674,36 @@ class EvalOnceExpr(Expression):
         return [self.wrapped_expr]
 
     def use(self) -> None:
-        self.num_usages += 1
-        if self.trivial or (self.num_usages == 1 and not self.emit_exactly_once):
+        if self.trivial or (self.transparent and not self.var.is_emitted):
+            # Forward uses through transparent wrapper (unless it has stopped
+            # being transparent)
             self.wrapped_expr.use()
-        if self.num_usages > 1 and not self.trivial:
-            self.var.is_used = True
+        elif not self.is_used:
+            # On first use, forward the use (except in the emit_exactly_once
+            # case where that has already happened).
+            if not self.emit_exactly_once:
+                self.wrapped_expr.use()
+        else:
+            # On second use, make sure a var gets emitted.
+            self.var.is_emitted = True
+        self.is_used = True
 
     def force(self) -> None:
-        # Transition to non-trivial, and mark as used multiple times to force a var.
-        # TODO: If it was originally trivial, we may previously have marked its
-        # wrappee used multiple times, even though we now know that it should
+        # Transition to opaque, and mark as used multiple times to force a var.
+        # TODO: If it was originally transparent, we may previously have marked
+        # its wrappee used multiple times, even though we now know that it should
         # have been marked just once... We could fix that by moving marking of
-        # trivial EvalOnceExpr's to the very end. At least the consequences of
+        # transparent EvalOnceExpr's to the very end. At least the consequences of
         # getting this wrong are pretty mild -- it just causes extraneous var
         # emission in rare cases.
-        if not self.forced_emit:
+        if not self.forced_emit and not self.trivial:
             self.forced_emit = True
-            self.trivial = False
+            self.var.is_emitted = True
             self.use()
             self.use()
 
     def uses_var(self) -> bool:
-        return self.var.is_used and not self.trivial
+        return self.var.is_emitted and not self.trivial
 
     def format(self, fmt: Formatter) -> str:
         if not self.uses_var():
@@ -1868,13 +1888,13 @@ class EvalOnceStmt(Statement):
     expr: EvalOnceExpr
 
     def should_write(self) -> bool:
-        return self.expr.var.is_used or (
-            self.expr.emit_exactly_once and self.expr.num_usages == 0
+        return self.expr.var.is_emitted or (
+            self.expr.emit_exactly_once and not self.expr.is_used
         )
 
     def format(self, fmt: Formatter) -> str:
         val = elide_literal_casts(self.expr.wrapped_expr)
-        if self.expr.emit_exactly_once and self.expr.num_usages == 0:
+        if self.expr.emit_exactly_once and not self.expr.is_used:
             val_str = format_expr(val, fmt)
             return f"{val_str};"
         return format_var_assignment(self.expr.var, val, fmt)
@@ -2349,6 +2369,23 @@ def is_trivial_expression(expr: Expression) -> bool:
     if isinstance(
         expr,
         (
+            Literal,
+            GlobalSymbol,
+            NaivePhiExpr,
+            SecondF64Half,
+        ),
+    ):
+        return True
+    if isinstance(expr, AddressOf):
+        return all(is_trivial_expression(e) for e in expr.dependencies())
+    return False
+
+
+def should_wrap_transparently(expr: Expression) -> bool:
+    # Determine whether an expression should be evaluated only once or not.
+    if isinstance(
+        expr,
+        (
             EvalOnceExpr,
             Literal,
             GlobalSymbol,
@@ -2362,9 +2399,9 @@ def is_trivial_expression(expr: Expression) -> bool:
     ):
         return True
     if isinstance(expr, AddressOf):
-        return all(is_trivial_expression(e) for e in expr.dependencies())
+        return all(should_wrap_transparently(e) for e in expr.dependencies())
     if isinstance(expr, Cast):
-        return expr.is_trivial()
+        return expr.should_wrap_transparently()
     return False
 
 
@@ -2558,15 +2595,15 @@ def late_unwrap(expr: Expression) -> Expression:
     return expr
 
 
-def trivial_unwrap(expr: Expression) -> Expression:
+def transparent_unwrap(expr: Expression) -> Expression:
     """
-    Unwrap trivial EvalOnceExpr's (e.g. EvalOnceExpr's that wrap other EvalOnceExpr's).
+    Unwrap transparent EvalOnceExpr's (e.g. EvalOnceExpr's that wrap other EvalOnceExpr's).
 
     This is safe to use but may result in suboptimal codegen if used pervasively.
     Mainly useful for equality comparisons.
     """
-    if isinstance(expr, EvalOnceExpr) and expr.trivial:
-        return trivial_unwrap(expr.wrapped_expr)
+    if isinstance(expr, EvalOnceExpr) and expr.transparent and not expr.var.is_emitted:
+        return transparent_unwrap(expr.wrapped_expr)
     return expr
 
 
@@ -3372,7 +3409,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             and not expr.forced_emit
         ):
             base, num = fold(early_unwrap(expr), False, allow_sll)
-            if num != 1 and is_trivial_expression(base):
+            if num != 1 and should_wrap_transparently(base):
                 return (base, num)
         return (expr, 1)
 
@@ -3838,7 +3875,7 @@ def pick_naive_phi_assignment_nodes(
         meta = regs.get_meta(reg)
         if raw is None or meta is None or meta.force:
             continue
-        if trivial_unwrap(raw) == expr:
+        if transparent_unwrap(raw) == expr:
             return [node]
 
     # We couldn't find anything, so fall back to the naive solution
@@ -3862,7 +3899,7 @@ def assign_naive_phis(
         for node in phi.node.parents:
             expr = get_block_info(node).final_register_states[phi.reg]
             expr.type.unify(phi.type)
-            equivalent_nodes[trivial_unwrap(expr)].append(node)
+            equivalent_nodes[transparent_unwrap(expr)].append(node)
 
         exprs = list(equivalent_nodes.keys())
         first_uw = early_unwrap(exprs[0])
@@ -3878,7 +3915,7 @@ def assign_naive_phis(
             # prevent_later_uses machinery).
             # If there is just a single unique value, use that without unwrapping
             # to avoid the aforementioned problems. (This check is why we need
-            # trivial_unwrap -- without it len(exprs) would never be 1.)
+            # transparent_unwrap -- without it len(exprs) would never be 1.)
             phi_expr = exprs[0] if len(exprs) == 1 else first_uw
             phi.replacement_expr = as_type(phi_expr, phi.type, silent=True)
             for _ in range(phi.num_usages):
@@ -4051,7 +4088,7 @@ class NodeState:
         expr: Expression,
         *,
         emit_exactly_once: bool,
-        trivial: bool,
+        transparent: bool,
         reg: Register,
         source: Optional[Instruction],
     ) -> EvalOnceExpr:
@@ -4066,8 +4103,10 @@ class NodeState:
             assert not planned_var
             return expr
 
+        trivial = transparent and is_trivial_expression(expr)
+
         if emit_exactly_once:
-            # (otherwise this will be marked used once num_usages reaches 1)
+            # (otherwise this will be marked used once is_used becomes true)
             expr.use()
 
         if planned_var is not None:
@@ -4081,7 +4120,7 @@ class NodeState:
             temp_name = f"temp_{prefix}"
             if self.stack_info.global_info.deterministic_vars:
                 temp_name = f"{temp_name}_{self.regs.get_instruction_lineno()}"
-            var = Var(self.stack_info, temp_name, expr.type)
+            var = Var(self.stack_info, temp_name, expr.type, is_planned=False)
             self.stack_info.temp_vars.append(var)
 
         expr = EvalOnceExpr(
@@ -4091,6 +4130,7 @@ class NodeState:
             source=source,
             emit_exactly_once=emit_exactly_once,
             trivial=trivial,
+            transparent=transparent,
         )
         stmt = EvalOnceStmt(expr)
         self.write_statement(stmt)
@@ -4102,7 +4142,7 @@ class NodeState:
             # assignments for phis that appear due to function call heuristics
             # but later vanish when type information improves. For now, we
             # don't.)
-            assert var.is_used
+            assert var.is_emitted
             expr.use()
 
         return expr
@@ -4144,12 +4184,12 @@ class NodeState:
         expr = self._eval_once(
             expr,
             emit_exactly_once=False,
-            trivial=True,
+            transparent=True,
             reg=reg,
             source=None,
         )
         self.regs.global_set_with_meta(reg, expr, meta)
-        if expr.var.is_used:
+        if expr.var.is_emitted:
             # TODO: hack to treat argument phis as accessed PassedInArg's
             self.regs[reg]
 
@@ -4188,20 +4228,20 @@ class NodeState:
         reg: Register,
         uw_expr: Expression,
         *,
-        trivial: Optional[bool] = None,
+        transparent: Optional[bool] = None,
         emit_exactly_once: bool = False,
         function_return: bool = False,
     ) -> Optional[Expression]:
         source = self.regs._active_instr
         assert source is not None
 
-        if trivial is None:
-            trivial = is_trivial_expression(uw_expr)
+        if transparent is None:
+            transparent = should_wrap_transparently(uw_expr)
 
         expr: RegExpression = self._eval_once(
             uw_expr,
             emit_exactly_once=emit_exactly_once,
-            trivial=trivial,
+            transparent=transparent,
             reg=reg,
             source=source,
         )
@@ -4379,7 +4419,7 @@ class NodeState:
         call = self._eval_once(
             call,
             emit_exactly_once=True,
-            trivial=False,
+            transparent=False,
             reg=Register("ret"),
             source=source,
         )
@@ -4405,7 +4445,7 @@ class NodeState:
             if not isinstance(out, Register):
                 continue
             val = return_reg_vals[out]
-            self.set_reg_raw(out, val, trivial=False, function_return=True)
+            self.set_reg_raw(out, val, transparent=False, function_return=True)
 
         self.has_function_call = True
 
@@ -5038,7 +5078,7 @@ def translate_to_ast(
             var.stack_info = stack_info
             var.name = None
             var.debug_exprs = []
-            var.is_used = True
+            var.is_emitted = True
             stack_info.temp_vars.append(var)
 
     arch = global_info.arch
@@ -5159,7 +5199,7 @@ def translate_to_ast(
             var_name = local.format(fmt)
             v[var_name] = local
         for var in stack_info.temp_vars:
-            if var.is_used:
+            if var.is_emitted:
                 var_name = var.format(fmt)
                 exprs = var.debug_exprs
                 v[var_name] = exprs[0] if len(exprs) == 1 else exprs

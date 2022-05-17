@@ -1440,7 +1440,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
         temp_decls = []
         for var in function_info.stack_info.temp_vars:
-            if var.is_used:
+            if var.is_emitted:
                 type_decl = var.type.to_decl(var.format(fmt), fmt)
                 temp_decls.append(f"{type_decl};")
                 any_decl = True

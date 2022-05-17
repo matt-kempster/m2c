@@ -10,7 +10,7 @@ s32 test(s32 arg0) {
     s32 temp_a0_5;
 
     phi_a0 = arg0;
-    if (arg0 == 5) {
+    if (phi_a0 == 5) {
         do {
             D_410150 = phi_a0;
             temp_a0 = phi_a0 + 1;

@@ -64,16 +64,16 @@ void func_004007C0(u32 arg0) {
     func_00400090((u32) ((s32) (arg0 + (arg0 >> 0x1F)) >> 1));
     func_00400090(arg0 / 3);
     phi_a0 = arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0 = arg0 + 3;
+    if ((s32) phi_a0 < 0) {
+        phi_a0 += 3;
     }
     func_00400090((u32) ((s32) phi_a0 >> 2));
     func_00400090(arg0 / 5);
     func_00400090(arg0 / 6);
     func_00400090(arg0 / 7);
     phi_a0_2 = arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0_2 = arg0 + 7;
+    if ((s32) phi_a0_2 < 0) {
+        phi_a0_2 += 7;
     }
     func_00400090((u32) ((s32) phi_a0_2 >> 3));
     func_00400090(arg0 / 9);
@@ -84,8 +84,8 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / 14);
     func_00400090(arg0 / 15);
     phi_a0_3 = arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0_3 = arg0 + 0xF;
+    if ((s32) phi_a0_3 < 0) {
+        phi_a0_3 += 0xF;
     }
     func_00400090((u32) ((s32) phi_a0_3 >> 4));
     func_00400090(arg0 / 17);
@@ -104,8 +104,8 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / 30);
     func_00400090(arg0 / 31);
     phi_a0_4 = arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0_4 = arg0 + 0x1F;
+    if ((s32) phi_a0_4 < 0) {
+        phi_a0_4 += 0x1F;
     }
     func_00400090((u32) ((s32) phi_a0_4 >> 5));
     func_00400090(arg0 / 33);
@@ -121,8 +121,8 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / 1073741822);
     func_00400090(arg0 / 1073741822);
     phi_a0_5 = arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0_5 = arg0 + 0x3FFFFFFF;
+    if ((s32) phi_a0_5 < 0) {
+        phi_a0_5 += 0x3FFFFFFF;
     }
     func_00400090((u32) ((s32) phi_a0_5 >> 0x1E));
     func_00400090(arg0 / 1073741824);
@@ -136,8 +136,8 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / -7);
     func_00400090(arg0 / -5);
     phi_a0_6 = arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0_6 = arg0 + 3;
+    if ((s32) phi_a0_6 < 0) {
+        phi_a0_6 += 3;
     }
     func_00400090((u32) -((s32) phi_a0_6 >> 2));
     func_00400090(arg0 / -3);

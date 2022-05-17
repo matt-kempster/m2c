@@ -22,7 +22,7 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
 
     phi_a2 = arg2;
     phi_t0 = arg0 + arg1;
-    temp_t7 = arg1 + arg2;
+    temp_t7 = arg1 + phi_a2;
     sp2C = phi_t0;
     sp1C = temp_t7;
     phi_t1 = temp_t7;
@@ -81,7 +81,7 @@ block_4:
             phi_v1_4 = phi_v1_3;
             if (func_00400090(temp_a0_2) != 0) {
                 if (arg3 != 0) {
-                    if (phi_v1_3 < 5) {
+                    if (phi_v1_4 < 5) {
                         do {
                             temp_t9 = (phi_v1_4 + 1) * 2;
                             phi_v1_4 = temp_t9;
