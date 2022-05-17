@@ -1,14 +1,14 @@
 ? bar();                                            /* extern */
 
 void test(void) {
-    s32 phi_v0;
+    s32 var_v0;
 
     bar();
-    phi_v0 = 4;
+    var_v0 = 4;
     do {
         if (1 != 0) {
             bar();
-            phi_v0 = 5;
+            var_v0 = 5;
         }
-    } while ((phi_v0 > 1) < 0);
+    } while ((var_v0 > 1) < 0);
 }

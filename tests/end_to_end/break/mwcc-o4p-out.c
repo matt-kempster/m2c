@@ -1,9 +1,9 @@
 static ? globals;
 
 void test(s32 arg0) {
-    s32 phi_ctr;
+    s32 var_ctr;
 
-    phi_ctr = arg0;
+    var_ctr = arg0;
     if (arg0 > 0) {
 loop_1:
         globals.unk0 = 1;
@@ -27,8 +27,8 @@ loop_1:
             globals.unkC = 4;
         }
 block_10:
-        phi_ctr -= 1;
-        if (phi_ctr == 0) {
+        var_ctr -= 1;
+        if (var_ctr == 0) {
             /* Duplicate return node #11. Try simplifying control flow for better match */
             globals.unk10 = 5;
             return;

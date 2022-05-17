@@ -1,21 +1,21 @@
 s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
-    s32 phi_r5;
-    s32 phi_r7;
+    s32 var_r5;
+    s32 var_r7;
 
-    phi_r7 = 0;
+    var_r7 = 0;
 loop_2:
     if (arg0 != 0) {
         if ((arg1 == 0) && (arg2 == 0)) {
 
         } else {
-            phi_r7 += 1;
+            var_r7 += 1;
             goto loop_2;
         }
     }
 loop_7:
     if (arg0 != 0) {
 block_6:
-        phi_r7 += 1;
+        var_r7 += 1;
         goto loop_7;
     }
     if (arg1 != 0) {
@@ -27,13 +27,13 @@ block_6:
     }
 loop_24:
     if (arg0 != 0) {
-        phi_r7 += 1;
-        if (((arg1 == 0) || ((arg2 == 0) && (arg3 == 0))) && (phi_r7 += 1, ((arg1 == 0) != 0)) && ((arg2 == 0) || (arg3 == 0))) {
-            phi_r7 += 1;
+        var_r7 += 1;
+        if (((arg1 == 0) || ((arg2 == 0) && (arg3 == 0))) && (var_r7 += 1, ((arg1 == 0) != 0)) && ((arg2 == 0) || (arg3 == 0))) {
+            var_r7 += 1;
             if ((arg1 == 0) || ((arg2 == 0) && (arg3 == 0))) {
-                phi_r7 += 1;
+                var_r7 += 1;
                 if ((arg1 == 0) && ((arg2 == 0) || (arg3 == 0))) {
-                    phi_r7 += 1;
+                    var_r7 += 1;
                     goto loop_24;
                 }
             }
@@ -41,12 +41,12 @@ loop_24:
             goto loop_24;
         }
     }
-    phi_r5 = 0;
+    var_r5 = 0;
 loop_27:
-    if ((phi_r5 < 0xA) && ((arg0 != 0) || (arg1 != 0))) {
-        phi_r5 += arg2 + arg3;
-        phi_r7 += 1;
+    if ((var_r5 < 0xA) && ((arg0 != 0) || (arg1 != 0))) {
+        var_r5 += arg2 + arg3;
+        var_r7 += 1;
         goto loop_27;
     }
-    return phi_r7;
+    return var_r7;
 }

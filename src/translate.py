@@ -398,7 +398,7 @@ class StackInfo:
 
     def add_register_var(self, reg: Register, name: str) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        var = Var(self, prefix=name, type=type, is_planned=True)
+        var = Var(self, prefix=f"var_{name}", type=type, is_planned=True)
         self.reg_vars[reg] = var
         self.temp_vars.append(var)
 
@@ -416,7 +416,7 @@ class StackInfo:
         if not ret:
             reg_name = self.function.reg_formatter.format(reg)
             ret = Var(
-                self, prefix=f"phi_{reg_name}", type=Type.any_reg(), is_planned=True
+                self, prefix=f"var_{reg_name}", type=Type.any_reg(), is_planned=True
             )
             self.function.planned_vars[(reg, source)] = ret
         return ret
@@ -2061,6 +2061,8 @@ class RegInfo:
         if meta.inherited:
             self.read_inherited.add(key)
         uw_ret = early_unwrap(ret)
+        # if isinstance(ret, EvalOnceExpr) and ret.trivial:
+        #     return ret.wrapped_expr
         if isinstance(uw_ret, Literal):
             # Requiring early_unwrap at every place that wants to check if an input
             # is a literal is a bit noisy, so we unwrap here instead.
