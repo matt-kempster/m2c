@@ -33,8 +33,11 @@ class Function:
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
     # TODO: move this somewhere closer to translate.py, where we can type it.
-    # Dict[Tuple[Register, Optional[Instruction]], "Var"]
+    # Dict[Tuple[Register, InstructionSource], "Var"]
     planned_vars: Dict[Any, Any] = field(default_factory=dict)
+
+    # Set[Tuple[Register, Node]]
+    planned_inherited_phis: Set[Any] = field(default_factory=set)
 
     def new_label(self, name: str) -> None:
         label = Label(name)

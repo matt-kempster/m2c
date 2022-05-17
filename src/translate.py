@@ -185,6 +185,9 @@ def as_function_ptr(expr: "Expression") -> "Expression":
     return as_type(expr, Type.ptr(Type.function()), True)
 
 
+InstructionSource = Optional[Instruction]
+
+
 @dataclass
 class StackInfo:
     function: Function
@@ -403,13 +406,13 @@ class StackInfo:
         self.temp_vars.append(var)
 
     def get_planned_var(
-        self, reg: Register, source: Optional[Instruction]
+        self, reg: Register, source: InstructionSource
     ) -> Optional["Var"]:
         reg_var = self.reg_vars.get(reg)
         return reg_var or self.function.planned_vars.get((reg, source))
 
     def get_or_create_planned_var(
-        self, reg: Register, source: Optional[Instruction]
+        self, reg: Register, source: InstructionSource
     ) -> "Var":
         assert reg not in self.reg_vars
         ret = self.function.planned_vars.get((reg, source))
@@ -420,6 +423,12 @@ class StackInfo:
             )
             self.function.planned_vars[(reg, source)] = ret
         return ret
+
+    def add_planned_inherited_phi(self, node: Node, reg: Register) -> None:
+        self.function.planned_inherited_phis.add((reg, node))
+
+    def is_planned_inherited_phi(self, node: Node, reg: Register) -> bool:
+        return (reg, node) in self.function.planned_inherited_phis
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg == self.global_info.arch.stack_pointer_reg:
@@ -1250,7 +1259,7 @@ class LocalVar(Expression):
 class RegisterVar(Expression):
     var: Var
     type: Type
-    sources: List[Optional[Instruction]]
+    sources: List[InstructionSource]
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1639,7 +1648,7 @@ class EvalOnceExpr(Expression):
     var: Var
     type: Type
 
-    source: Optional[Instruction]
+    source: InstructionSource
 
     # True for function calls/errors
     emit_exactly_once: bool
@@ -1717,7 +1726,8 @@ class NaivePhiExpr(Expression):
     reg: Register
     node: Node
     type: Type
-    sources: List[Optional[Instruction]]
+    sources: List[InstructionSource]
+    uses_dominator: bool
     used_naive_phis: List["NaivePhiExpr"]
     name: Optional[str] = None
     num_usages: int = 0
@@ -3811,19 +3821,16 @@ def vars_clobbered_until_dominator(stack_info: StackInfo, node: Node) -> Set[Var
     return clobbered
 
 
-def reg_sources(
-    node: Node, reg: Register, dom_sources: List[Optional[Instruction]]
-) -> List[Optional[Instruction]]:
+def reg_sources(node: Node, reg: Register) -> Tuple[List[InstructionSource], bool]:
     assert node.immediate_dominator is not None
     seen = {node.immediate_dominator}
     stack = node.parents[:]
-    sources: List[Optional[Instruction]] = []
+    sources: List[InstructionSource] = []
+    uses_dominator = False
     while stack:
         n = stack.pop()
         if n == node.immediate_dominator:
-            if not dom_sources:
-                return []
-            sources += dom_sources
+            uses_dominator = True
         if n in seen:
             continue
         seen.add(n)
@@ -3833,10 +3840,10 @@ def reg_sources(
                 sources.append(instr)
                 break
             elif reg in instr.clobbers:
-                return []
+                return [], False
         else:
             stack.extend(n.parents)
-    return sources
+    return sources, uses_dominator
 
 
 @dataclass
@@ -3905,6 +3912,8 @@ def assign_naive_phis(
         assert len(phi.node.parents) >= 2
 
         # Group parent nodes by the value of their phi register
+        # TODO: should we look at the nodes corresponding to phi.sources instead,
+        # to improve deduplication?
         equivalent_nodes: DefaultDict[Expression, List[Node]] = defaultdict(list)
         for node in phi.node.parents:
             expr = get_block_info(node).final_register_states[phi.reg]
@@ -3930,6 +3939,8 @@ def assign_naive_phis(
             phi.replacement_expr = as_type(phi_expr, phi.type, silent=True)
             for _ in range(phi.num_usages):
                 phi_expr.use()
+            if phi.uses_dominator and len(exprs) == 1:
+                stack_info.add_planned_inherited_phi(phi.node, phi.reg)
         else:
             for expr, nodes in equivalent_nodes.items():
                 for node in pick_naive_phi_assignment_nodes(phi.reg, nodes, expr):
@@ -3960,7 +3971,7 @@ def join_planned_vars(
     var_joiner: VarJoiner,
     stack_info: StackInfo,
     reg: Register,
-    sources: List[Optional[Instruction]],
+    sources: List[InstructionSource],
 ) -> None:
     var = stack_info.get_or_create_planned_var(reg, sources[0])
     for source in sources[1:]:
@@ -4100,7 +4111,7 @@ class NodeState:
         emit_exactly_once: bool,
         transparent: bool,
         reg: Register,
-        source: Optional[Instruction],
+        source: InstructionSource,
     ) -> EvalOnceExpr:
         planned_var = self.stack_info.get_planned_var(reg, source)
 
@@ -4578,6 +4589,7 @@ def translate_graph_from_block(
             continue
         stack_info = state.stack_info
         new_regs = RegInfo(stack_info=stack_info)
+        child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
         for reg, data in state.regs.contents.items():
             new_regs.global_set_with_meta(
                 reg,
@@ -4592,22 +4604,31 @@ def translate_graph_from_block(
         )
         for reg in phi_regs:
             dom_expr = state.regs.get_raw(reg)
-            dom_sources: List[Optional[Instruction]]
-            if dom_expr is None:
-                dom_sources = []
-            elif isinstance(dom_expr, EvalOnceExpr):
-                dom_sources = [dom_expr.source]
-            elif isinstance(dom_expr, RegisterVar):
-                dom_sources = dom_expr.sources
-            elif isinstance(dom_expr, NaivePhiExpr):
-                dom_sources = dom_expr.sources
-            else:
-                static_assert_unreachable(dom_expr)
-            sources = reg_sources(child, reg, dom_sources)
+            if stack_info.is_planned_inherited_phi(child, reg):
+                assert dom_expr is not None
+                new_regs.global_set_with_meta(reg, dom_expr, RegMeta(inherited=True))
+                continue
+            sources, uses_dominator = reg_sources(child, reg)
+            if uses_dominator:
+                dom_sources: List[InstructionSource]
+                if dom_expr is None:
+                    dom_sources = []
+                elif isinstance(dom_expr, EvalOnceExpr):
+                    dom_sources = [dom_expr.source]
+                elif isinstance(dom_expr, RegisterVar):
+                    dom_sources = dom_expr.sources
+                elif isinstance(dom_expr, NaivePhiExpr):
+                    dom_sources = dom_expr.sources
+                else:
+                    static_assert_unreachable(dom_expr)
+                if not dom_sources:
+                    sources = []
+                else:
+                    sources.extend(dom_sources)
 
             if sources:
+                expr: Optional[RegExpression]
                 var = stack_info.get_planned_var(reg, sources[0])
-                expr: RegExpression
                 if var is not None and all(
                     stack_info.get_planned_var(reg, s) == var for s in sources[1:]
                 ):
@@ -4618,6 +4639,7 @@ def translate_graph_from_block(
                         node=child,
                         type=Type.any_reg(),
                         sources=sources,
+                        uses_dominator=uses_dominator,
                         used_naive_phis=used_naive_phis,
                     )
                 new_regs.global_set_with_meta(reg, expr, RegMeta(inherited=True))
@@ -4625,7 +4647,6 @@ def translate_graph_from_block(
                 del new_regs[reg]
 
         clobbered_vars = vars_clobbered_until_dominator(stack_info, child)
-        child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
         child_state.prevent_later_var_uses(clobbered_vars)
 
         translate_graph_from_block(child_state, used_naive_phis, return_blocks, options)
