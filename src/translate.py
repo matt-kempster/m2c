@@ -2524,7 +2524,7 @@ def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> s
 def expr_to_var(expr: Expression) -> Optional[Var]:
     if isinstance(expr, RegisterVar):
         return expr.var
-    if isinstance(expr, EvalOnceExpr) and expr.uses_var():
+    if isinstance(expr, EvalOnceExpr) and not expr.trivial:
         return expr.var
     return None
 
