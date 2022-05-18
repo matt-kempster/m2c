@@ -31,7 +31,6 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
             sp20 = var_t0;
             temp_v0 = func_00400090(temp_t7);
             var_a2 = arg2;
-            var_t0 = var_t0;
             var_t1 = temp_v0;
             if (temp_v0 == 0) {
                 if (arg3 != 0) {
@@ -58,7 +57,6 @@ block_4:
             sp2C = temp_a0;
             sp24 = var_v1_3;
             temp_v0_2 = func_00400090(temp_a0);
-            var_v1_3 = var_v1_3;
             var_t1 = temp_v0_2;
             if (temp_v0_2 != 0) {
                 if (arg3 != 0) {

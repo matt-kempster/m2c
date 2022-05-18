@@ -1888,9 +1888,13 @@ class EvalOnceStmt(Statement):
     expr: EvalOnceExpr
 
     def should_write(self) -> bool:
-        return self.expr.var.is_emitted or (
-            self.expr.emit_exactly_once and not self.expr.is_used
-        )
+        if self.expr.emit_exactly_once and not self.expr.is_used:
+            return True
+        if not self.expr.var.is_emitted:
+            return False
+        if expr_to_var(late_unwrap(self.expr.wrapped_expr)) == self.expr.var:
+            return False
+        return True
 
     def format(self, fmt: Formatter) -> str:
         val = elide_literal_casts(self.expr.wrapped_expr)
