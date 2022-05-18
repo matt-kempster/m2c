@@ -7,30 +7,26 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
     s32 sp1C;
     s32 temp_a0;
     s32 temp_a0_2;
+    s32 temp_t0;
     s32 temp_t5;
     s32 temp_t7;
     s32 temp_t9;
     s32 temp_v0;
     s32 temp_v0_2;
-    s32 var_a2;
-    s32 var_t0;
     s32 var_t1;
     s32 var_v1;
     s32 var_v1_2;
     s32 var_v1_3;
-    s32 var_v1_4;
 
-    var_a2 = arg2;
-    var_t0 = arg0 + arg1;
-    temp_t7 = arg1 + var_a2;
-    sp2C = var_t0;
+    temp_t0 = arg0 + arg1;
+    temp_t7 = arg1 + arg2;
+    sp2C = temp_t0;
     sp1C = temp_t7;
     var_t1 = temp_t7;
-    if (var_t0 == 0) {
+    if (temp_t0 == 0) {
         if (temp_t7 == 0) {
-            sp20 = var_t0;
+            sp20 = temp_t0;
             temp_v0 = func_00400090(temp_t7);
-            var_a2 = arg2;
             var_t1 = temp_v0;
             if (temp_v0 == 0) {
                 if (arg3 != 0) {
@@ -50,9 +46,9 @@ s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
 block_4:
         var_v1_2 = 1;
     }
-    var_v1_3 = var_v1_2 + var_a2;
-    if (var_t0 != 0) {
-        temp_a0 = var_t0 + var_t1;
+    var_v1_3 = var_v1_2 + arg2;
+    if (temp_t0 != 0) {
+        temp_a0 = temp_t0 + var_t1;
         if (var_t1 != 0) {
             sp2C = temp_a0;
             sp24 = var_v1_3;
@@ -76,16 +72,15 @@ block_4:
         if (var_t1 != 0) {
             sp2C = temp_a0_2;
             sp24 = var_v1_3;
-            var_v1_4 = var_v1_3;
             if (func_00400090(temp_a0_2) != 0) {
                 if (arg3 != 0) {
-                    if (var_v1_4 < 5) {
+                    if (var_v1_3 < 5) {
                         do {
-                            temp_t9 = (var_v1_4 + 1) * 2;
-                            var_v1_4 = temp_t9;
+                            temp_t9 = (var_v1_3 + 1) * 2;
+                            var_v1_3 = temp_t9;
                         } while (temp_t9 < 5);
                     }
-                    var_v1 = var_v1_4 + 5;
+                    var_v1 = var_v1_3 + 5;
                 } else {
                     goto block_21;
                 }

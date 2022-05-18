@@ -3903,19 +3903,30 @@ def pick_naive_phi_assignment_nodes(
 def assign_naive_phis(
     used_naive_phis: List[NaivePhiExpr], var_joiner: VarJoiner, stack_info: StackInfo
 ) -> None:
+    instr_nodes = {}
+    for node in stack_info.flow_graph.nodes:
+        for inst in node.block.instructions:
+            instr_nodes[inst] = node
+
     i = 0
     # Iterate over used phis until there are no more remaining. New ones may
     # appear during iteration, hence the while loop.
     while i < len(used_naive_phis):
         phi = used_naive_phis[i]
         assert phi.num_usages > 0
+        assert len(phi.sources) >= 2
         assert len(phi.node.parents) >= 2
 
         # Group parent nodes by the value of their phi register
-        # TODO: should we look at the nodes corresponding to phi.sources instead,
-        # to improve deduplication?
         equivalent_nodes: DefaultDict[Expression, List[Node]] = defaultdict(list)
-        for node in phi.node.parents:
+        for source in phi.sources:
+            if source is None:
+                # Use the end of the first block instead of the start of the
+                # function. Since there's no write in between both are fine.
+                # (If we were a write in between it would be a source.)
+                node = stack_info.flow_graph.entry_node()
+            else:
+                node = instr_nodes[source]
             expr = get_block_info(node).final_register_states[phi.reg]
             expr.type.unify(phi.type)
             equivalent_nodes[transparent_unwrap(expr)].append(node)
