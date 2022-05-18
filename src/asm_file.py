@@ -368,6 +368,12 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         if not line:
             continue
 
+        if "=" in line:
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if " " not in key:
+                line = f".set {key}, {value}"
+
         directive = line.split()[0]
         if directive.startswith("."):
             # Assembler directive.
