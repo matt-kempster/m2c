@@ -4194,7 +4194,7 @@ class NodeState:
             # assignments for phis that appear due to function call heuristics
             # but later vanish when type information improves. For now, we
             # don't.)
-            assert var.is_emitted
+            var.is_emitted = True
             expr.use()
 
         return expr
@@ -4256,16 +4256,15 @@ class NodeState:
             return None
 
         if isinstance(expr, LocalVar):
-            # TODO
-            # if (
-            #     isinstance(self.node, ReturnNode)
-            #     and self.stack_info.maybe_get_register_var(reg)
-            #     and self.stack_info.in_callee_save_reg_region(expr.value)
-            #     and reg in self.stack_info.callee_save_regs
-            # ):
-            #     # Elide saved register restores with --reg-vars (it doesn't
-            #     # matter in other cases).
-            #     return None
+            if (
+                isinstance(self.node, ReturnNode)
+                and self.stack_info.maybe_get_register_var(reg)
+                and self.stack_info.in_callee_save_reg_region(expr.value)
+                and reg in self.stack_info.callee_save_regs
+            ):
+                # Elide saved register restores with --reg-vars (it doesn't
+                # matter in other cases).
+                return None
             if expr in self.local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
