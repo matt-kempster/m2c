@@ -1,6 +1,6 @@
 f32 test(f32 arg8) {
-    f32 spC;
     f32 sp14;                                       /* compiler-managed */
+    f32 spC;
     f32 temp_f2;
 
     spC = arg8;

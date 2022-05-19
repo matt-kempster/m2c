@@ -1,8 +1,8 @@
 ? foo(? *, ? *);                                    /* static */
 
 void test(? *arg0, ? *arg1) {
-    ? *sp8;                                         /* compiler-managed */
     ? *spC;
+    ? *sp8;                                         /* compiler-managed */
 
     sp8 = arg0;
     spC = arg1;

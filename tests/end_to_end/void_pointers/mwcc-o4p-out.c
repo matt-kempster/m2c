@@ -1,7 +1,7 @@
 s32 test(s32 *x) {
-    s32 spC;
-    s32 *sp10;
     s8 sp14;
+    s32 *sp10;
+    s32 spC;
 
     sp10 = x + 0x28;
     sp14 = (s8) x->unk0;

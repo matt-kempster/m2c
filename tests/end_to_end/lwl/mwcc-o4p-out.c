@@ -8,9 +8,9 @@ static ? buf;
 static s32 $$22 = 0x61626364;                       /* const */
 
 void test(void) {
-    s32 sp8;
-    u16 spC;
     u8 spE;
+    u16 spC;
+    s32 sp8;
     s32 temp_r5;
     u16 temp_r4;
 

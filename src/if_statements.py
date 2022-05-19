@@ -1426,8 +1426,8 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
         local_vars = function_info.stack_info.local_vars
         # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
-        # IDO's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
-        if options.target.compiler == Target.CompilerEnum.IDO:
+        # IDO's and MWCC's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
+        if options.target.compiler != Target.CompilerEnum.GCC:
             local_vars = local_vars[::-1]
         for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)

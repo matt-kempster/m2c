@@ -1,6 +1,6 @@
 void test(void) {
-    struct A *sp8;
     s32 *spC;
+    struct A *sp8;
 
     foo(&spC, &sp8);
 }
