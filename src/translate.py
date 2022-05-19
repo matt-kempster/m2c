@@ -732,7 +732,6 @@ class Var:
 
     def format(self, fmt: Formatter) -> str:
         # Assign names lazily, hopefully in approximate output source order.
-        # (TODO: use asm order instead?)
         assert self.is_emitted
         if self.name is None:
             self.name = self.stack_info.temp_var(self.prefix)
@@ -3997,17 +3996,11 @@ def assign_naive_phis(
                 prefix = f"{prefix}_{phi.node.block.index}"
             phi.name = stack_info.temp_var(prefix)
             stack_info.naive_phi_vars.append(phi)
-            join_planned_vars(stack_info, phi.reg, phi.sources)
 
-
-def join_planned_vars(
-    stack_info: StackInfo,
-    reg: Register,
-    sources: List[InstructionSource],
-) -> None:
-    var = stack_info.get_or_create_planned_var(reg, sources[0])
-    for source in sources[1:]:
-        stack_info.get_or_create_planned_var(reg, source).join(var)
+            # Merge the phi source vars together for the next translation pass.
+            var = stack_info.get_or_create_planned_var(phi.reg, phi.sources[0])
+            for source in phi.sources[1:]:
+                stack_info.get_or_create_planned_var(phi.reg, source).join(var)
 
 
 def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
@@ -4302,15 +4295,6 @@ class NodeState:
             expr.use()
             self.write_statement(ExprStmt(expr))
         else:
-            # dest = self.stack_info.maybe_get_register_var(reg)
-            # if dest is not None:
-            #     self.stack_info.use_register_var(dest)
-            #     # Avoid emitting x = x, but still refresh EvalOnceExpr's etc.
-            #     if not (isinstance(uw_expr, RegisterVar) and uw_expr.reg == reg):
-            #         st_source = as_type(expr, dest.type, True)
-            #         st_source.use()
-            #         self.write_statement(StoreStmt(source=st_source, dest=dest))
-            #     expr = dest
             self.regs.set_with_meta(
                 reg,
                 expr,
@@ -5152,7 +5136,6 @@ def translate_to_ast(
                 stack_info,
                 prefix=f"var_{reg_name}",
                 type=Type.any_reg(),
-                is_emitted=True,
             )
             planned_vars[representative] = var
             stack_info.temp_vars.append(var)
