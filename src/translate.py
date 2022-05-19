@@ -189,8 +189,28 @@ InstructionSource = Optional[Instruction]
 
 
 @dataclass
+class PersistentFunctionState:
+    """Function state that's persistent between multiple translation passes."""
+
+    # Instruction outputs that should be assigned to variables. This is computed
+    # as part of assign_naive_phis, promoting naive phis to real variables for the
+    # next translation pass.
+    planned_vars: Dict[Tuple[Register, InstructionSource], "Var"] = field(
+        default_factory=dict
+    )
+
+    # Node inputs that can be inherited from the immediate dominator, despite
+    # being clobbered along the way. Similar to planned_vars, this is computed
+    # as part of assign_naive_phis when it detects that all phi sources have
+    # equal values and that the dominator serves as a phi source: in this case,
+    # it's wasteful to emit a phi or a var.
+    planned_inherited_phis: Set[Tuple[Register, Node]] = field(default_factory=set)
+
+
+@dataclass
 class StackInfo:
     function: Function
+    persistent_state: PersistentFunctionState
     global_info: "GlobalInfo"
     flow_graph: FlowGraph
     allocated_stack_size: int = 0
@@ -409,26 +429,26 @@ class StackInfo:
         self, reg: Register, source: InstructionSource
     ) -> Optional["Var"]:
         reg_var = self.reg_vars.get(reg)
-        return reg_var or self.function.planned_vars.get((reg, source))
+        return reg_var or self.persistent_state.planned_vars.get((reg, source))
 
     def get_or_create_planned_var(
         self, reg: Register, source: InstructionSource
     ) -> "Var":
         assert reg not in self.reg_vars
-        ret = self.function.planned_vars.get((reg, source))
+        ret = self.persistent_state.planned_vars.get((reg, source))
         if not ret:
             reg_name = self.function.reg_formatter.format(reg)
             ret = Var(
                 self, prefix=f"var_{reg_name}", type=Type.any_reg(), is_planned=True
             )
-            self.function.planned_vars[(reg, source)] = ret
+            self.persistent_state.planned_vars[(reg, source)] = ret
         return ret
 
     def add_planned_inherited_phi(self, node: Node, reg: Register) -> None:
-        self.function.planned_inherited_phis.add((reg, node))
+        self.persistent_state.planned_inherited_phis.add((reg, node))
 
     def is_planned_inherited_phi(self, node: Node, reg: Register) -> bool:
-        return (reg, node) in self.function.planned_inherited_phis
+        return (reg, node) in self.persistent_state.planned_inherited_phis
 
     def is_stack_reg(self, reg: Register) -> bool:
         if reg == self.global_info.arch.stack_pointer_reg:
@@ -463,11 +483,12 @@ class StackInfo:
 
 def get_stack_info(
     function: Function,
+    persistent_state: PersistentFunctionState,
     global_info: "GlobalInfo",
     flow_graph: FlowGraph,
 ) -> StackInfo:
     arch = global_info.arch
-    info = StackInfo(function, global_info, flow_graph)
+    info = StackInfo(function, persistent_state, global_info, flow_graph)
 
     # The goal here is to pick out special instructions that provide information
     # about this function's stack setup.
@@ -4614,14 +4635,17 @@ def translate_graph_from_block(
             r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
         )
         for reg in phi_regs:
-            dom_expr = state.regs.get_raw(reg)
             if stack_info.is_planned_inherited_phi(child, reg):
-                assert dom_expr is not None
-                new_regs.global_set_with_meta(reg, dom_expr, RegMeta(inherited=True))
+                # Reset the 'initial' meta bit, since we inherit from multiple
+                # sources, but otherwise leave the dominator's value in place.
+                meta = new_regs.get_meta(reg)
+                assert meta is not None
+                new_regs.update_meta(reg, replace(meta, initial=False))
                 continue
             sources, uses_dominator = reg_sources(child, reg)
             if uses_dominator:
                 dom_sources: List[InstructionSource]
+                dom_expr = state.regs.get_raw(reg)
                 if dom_expr is None:
                     dom_sources = []
                 elif isinstance(dom_expr, EvalOnceExpr):
@@ -4701,6 +4725,12 @@ class GlobalInfo:
     typepool: TypePool
     deterministic_vars: bool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
+    persistent_function_state: Dict[str, PersistentFunctionState] = field(
+        default_factory=lambda: defaultdict(PersistentFunctionState)
+    )
+
+    def get_persistent_function_state(self, func_name: str) -> PersistentFunctionState:
+        return self.persistent_function_state[func_name]
 
     def asm_data_value(self, sym_name: str) -> Optional[AsmDataEntry]:
         return self.asm_data.values.get(sym_name)
@@ -5105,7 +5135,8 @@ def translate_to_ast(
     branch condition.
     """
     # Initialize info about the function.
-    stack_info = get_stack_info(function, global_info, flow_graph)
+    persistent_state = global_info.get_persistent_function_state(function.name)
+    stack_info = get_stack_info(function, persistent_state, global_info, flow_graph)
     state = NodeState(
         node=flow_graph.entry_node(),
         regs=RegInfo(stack_info=stack_info),
@@ -5114,7 +5145,7 @@ def translate_to_ast(
 
     # TODO hack
     seen_planned_vars: Set[Var] = set()
-    for k, var in function.planned_vars.items():
+    for k, var in persistent_state.planned_vars.items():
         if var not in seen_planned_vars:
             seen_planned_vars.add(var)
             var.stack_info = stack_info
@@ -5229,8 +5260,8 @@ def translate_to_ast(
     resolve_types_late(stack_info)
 
     # TODO hack
-    for k, var in function.planned_vars.items():
-        function.planned_vars[k] = var_joiner.canonicalize(var)
+    for k, var in persistent_state.planned_vars.items():
+        persistent_state.planned_vars[k] = var_joiner.canonicalize(var)
 
     if options.pdb_translate:
         import pdb
