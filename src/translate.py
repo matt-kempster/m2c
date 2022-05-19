@@ -188,6 +188,32 @@ def as_function_ptr(expr: "Expression") -> "Expression":
 InstructionSource = Optional[Instruction]
 
 
+@dataclass(eq=False)
+class PlannedVar:
+    """Anonymous persistent Var, that can be merged with other ones using a
+    union-find-based setup."""
+
+    _parent: Optional["PlannedVar"] = None
+
+    def get_representative(self) -> "PlannedVar":
+        """Find the representative PlannedVar of all the ones that have been
+        merged with this one."""
+        root = self
+        while root._parent is not None:
+            root = root._parent
+        cur = self
+        while cur != root:
+            cur._parent = root
+            cur = cur._parent
+        return root
+
+    def join(self, other: "PlannedVar") -> None:
+        a = self.get_representative()
+        b = other.get_representative()
+        if a != b:
+            a._parent = b
+
+
 @dataclass
 class PersistentFunctionState:
     """Function state that's persistent between multiple translation passes."""
@@ -195,7 +221,7 @@ class PersistentFunctionState:
     # Instruction outputs that should be assigned to variables. This is computed
     # as part of assign_naive_phis, promoting naive phis to real variables for the
     # next translation pass.
-    planned_vars: Dict[Tuple[Register, InstructionSource], "Var"] = field(
+    planned_vars: Dict[Tuple[Register, InstructionSource], PlannedVar] = field(
         default_factory=dict
     )
 
@@ -225,6 +251,9 @@ class StackInfo:
     temp_vars: List["Var"] = field(default_factory=list)
     naive_phi_vars: List["NaivePhiExpr"] = field(default_factory=list)
     reg_vars: Dict[Register, "Var"] = field(default_factory=dict)
+    planned_vars: Dict[Tuple[Register, InstructionSource], "Var"] = field(
+        default_factory=dict
+    )
     used_reg_vars: Set[Register] = field(default_factory=set)
     arguments: List["PassedInArg"] = field(default_factory=list)
     temp_name_counter: Dict[str, int] = field(default_factory=dict)
@@ -421,26 +450,22 @@ class StackInfo:
 
     def add_register_var(self, reg: Register, name: str) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        var = Var(self, prefix=f"var_{name}", type=type, is_planned=True)
+        var = Var(self, prefix=f"var_{name}", type=type)
         self.reg_vars[reg] = var
         self.temp_vars.append(var)
 
     def get_planned_var(
         self, reg: Register, source: InstructionSource
     ) -> Optional["Var"]:
-        reg_var = self.reg_vars.get(reg)
-        return reg_var or self.persistent_state.planned_vars.get((reg, source))
+        return self.reg_vars.get(reg) or self.planned_vars.get((reg, source))
 
     def get_or_create_planned_var(
         self, reg: Register, source: InstructionSource
-    ) -> "Var":
+    ) -> PlannedVar:
         assert reg not in self.reg_vars
         ret = self.persistent_state.planned_vars.get((reg, source))
         if not ret:
-            reg_name = self.function.reg_formatter.format(reg)
-            ret = Var(
-                self, prefix=f"var_{reg_name}", type=Type.any_reg(), is_planned=True
-            )
+            ret = PlannedVar()
             self.persistent_state.planned_vars[(reg, source)] = ret
         return ret
 
@@ -701,7 +726,6 @@ class Var:
     stack_info: StackInfo = field(repr=False)
     prefix: str
     type: Type
-    is_planned: bool
     is_emitted: bool = False
     name: Optional[str] = None
     debug_exprs: List["Expression"] = field(repr=False, default_factory=list)
@@ -3867,29 +3891,6 @@ def reg_sources(node: Node, reg: Register) -> Tuple[List[InstructionSource], boo
     return sources, uses_dominator
 
 
-@dataclass
-class VarJoiner:
-    """Union-find-based data structure used to merge Var's together."""
-
-    uf_parents: Dict[Var, Var] = field(default_factory=dict)
-
-    def canonicalize(self, v: Var) -> Var:
-        root = v
-        while root in self.uf_parents:
-            root = self.uf_parents[root]
-        while v != root:
-            new_v = self.uf_parents[v]
-            self.uf_parents[v] = root
-            v = new_v
-        return root
-
-    def join(self, a: Var, b: Var) -> None:
-        a = self.canonicalize(a)
-        b = self.canonicalize(b)
-        if a != b:
-            self.uf_parents[a] = b
-
-
 def pick_naive_phi_assignment_nodes(
     reg: Register, nodes: List[Node], expr: Expression
 ) -> List[Node]:
@@ -3922,7 +3923,7 @@ def pick_naive_phi_assignment_nodes(
 
 
 def assign_naive_phis(
-    used_naive_phis: List[NaivePhiExpr], var_joiner: VarJoiner, stack_info: StackInfo
+    used_naive_phis: List[NaivePhiExpr], stack_info: StackInfo
 ) -> None:
     instr_nodes = {}
     for node in stack_info.flow_graph.nodes:
@@ -3996,19 +3997,17 @@ def assign_naive_phis(
                 prefix = f"{prefix}_{phi.node.block.index}"
             phi.name = stack_info.temp_var(prefix)
             stack_info.naive_phi_vars.append(phi)
-            join_planned_vars(var_joiner, stack_info, phi.reg, phi.sources)
+            join_planned_vars(stack_info, phi.reg, phi.sources)
 
 
 def join_planned_vars(
-    var_joiner: VarJoiner,
     stack_info: StackInfo,
     reg: Register,
     sources: List[InstructionSource],
 ) -> None:
     var = stack_info.get_or_create_planned_var(reg, sources[0])
     for source in sources[1:]:
-        var2 = stack_info.get_or_create_planned_var(reg, source)
-        var_joiner.join(var, var2)
+        stack_info.get_or_create_planned_var(reg, source).join(var)
 
 
 def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
@@ -4173,7 +4172,7 @@ class NodeState:
             temp_name = f"temp_{prefix}"
             if self.stack_info.global_info.deterministic_vars:
                 temp_name = f"{temp_name}_{self.regs.get_instruction_lineno()}"
-            var = Var(self.stack_info, temp_name, expr.type, is_planned=False)
+            var = Var(self.stack_info, temp_name, expr.type)
             self.stack_info.temp_vars.append(var)
 
         expr = EvalOnceExpr(
@@ -5143,16 +5142,22 @@ def translate_to_ast(
         stack_info=stack_info,
     )
 
-    # TODO hack
-    seen_planned_vars: Set[Var] = set()
-    for k, var in persistent_state.planned_vars.items():
-        if var not in seen_planned_vars:
-            seen_planned_vars.add(var)
-            var.stack_info = stack_info
-            var.name = None
-            var.debug_exprs = []
-            var.is_emitted = True
+    planned_vars: Dict[PlannedVar, Var] = {}
+    for key, persistent_var in persistent_state.planned_vars.items():
+        reg = key[0]
+        representative = persistent_var.get_representative()
+        var = planned_vars.get(representative)
+        if var is None:
+            reg_name = function.reg_formatter.format(reg)
+            var = Var(
+                stack_info,
+                prefix=f"var_{reg_name}",
+                type=Type.any_reg(),
+                is_emitted=True,
+            )
+            planned_vars[representative] = var
             stack_info.temp_vars.append(var)
+        stack_info.planned_vars[key] = var
 
     arch = global_info.arch
     state.set_initial_reg(
@@ -5255,13 +5260,8 @@ def translate_to_ast(
             if not param.name:
                 param.name = arg.format(Formatter())
 
-    var_joiner = VarJoiner()
-    assign_naive_phis(used_naive_phis, var_joiner, stack_info)
+    assign_naive_phis(used_naive_phis, stack_info)
     resolve_types_late(stack_info)
-
-    # TODO hack
-    for k, var in persistent_state.planned_vars.items():
-        persistent_state.planned_vars[k] = var_joiner.canonicalize(var)
 
     if options.pdb_translate:
         import pdb
