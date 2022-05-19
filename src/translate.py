@@ -1776,7 +1776,6 @@ class NaivePhiExpr(Expression):
     name: Optional[str] = None
     num_usages: int = 0
     replacement_expr: Optional[Expression] = None
-    used_by: Optional["NaivePhiExpr"] = None
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1784,26 +1783,12 @@ class NaivePhiExpr(Expression):
     def get_var_name(self) -> str:
         return self.name or f"unnamed-phi({self.reg.register_name})"
 
-    def use(self, from_phi: Optional["NaivePhiExpr"] = None) -> None:
+    def use(self) -> None:
         if self.num_usages == 0:
             self.used_naive_phis.append(self)
-            self.used_by = from_phi
         self.num_usages += 1
-        if self.used_by != from_phi:
-            self.used_by = None
         if self.replacement_expr is not None:
             self.replacement_expr.use()
-
-    def propagates_to(self) -> "NaivePhiExpr":
-        """Compute the phi that stores to this phi should propagate to. This is
-        usually the phi itself, but if the phi is only once for the purpose of
-        computing another phi, we forward the store there directly. This is
-        admittedly a bit sketchy, in case the phi is in scope here and used
-        later on... but we have that problem with regular phi assignments as
-        well."""
-        if self.used_by is None or self.replacement_expr is not None:
-            return self
-        return self.used_by.propagates_to()
 
     def format(self, fmt: Formatter) -> str:
         if self.replacement_expr:
@@ -1964,20 +1949,11 @@ class SetNaivePhiStmt(Statement):
     expr: Expression
 
     def should_write(self) -> bool:
-        expr = self.expr
-        if isinstance(expr, NaivePhiExpr) and expr.propagates_to() != expr:
-            # When we have phi1 = phi2, and phi2 is only used in this place,
-            # the SetNaivePhiStmt for phi2 will store directly to phi1 and we can
-            # skip this store.
-            assert expr.propagates_to() == self.phi.propagates_to()
-            return False
-        if late_unwrap(expr) == self.phi.propagates_to():
-            # Elide "phi = phi".
-            return False
-        return True
+        # Elide "phi = phi"
+        return late_unwrap(self.expr) != self.phi
 
     def format(self, fmt: Formatter) -> str:
-        return format_assignment(self.phi.propagates_to(), self.expr, fmt)
+        return format_assignment(self.phi, self.expr, fmt)
 
 
 @dataclass
@@ -3978,18 +3954,13 @@ def assign_naive_phis(
                 for node in pick_naive_phi_assignment_nodes(phi.reg, nodes, expr):
                     block_info = get_block_info(node)
                     expr = block_info.final_register_states[phi.reg]
-                    if False and isinstance(expr, NaivePhiExpr):
-                        # Explicitly mark how the expression is used if it's a phi,
-                        # so we can propagate phi sets (to get rid of temporaries).
-                        expr.use(from_phi=phi)
-                    else:
-                        expr.use()
+                    expr.use()
                     typed_expr = as_type(expr, phi.type, silent=True)
                     block_info.to_write.append(SetNaivePhiStmt(phi, typed_expr))
         i += 1
 
     for phi in used_naive_phis:
-        if not phi.replacement_expr and phi.propagates_to() == phi:
+        if not phi.replacement_expr:
             output_reg_name = stack_info.function.reg_formatter.format(phi.reg)
             prefix = f"phi_{output_reg_name}"
             if stack_info.global_info.deterministic_vars:
