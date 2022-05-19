@@ -2099,12 +2099,10 @@ class RegInfo:
         if meta.inherited:
             self.read_inherited.add(key)
         uw_ret = early_unwrap(ret)
-        # if isinstance(ret, EvalOnceExpr) and ret.trivial:
-        #     return ret.wrapped_expr
-        if isinstance(uw_ret, Literal):
-            # Requiring early_unwrap at every place that wants to check if an input
-            # is a literal is a bit noisy, so we unwrap here instead.
-            return uw_ret
+        if isinstance(ret, EvalOnceExpr) and ret.trivial:
+            # Unwrap trivial wrappers eagerly: this helps phi equality checks, and
+            # removes the need for unwrapping at each place that deals with literals.
+            return ret.wrapped_expr
         if isinstance(uw_ret, PassedInArg) and meta.initial:
             # Use accessed argument registers as a signal for determining which
             # arguments actually exist.
