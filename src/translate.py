@@ -3957,7 +3957,7 @@ def assign_naive_phis(
                 for node in pick_naive_phi_assignment_nodes(phi.reg, nodes, expr):
                     block_info = get_block_info(node)
                     expr = block_info.final_register_states[phi.reg]
-                    if isinstance(expr, NaivePhiExpr):
+                    if False and isinstance(expr, NaivePhiExpr):
                         # Explicitly mark how the expression is used if it's a phi,
                         # so we can propagate phi sets (to get rid of temporaries).
                         expr.use(from_phi=phi)
