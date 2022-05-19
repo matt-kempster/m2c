@@ -457,12 +457,16 @@ class StackInfo:
     def get_planned_var(
         self, reg: Register, source: InstructionSource
     ) -> Optional["Var"]:
-        return self.reg_vars.get(reg) or self.planned_vars.get((reg, source))
+        # Ignore reg_vars for function calls and initial argument registers, to
+        # avoid clutter.
+        var = self.reg_vars.get(reg)
+        if var and source is not None and source.function_target is None:
+            return var
+        return self.planned_vars.get((reg, source))
 
     def get_or_create_planned_var(
         self, reg: Register, source: InstructionSource
     ) -> PlannedVar:
-        assert reg not in self.reg_vars
         ret = self.persistent_state.planned_vars.get((reg, source))
         if not ret:
             ret = PlannedVar()
