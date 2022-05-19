@@ -5110,6 +5110,20 @@ def translate_to_ast(
         stack_info.planned_vars[key] = var
 
     arch = global_info.arch
+    if options.reg_vars == ["saved"]:
+        reg_vars = arch.saved_regs
+    elif options.reg_vars == ["most"]:
+        reg_vars = arch.saved_regs + arch.simple_temp_regs
+    elif options.reg_vars == ["all"]:
+        reg_vars = arch.saved_regs + arch.simple_temp_regs + arch.argument_regs
+    else:
+        reg_vars = [
+            stack_info.function.reg_formatter.parse(x, arch) for x in options.reg_vars
+        ]
+    for reg in reg_vars:
+        reg_name = stack_info.function.reg_formatter.format(reg)
+        stack_info.add_register_var(reg, reg_name)
+
     state.set_initial_reg(
         arch.stack_pointer_reg,
         GlobalSymbol("sp", type=Type.ptr()),
@@ -5154,20 +5168,6 @@ def translate_to_ast(
                 make_arg(slot.offset, slot.type),
                 RegMeta(uninteresting=True, initial=True),
             )
-
-    if options.reg_vars == ["saved"]:
-        reg_vars = arch.saved_regs
-    elif options.reg_vars == ["most"]:
-        reg_vars = arch.saved_regs + arch.simple_temp_regs
-    elif options.reg_vars == ["all"]:
-        reg_vars = arch.saved_regs + arch.simple_temp_regs + arch.argument_regs
-    else:
-        reg_vars = [
-            stack_info.function.reg_formatter.parse(x, arch) for x in options.reg_vars
-        ]
-    for reg in reg_vars:
-        reg_name = stack_info.function.reg_formatter.format(reg)
-        stack_info.add_register_var(reg, reg_name)
 
     if options.debug:
         print(stack_info)
