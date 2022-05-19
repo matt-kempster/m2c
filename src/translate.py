@@ -4597,22 +4597,15 @@ def translate_graph_from_block(
                 continue
             sources, uses_dominator = reg_sources(child, reg)
             if uses_dominator:
-                dom_sources: List[InstructionSource]
                 dom_expr = state.regs.get_raw(reg)
                 if dom_expr is None:
-                    dom_sources = []
+                    sources = []
                 elif isinstance(dom_expr, EvalOnceExpr):
-                    dom_sources = [dom_expr.source]
-                elif isinstance(dom_expr, RegisterVar):
-                    dom_sources = dom_expr.sources
-                elif isinstance(dom_expr, NaivePhiExpr):
-                    dom_sources = dom_expr.sources
+                    sources.append(dom_expr.source)
+                elif isinstance(dom_expr, (RegisterVar, NaivePhiExpr)):
+                    sources.extend(dom_expr.sources)
                 else:
                     static_assert_unreachable(dom_expr)
-                if not dom_sources:
-                    sources = []
-                else:
-                    sources.extend(dom_sources)
 
             if sources:
                 expr: Optional[RegExpression]
