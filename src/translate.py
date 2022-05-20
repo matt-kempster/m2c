@@ -4511,17 +4511,10 @@ def translate_node_body(state: NodeState) -> BlockInfo:
     )
 
 
-def translate_graph_from_block(
+def translate_block(
     state: NodeState,
-    used_naive_phis: List[NaivePhiExpr],
-    return_blocks: List[BlockInfo],
     options: Options,
-) -> None:
-    """
-    Given a FlowGraph node and a dictionary of register contents, give that node
-    its appropriate BlockInfo (which contains the AST of its code).
-    """
-
+) -> BlockInfo:
     node = state.node
     if options.debug:
         print(f"\nNode in question: {node}")
@@ -4565,74 +4558,135 @@ def translate_graph_from_block(
             has_function_call=False,
         )
 
-    node.block.add_block_info(block_info)
-    if isinstance(node, ReturnNode):
-        return_blocks.append(block_info)
+    return block_info
 
-    # Translate everything dominated by this node, now that we know our own
-    # final register state. This will eventually reach every node.
-    for child in node.immediately_dominates:
-        if isinstance(child, TerminalNode):
-            continue
-        stack_info = state.stack_info
-        new_regs = RegInfo(stack_info=stack_info)
-        child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
-        for reg, data in state.regs.contents.items():
-            new_regs.global_set_with_meta(
-                reg,
-                data.value,
-                RegMeta(
-                    inherited=True, force=data.meta.force, initial=data.meta.initial
-                ),
-            )
 
-        phi_regs = (
-            r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
+def create_dominated_node_state(
+    parent_state: NodeState,
+    child: Node,
+    used_naive_phis: List[NaivePhiExpr],
+) -> NodeState:
+    """
+    Create a NodeState for translating a child of a node in the dominator tree,
+    generating phi nodes for register contents that cannot be inherited directly.
+    """
+    stack_info = parent_state.stack_info
+    new_regs = RegInfo(stack_info=stack_info)
+    child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
+    for reg, data in parent_state.regs.contents.items():
+        new_regs.global_set_with_meta(
+            reg,
+            data.value,
+            RegMeta(inherited=True, force=data.meta.force, initial=data.meta.initial),
         )
-        for reg in phi_regs:
-            if stack_info.is_planned_inherited_phi(child, reg):
-                # Reset the 'initial' meta bit, since we inherit from multiple
-                # sources, but otherwise leave the dominator's value in place.
-                meta = new_regs.get_meta(reg)
-                assert meta is not None
+
+    phi_regs = (
+        r for r in locs_clobbered_until_dominator(child) if isinstance(r, Register)
+    )
+    for reg in phi_regs:
+        if stack_info.is_planned_inherited_phi(child, reg):
+            # A previous translation pass has determined that despite register
+            # writes along the way to the dominator, using the dominator's
+            # value is fine (because all possible phi values are the same).
+            # Do reset the 'initial' meta bit though: the non-dominator sources
+            # are non-initial.
+            meta = new_regs.get_meta(reg)
+            if meta is not None:
                 new_regs.update_meta(reg, replace(meta, initial=False))
                 continue
-            sources, uses_dominator = reg_sources(child, reg)
-            if uses_dominator:
-                dom_expr = state.regs.get_raw(reg)
-                if dom_expr is None:
-                    sources = []
-                elif isinstance(dom_expr, EvalOnceExpr):
-                    sources.append(dom_expr.source)
-                elif isinstance(dom_expr, (RegisterVar, NaivePhiExpr)):
-                    sources.extend(dom_expr.sources)
-                else:
-                    static_assert_unreachable(dom_expr)
 
-            if sources:
-                expr: Optional[RegExpression]
-                var = stack_info.get_planned_var(reg, sources[0])
-                if var is not None and all(
-                    stack_info.get_planned_var(reg, s) == var for s in sources[1:]
-                ):
-                    expr = RegisterVar(var, var.type, sources)
-                else:
-                    expr = NaivePhiExpr(
-                        reg=reg,
-                        node=child,
-                        type=Type.any_reg(),
-                        sources=sources,
-                        uses_dominator=uses_dominator,
-                        used_naive_phis=used_naive_phis,
-                    )
-                new_regs.global_set_with_meta(reg, expr, RegMeta(inherited=True))
-            elif reg in new_regs:
-                del new_regs[reg]
+        sources, uses_dominator = reg_sources(child, reg)
+        if uses_dominator:
+            dom_expr = parent_state.regs.get_raw(reg)
+            if dom_expr is None:
+                sources = []
+            elif isinstance(dom_expr, EvalOnceExpr):
+                sources.append(dom_expr.source)
+            elif isinstance(dom_expr, (RegisterVar, NaivePhiExpr)):
+                sources.extend(dom_expr.sources)
+            else:
+                static_assert_unreachable(dom_expr)
 
-        clobbered_vars = vars_clobbered_until_dominator(stack_info, child)
-        child_state.prevent_later_var_uses(clobbered_vars)
+        if sources:
+            # For each source of this phi, there will be an associated EvalOnceExpr.
+            # If there are planned vars associated with those EvalOnceExpr's --
+            # assigning them pre-determined vars and forcing the corresponding
+            # EvalOnceStmt's to be emitted -- *and* those planned vars are all the
+            # same, we can emit a reference to that var as our phi.
+            #
+            # Otherwise, we emit a naive phi expression, which as part of
+            # `assign_naive_phis` will either do "all sources values are the
+            # same"-based deduplication, or emit a planned var for the next
+            # translation pass.
+            #
+            # Ideally, after a second translation pass this makes sure we don't
+            # need any naive phi vars, which give bloated and misleading output.
+            expr: Optional[RegExpression]
+            var = stack_info.get_planned_var(reg, sources[0])
+            if var is not None and all(
+                stack_info.get_planned_var(reg, s) == var for s in sources[1:]
+            ):
+                expr = RegisterVar(var, var.type, sources)
+            else:
+                expr = NaivePhiExpr(
+                    reg=reg,
+                    node=child,
+                    type=Type.any_reg(),
+                    sources=sources,
+                    uses_dominator=uses_dominator,
+                    used_naive_phis=used_naive_phis,
+                )
+            new_regs.global_set_with_meta(reg, expr, RegMeta(inherited=True))
 
-        translate_graph_from_block(child_state, used_naive_phis, return_blocks, options)
+        elif reg in new_regs:
+            # Along some path to the dominator the register is clobbered by a
+            # function call. Mark it as undefined. (This helps return value and
+            # function call argument heuristics.)
+            del new_regs[reg]
+
+    # If we inherit an expression from the dominator that mentions a var,
+    # and that var gets assigned to somewhere along a path to the dominator,
+    # using that expression requires it to be made into a temp.
+    # TODO: we should really do this with other prevents as well, e.g. prevent
+    # reads/calls if there are function calls along a path to the dominator.
+    clobbered_vars = vars_clobbered_until_dominator(stack_info, child)
+    child_state.prevent_later_var_uses(clobbered_vars)
+
+    return child_state
+
+
+def translate_all_blocks(
+    state: NodeState,
+    used_naive_phis: List[NaivePhiExpr],
+    return_blocks: List[BlockInfo],
+    options: Options,
+) -> None:
+    """
+    Do translation for all non-terminal nodes, attaching block info to them.
+
+    Translation is performed in order of the dominator tree. Each node inherits
+    register state from its immediate dominator (the closest parent node that
+    control flow is guaranteed to pass through), with some register contents
+    being replaced by phi nodes if they may be changed along the path to the
+    dominator.
+    """
+    # Do the traversal non-recursively, in order to get nicer stacks for profiling.
+    translate_stack = [state]
+    while translate_stack:
+        state = translate_stack.pop()
+        block_info = translate_block(state, options)
+        node = state.node
+        node.block.add_block_info(block_info)
+        if isinstance(node, ReturnNode):
+            return_blocks.append(block_info)
+        # Add children to the translation queue in reverse order, to get a normally
+        # ordered pre-order traversal. (Doesn't affect the result majorly but it's
+        # easier to think about.)
+        for child in reversed(state.node.immediately_dominates):
+            if not isinstance(child, TerminalNode):
+                translate_stack.append(
+                    create_dominated_node_state(state, child, used_naive_phis)
+                )
 
 
 def resolve_types_late(stack_info: StackInfo) -> None:
@@ -5173,12 +5227,7 @@ def translate_to_ast(
 
     used_naive_phis: List[NaivePhiExpr] = []
     return_blocks: List[BlockInfo] = []
-    translate_graph_from_block(
-        state,
-        used_naive_phis,
-        return_blocks,
-        options,
-    )
+    translate_all_blocks(state, used_naive_phis, return_blocks, options)
 
     for reg in arch.base_return_regs:
         propagate_register_meta(flow_graph.nodes, reg)
