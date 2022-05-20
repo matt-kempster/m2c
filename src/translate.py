@@ -3868,37 +3868,6 @@ def reg_sources(node: Node, reg: Register) -> Tuple[List[InstructionSource], boo
     return sources, uses_dominator
 
 
-def pick_naive_phi_assignment_nodes(
-    reg: Register, nodes: List[Node], expr: Expression
-) -> List[Node]:
-    """
-    As part of `assign_naive_phis()`, we need to pick a set of nodes where we
-    can emit a `SetNaivePhiStmt` that assigns the phi for `reg` to `expr`.
-    The final register state for `reg` for each node in `nodes` is `expr`,
-    so the best case would be finding a single dominating node for the assignment.
-    """
-    # Find the set of nodes which dominate *all* of `nodes`, sorted by number
-    # of dominators. (This puts "earlier" nodes at the beginning of the list.)
-    dominators = sorted(
-        set.intersection(*(node.dominators for node in nodes)),
-        key=lambda n: len(n.dominators),
-    )
-
-    # Check the dominators for a node with the correct final state for `reg`
-    for node in dominators:
-        regs = get_block_info(node).final_register_states
-        raw = regs.get_raw(reg)
-        meta = regs.get_meta(reg)
-        if raw is None or meta is None or meta.force:
-            continue
-        if transparent_unwrap(raw) == expr:
-            return [node]
-
-    # We couldn't find anything, so fall back to the naive solution
-    # TODO: In some cases there may be a better solution (e.g. one that requires 2 nodes)
-    return nodes
-
-
 def assign_naive_phis(
     used_naive_phis: List[NaivePhiExpr], stack_info: StackInfo
 ) -> None:
@@ -3953,7 +3922,7 @@ def assign_naive_phis(
                 stack_info.add_planned_inherited_phi(phi.node, phi.reg)
         else:
             for expr, nodes in equivalent_nodes.items():
-                for node in pick_naive_phi_assignment_nodes(phi.reg, nodes, expr):
+                for node in nodes:
                     block_info = get_block_info(node)
                     expr = block_info.final_register_states[phi.reg]
                     expr.use()
