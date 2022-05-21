@@ -411,11 +411,7 @@ class Type:
     GetFieldResult = Tuple[Optional[AccessPath], "Type", int]
 
     def get_field(
-        self,
-        offset: int,
-        *,
-        target_size: Optional[int],
-        exact: bool = True,
+        self, offset: int, *, target_size: Optional[int], exact: bool = True
     ) -> GetFieldResult:
         """
         Locate the field in self at the appropriate offset, and optionally
