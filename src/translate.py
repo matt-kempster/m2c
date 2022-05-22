@@ -5131,21 +5131,25 @@ def translate_to_ast(
         stack_info=stack_info,
     )
 
-    planned_vars: Dict[PlannedVar, Var] = {}
+    planned_vars = defaultdict(list)
     for key, persistent_var in persistent_state.planned_vars.items():
-        reg = key[0]
-        representative = persistent_var.get_representative()
-        var = planned_vars.get(representative)
-        if var is None:
-            reg_name = function.reg_formatter.format(reg)
-            var = Var(
-                stack_info,
-                prefix=f"var_{reg_name}",
-                type=Type.any_reg(),
-            )
-            planned_vars[representative] = var
-            stack_info.temp_vars.append(var)
-        stack_info.planned_vars[key] = var
+        planned_vars[persistent_var.get_representative()].append(key)
+
+    for keys in planned_vars.values():
+        reg = keys[0][0]
+        reg_name = function.reg_formatter.format(reg)
+        prefix = f"var_{reg_name}"
+        if global_info.deterministic_vars:
+            lineno = min(0 if instr is None else instr.meta.lineno for _, instr in keys)
+            prefix = f"{prefix}_{lineno}"
+        var = Var(
+            stack_info,
+            prefix=prefix,
+            type=Type.any_reg(),
+        )
+        stack_info.temp_vars.append(var)
+        for key in keys:
+            stack_info.planned_vars[key] = var
 
     arch = global_info.arch
     if options.reg_vars == ["saved"]:
