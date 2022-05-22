@@ -2038,9 +2038,9 @@ class RegMeta:
     is determined dynamically based on type info.
 
     Except for a few properties, metadata is propagated across blocks only
-    after block translation is done, as part of propagate_register_meta.
-    (Parent block metadata is not generally available when constructing reg
-    metas, due to cycles)."""
+    after block translation is done, as part of propagate_register_meta,
+    and only for a handful of registers. (Parent block metadata is not
+    generally available when constructing reg metas, due to cycles)."""
 
     # True if this regdata is unchanged from the start of the block
     inherited: bool = False
@@ -5111,35 +5111,19 @@ def narrow_func_call_outputs(
             instr.outputs.clear()
 
 
-def translate_to_ast(
-    function: Function,
-    flow_graph: FlowGraph,
-    options: Options,
-    global_info: GlobalInfo,
-) -> FunctionInfo:
-    """
-    Given a function, produce a FlowGraph that both contains control-flow
-    information and has AST transformations for each block of code and
-    branch condition.
-    """
-    # Initialize info about the function.
-    persistent_state = global_info.get_persistent_function_state(function.name)
-    stack_info = get_stack_info(function, persistent_state, global_info, flow_graph)
-    state = NodeState(
-        node=flow_graph.entry_node(),
-        regs=RegInfo(stack_info=stack_info),
-        stack_info=stack_info,
-    )
-
+def setup_planned_vars(
+    stack_info: StackInfo, persistent_state: PersistentFunctionState
+) -> None:
+    """Set up stack_info planned vars from state from earlier translation passes."""
     planned_vars = defaultdict(list)
     for key, persistent_var in persistent_state.planned_vars.items():
         planned_vars[persistent_var.get_representative()].append(key)
 
     for keys in planned_vars.values():
         reg = keys[0][0]
-        reg_name = function.reg_formatter.format(reg)
+        reg_name = stack_info.function.reg_formatter.format(reg)
         prefix = f"var_{reg_name}"
-        if global_info.deterministic_vars:
+        if stack_info.global_info.deterministic_vars:
             lineno = min(0 if instr is None else instr.meta.lineno for _, instr in keys)
             prefix = f"{prefix}_{lineno}"
         var = Var(
@@ -5151,7 +5135,11 @@ def translate_to_ast(
         for key in keys:
             stack_info.planned_vars[key] = var
 
-    arch = global_info.arch
+
+def setup_reg_vars(stack_info: StackInfo, options: Options) -> None:
+    """Set up per-register planned vars based on command line flags."""
+    arch = stack_info.global_info.arch
+
     if options.reg_vars == ["saved"]:
         reg_vars = arch.saved_regs
     elif options.reg_vars == ["most"]:
@@ -5166,6 +5154,12 @@ def translate_to_ast(
         reg_name = stack_info.function.reg_formatter.format(reg)
         stack_info.add_register_var(reg, reg_name)
 
+
+def setup_initial_registers(state: NodeState, fn_sig: FunctionSignature) -> None:
+    """Set up initial register contents for translation."""
+    stack_info = state.stack_info
+    arch = stack_info.global_info.arch
+
     state.set_initial_reg(
         arch.stack_pointer_reg,
         GlobalSymbol("sp", type=Type.ptr()),
@@ -5175,16 +5169,6 @@ def translate_to_ast(
         state.set_initial_reg(
             reg, stack_info.saved_reg_symbol(reg.register_name), RegMeta(initial=True)
         )
-
-    fn_sym = global_info.address_of_gsym(function.name).expr
-    assert isinstance(fn_sym, GlobalSymbol)
-
-    fn_type = fn_sym.type
-    fn_type.unify(Type.function())
-    fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
-    assert fn_sig is not None, "fn_type is known to be a function"
-    return_type = fn_sig.return_type
-    stack_info.is_variadic = fn_sig.is_variadic
 
     def make_arg(offset: int, type: Type) -> PassedInArg:
         assert offset % 4 == 0
@@ -5211,6 +5195,40 @@ def translate_to_ast(
                 RegMeta(uninteresting=True, initial=True),
             )
 
+
+def translate_to_ast(
+    function: Function,
+    flow_graph: FlowGraph,
+    options: Options,
+    global_info: GlobalInfo,
+) -> FunctionInfo:
+    """
+    Given a function, produce a FlowGraph that both contains control-flow
+    information and has AST transformations for each block of code and
+    branch condition.
+    """
+    persistent_state = global_info.get_persistent_function_state(function.name)
+    stack_info = get_stack_info(function, persistent_state, global_info, flow_graph)
+    state = NodeState(
+        node=flow_graph.entry_node(),
+        regs=RegInfo(stack_info=stack_info),
+        stack_info=stack_info,
+    )
+
+    setup_planned_vars(stack_info, persistent_state)
+    setup_reg_vars(stack_info, options)
+
+    fn_sym = global_info.address_of_gsym(function.name).expr
+    assert isinstance(fn_sym, GlobalSymbol)
+
+    fn_type = fn_sym.type
+    fn_type.unify(Type.function())
+    fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
+    assert fn_sig is not None, "fn_type is known to be a function"
+    stack_info.is_variadic = fn_sig.is_variadic
+
+    setup_initial_registers(state, fn_sig)
+
     if options.debug:
         print(stack_info)
         print("\nNow, we attempt to translate:")
@@ -5219,9 +5237,14 @@ def translate_to_ast(
     return_blocks: List[BlockInfo] = []
     translate_all_blocks(state, used_naive_phis, return_blocks, options)
 
+    arch = global_info.arch
+
+    # Guess return register and mark returns (we should really base this on
+    # function signature if known, but so far the heuristic is reliable enough)
     for reg in arch.base_return_regs:
         propagate_register_meta(flow_graph.nodes, reg)
 
+    return_type = fn_sig.return_type
     return_reg: Optional[Register] = None
 
     if not options.void and not return_type.is_void():
@@ -5239,6 +5262,7 @@ def translate_to_ast(
     else:
         return_type.unify(Type.void())
 
+    # Guess parameters
     if not fn_sig.params_known:
         while len(fn_sig.params) < len(stack_info.arguments):
             fn_sig.params.append(FunctionParam())
