@@ -2642,10 +2642,12 @@ def late_unwrap(expr: Expression) -> Expression:
 
 def transparent_unwrap(expr: Expression) -> Expression:
     """
-    Unwrap transparent EvalOnceExpr's (e.g. EvalOnceExpr's that wrap other EvalOnceExpr's).
+    Unwrap transparent EvalOnceExpr's (e.g. EvalOnceExpr's that wrap other
+    EvalOnceExpr's, or trivial EvalOnceExpr's).
 
-    This is safe to use but may result in suboptimal codegen if used pervasively.
-    Mainly useful for equality comparisons.
+    This is safe to use but may result in suboptimal codegen if used while code
+    is being generated, since wrapper transparency is not yet final. (In
+    particular, it may result in an inconsistent choice of temps to refer to.)
     """
     if isinstance(expr, EvalOnceExpr) and expr.transparent and not expr.uses_var():
         return transparent_unwrap(expr.wrapped_expr)
@@ -3922,15 +3924,36 @@ def assign_naive_phis(
             # All the phis have the same value (e.g. because we recomputed an
             # expression after a store, or restored a register after a function
             # call). Just use that value instead of introducing a phi node.
-            # TODO: the unwrapping here is necessary, but also kinda sketchy:
-            # we may set as replacement_expr an expression that really shouldn't
-            # be repeated, e.g. a StructAccess. It would make sense to use less
-            # eager unwrapping, and/or to emit an EvalOnceExpr at this point
-            # (though it's too late for it to be able to participate in the
-            # prevent_later_uses machinery).
-            # If there is just a single unique value, use that without unwrapping
-            # to avoid the aforementioned problems. (This check is why we need
-            # transparent_unwrap -- without it len(exprs) would never be 1.)
+            #
+            # The early_unwrap's here are kinda sketchy. It we left them out,
+            # the transparent_unwrap's would still leave us able to detect
+            # registers stored on stack across function calls, and literals
+            # being rematerialized. What early_unwrap gives us is the ability
+            # to detect equality of non-trivial expressions (in the sense of
+            # is_trivial_expression) with eq=True -- most importantly struct/
+            # global accesses -- and avoid phi nodes for those. This helps a
+            # lot with detecting and undoing the pattern of compilers where
+            # they cache values of struct accesses and invalidate the cache on
+            # writes/function calls. However, it comes at a cost: the
+            # `replacement_expr` forwarding happens too late to be part of the
+            # prevent_later_uses machinery, so we may end up with incorrect
+            # output.
+            #
+            # We also aren't generating a temp for the `replacement_expr`,
+            # resulting in potentially a lot of repeated struct accesses. This
+            # would be fixable by pre-allocating a temp at the top of the block
+            # when creating the NaivePhiExpr and using that here; however, this
+            # often makes output worse, since it effectively undoes the
+            # heuristic detection of cached struct reads. (In addition these
+            # pre-reserved temps that don't correspond to an instruction would
+            # add a bit of a complexity.)
+            #
+            # To avoid repeated accesses and participate in prevent_later_uses
+            # in the simple case where `early_unwrap` is not needed, we
+            # special-case len(exprs) == 1 by skipping the deeper unwrapping and
+            # -- if the dominator acts as one of the phi sources, which is true
+            # most of the time -- marking the phi as directly inheritable from
+            # the dominator during the next translation pass.
             phi_expr = exprs[0] if len(exprs) == 1 else first_uw
             phi.replacement_expr = as_type(phi_expr, phi.type, silent=True)
             for _ in range(phi.num_usages):
