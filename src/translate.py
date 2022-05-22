@@ -2199,6 +2199,7 @@ def get_block_info(node: Node) -> BlockInfo:
 
 @dataclass
 class InstrArgs:
+    instruction: Instruction
     raw_args: List[Argument]
     regs: RegInfo = field(repr=False)
     stack_info: StackInfo = field(repr=False)
@@ -2758,7 +2759,7 @@ def load_upper(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
     source = stack_info.global_info.address_of_gsym(sym.symbol_name)
     imm = Literal(offset)
-    return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info)
+    return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info, args)
 
 
 def handle_convert(expr: Expression, dest_type: Type, source_type: Type) -> Cast:
@@ -2769,18 +2770,19 @@ def handle_convert(expr: Expression, dest_type: Type, source_type: Type) -> Cast
 
 
 def handle_la(args: InstrArgs) -> Expression:
+    output_reg = args.reg_ref(0)
     target = args.memory_ref(1)
     stack_info = args.stack_info
     if isinstance(target, AddressMode):
         return handle_addi(
             replace(
                 args,
-                raw_args=[args.reg_ref(0), target.rhs, AsmLiteral(target.offset)],
+                raw_args=[output_reg, target.rhs, AsmLiteral(target.offset)],
             )
         )
 
     var = stack_info.global_info.address_of_gsym(target.sym.symbol_name)
-    return add_imm(var, Literal(target.offset), stack_info)
+    return add_imm(output_reg, var, Literal(target.offset), args)
 
 
 def handle_or(left: Expression, right: Expression) -> Expression:
@@ -2830,6 +2832,7 @@ def handle_sltiu(args: InstrArgs) -> Expression:
 
 def handle_addi(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
+    output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.imm(2)
@@ -2845,9 +2848,9 @@ def handle_addi(args: InstrArgs) -> Expression:
         and isinstance(imm, Literal)
     ):
         return add_imm(
-            uw_source.left, Literal(imm.value + uw_source.right.value), stack_info
+            output_reg, uw_source.left, Literal(imm.value + uw_source.right.value), args
         )
-    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
+    return handle_addi_real(output_reg, source_reg, source, imm, stack_info, args)
 
 
 def handle_addis(args: InstrArgs) -> Expression:
@@ -2855,7 +2858,7 @@ def handle_addis(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.shifted_imm(2)
-    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info)
+    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info, args)
 
 
 def handle_addi_real(
@@ -2864,6 +2867,7 @@ def handle_addi_real(
     source: Expression,
     imm: Expression,
     stack_info: StackInfo,
+    args: InstrArgs,
 ) -> Expression:
     if source_reg is not None and stack_info.is_stack_reg(source_reg):
         # Adding to sp, i.e. passing an address.
@@ -2877,10 +2881,13 @@ def handle_addi_real(
             stack_info.add_local_var(var)
         return AddressOf(var, type=var.type.reference())
     else:
-        return add_imm(source, imm, stack_info)
+        return add_imm(output_reg, source, imm, args)
 
 
-def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expression:
+def add_imm(
+    output_reg: Register, source: Expression, imm: Expression, args: InstrArgs
+) -> Expression:
+    stack_info = args.stack_info
     if imm == Literal(0):
         # addiu $reg1, $reg2, 0 is a move
         # (this happens when replacing %lo(...) by 0)
@@ -2888,8 +2895,12 @@ def add_imm(source: Expression, imm: Expression, stack_info: StackInfo) -> Expre
     elif source.type.is_pointer_or_array():
         # Pointer addition (this may miss some pointers that get detected later;
         # unfortunately that's hard to do anything about with m2c's single-pass
-        # architecture).
-        if isinstance(imm, Literal) and not imm.likely_partial_offset():
+        # architecture). Don't do this in the case "var_x = var_x + imm": that
+        # happens with loops over subarrays and it's better to expose the raw
+        # immediate.
+        dest_var = stack_info.get_planned_var(output_reg, args.instruction)
+        inplace = dest_var is not None and expr_to_var(source) == dest_var
+        if isinstance(imm, Literal) and not imm.likely_partial_offset() and not inplace:
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
             )
@@ -3609,9 +3620,13 @@ def handle_add(args: InstrArgs) -> Expression:
     # addiu instructions can sometimes be emitted as addu instead, when the
     # offset is too large.
     if isinstance(rhs, Literal):
-        return handle_addi_real(args.reg_ref(0), args.reg_ref(1), lhs, rhs, stack_info)
+        return handle_addi_real(
+            args.reg_ref(0), args.reg_ref(1), lhs, rhs, stack_info, args
+        )
     if isinstance(lhs, Literal):
-        return handle_addi_real(args.reg_ref(0), args.reg_ref(2), rhs, lhs, stack_info)
+        return handle_addi_real(
+            args.reg_ref(0), args.reg_ref(2), rhs, lhs, stack_info, args
+        )
 
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)
@@ -4447,7 +4462,7 @@ def evaluate_instruction(instr: Instruction, state: NodeState) -> None:
         assert state.branch_condition is None and state.switch_control is None
 
     if instr.eval_fn is not None:
-        args = InstrArgs(instr.args, state.regs, state.stack_info)
+        args = InstrArgs(instr, instr.args, state.regs, state.stack_info)
         eval_fn = typing.cast(Callable[[NodeState, InstrArgs], object], instr.eval_fn)
         eval_fn(state, args)
 

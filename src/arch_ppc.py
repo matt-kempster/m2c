@@ -677,7 +677,7 @@ class PpcArch(Arch):
                     )
                 s.set_reg(
                     update.rhs,
-                    add_imm(a.regs[update.rhs], Literal(update.offset), a.stack_info),
+                    add_imm(update.rhs, a.regs[update.rhs], Literal(update.offset), a),
                 )
 
                 if store is not None:
@@ -723,7 +723,7 @@ class PpcArch(Arch):
                             f"Invalid instruction, rA and rD must be different in {instr_str}"
                         )
                     s.set_reg(
-                        update_reg, add_imm(a.regs[update_reg], offset, a.stack_info)
+                        update_reg, add_imm(update_reg, a.regs[update_reg], offset, a)
                     )
 
             else:
@@ -748,7 +748,7 @@ class PpcArch(Arch):
                             f"Invalid instruction, rA and rD must be different in {instr_str}"
                         )
                     s.set_reg(
-                        update_reg, add_imm(a.regs[update_reg], offset, a.stack_info)
+                        update_reg, add_imm(update_reg, a.regs[update_reg], offset, a)
                     )
 
         elif mnemonic in ("stmw", "lmw"):
