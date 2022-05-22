@@ -2405,12 +2405,14 @@ def deref(
 
 def is_trivial_expression(expr: Expression) -> bool:
     # Determine whether an expression should be evaluated only once or not.
+    # NaivePhiExpr could be made trivial, but it's better to keep it symmetric
+    # with RegisterVar to avoid different deduplication between passes,
+    # resulting in naive phi outputs.
     if isinstance(
         expr,
         (
             Literal,
             GlobalSymbol,
-            NaivePhiExpr,
             SecondF64Half,
         ),
     ):
