@@ -12,7 +12,7 @@ lh    $t6, ($zero)
 bnez  $t6, .skip
  nop
 lh    $a0, 0x2004($s0)
-jal   func_800E2768
+jal   foo
  nop
 .skip:
 addiu $s1, $s1, 1
