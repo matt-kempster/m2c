@@ -464,7 +464,7 @@ class StackInfo:
             return var
         return self.planned_vars.get((reg, source))
 
-    def get_or_create_planned_var(
+    def get_persistent_planned_var(
         self, reg: Register, source: InstructionSource
     ) -> PlannedVar:
         ret = self.persistent_state.planned_vars.get((reg, source))
@@ -2120,10 +2120,10 @@ class RegInfo:
     stack_info: StackInfo = field(repr=False)
     contents: Dict[Register, RegData] = field(default_factory=dict)
     read_inherited: Set[Register] = field(default_factory=set)
-    _active_instr: Optional[Instruction] = None
+    active_instr: Optional[Instruction] = None
 
     def __getitem__(self, key: Register) -> Expression:
-        if self._active_instr is not None and key not in self._active_instr.inputs:
+        if self.active_instr is not None and key not in self.active_instr.inputs:
             lineno = self.get_instruction_lineno()
             return ErrorExpr(f"Read from unset register {key} on line {lineno}")
         if key == Register("zero"):
@@ -2156,16 +2156,18 @@ class RegInfo:
         return key in self.contents
 
     def set_with_meta(self, key: Register, value: RegExpression, meta: RegMeta) -> None:
-        assert self._active_instr is not None
-        if key not in self._active_instr.outputs:
-            raise DecompFailure(f"Undeclared write to {key} in {self._active_instr}")
+        """Assign a value to a register from inside an instruction context."""
+        assert self.active_instr is not None
+        if key not in self.active_instr.outputs:
+            raise DecompFailure(f"Undeclared write to {key} in {self.active_instr}")
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
 
     def global_set_with_meta(
         self, key: Register, value: RegExpression, meta: RegMeta
     ) -> None:
-        assert self._active_instr is None
+        """Assign a value to a register from outside an instruction context."""
+        assert self.active_instr is None
         assert key != Register("zero")
         self.contents[key] = RegData(value, meta)
 
@@ -2185,13 +2187,10 @@ class RegInfo:
         data = self.contents.get(key)
         return data.meta if data is not None else None
 
-    def set_active_instruction(self, instr: Optional[Instruction]) -> None:
-        self._active_instr = instr
-
     def get_instruction_lineno(self) -> int:
-        if self._active_instr is None:
+        if self.active_instr is None:
             return 0
-        return self._active_instr.meta.lineno
+        return self.active_instr.meta.lineno
 
     def __str__(self) -> str:
         return ", ".join(
@@ -4015,9 +4014,9 @@ def assign_naive_phis(
             stack_info.naive_phi_vars.append(phi)
 
             # Merge the phi source vars together for the next translation pass.
-            var = stack_info.get_or_create_planned_var(phi.reg, phi.sources[0])
+            var = stack_info.get_persistent_planned_var(phi.reg, phi.sources[0])
             for source in phi.sources[1:]:
-                stack_info.get_or_create_planned_var(phi.reg, source).join(var)
+                stack_info.get_persistent_planned_var(phi.reg, source).join(var)
 
 
 def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
@@ -4212,8 +4211,7 @@ class NodeState:
     def _prevent_later_uses(self, expr_filter: Callable[[Expression], bool]) -> None:
         """Prevent later uses of registers that recursively contain something that
         matches a callback filter."""
-        for r in self.regs.contents.keys():
-            data = self.regs.contents[r]
+        for r, data in self.regs.contents.items():
             expr = data.value
             if isinstance(expr, (PlannedPhiExpr, NaivePhiExpr)):
                 continue
@@ -4241,7 +4239,7 @@ class NodeState:
         self._prevent_later_uses(lambda e: isinstance(e, (StructAccess, ArrayAccess)))
 
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
-        assert self.regs._active_instr is None
+        assert self.regs.active_instr is None
         assert meta.initial
         expr = self._eval_once(
             expr,
@@ -4282,9 +4280,9 @@ class NodeState:
                 if orig_reg == reg:
                     expr = orig_expr
 
-        return self.set_reg_raw(reg, expr)
+        return self.set_reg_real(reg, expr)
 
-    def set_reg_raw(
+    def set_reg_real(
         self,
         reg: Register,
         uw_expr: Expression,
@@ -4293,7 +4291,7 @@ class NodeState:
         emit_exactly_once: bool = False,
         function_return: bool = False,
     ) -> Optional[Expression]:
-        source = self.regs._active_instr
+        source = self.regs.active_instr
         assert source is not None
 
         if transparent is None:
@@ -4463,7 +4461,7 @@ class NodeState:
         # Reset subroutine_args, for the next potential function call.
         self.subroutine_args.clear()
 
-        source = self.regs._active_instr
+        source = self.regs.active_instr
         assert source is not None
         call: Expression = FuncCall(
             fn_target, func_args, fn_sig.return_type.weaken_void_ptr()
@@ -4497,20 +4495,20 @@ class NodeState:
             if not isinstance(out, Register):
                 continue
             val = return_reg_vals[out]
-            self.set_reg_raw(out, val, transparent=False, function_return=True)
+            self.set_reg_real(out, val, transparent=False, function_return=True)
 
         self.has_function_call = True
 
     @contextmanager
     def current_instr(self, instr: Instruction) -> Iterator[None]:
-        assert self.regs._active_instr is None
-        self.regs.set_active_instruction(instr)
+        assert self.regs.active_instr is None
+        self.regs.active_instr = instr
         self.in_pattern = instr.in_pattern
         try:
             with current_instr(instr):
                 yield
         finally:
-            self.regs.set_active_instruction(None)
+            self.regs.active_instr = None
             self.in_pattern = False
 
 

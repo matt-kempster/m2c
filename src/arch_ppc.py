@@ -889,7 +889,7 @@ class PpcArch(Arch):
                     s.set_reg(Register("cr0_lt"), error)
                     s.set_reg(Register("cr0_so"), error)
                 if maybe_dest_first:
-                    s.set_reg_raw(a.reg_ref(0), error, emit_exactly_once=True)
+                    s.set_reg_real(a.reg_ref(0), error, emit_exactly_once=True)
                 else:
                     s.write_statement(ExprStmt(error))
 
