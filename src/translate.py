@@ -190,7 +190,7 @@ InstructionSource = Optional[Instruction]
 
 @dataclass(eq=False)
 class PlannedVar:
-    """Anonymous persistent Var, that can be merged with other ones using a
+    """A persistent Var, that can be merged with other ones using a
     union-find-based setup."""
 
     _parent: Optional["PlannedVar"] = None
@@ -1704,14 +1704,14 @@ class EvalOnceExpr(Expression):
     emit_exactly_once: bool
 
     # True if this EvalOnceExpr should be totally transparent and not use a variable
-    # even it gets assigned to a planned phi var. Based on `is_trivial_expression`.
+    # even if it gets assigned to a planned phi var. Based on `is_trivial_expression`.
     trivial: bool
 
     # True if this EvalOnceExpr should be totally transparent and not use a variable.
     # If `var.is_emitted` is true it is ignored (this may happen dynamically, due to
     # forced emissions caused by `prevent_later_uses`).
-    # Initially, it is based on `should_wrap_transparently` (except for function
-    # returns). Always true if `trivial` is true.
+    # Based on `should_wrap_transparently` (except for function returns). Always true
+    # if `trivial` is true.
     transparent: bool
 
     # Mutable state:
@@ -1813,7 +1813,7 @@ class NaivePhiExpr(Expression):
     type: Type
     sources: List[InstructionSource]
     uses_dominator: bool
-    used_naive_phis: List["NaivePhiExpr"]
+    used_naive_phis: List["NaivePhiExpr"]  # reference to global shared list
     name: Optional[str] = None
     num_usages: int = 0
     replacement_expr: Optional[Expression] = None
