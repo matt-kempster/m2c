@@ -3504,7 +3504,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             and not expr.forced_emit
         ):
             base, num = fold(early_unwrap(expr), False, allow_sll)
-            if num != 1 and should_wrap_transparently(base):
+            if num != 1:
                 return (base, num)
         return (expr, 1)
 
