@@ -1771,6 +1771,40 @@ class EvalOnceExpr(Expression):
 
 @dataclass(frozen=False, eq=False)
 class NaivePhiExpr(Expression):
+    """
+    A NaivePhiExpr acts as a phi node, using terminology from [1], with one
+    of two possible behaviors:
+    - if `replacement_expr` is set, it forwards forwarding/use to that. This
+      happens when all phi input values are the same.
+    - otherwise, it expands to a "phi_x" variable, with assignments
+      (SetNaivePhiStmt) being added to the end of the basic blocks that the
+      phi gets assigned from.
+
+    The second behavior results in unideal output in a couple of ways:
+    - code bloat caused by multiple phi nodes with overlapping sources each
+      needing separate sets of assignments,
+    - code bloat caused by temp and phi assignments being separate,
+    - incorrect codegen caused by end-of-block phi assignments happening one
+      by one instead of in parallel (consider e.g. wanting to perform the
+      end-of-block phi updates "(phi_a1, phi_a2) = (phi_a2, phi_a1)").
+
+    Thus, we try our hardest to avoid these kinds of NaivePhiExpr's by having
+    `assign_naive_phis` signal to future translation passes to use the
+    alternative phi node kind, RegisterVar, that's based on pre-planned
+    assignments to temps. (Unfortunately we can't use RegisterVar during the
+    first pass, because we don't know ahead of time which NaivePhiExpr's
+    will end up using a replacement_expr, or for that sake, even which
+    registers will end up being read as phis -- function pointers makes this a
+    dynamic property dependent on type info.)
+
+    A NaivePhiExpr that isn't use()'d is treated as if it doesn't exist, and in
+    particular does not add assignment statements to its source nodes. On first
+    use() it adds itself to the global `used_naive_phis` queue, which is
+    processed by `assign_naive_phis`.
+
+    [1] https://en.wikipedia.org/wiki/Static_single_assignment_form
+    """
+
     reg: Register
     node: Node
     type: Type
@@ -4626,10 +4660,8 @@ def create_dominated_node_state(
             # Otherwise, we emit a naive phi expression, which as part of
             # `assign_naive_phis` will either do "all sources values are the
             # same"-based deduplication, or emit a planned var for the next
-            # translation pass.
-            #
-            # Ideally, after a second translation pass this makes sure we don't
-            # need any naive phi vars, which give bloated and misleading output.
+            # translation pass. See the doc comment for NaivePhiExpr for more
+            # information.
             expr: Optional[RegExpression]
             var = stack_info.get_planned_var(reg, sources[0])
             if var is not None and all(
