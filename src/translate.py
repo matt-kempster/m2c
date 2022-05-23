@@ -1345,11 +1345,15 @@ class SubroutineArg(Expression):
 
 @dataclass(eq=True, unsafe_hash=True)
 class StructAccess(Expression):
-    # Represents struct_var->offset.
-    # This has eq=True since it represents a live expression and not an access
-    # at a certain point in time -- this sometimes helps get rid of phi nodes.
-    # prevent_later_uses makes sure it's not used after writes/function calls
-    # that may invalidate it.
+    """
+    Represents struct_var->offset.
+
+    This has `eq=True` since it represents a live expression and not an
+    access at a certain point in time -- this sometimes helps get rid of phi
+    nodes (see `assign_naive_phis` for details). `prevent_later_uses` makes
+    sure it's not used after writes/function calls that may invalidate it.
+    """
+
     struct_var: Expression
     offset: int
     target_size: Optional[int]
