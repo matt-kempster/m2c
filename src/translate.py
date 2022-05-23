@@ -1304,7 +1304,7 @@ class LocalVar(Expression):
 
 
 @dataclass(frozen=True, eq=False)
-class RegisterVar(Expression):
+class PlannedPhiExpr(Expression):
     var: Var
     type: Type
     sources: List[InstructionSource]
@@ -1794,8 +1794,8 @@ class NaivePhiExpr(Expression):
 
     Thus, we try our hardest to avoid these kinds of NaivePhiExpr's by having
     `assign_naive_phis` signal to future translation passes to use the
-    alternative phi node kind, RegisterVar, that's based on pre-planned
-    assignments to temps. (Unfortunately we can't use RegisterVar during the
+    alternative phi node kind, PlannedPhiExpr, that's based on pre-planned
+    assignments to temps. (Unfortunately we can't use PlannedPhiExpr during the
     first pass, because we don't know ahead of time which NaivePhiExpr's
     will end up using a replacement_expr, or for that sake, even which
     registers will end up being read as phis -- function pointers makes this a
@@ -2106,7 +2106,7 @@ class RegMeta:
     in_pattern: bool = False
 
 
-RegExpression = Union[EvalOnceExpr, RegisterVar, NaivePhiExpr]
+RegExpression = Union[EvalOnceExpr, PlannedPhiExpr, NaivePhiExpr]
 
 
 @dataclass
@@ -2444,7 +2444,7 @@ def deref(
 def is_trivial_expression(expr: Expression) -> bool:
     # Determine whether an expression should be evaluated only once or not.
     # NaivePhiExpr could be made trivial, but it's better to keep it symmetric
-    # with RegisterVar to avoid different deduplication between passes,
+    # with PlannedPhiExpr to avoid different deduplication between passes,
     # resulting in naive phi outputs.
     if isinstance(
         expr,
@@ -2471,7 +2471,7 @@ def should_wrap_transparently(expr: Expression) -> bool:
             LocalVar,
             PassedInArg,
             NaivePhiExpr,
-            RegisterVar,
+            PlannedPhiExpr,
             SecondF64Half,
             SubroutineArg,
         ),
@@ -2502,7 +2502,7 @@ def is_type_obvious(expr: Expression) -> bool:
             LocalVar,
             NaivePhiExpr,
             PassedInArg,
-            RegisterVar,
+            PlannedPhiExpr,
             FuncCall,
         ),
     ):
@@ -2601,7 +2601,7 @@ def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> s
 
 
 def var_for_expr(expr: Expression) -> Optional[Var]:
-    if isinstance(expr, RegisterVar):
+    if isinstance(expr, PlannedPhiExpr):
         return expr.var
     if isinstance(expr, EvalOnceExpr) and not expr.trivial:
         return expr.var
@@ -4203,7 +4203,7 @@ class NodeState:
 
         if planned_var is not None:
             # Count the pre-planned var assignment as a use. (We could make
-            # this lazy until the consuming RegisterVar is used, to avoid dead
+            # this lazy until the consuming PlannedPhiExpr is used, to avoid dead
             # assignments for phis that appear due to function call heuristics
             # but later vanish when type information improves. For now, we
             # don't.)
@@ -4218,7 +4218,7 @@ class NodeState:
         for r in self.regs.contents.keys():
             data = self.regs.contents[r]
             expr = data.value
-            if isinstance(expr, (RegisterVar, NaivePhiExpr)):
+            if isinstance(expr, (PlannedPhiExpr, NaivePhiExpr)):
                 continue
             if not data.meta.force and uses_expr(expr, expr_filter):
                 # Mark the register as "if used, emit the expression's once var".
@@ -4649,7 +4649,7 @@ def create_dominated_node_state(
                 sources = []
             elif isinstance(dom_expr, EvalOnceExpr):
                 sources.append(dom_expr.source)
-            elif isinstance(dom_expr, (RegisterVar, NaivePhiExpr)):
+            elif isinstance(dom_expr, (PlannedPhiExpr, NaivePhiExpr)):
                 sources.extend(dom_expr.sources)
             else:
                 static_assert_unreachable(dom_expr)
@@ -4671,7 +4671,7 @@ def create_dominated_node_state(
             if var is not None and all(
                 stack_info.get_planned_var(reg, s) == var for s in sources[1:]
             ):
-                expr = RegisterVar(var, var.type, sources)
+                expr = PlannedPhiExpr(var, var.type, sources)
             else:
                 expr = NaivePhiExpr(
                     reg=reg,
