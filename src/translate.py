@@ -1982,7 +1982,7 @@ class EvalOnceStmt(Statement):
         if self.expr.emit_exactly_once and not self.expr.is_used:
             val_str = format_expr(val, fmt)
             return f"{val_str};"
-        return format_var_assignment(self.expr.var, val, fmt)
+        return format_assignment(self.expr.var, val, fmt)
 
 
 @dataclass
@@ -2583,16 +2583,23 @@ def format_expr(expr: Expression, fmt: Formatter) -> str:
     return ret
 
 
-def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> str:
+def format_assignment(
+    dest: Union[Expression, Var], source: Expression, fmt: Formatter
+) -> str:
     """Stringify `dest = source;`."""
-    dest = late_unwrap(dest)
+    is_dest: Callable[[Expression], bool]
+    if isinstance(dest, Expression):
+        dest = late_unwrap(dest)
+        is_dest = lambda e: e == dest
+    else:
+        is_dest = lambda e: var_for_expr(e) == dest
     source = late_unwrap(source)
     if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
         source = source.normalize_for_formatting()
         rhs = None
-        if late_unwrap(source.left) == dest:
+        if is_dest(late_unwrap(source.left)):
             rhs = source.right
-        elif late_unwrap(source.right) == dest and source.op in ASSOCIATIVE_OPS:
+        elif is_dest(late_unwrap(source.right)) and source.op in ASSOCIATIVE_OPS:
             rhs = source.left
         if rhs is not None:
             return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
@@ -2605,26 +2612,6 @@ def var_for_expr(expr: Expression) -> Optional[Var]:
     if isinstance(expr, EvalOnceExpr) and not expr.trivial:
         return expr.var
     return None
-
-
-def format_var_assignment(dest: Var, source: Expression, fmt: Formatter) -> str:
-    """Stringify `dest = source;`."""
-
-    dest_str = dest.format(fmt)
-    source = late_unwrap(source)
-    if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
-        source = source.normalize_for_formatting()
-        rhs = None
-        if var_for_expr(late_unwrap(source.left)) == dest:
-            rhs = source.right
-        elif (
-            var_for_expr(late_unwrap(source.right)) == dest
-            and source.op in ASSOCIATIVE_OPS
-        ):
-            rhs = source.left
-        if rhs is not None:
-            return f"{dest_str} {source.op}= {format_expr(rhs, fmt)};"
-    return f"{dest_str} = {format_expr(source, fmt)};"
 
 
 def parenthesize_for_struct_access(expr: Expression, fmt: Formatter) -> str:
