@@ -1797,7 +1797,8 @@ class NaivePhiExpr(Expression):
     first pass, because we don't know ahead of time which NaivePhiExpr's
     will end up using a replacement_expr, or for that sake, even which
     registers will end up being read as phis -- function pointers makes this a
-    dynamic property dependent on type info.)
+    dynamic property dependent on type info. Both problems are potentially
+    resolvable but it would involve a fair bit of work.)
 
     A NaivePhiExpr that isn't use()'d is treated as if it doesn't exist, and in
     particular does not add assignment statements to its source nodes. On first
@@ -1831,7 +1832,7 @@ class NaivePhiExpr(Expression):
             self.replacement_expr.use()
 
     def format(self, fmt: Formatter) -> str:
-        if self.replacement_expr:
+        if self.replacement_expr is not None:
             return self.replacement_expr.format(fmt)
         return self.get_var_name()
 
