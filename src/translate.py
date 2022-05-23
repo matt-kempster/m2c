@@ -219,17 +219,15 @@ class PersistentFunctionState:
     """Function state that's persistent between multiple translation passes."""
 
     # Instruction outputs that should be assigned to variables. This is computed
-    # as part of assign_naive_phis, promoting naive phis to real variables for the
-    # next translation pass.
+    # as part of `assign_naive_phis`, promoting naive phis to planned ones for
+    # the next translation pass.
     planned_vars: Dict[Tuple[Register, InstructionSource], PlannedVar] = field(
         default_factory=dict
     )
 
-    # Node inputs that can be inherited from the immediate dominator, despite
-    # being clobbered along the way. Similar to planned_vars, this is computed
-    # as part of assign_naive_phis when it detects that all phi sources have
-    # equal values and that the dominator serves as a phi source: in this case,
-    # it's wasteful to emit a phi or a var.
+    # Phi node inputs that can be inherited from the immediate dominator, despite
+    # being clobbered on some path to there. Similar to planned_vars, this is
+    # computed as part of `assign_naive_phis`.
     planned_inherited_phis: Set[Tuple[Register, Node]] = field(default_factory=set)
 
 
@@ -1706,14 +1704,14 @@ class EvalOnceExpr(Expression):
     emit_exactly_once: bool
 
     # True if this EvalOnceExpr should be totally transparent and not use a variable
-    # even it gets assigned to a planned phi var. Based on is_trivial_expression.
+    # even it gets assigned to a planned phi var. Based on `is_trivial_expression`.
     trivial: bool
 
     # True if this EvalOnceExpr should be totally transparent and not use a variable.
-    # If 'var.is_emitted' is true it is ignored (this may happen dynamically, due to
-    # forced emissions).
-    # Initially, it is based on should_wrap_transparently (except for function returns).
-    # Always true if 'trivial' is true.
+    # If `var.is_emitted` is true it is ignored (this may happen dynamically, due to
+    # forced emissions caused by `prevent_later_uses`).
+    # Initially, it is based on `should_wrap_transparently` (except for function
+    # returns). Always true if `trivial` is true.
     transparent: bool
 
     # Mutable state:
@@ -1721,9 +1719,9 @@ class EvalOnceExpr(Expression):
     # True if this EvalOnceExpr must use a variable (see RegMeta.force)
     forced_emit: bool = False
 
-    # True if this EvalOnceExpr has been use()d. If var.is_emitted is true, this will
+    # True if this EvalOnceExpr has been use()d. If `var.is_emitted` is true, this will
     # also be: either because this EvalOnceExpr was used twice and that triggered
-    # var.is_emitted to be set to true, or because the var is a planned phi, and then
+    # `var.is_emitted` to be set to true, or because the var is a planned phi, and then
     # this EvalOnceExpr will be use()d as part of its creation, for the assignment to
     # the phi.
     is_used: bool = False
@@ -1736,7 +1734,7 @@ class EvalOnceExpr(Expression):
 
     def use(self) -> None:
         if self.trivial or (self.transparent and not self.var.is_emitted):
-            # Forward uses through transparent wrapper (unless it has stopped
+            # Forward uses through transparent wrappers (unless we have stopped
             # being transparent)
             self.wrapped_expr.use()
         elif not self.is_used:
@@ -2441,18 +2439,11 @@ def deref(
 
 
 def is_trivial_expression(expr: Expression) -> bool:
-    # Determine whether an expression should be evaluated only once or not.
+    """Compute whether an EvalOnceExpr should be marked as `trivial = True`."""
     # NaivePhiExpr could be made trivial, but it's better to keep it symmetric
     # with PlannedPhiExpr to avoid different deduplication between passes,
-    # resulting in naive phi outputs.
-    if isinstance(
-        expr,
-        (
-            Literal,
-            GlobalSymbol,
-            SecondF64Half,
-        ),
-    ):
+    # since that can cause naive phis to end up in the final output.
+    if isinstance(expr, (Literal, GlobalSymbol, SecondF64Half)):
         return True
     if isinstance(expr, AddressOf):
         return all(is_trivial_expression(e) for e in expr.dependencies())
@@ -2460,7 +2451,8 @@ def is_trivial_expression(expr: Expression) -> bool:
 
 
 def should_wrap_transparently(expr: Expression) -> bool:
-    # Determine whether an expression should be evaluated only once or not.
+    """Compute whether an EvalOnceExpr should be marked as `transparent = True`,
+    thus not using a variable despite multiple uses (unless forced)."""
     if isinstance(
         expr,
         (
@@ -2607,6 +2599,10 @@ def format_assignment(
 
 
 def var_for_expr(expr: Expression) -> Optional[Var]:
+    """If an expression *may* expand to the read of a Var, return that var.
+
+    EvalOnceExpr's with `transparent = True`, (which may become non-transparent
+    in the future) return their underlying var."""
     if isinstance(expr, PlannedPhiExpr):
         return expr.var
     if isinstance(expr, EvalOnceExpr) and not expr.trivial:
@@ -4237,7 +4233,9 @@ class NodeState:
         )
         self.regs.global_set_with_meta(reg, expr, meta)
         if expr.var.is_emitted:
-            # TODO: hack to treat argument phis as accessed PassedInArg's
+            # For arguments only used as phis, we need to access them here in
+            # order for the PassedInArg code path in __getitem__ to get hit.
+            # (Arguably a bit hacky...)
             self.regs[reg]
 
     def set_reg(
@@ -4544,6 +4542,13 @@ def translate_block(
     state: NodeState,
     options: Options,
 ) -> BlockInfo:
+    """
+    Given a FlowGraph node and current symbolic execution state, symbolically
+    execute all instructions in the block, resulting in updated execution state
+    as well as a BlockInfo with C statements and if conditions to emit for the
+    given node.
+    """
+
     node = state.node
     if options.debug:
         print(f"\nNode in question: {node}")
