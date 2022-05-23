@@ -3498,12 +3498,9 @@ def fold_mul_chains(expr: Expression) -> Expression:
         if isinstance(expr, UnaryOp) and expr.op == "-" and not toplevel:
             base, num = fold(expr.expr, False, True)
             return (base, -num)
-        if (
-            isinstance(expr, EvalOnceExpr)
-            and not expr.emit_exactly_once
-            and not expr.forced_emit
-        ):
-            base, num = fold(early_unwrap(expr), False, allow_sll)
+        uw_expr = early_unwrap(expr)
+        if uw_expr is not expr:
+            base, num = fold(uw_expr, False, allow_sll)
             if num != 1:
                 return (base, num)
         return (expr, 1)
