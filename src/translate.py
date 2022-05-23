@@ -1973,7 +1973,7 @@ class EvalOnceStmt(Statement):
             return True
         if not self.expr.var.is_emitted:
             return False
-        if expr_to_var(late_unwrap(self.expr.wrapped_expr)) == self.expr.var:
+        if var_for_expr(late_unwrap(self.expr.wrapped_expr)) == self.expr.var:
             return False
         return True
 
@@ -2600,7 +2600,7 @@ def format_assignment(dest: Expression, source: Expression, fmt: Formatter) -> s
     return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
 
 
-def expr_to_var(expr: Expression) -> Optional[Var]:
+def var_for_expr(expr: Expression) -> Optional[Var]:
     if isinstance(expr, RegisterVar):
         return expr.var
     if isinstance(expr, EvalOnceExpr) and not expr.trivial:
@@ -2616,10 +2616,10 @@ def format_var_assignment(dest: Var, source: Expression, fmt: Formatter) -> str:
     if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
         source = source.normalize_for_formatting()
         rhs = None
-        if expr_to_var(late_unwrap(source.left)) == dest:
+        if var_for_expr(late_unwrap(source.left)) == dest:
             rhs = source.right
         elif (
-            expr_to_var(late_unwrap(source.right)) == dest
+            var_for_expr(late_unwrap(source.right)) == dest
             and source.op in ASSOCIATIVE_OPS
         ):
             rhs = source.left
@@ -2941,7 +2941,7 @@ def add_imm(
         # happens with loops over subarrays and it's better to expose the raw
         # immediate.
         dest_var = stack_info.get_planned_var(output_reg, args.instruction)
-        inplace = dest_var is not None and expr_to_var(source) == dest_var
+        inplace = dest_var is not None and var_for_expr(source) == dest_var
         if isinstance(imm, Literal) and not imm.likely_partial_offset() and not inplace:
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
@@ -4233,7 +4233,7 @@ class NodeState:
         self._prevent_later_uses(lambda e: e == sub_expr)
 
     def prevent_later_var_uses(self, vars: Set[Var]) -> None:
-        self._prevent_later_uses(lambda e: expr_to_var(e) in vars)
+        self._prevent_later_uses(lambda e: var_for_expr(e) in vars)
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
