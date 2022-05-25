@@ -199,12 +199,12 @@ class PlannedVar:
         """Find the representative PlannedVar of all the ones that have been
         merged with this one."""
         root = self
+        seen = []
         while root._parent is not None:
+            seen.append(root)
             root = root._parent
-        cur = self
-        while cur != root:
-            cur._parent = root
-            cur = cur._parent
+        for var in seen:
+            var._parent = root
         return root
 
     def join(self, other: "PlannedVar") -> None:
