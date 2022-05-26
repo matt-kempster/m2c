@@ -198,7 +198,6 @@ class StackInfo:
     callee_save_regs: Set[Register] = field(default_factory=set)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
     unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
-    local_vars: List["LocalVar"] = field(default_factory=list)
     temp_vars: List["EvalOnceStmt"] = field(default_factory=list)
     phi_vars: List["PhiExpr"] = field(default_factory=list)
     reg_vars: Dict[Register, "RegisterVar"] = field(default_factory=dict)
@@ -208,6 +207,7 @@ class StackInfo:
     nonzero_accesses: Set["Expression"] = field(default_factory=set)
     param_names: Dict[int, str] = field(default_factory=dict)
     stack_pointer_type: Optional[Type] = None
+    stack_struct: Optional[StructDeclaration] = None
     replace_first_arg: Optional[Tuple[str, Type]] = None
     weak_stack_var_types: Dict[int, Type] = field(default_factory=dict)
     weak_stack_var_locations: Set[int] = field(default_factory=set)
@@ -282,13 +282,6 @@ class StackInfo:
 
     def get_param_name(self, offset: int) -> Optional[str]:
         return self.param_names.get(offset)
-
-    def add_local_var(self, var: "LocalVar") -> None:
-        if any(v.value == var.value for v in self.local_vars):
-            return
-        self.local_vars.append(var)
-        # Make sure the local vars stay sorted in order on the stack.
-        self.local_vars.sort(key=lambda v: v.value)
 
     def add_argument(self, arg: "PassedInArg") -> None:
         if any(a.value == arg.value for a in self.arguments):
@@ -616,6 +609,8 @@ def get_stack_info(
     # Mark the struct as a stack struct so we never try to use a reference to the struct itself
     stack_struct.is_stack = True
     stack_struct.new_field_prefix = "sp"
+
+    info.stack_struct = stack_struct
 
     # This acts as the type of the $sp register
     info.stack_pointer_type = Type.ptr(Type.struct(stack_struct))
@@ -2727,10 +2722,7 @@ def handle_addi_real(
         if stack_info.is_stack_reg(output_reg):
             # Changing sp. Just ignore that.
             return source
-        # Keep track of all local variables that we take addresses of.
         var = stack_info.get_stack_var(imm.value, store=False)
-        if isinstance(var, LocalVar):
-            stack_info.add_local_var(var)
         return AddressOf(var, type=var.type.reference())
     else:
         return add_imm(source, imm, stack_info)
@@ -4124,7 +4116,6 @@ class NodeState:
             return
 
         if isinstance(dest, LocalVar):
-            self.stack_info.add_local_var(dest)
             raw_value = source
             if isinstance(raw_value, Cast) and raw_value.reinterpret:
                 # When preserving values on the stack across function calls,
@@ -4966,9 +4957,6 @@ def translate_to_ast(
 
         v: Dict[str, object] = {}
         fmt = Formatter()
-        for local in stack_info.local_vars:
-            var_name = local.format(fmt)
-            v[var_name] = local
         for temp in stack_info.temp_vars:
             if temp.need_decl():
                 var_name = temp.expr.var.format(fmt)
