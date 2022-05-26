@@ -1424,21 +1424,23 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         # Format the body first, because this can result in additional type inferencce
         formatted_body = body.format(fmt)
 
-        local_vars = function_info.stack_info.local_vars
+        stack_struct = function_info.stack_info.stack_struct
+        assert stack_struct is not None
+        stack_struct_fields = stack_struct.fields
+
         # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
         # IDO's and MWCC's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
         if options.target.compiler != Target.CompilerEnum.GCC:
-            local_vars = local_vars[::-1]
-        for local_var in local_vars:
-            type_decl = local_var.toplevel_decl(fmt)
-            if type_decl is not None:
-                comment = None
-                if local_var.value in function_info.stack_info.weak_stack_var_locations:
-                    comment = "compiler-managed"
-                function_lines.append(
-                    SimpleStatement(f"{type_decl};", comment=comment).format(fmt)
-                )
-                any_decl = True
+            stack_struct_fields = stack_struct_fields[::-1]
+        for field in stack_struct_fields:
+            type_decl = field.type.to_decl(field.name, fmt)
+            comment = None
+            if field.offset in function_info.stack_info.weak_stack_var_locations:
+                comment = "compiler-managed"
+            function_lines.append(
+                SimpleStatement(f"{type_decl};", comment=comment).format(fmt)
+            )
+            any_decl = True
 
         # With reused temps (no longer used), we can get duplicate declarations,
         # hence the use of a set here.
