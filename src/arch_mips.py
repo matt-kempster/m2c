@@ -446,7 +446,7 @@ class GccSqrtPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Replacement:
-        return Replacement([m.body[0]], len(m.body))
+        return Replacement([m.body[0], m.body[4]], len(m.body))
 
 
 class TrapuvPattern(SimpleAsmPattern):
