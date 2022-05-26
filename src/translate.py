@@ -222,7 +222,6 @@ class StackInfo:
             return False
         if self.is_leaf:
             return False
-        assert self.subroutine_arg_top is not None
         return location < self.subroutine_arg_top
 
     def in_callee_save_reg_region(self, location: int) -> bool:
@@ -565,35 +564,35 @@ def get_stack_info(
                         info.subroutine_arg_top, inst.args[2].value
                     )
 
-        # Compute the bounds of the callee-saved register region, including padding
-        if callee_saved_offsets:
-            callee_saved_offsets.sort()
-            bottom = callee_saved_offsets[0]
+    # Compute the bounds of the callee-saved register region, including padding
+    if callee_saved_offsets:
+        callee_saved_offsets.sort()
+        bottom = callee_saved_offsets[0]
 
-            # Both IDO & GCC save registers in two subregions:
-            # (a) One for double-sized registers
-            # (b) One for word-sized registers, padded to a multiple of 8 bytes
-            # IDO has (a) lower than (b); GCC has (b) lower than (a)
-            # Check that there are no gaps in this region, other than a single
-            # 4-byte word between subregions.
-            top = bottom
-            internal_padding_added = False
-            for offset in callee_saved_offsets:
-                if offset != top:
-                    if not internal_padding_added and offset == top + 4:
-                        internal_padding_added = True
-                    else:
-                        raise DecompFailure(
-                            f"Gap in callee-saved word stack region. "
-                            f"Saved: {callee_saved_offsets}, "
-                            f"gap at: {offset} != {top}."
-                        )
-                top = offset + 4
-            info.callee_save_reg_region = (bottom, top)
+        # Both IDO & GCC save registers in two subregions:
+        # (a) One for double-sized registers
+        # (b) One for word-sized registers, padded to a multiple of 8 bytes
+        # IDO has (a) lower than (b); GCC has (b) lower than (a)
+        # Check that there are no gaps in this region, other than a single
+        # 4-byte word between subregions.
+        top = bottom
+        internal_padding_added = False
+        for offset in callee_saved_offsets:
+            if offset != top:
+                if not internal_padding_added and offset == top + 4:
+                    internal_padding_added = True
+                else:
+                    raise DecompFailure(
+                        f"Gap in callee-saved word stack region. "
+                        f"Saved: {callee_saved_offsets}, "
+                        f"gap at: {offset} != {top}."
+                    )
+            top = offset + 4
+        info.callee_save_reg_region = (bottom, top)
 
-            # Subroutine arguments must be at the very bottom of the stack, so they
-            # must come after the callee-saved region
-            info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
+        # Subroutine arguments must be at the very bottom of the stack, so they
+        # must come after the callee-saved region
+        info.subroutine_arg_top = min(info.subroutine_arg_top, bottom)
 
     # Use a struct to represent the stack layout. If the struct is provided in the context,
     # its fields will be used for variable types & names.
