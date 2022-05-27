@@ -53,33 +53,29 @@ void func_004003A8(s16 arg0) {
 }
 
 void func_004007C0(u32 arg0) {
-    s32 phi_a0;
-    s32 phi_a0_2;
-    s32 phi_a0_3;
-    s32 phi_a0_4;
-    s32 phi_a0_5;
-    s32 phi_a0_6;
+    u32 var_a0;
+    u32 var_a0_2;
+    u32 var_a0_3;
+    u32 var_a0_4;
+    u32 var_a0_5;
+    u32 var_a0_6;
 
     func_00400090(arg0);
     func_00400090((u32) ((s32) (arg0 + (arg0 >> 0x1F)) >> 1));
     func_00400090(arg0 / 3);
-    phi_a0 = (s32) arg0;
-    phi_a0_2 = (s32) arg0;
-    phi_a0_3 = (s32) arg0;
-    phi_a0_4 = (s32) arg0;
-    phi_a0_5 = (s32) arg0;
-    phi_a0_6 = (s32) arg0;
-    if ((s32) arg0 < 0) {
-        phi_a0 = arg0 + 3;
+    var_a0 = arg0;
+    if ((s32) var_a0 < 0) {
+        var_a0 += 3;
     }
-    func_00400090((u32) (phi_a0 >> 2));
+    func_00400090((u32) ((s32) var_a0 >> 2));
     func_00400090(arg0 / 5);
     func_00400090(arg0 / 6);
     func_00400090(arg0 / 7);
-    if ((s32) arg0 < 0) {
-        phi_a0_2 = arg0 + 7;
+    var_a0_2 = arg0;
+    if ((s32) var_a0_2 < 0) {
+        var_a0_2 += 7;
     }
-    func_00400090((u32) (phi_a0_2 >> 3));
+    func_00400090((u32) ((s32) var_a0_2 >> 3));
     func_00400090(arg0 / 9);
     func_00400090(arg0 / 10);
     func_00400090(arg0 / 11);
@@ -87,10 +83,11 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / 13);
     func_00400090(arg0 / 14);
     func_00400090(arg0 / 15);
-    if ((s32) arg0 < 0) {
-        phi_a0_3 = arg0 + 0xF;
+    var_a0_3 = arg0;
+    if ((s32) var_a0_3 < 0) {
+        var_a0_3 += 0xF;
     }
-    func_00400090((u32) (phi_a0_3 >> 4));
+    func_00400090((u32) ((s32) var_a0_3 >> 4));
     func_00400090(arg0 / 17);
     func_00400090(arg0 / 18);
     func_00400090(arg0 / 19);
@@ -106,10 +103,11 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / 29);
     func_00400090(arg0 / 30);
     func_00400090(arg0 / 31);
-    if ((s32) arg0 < 0) {
-        phi_a0_4 = arg0 + 0x1F;
+    var_a0_4 = arg0;
+    if ((s32) var_a0_4 < 0) {
+        var_a0_4 += 0x1F;
     }
-    func_00400090((u32) (phi_a0_4 >> 5));
+    func_00400090((u32) ((s32) var_a0_4 >> 5));
     func_00400090(arg0 / 33);
     func_00400090(arg0 / 100);
     func_00400090(arg0 / 255);
@@ -122,10 +120,11 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / 100000000);
     func_00400090(arg0 / 1073741822);
     func_00400090(arg0 / 1073741822);
-    if ((s32) arg0 < 0) {
-        phi_a0_5 = arg0 + 0x3FFFFFFF;
+    var_a0_5 = arg0;
+    if ((s32) var_a0_5 < 0) {
+        var_a0_5 += 0x3FFFFFFF;
     }
-    func_00400090((u32) (phi_a0_5 >> 0x1E));
+    func_00400090((u32) ((s32) var_a0_5 >> 0x1E));
     func_00400090(arg0 / 1073741824);
     func_00400090(arg0 / 2147483648);
     func_00400090(arg0 / 2147483645);
@@ -136,43 +135,40 @@ void func_004007C0(u32 arg0) {
     func_00400090(arg0 / -10);
     func_00400090(arg0 / -7);
     func_00400090(arg0 / -5);
-    if ((s32) arg0 < 0) {
-        phi_a0_6 = arg0 + 3;
+    var_a0_6 = arg0;
+    if ((s32) var_a0_6 < 0) {
+        var_a0_6 += 3;
     }
-    func_00400090((u32) -(phi_a0_6 >> 2));
+    func_00400090((u32) -((s32) var_a0_6 >> 2));
     func_00400090(arg0 / -3);
     func_00400090((u32) -((s32) arg0 / 2));
     func_00400090((u32) -(s32) arg0);
 }
 
 void func_00400F48(s32 arg0) {
-    s32 phi_a0;
-    s32 phi_a0_2;
-    s32 phi_a0_3;
-    s32 phi_a0_4;
-    s32 phi_a0_5;
-    s32 phi_a0_6;
+    s32 var_a0;
+    s32 var_a0_2;
+    s32 var_a0_3;
+    s32 var_a0_4;
+    s32 var_a0_5;
+    s32 var_a0_6;
 
     func_00400090(0U);
     func_00400090(arg0 % 2);
     func_00400090(arg0 % 3);
-    phi_a0 = arg0;
-    phi_a0_2 = arg0;
-    phi_a0_3 = arg0;
-    phi_a0_4 = arg0;
-    phi_a0_5 = arg0;
-    phi_a0_6 = arg0;
+    var_a0 = arg0;
     if (arg0 < 0) {
-        phi_a0 = arg0 + 3;
+        var_a0 = arg0 + 3;
     }
-    func_00400090(arg0 - ((phi_a0 >> 2) * 4));
+    func_00400090(arg0 - ((var_a0 >> 2) * 4));
     func_00400090(arg0 % 5);
     func_00400090(arg0 % 6);
     func_00400090(arg0 % 7);
+    var_a0_2 = arg0;
     if (arg0 < 0) {
-        phi_a0_2 = arg0 + 7;
+        var_a0_2 = arg0 + 7;
     }
-    func_00400090(arg0 - ((phi_a0_2 >> 3) * 8));
+    func_00400090(arg0 - ((var_a0_2 >> 3) * 8));
     func_00400090(arg0 % 9);
     func_00400090(arg0 % 10);
     func_00400090(arg0 % 11);
@@ -180,10 +176,11 @@ void func_00400F48(s32 arg0) {
     func_00400090(arg0 % 13);
     func_00400090(arg0 % 14);
     func_00400090(arg0 % 15);
+    var_a0_3 = arg0;
     if (arg0 < 0) {
-        phi_a0_3 = arg0 + 0xF;
+        var_a0_3 = arg0 + 0xF;
     }
-    func_00400090(arg0 - ((phi_a0_3 >> 4) * 0x10));
+    func_00400090(arg0 - ((var_a0_3 >> 4) * 0x10));
     func_00400090(arg0 % 17);
     func_00400090(arg0 % 18);
     func_00400090(arg0 % 19);
@@ -199,10 +196,11 @@ void func_00400F48(s32 arg0) {
     func_00400090(arg0 % 29);
     func_00400090(arg0 % 30);
     func_00400090(arg0 % 31);
+    var_a0_4 = arg0;
     if (arg0 < 0) {
-        phi_a0_4 = arg0 + 0x1F;
+        var_a0_4 = arg0 + 0x1F;
     }
-    func_00400090(arg0 - ((phi_a0_4 >> 5) << 5));
+    func_00400090(arg0 - ((var_a0_4 >> 5) << 5));
     func_00400090(arg0 % 33);
     func_00400090(arg0 % 100);
     func_00400090(arg0 % 255);
@@ -215,10 +213,11 @@ void func_00400F48(s32 arg0) {
     func_00400090(arg0 % 100000000);
     func_00400090(arg0 % 1073741822);
     func_00400090(arg0 - ((arg0 / 1073741822) * 0x3FFFFFFF));
+    var_a0_5 = arg0;
     if (arg0 < 0) {
-        phi_a0_5 = arg0 + 0x3FFFFFFF;
+        var_a0_5 = arg0 + 0x3FFFFFFF;
     }
-    func_00400090(arg0 - ((phi_a0_5 >> 0x1E) << 0x1E));
+    func_00400090(arg0 - ((var_a0_5 >> 0x1E) << 0x1E));
     func_00400090(arg0 - ((arg0 / 1073741824) * 0x40000001));
     func_00400090(arg0 - ((arg0 / 2147483648) * 0x7FFFFFFD));
     func_00400090(arg0 - ((arg0 / 2147483645) * 0x7FFFFFFE));
@@ -229,10 +228,11 @@ void func_00400F48(s32 arg0) {
     func_00400090(arg0 % 10);
     func_00400090(arg0 % 7);
     func_00400090(arg0 % 5);
+    var_a0_6 = arg0;
     if (arg0 < 0) {
-        phi_a0_6 = arg0 + 3;
+        var_a0_6 = arg0 + 3;
     }
-    func_00400090(arg0 - ((phi_a0_6 >> 2) * 4));
+    func_00400090(arg0 - ((var_a0_6 >> 2) * 4));
     func_00400090(arg0 % 3);
     func_00400090(arg0 % 2);
     func_00400090(0U);

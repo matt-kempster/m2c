@@ -51,6 +51,7 @@ from .translate import (
     CmpInstrMap,
     CommentStmt,
     ErrorExpr,
+    ExprStmt,
     Expression,
     InstrArgs,
     InstrMap,
@@ -676,7 +677,7 @@ class PpcArch(Arch):
                     )
                 s.set_reg(
                     update.rhs,
-                    add_imm(a.regs[update.rhs], Literal(update.offset), a.stack_info),
+                    add_imm(update.rhs, a.regs[update.rhs], Literal(update.offset), a),
                 )
 
                 if store is not None:
@@ -722,7 +723,7 @@ class PpcArch(Arch):
                             f"Invalid instruction, rA and rD must be different in {instr_str}"
                         )
                     s.set_reg(
-                        update_reg, add_imm(a.regs[update_reg], offset, a.stack_info)
+                        update_reg, add_imm(update_reg, a.regs[update_reg], offset, a)
                     )
 
             else:
@@ -747,7 +748,7 @@ class PpcArch(Arch):
                             f"Invalid instruction, rA and rD must be different in {instr_str}"
                         )
                     s.set_reg(
-                        update_reg, add_imm(a.regs[update_reg], offset, a.stack_info)
+                        update_reg, add_imm(update_reg, a.regs[update_reg], offset, a)
                     )
 
         elif mnemonic in ("stmw", "lmw"):
@@ -880,17 +881,17 @@ class PpcArch(Arch):
                 maybe_dest_first = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                error = f"unknown instruction: {instr_str}"
+                error = ErrorExpr(f"unknown instruction: {instr_str}")
                 if mnemonic.endswith("."):
                     # Unimplemented instructions that modify CR0
-                    s.set_reg(Register("cr0_eq"), ErrorExpr(error))
-                    s.set_reg(Register("cr0_gt"), ErrorExpr(error))
-                    s.set_reg(Register("cr0_lt"), ErrorExpr(error))
-                    s.set_reg(Register("cr0_so"), ErrorExpr(error))
+                    s.set_reg(Register("cr0_eq"), error)
+                    s.set_reg(Register("cr0_gt"), error)
+                    s.set_reg(Register("cr0_lt"), error)
+                    s.set_reg(Register("cr0_so"), error)
                 if maybe_dest_first:
-                    s.set_reg_with_error(a.reg_ref(0), ErrorExpr(error))
+                    s.set_reg_real(a.reg_ref(0), error, emit_exactly_once=True)
                 else:
-                    s.write_statement(error_stmt(error))
+                    s.write_statement(ExprStmt(error))
 
         return Instruction(
             mnemonic=mnemonic,

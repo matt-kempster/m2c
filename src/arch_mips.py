@@ -979,11 +979,11 @@ class MipsArch(Arch):
                 maybe_dest_first = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                error = f"unknown instruction: {instr_str}"
+                error = ErrorExpr(f"unknown instruction: {instr_str}")
                 if maybe_dest_first:
-                    s.set_reg_with_error(a.reg_ref(0), ErrorExpr(error))
+                    s.set_reg_real(a.reg_ref(0), error, emit_exactly_once=True)
                 else:
-                    s.write_statement(error_stmt(error))
+                    s.write_statement(ExprStmt(error))
 
         return Instruction(
             mnemonic=mnemonic,

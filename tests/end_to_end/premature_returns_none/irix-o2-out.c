@@ -1,9 +1,9 @@
 ? test(s32 arg0) {
-    ? phi_v1;
+    ? var_v1;
 
-    phi_v1 = 0;
+    var_v1 = 0;
     if (arg0 != 0) {
-        phi_v1 = 1;
+        var_v1 = 1;
     }
-    return phi_v1;
+    return var_v1;
 }

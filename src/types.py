@@ -162,6 +162,7 @@ class TypeData:
     array_dim: Optional[int] = None  # K_ARRAY
     struct: Optional["StructDeclaration"] = None  # K_STRUCT
     enum: Optional[Enum] = None  # K_INT
+    new_field_within: Set["StructDeclaration"] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         assert self.kind
@@ -268,6 +269,10 @@ class Type:
         if x.enum is not None and y.enum is not None:
             if x.enum != y.enum:
                 return False
+        if y.struct in x.new_field_within or x.struct in y.new_field_within:
+            # Disallow recursive structs: if y is a struct that has a newly added
+            # field of (yet unknown) type x, don't allow unifying x and y.
+            return False
         x.kind = kind
         x.likely_kind = likely_kind
         x.size_bits = size_bits
@@ -277,6 +282,7 @@ class Type:
         x.array_dim = array_dim
         x.struct = struct
         x.enum = enum
+        x.new_field_within |= y.new_field_within
         y.uf_parent = x
         return True
 
@@ -508,7 +514,7 @@ class Type:
                 return zero_offset_results[0]
             elif exact:
                 # Try to insert a new field into the struct at the given offset
-                field_type = Type.any_field()
+                field_type = Type.any_field(new_within=data.struct)
                 field_name = f"{data.struct.new_field_prefix}{offset:X}"
                 new_field = data.struct.try_add_field(
                     field_type, offset, field_name, size=target_size
@@ -788,8 +794,13 @@ class Type:
         return Type(TypeData(kind=TypeData.K_ANYREG))
 
     @staticmethod
-    def any_field() -> "Type":
-        return Type(TypeData(kind=TypeData.K_ANY & ~TypeData.K_VOID))
+    def any_field(*, new_within: "Optional[StructDeclaration]" = None) -> "Type":
+        return Type(
+            TypeData(
+                kind=TypeData.K_ANY & ~TypeData.K_VOID,
+                new_field_within={new_within} if new_within else set(),
+            )
+        )
 
     @staticmethod
     def intish() -> "Type":

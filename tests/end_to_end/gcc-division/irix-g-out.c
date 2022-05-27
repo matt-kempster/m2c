@@ -53,7 +53,7 @@ void func_00400224(s16 arg0) {
 }
 
 void func_00400404(u32 arg0) {
-    s32 phi_at;
+    u32 var_at;
 
     func_00400090(arg0);
     func_00400090((u32) ((s32) arg0 / 2));
@@ -99,11 +99,11 @@ void func_00400404(u32 arg0) {
     func_00400090((u32) ((s32) arg0 / 89121024));
     func_00400090((u32) ((s32) arg0 / 1073741822));
     func_00400090((u32) ((s32) arg0 / 1073741823));
-    phi_at = (s32) arg0;
+    var_at = arg0;
     if ((s32) arg0 < 0) {
-        phi_at = arg0 + 0x3FFFFFFF;
+        var_at = arg0 + 0x3FFFFFFF;
     }
-    func_00400090((u32) (phi_at >> 0x1E));
+    func_00400090((u32) ((s32) var_at >> 0x1E));
     func_00400090((u32) ((s32) arg0 / 1073741825));
     func_00400090((u32) ((s32) arg0 / 2147483645));
     func_00400090((u32) ((s32) arg0 / 2147483646));
