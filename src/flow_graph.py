@@ -842,7 +842,7 @@ def is_trivial_return_block(block: Block, arch: ArchFlowGraph) -> bool:
     # A heuristic for when a block is a simple "early-return" block.
     # This could be improved.
     for instr in block.instructions:
-        if instr.is_store:
+        if instr.is_store or instr.function_target is not None:
             return False
         if any(reg in arch.all_return_regs for reg in instr.inputs + instr.outputs):
             return False
