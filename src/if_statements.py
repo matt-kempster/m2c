@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 from .flow_graph import (
     BasicNode,
@@ -38,7 +38,7 @@ class Context:
     options: Options
     is_void: bool = True
     switch_nodes: Dict[Node, int] = field(default_factory=dict)
-    case_nodes: Dict[Node, List[Tuple[int, str]]] = field(
+    case_nodes: DefaultDict[Node, List[Tuple[int, str]]] = field(
         default_factory=lambda: defaultdict(list)
     )
     goto_nodes: Set[Node] = field(default_factory=set)
@@ -130,6 +130,7 @@ class SimpleStatement:
     contents: Optional[Union[str, TrStatement]]
     comment: Optional[str] = None
     is_jump: bool = False
+    indent: int = 0
 
     def should_write(self) -> bool:
         return self.contents is not None or self.comment is not None
@@ -147,7 +148,7 @@ class SimpleStatement:
         else:
             comments = []
 
-        return fmt.with_comments(content, comments)
+        return fmt.with_comments(content, comments, indent=self.indent)
 
     def clear(self) -> None:
         self.contents = None
@@ -160,8 +161,8 @@ class LabelStatement:
     node: Node
 
     def should_write(self) -> bool:
-        return (
-            self.node in self.context.goto_nodes or self.node in self.context.case_nodes
+        return self.node in self.context.goto_nodes or bool(
+            self.context.case_nodes.get(self.node)
         )
 
     def format(self, fmt: Formatter) -> str:
@@ -1057,6 +1058,22 @@ def build_switch_statement(
     The nodes must already be labeled with `add_labels_for_switch` before calling this.
     """
     switch_body = Body(print_node_comment=context.options.debug)
+
+    # If there are any case labels to jump to the `end` node immediately after the
+    # switch block, emit them as `case ...: break;` at the start of the switch block
+    # instead. This avoids having "dangling" `case ...:` labels outside of the block.
+    remaining_labels = []
+    for index, case_label in context.case_nodes[end]:
+        if index == switch_index:
+            comment = f"switch {switch_index}" if switch_index != 0 else None
+            switch_body.add_statement(
+                SimpleStatement(f"{case_label}:", comment=comment, indent=-1)
+            )
+        else:
+            remaining_labels.append((index, case_label))
+    if len(remaining_labels) != len(context.case_nodes[end]):
+        switch_body.add_statement(SimpleStatement(f"break;", is_jump=True))
+        context.case_nodes[end] = remaining_labels
 
     # Order case blocks by their position in the asm, not by their order in the jump table
     # (but use the order in the jump table to break ties)
