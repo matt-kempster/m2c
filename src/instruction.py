@@ -126,6 +126,7 @@ class Instruction:
     function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
     is_conditional: bool = False
     is_return: bool = False
+    is_store: bool = False
 
     # These are for MIPS. `is_branch_likely` refers to branch instructions which
     # execute their delay slot only if the branch *is* taken. (Maybe these two

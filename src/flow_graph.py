@@ -838,15 +838,13 @@ def build_graph_from_block(
     return new_node
 
 
-def is_trivial_return_block(block: Block) -> bool:
+def is_trivial_return_block(block: Block, arch: ArchFlowGraph) -> bool:
     # A heuristic for when a block is a simple "early-return" block.
     # This could be improved.
-    stores = ["sb", "sh", "sw", "swc1", "sdc1", "swr", "swl", "jal"]
-    return_regs = [Register("v0"), Register("f0")]
     for instr in block.instructions:
-        if instr.mnemonic in stores:
+        if instr.is_store:
             return False
-        if any(reg in instr.args for reg in return_regs):
+        if any(reg in arch.all_return_regs for reg in instr.inputs + instr.outputs):
             return False
     return True
 
@@ -902,7 +900,9 @@ def warn_on_safeguard_use(nodes: List[Node], arch: ArchFlowGraph) -> None:
         print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
 
 
-def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
+def is_premature_return(
+    node: Node, edge: Node, nodes: List[Node], arch: ArchFlowGraph
+) -> bool:
     """Check whether a given edge in the flow graph is an early return."""
     if len(nodes) < 3:
         return False
@@ -910,7 +910,7 @@ def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     assert isinstance(terminal_node, TerminalNode)
     if not isinstance(edge, ReturnNode) or edge != final_return_node:
         return False
-    if not is_trivial_return_block(edge.block):
+    if not is_trivial_return_block(edge.block, arch):
         # Only trivial return blocks can be used for premature returns,
         # hopefully.
         return False
@@ -927,7 +927,7 @@ def is_premature_return(node: Node, edge: Node, nodes: List[Node]) -> bool:
     return node != antepenultimate_node
 
 
-def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
+def duplicate_premature_returns(nodes: List[Node], arch: ArchFlowGraph) -> List[Node]:
     """For each jump to an early return node, create a duplicate return node
     for it to jump to. This ensures nice nesting for the if_statements code,
     and avoids a phi node for the return value."""
@@ -937,7 +937,7 @@ def duplicate_premature_returns(nodes: List[Node]) -> List[Node]:
         if (
             isinstance(node, BasicNode)
             and not node.emit_goto
-            and is_premature_return(node, node.successor, nodes)
+            and is_premature_return(node, node.successor, nodes, arch)
         ):
             assert isinstance(node.successor, ReturnNode)
             index += 1
@@ -1482,7 +1482,7 @@ def build_flowgraph(
     nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
     warn_on_safeguard_use(nodes, arch)
     if not fragment:
-        nodes = duplicate_premature_returns(nodes)
+        nodes = duplicate_premature_returns(nodes, arch)
 
     compute_relations(nodes)
     if not fragment:

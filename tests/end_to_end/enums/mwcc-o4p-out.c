@@ -1,15 +1,12 @@
 enum my_enum test(enum my_enum x) {
-    if (x != TWO_TOO) {
-        if (x < 2) {
-            if (x != ZERO) {
-                return ZERO;
-            }
-            return array->unk0;
-        }
-        if (x != THREE) {
-            return ZERO;
-        }
+    switch (x) {                                    /* irregular */
+    case ZERO:
+        return array->unk0;
+    case TWO_TOO:
+        return array->unk4;
+    case THREE:
         return array->unk8;
+    default:
+        return ZERO;
     }
-    return array->unk4;
 }

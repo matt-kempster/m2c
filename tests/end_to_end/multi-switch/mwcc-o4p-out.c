@@ -14,7 +14,9 @@ s32 test(s32 arg0) {
                 // Duplicate return node #23. Try simplifying control flow for better match
                 return var_r3 ^ (var_r3 + 1);
             case -50: // switch 1
-                glob = var_r3 - 1;
+                var_r3 -= 1;
+                // Duplicate return node #31. Try simplifying control flow for better match
+                glob = var_r3;
                 return 2;
             default: // switch 1
                 var_r3 *= 2;
@@ -27,7 +29,9 @@ s32 test(s32 arg0) {
             case 3: // switch 1
                 return var_r3 ^ (var_r3 + 1);
             case 0x6B:
-                glob = var_r3 + 1;
+                var_r3 += 1;
+                // Duplicate return node #31. Try simplifying control flow for better match
+                glob = var_r3;
                 return 2;
             case 0x66:
 block_28:
@@ -35,12 +39,14 @@ block_28:
                     var_r3 -= 1;
                     var_r3 = var_r3 / 2;
                 }
+                // Duplicate return node #31. Try simplifying control flow for better match
                 glob = var_r3;
                 return 2;
             }
         }
     } else {
-        glob = var_r3 + 1;
+        var_r3 += 1;
+        glob = var_r3;
         return 2;
     }
 }

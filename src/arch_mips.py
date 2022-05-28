@@ -683,6 +683,7 @@ class MipsArch(Arch):
         is_branch_likely = False
         is_conditional = False
         is_return = False
+        is_store = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         instr_str = str(AsmInstruction(mnemonic, args))
@@ -846,6 +847,7 @@ class MipsArch(Arch):
             assert isinstance(args[0], Register)
             inputs = [args[0]]
             outputs = make_memory_access(args[1])
+            is_store = True
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].rhs)
             if mnemonic == "sdc1":
@@ -998,6 +1000,7 @@ class MipsArch(Arch):
             is_branch_likely=is_branch_likely,
             is_conditional=is_conditional,
             is_return=is_return,
+            is_store=is_store,
             eval_fn=eval_fn,
         )
 

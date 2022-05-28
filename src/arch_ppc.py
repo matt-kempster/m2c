@@ -515,6 +515,7 @@ class PpcArch(Arch):
         function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
         is_conditional = False
         is_return = False
+        is_store = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         instr_str = str(AsmInstruction(mnemonic, args))
@@ -632,6 +633,7 @@ class PpcArch(Arch):
 
         elif mnemonic in cls.instrs_store:
             assert isinstance(args[0], Register) and size is not None
+            is_store = True
             if mnemonic.endswith("x"):
                 assert (
                     len(args) == 3 + psq_imms
@@ -653,6 +655,7 @@ class PpcArch(Arch):
 
         elif mnemonic in cls.instrs_store_update:
             assert isinstance(args[0], Register) and size is not None
+            is_store = True
             if mnemonic.endswith("x"):
                 assert (
                     len(args) == 3 + psq_imms
@@ -739,7 +742,7 @@ class PpcArch(Arch):
                     update = a.memory_ref(1)
                     if not isinstance(update, AddressMode):
                         raise DecompFailure(
-                            f"Unhandled store-and-update arg in {instr_str}: {update!r}"
+                            f"Unhandled load-and-update arg in {instr_str}: {update!r}"
                         )
                     update_reg = update.rhs
                     offset = Literal(update.offset)
@@ -758,6 +761,7 @@ class PpcArch(Arch):
                 and isinstance(args[1], AsmAddressMode)
                 and args[0].register_name[0] == "r"
             )
+            is_store = mnemonic == "stmw"
             index = int(args[0].register_name[1:])
             offset = args[1].lhs_as_literal()
             while index <= 31:
@@ -904,6 +908,7 @@ class PpcArch(Arch):
             function_target=function_target,
             is_conditional=is_conditional,
             is_return=is_return,
+            is_store=is_store,
             eval_fn=eval_fn,
         )
 

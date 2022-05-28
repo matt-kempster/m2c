@@ -9,31 +9,26 @@ loop_1:
         globals.unk0 = 1;
         if ((s32) globals.unk4 == 2) {
             globals.unk8 = 3;
-            globals.unk10 = 5;
-            return;
-        }
-        if ((s32) globals.unk8 == 2) {
-            globals.unkC = 3;
-            goto block_10;
-        }
-        if ((s32) globals.unk10 == 2) {
-            globals.unk14 = 3;
-            globals.unk10 = 5;
-            return;
-        }
-        if ((s32) globals.unk14 == 2) {
-            globals.unk18 = 3;
         } else {
-            globals.unkC = 4;
-        }
+            if ((s32) globals.unk8 == 2) {
+                globals.unkC = 3;
+                goto block_10;
+            }
+            if ((s32) globals.unk10 == 2) {
+                globals.unk14 = 3;
+            } else {
+                if ((s32) globals.unk14 == 2) {
+                    globals.unk18 = 3;
+                } else {
+                    globals.unkC = 4;
+                }
 block_10:
-        var_ctr -= 1;
-        if (var_ctr == 0) {
-            /* Duplicate return node #11. Try simplifying control flow for better match */
-            globals.unk10 = 5;
-            return;
+                var_ctr -= 1;
+                if (var_ctr != 0) {
+                    goto loop_1;
+                }
+            }
         }
-        goto loop_1;
     }
     globals.unk10 = 5;
 }

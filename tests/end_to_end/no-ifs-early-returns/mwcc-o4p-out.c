@@ -11,10 +11,10 @@ void test(s32 *arg0, s32 *arg1) {
     if (temp_r3 == 8) {
         goto block_4;
     }
-    return;
+    goto block_6;
 block_4:
     *arg1 += temp_r3;
-    return;
+    goto block_6;
 block_5:
     *arg1 -= temp_r3;
 block_6:
