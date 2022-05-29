@@ -389,6 +389,9 @@ def parse_arg_elems(
                     value = BinOp(op, value, rhs)
         elif tok == "@":
             # A relocation (e.g. (...)@ha or (...)@l).
+            if not top_level:
+                # Parse a+b@l as (a+b)@l, not a+(b@l)
+                break
             arg_elems.pop(0)
             reloc_name = parse_word(arg_elems)
             assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
