@@ -5,6 +5,8 @@ extern s32 glob;
 
     var_r31 = arg0;
     switch (var_r31) {                              /* irregular */
+    case 9:
+        break;
     case 2:
         var_r31 -= 1;
         /* fallthrough */
@@ -18,7 +20,6 @@ extern s32 glob;
         var_r31 = var_r31 / 2;
         break;
     }
-case 9:
     test(glob);
     if ((s32) glob == 0) {
         glob = var_r31;
