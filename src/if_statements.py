@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 from .flow_graph import (
     BasicNode,
@@ -38,7 +38,7 @@ class Context:
     options: Options
     is_void: bool = True
     switch_nodes: Dict[Node, int] = field(default_factory=dict)
-    case_nodes: Dict[Node, List[Tuple[int, str]]] = field(
+    case_nodes: DefaultDict[Node, List[Tuple[int, str]]] = field(
         default_factory=lambda: defaultdict(list)
     )
     goto_nodes: Set[Node] = field(default_factory=set)
@@ -87,6 +87,12 @@ class IfElseStatement:
         return if_str
 
 
+def comments_for_switch(index: int) -> List[str]:
+    if index == 0:
+        return []
+    return [f"switch {index}"]
+
+
 @dataclass
 class SwitchStatement:
     jump: SwitchControl
@@ -103,7 +109,7 @@ class SwitchStatement:
         comments = []
         body_is_empty = self.body.is_empty()
         if self.index > 0:
-            comments.append(f"switch {self.index}")
+            comments.extend(comments_for_switch(self.index))
         if self.jump.is_irregular:
             comments.append("irregular")
         elif not self.jump.jump_table:
@@ -128,11 +134,12 @@ class SwitchStatement:
 @dataclass
 class SimpleStatement:
     contents: Optional[Union[str, TrStatement]]
-    comment: Optional[str] = None
+    comments: List[str] = field(default_factory=list)
     is_jump: bool = False
+    indent: int = 0
 
     def should_write(self) -> bool:
-        return self.contents is not None or self.comment is not None
+        return self.contents is not None or bool(self.comments)
 
     def format(self, fmt: Formatter) -> str:
         if self.contents is None:
@@ -142,16 +149,11 @@ class SimpleStatement:
         else:
             content = self.contents.format(fmt)
 
-        if self.comment is not None:
-            comments = [self.comment]
-        else:
-            comments = []
-
-        return fmt.with_comments(content, comments)
+        return fmt.with_comments(content, self.comments, indent=self.indent)
 
     def clear(self) -> None:
         self.contents = None
-        self.comment = None
+        self.comments = []
 
 
 @dataclass
@@ -160,15 +162,15 @@ class LabelStatement:
     node: Node
 
     def should_write(self) -> bool:
-        return (
-            self.node in self.context.goto_nodes or self.node in self.context.case_nodes
+        return self.node in self.context.goto_nodes or bool(
+            self.context.case_nodes.get(self.node)
         )
 
     def format(self, fmt: Formatter) -> str:
         lines = []
         if self.node in self.context.case_nodes:
             for (switch, case_label) in self.context.case_nodes[self.node]:
-                comments = [f"switch {switch}"] if switch != 0 else []
+                comments = comments_for_switch(switch)
                 lines.append(fmt.with_comments(f"{case_label}:", comments, indent=-1))
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
@@ -231,7 +233,7 @@ class Body:
         self.statements.append(statement)
 
     def add_comment(self, contents: str) -> None:
-        self.add_statement(SimpleStatement(None, comment=contents))
+        self.add_statement(SimpleStatement(None, comments=[contents]))
 
     def add_if_else(self, if_else: IfElseStatement) -> None:
         if if_else.else_body is None or if_else.if_body.ends_in_jump():
@@ -1058,6 +1060,22 @@ def build_switch_statement(
     """
     switch_body = Body(print_node_comment=context.options.debug)
 
+    # If there are any case labels to jump to the `end` node immediately after the
+    # switch block, emit them as `case ...: break;` at the start of the switch block
+    # instead. This avoids having "dangling" `case ...:` labels outside of the block.
+    remaining_labels = []
+    for index, case_label in context.case_nodes[end]:
+        if index == switch_index:
+            comments = comments_for_switch(switch_index)
+            switch_body.add_statement(
+                SimpleStatement(f"{case_label}:", comments=comments, indent=-1)
+            )
+        else:
+            remaining_labels.append((index, case_label))
+    if len(remaining_labels) != len(context.case_nodes[end]):
+        switch_body.add_statement(SimpleStatement(f"break;", is_jump=True))
+        context.case_nodes[end] = remaining_labels
+
     # Order case blocks by their position in the asm, not by their order in the jump table
     # (but use the order in the jump table to break ties)
     sorted_cases = sorted(
@@ -1432,11 +1450,11 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)
             if type_decl is not None:
-                comment = None
+                comments = []
                 if local_var.value in function_info.stack_info.weak_stack_var_locations:
-                    comment = "compiler-managed"
+                    comments = ["compiler-managed"]
                 function_lines.append(
-                    SimpleStatement(f"{type_decl};", comment=comment).format(fmt)
+                    SimpleStatement(f"{type_decl};", comments=comments).format(fmt)
                 )
                 any_decl = True
 
