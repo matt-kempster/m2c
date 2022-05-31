@@ -3147,7 +3147,7 @@ def format_f32_imm(num: int) -> str:
     value = struct.unpack(">f", packed)[0]
 
     if not value or value == 4294967296.0:
-        # Zero, negative zero, nan, or INT_MAX.
+        # Zero, negative zero, nan, or 2**32.
         return str(value)
 
     # Write values smaller than 1e-7 / greater than 1e7 using scientific notation,
