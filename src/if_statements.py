@@ -108,8 +108,7 @@ class SwitchStatement:
         lines = []
         comments = []
         body_is_empty = self.body.is_empty()
-        if self.index > 0:
-            comments.extend(comments_for_switch(self.index))
+        comments.extend(comments_for_switch(self.index))
         if self.jump.is_irregular:
             comments.append("irregular")
         elif not self.jump.jump_table:
