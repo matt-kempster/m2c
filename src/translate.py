@@ -2319,13 +2319,16 @@ class InstrArgs:
             return Literal(ret.value & 0xFFFF)
         return ret
 
-    def hi_imm(self, index: int) -> Argument:
+    def hi_imm(self, index: int) -> RawSymbolRef:
         arg = self.raw_arg(index)
         if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha", "h"):
             raise DecompFailure(
-                f"Got lui/lis instruction with macro other than %hi/@ha/@h: {arg}"
+                f"lui/lis argument must be a literal or %hi/@ha/@h macro, found {arg}"
             )
-        return arg.argument
+        ref = parse_symbol_ref(arg.argument)
+        if ref is None:
+            raise DecompFailure(f"Invalid macro argument {arg.argument}")
+        return ref
 
     def shifted_imm(self, index: int) -> Expression:
         # TODO: Should this be part of hi_imm? Do we need to handle @ha?
@@ -2345,17 +2348,10 @@ class InstrArgs:
         # some disassemblers (like IDA) even though it isn't valid assembly.
         # For PPC, we want to allow "lwz $r1, symbol@sda21($r13)" where $r13 is
         # assumed to point to the start of a small data area (SDA).
-        if isinstance(ret, AsmGlobalSymbol):
-            return RawSymbolRef(offset=0, sym=ret)
-
-        if (
-            isinstance(ret, BinOp)
-            and ret.op in "+-"
-            and isinstance(ret.lhs, AsmGlobalSymbol)
-            and isinstance(ret.rhs, AsmLiteral)
-        ):
-            sign = 1 if ret.op == "+" else -1
-            return RawSymbolRef(offset=(ret.rhs.value * sign), sym=ret.lhs)
+        # (strip_macros removes the AsmAddressMode wrapper for sda21 relocs.)
+        ref = parse_symbol_ref(ret)
+        if ref is not None:
+            return ref
 
         if not isinstance(ret, AsmAddressMode):
             raise DecompFailure(
@@ -2755,34 +2751,30 @@ def void_fn_op(fn_name: str, args: List[Expression]) -> ExprStmt:
     return ExprStmt(fn_call)
 
 
-def load_upper(args: InstrArgs) -> Expression:
-    arg = args.raw_arg(1)
-    if not isinstance(arg, Macro):
-        assert not isinstance(
-            arg, Literal
-        ), "normalize_instruction should convert lui/lis <literal> to li"
-        raise DecompFailure(
-            f"lui/lis argument must be a literal or %hi/@ha macro, found {arg}"
-        )
-
-    hi_arg = args.hi_imm(1)
+def parse_symbol_ref(arg: Argument) -> Optional[RawSymbolRef]:
+    if isinstance(arg, AsmGlobalSymbol):
+        return RawSymbolRef(offset=0, sym=arg)
     if (
-        isinstance(hi_arg, BinOp)
-        and hi_arg.op in "+-"
-        and isinstance(hi_arg.lhs, AsmGlobalSymbol)
-        and isinstance(hi_arg.rhs, AsmLiteral)
+        isinstance(arg, BinOp)
+        and arg.op in "+-"
+        and isinstance(arg.lhs, AsmGlobalSymbol)
+        and isinstance(arg.rhs, AsmLiteral)
     ):
-        sym = hi_arg.lhs
-        offset = hi_arg.rhs.value * (-1 if hi_arg.op == "-" else 1)
-    elif isinstance(hi_arg, AsmGlobalSymbol):
-        sym = hi_arg
-        offset = 0
-    else:
-        raise DecompFailure(f"Invalid %hi/@ha argument {hi_arg}")
+        return RawSymbolRef(
+            offset=arg.rhs.value * (-1 if arg.op == "-" else 1), sym=arg.lhs
+        )
+    return None
 
+
+def load_upper(args: InstrArgs) -> Expression:
+    assert not isinstance(
+        args.raw_arg(1), Literal
+    ), "normalize_instruction should convert lui/lis <literal> to li"
+
+    ref = args.hi_imm(1)
     stack_info = args.stack_info
-    source = stack_info.global_info.address_of_gsym(sym.symbol_name)
-    imm = Literal(offset)
+    source = stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
+    imm = Literal(ref.offset)
     return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info, args)
 
 

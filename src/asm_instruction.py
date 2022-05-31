@@ -358,7 +358,7 @@ def parse_arg_elems(
             else:
                 op = expect("&+-*")
 
-            if tok == "-" and arg_elems[0] == "_":
+            if op == "-" and arg_elems[0] == "_":
                 # Parse `sym-_SDA_BASE_` as a Macro, equivalently to `sym@sda21`
                 reloc_name = parse_word(arg_elems)
                 if reloc_name not in ("_SDA_BASE_", "_SDA2_BASE_"):
@@ -379,8 +379,10 @@ def parse_arg_elems(
                     raise DecompFailure(
                         "Math is too complicated for m2c. Try adding parentheses."
                     )
-                if isinstance(rhs, AsmLiteral) and isinstance(
-                    value, AsmSectionGlobalSymbol
+                if (
+                    op == "+"
+                    and isinstance(rhs, AsmLiteral)
+                    and isinstance(value, AsmSectionGlobalSymbol)
                 ):
                     value = asm_section_global_symbol(
                         value.section_name, value.addend + rhs.value
