@@ -556,7 +556,7 @@ def get_stack_info(
             assert isinstance(inst.args[1].lhs, AsmLiteral)
             info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
         elif (
-            arch_mnemonic == "mips:move"
+            arch_mnemonic in ("mips:move", "ppc:mr")
             and inst.args[0] == arch.frame_pointer_reg
             and inst.args[1] == arch.stack_pointer_reg
         ):

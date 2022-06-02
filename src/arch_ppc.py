@@ -269,7 +269,7 @@ class PpcArch(Arch):
     arch = Target.ArchEnum.PPC
 
     stack_pointer_reg = Register("r1")
-    frame_pointer_reg = None
+    frame_pointer_reg = Register("r30")
     return_address_reg = Register("lr")
 
     base_return_regs = [Register(r) for r in ["r3", "f1"]]
