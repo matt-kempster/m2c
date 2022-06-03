@@ -785,7 +785,8 @@ def build_graph_from_block(
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file(s), or in an additional file.\n"
-                    'It needs to be within ".section .rodata" or ".section .late_rodata".\n'
+                    'It needs to be within a data section (e.g. ".section .rodata", or\n'
+                    ".late_rodata/.data/.sdata/.sdata2).\n"
                 )
 
             jtbl_value = asm_data.values[jtbl_name]
