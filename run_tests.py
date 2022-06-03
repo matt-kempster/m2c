@@ -23,6 +23,7 @@ class TestOptions:
     should_overwrite: bool
     diff_context: int
     filter_re: Pattern[str]
+    fraction: Optional[int] = None
     parallel: Optional[int] = None
     extra_flags: List[str] = field(default_factory=list)
     coverage: Any = None
@@ -318,6 +319,8 @@ def main(
     total = len(test_cases)
     if test_options.filter_re is not None:
         test_cases = [t for t in test_cases if test_options.filter_re.search(t.name)]
+    if test_options.fraction is not None:
+        test_cases = test_cases[:: test_options.fraction]
     skipped = total - len(test_cases)
 
     test_iterator: Iterator[Tuple[TestCase, Optional[bool], str]]
@@ -396,6 +399,14 @@ if __name__ == "__main__":
         help=("Only run tests matching this regular expression."),
     )
     parser.add_argument(
+        "-K",
+        "--fraction",
+        metavar="N",
+        dest="fraction",
+        type=int,
+        help=("Only run 1 in every N tests."),
+    )
+    parser.add_argument(
         "--project",
         metavar="DIR",
         dest="project_dirs",
@@ -469,6 +480,7 @@ if __name__ == "__main__":
         should_overwrite=args.should_overwrite,
         diff_context=args.diff_context,
         filter_re=args.filter_re,
+        fraction=args.fraction,
         parallel=args.parallel,
         extra_flags=args.extra_flags,
         coverage=cov,
