@@ -1,9 +1,9 @@
 ? strcpy(? *, ? *, s32);                            /* extern */
 ? foo(s32 *, u16);                                  /* static */
-extern ? $$24;
 extern ? a1;
 extern ? a2;
 extern s32 a3;
+static ? $$24;                                      /* unable to generate initializer */
 static ? buf;
 static s32 $$22 = 0x61626364;                       /* const */
 

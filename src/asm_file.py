@@ -419,7 +419,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     curr_section = line.split()[1].split(",")[0]
                     if curr_section in (".rdata", ".late_rodata", ".sdata2"):
                         curr_section = ".rodata"
-                    if curr_section.startswith(".text"):
+                    elif curr_section == ".sdata":
+                        curr_section = ".data"
+                    elif curr_section.startswith(".text"):
                         curr_section = ".text"
                 elif (
                     directive == ".rdata"

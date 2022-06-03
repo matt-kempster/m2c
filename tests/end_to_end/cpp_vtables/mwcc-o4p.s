@@ -105,13 +105,13 @@ __vt__7Derived:
 
 .global $$210
 $$210:
-	.word 0x44657269
-	.word 0x76656400
+	.word 0x44657269  # "Deri"
+	.word 0x76656400  # "ved\0"
 
 .global $$212
 $$212:
-	.word 0x42617365
-	.word 0x00000000
+	.word 0x42617365  # "Base"
+	.word 0x00000000  # "\0\0\0\0"
 
 .global __RTTI__4Base
 __RTTI__4Base:
