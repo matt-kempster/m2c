@@ -1,3 +1,4 @@
+"""Functions for evaluating assembly instructions and building Expression trees."""
 from dataclasses import replace
 import struct
 from typing import (
@@ -9,10 +10,7 @@ from typing import (
     Union,
 )
 from .asm_instruction import (
-    AsmGlobalSymbol,
     AsmLiteral,
-    BinOp,
-    Macro,
     Register,
 )
 from .error import DecompFailure
@@ -50,7 +48,6 @@ from .translate import (
     as_type,
     early_unwrap,
     early_unwrap_ints,
-    is_trivial_expression,
     var_for_expr,
 )
 from .types import (
