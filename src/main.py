@@ -386,6 +386,13 @@ def parse_flags(flags: List[str]) -> Options:
         default="right",
     )
     group.add_argument(
+        "--brief-flag-checks",
+        dest="brief_flag_checks",
+        action="store_true",
+        help="Simplify flag checks of the form (var & literal) != 0 to (var & literal) "
+        "as well as (var & literal) == 0 to !(var & literal).",
+    )
+    group.add_argument(
         "--unk-underscore",
         dest="unknown_underscore",
         help="Emit unk_X instead of unkX for unknown struct accesses",
@@ -544,6 +551,7 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_if=args.allman,
         newline_before_else=args.allman,
         pointer_style_left=args.pointer_style == "left",
+        brief_flag_checks=args.brief_flag_checks,
         unknown_underscore=args.unknown_underscore,
         hex_case=args.hex_case,
         comment_style=args.comment_style,

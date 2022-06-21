@@ -23,6 +23,7 @@ class CodingStyle:
     newline_after_if: bool
     newline_before_else: bool
     pointer_style_left: bool
+    brief_flag_checks: bool
     unknown_underscore: bool
     hex_case: bool
     comment_style: CommentStyle
@@ -137,6 +138,7 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     newline_after_if=False,
     newline_before_else=False,
     pointer_style_left=False,
+    brief_flag_checks=False,
     unknown_underscore=False,
     hex_case=False,
     comment_style=CodingStyle.CommentStyle.MULTILINE,

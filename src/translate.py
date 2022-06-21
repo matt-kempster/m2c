@@ -1092,6 +1092,19 @@ class BinaryOp(Condition):
         if self.op in PSEUDO_FUNCTION_OPS:
             return f"{self.op}({lhs}, {rhs})"
 
+        # Write out flag checks such as '(var & literal) == 0' or '(var & literal) != 0' to be (var & literal) or !(var & literal)
+        if (
+            fmt.coding_style.brief_flag_checks
+            and isinstance(left_expr, BinaryOp)
+            and left_expr.op == "&"
+            and isinstance(right_expr, Literal)
+            and right_expr.value == 0
+        ):
+            if self.op == "==":
+                return f"(!{lhs})"
+            elif self.op == "!=":
+                return f"({lhs})"
+
         return f"({lhs} {self.op} {rhs})"
 
 
