@@ -1101,9 +1101,9 @@ class BinaryOp(Condition):
             and right_expr.value == 0
         ):
             if self.op == "==":
-                return f"(!{lhs})"
+                return f"!({strip_parens(lhs)})"
             elif self.op == "!=":
-                return f"({lhs})"
+                return f"({strip_parens(lhs)})"
 
         return f"({lhs} {self.op} {rhs})"
 
@@ -2490,12 +2490,18 @@ def balanced_parentheses(string: str) -> bool:
     return bal == 0
 
 
+def strip_parens(expr: str) -> str:
+    """Remove outer parens from an expression"""
+    ret = expr
+
+    while ret.startswith("(") and balanced_parentheses(ret[1:-1]):
+        ret = ret[1:-1]
+    return ret
+
+
 def format_expr(expr: Expression, fmt: Formatter) -> str:
     """Stringify an expression, stripping unnecessary parentheses around it."""
-    ret = expr.format(fmt)
-    if ret.startswith("(") and balanced_parentheses(ret[1:-1]):
-        return ret[1:-1]
-    return ret
+    return strip_parens(expr.format(fmt))
 
 
 def format_assignment(
