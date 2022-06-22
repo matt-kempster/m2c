@@ -378,6 +378,12 @@ def parse_flags(flags: List[str]) -> Options:
         help="Put braces on separate lines",
     )
     group.add_argument(
+        "--indent-switch-contents",
+        dest="indent_switch_contents",
+        action="store_true",
+        help="Indent switch statements' contents an extra level",
+    )
+    group.add_argument(
         "--pointer-style",
         dest="pointer_style",
         help="Control whether to output pointer asterisks next to the type name (left) "
@@ -543,6 +549,7 @@ def parse_flags(flags: List[str]) -> Options:
         newline_after_function=args.allman,
         newline_after_if=args.allman,
         newline_before_else=args.allman,
+        switch_indent_level=2 if args.indent_switch_contents else 1,
         pointer_style_left=args.pointer_style == "left",
         unknown_underscore=args.unknown_underscore,
         hex_case=args.hex_case,

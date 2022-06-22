@@ -124,7 +124,7 @@ class SwitchStatement:
                 lines.append(fmt.indent("{"))
             else:
                 lines.append(fmt.with_comments(f"{head} {{", comments))
-            with fmt.indented():
+            with fmt.indented(fmt.coding_style.switch_indent_level):
                 lines.append(self.body.format(fmt))
             lines.append(fmt.indent("}"))
         return "\n".join(lines)

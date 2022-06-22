@@ -22,6 +22,7 @@ class CodingStyle:
     newline_after_function: bool
     newline_after_if: bool
     newline_before_else: bool
+    switch_indent_level: int
     pointer_style_left: bool
     unknown_underscore: bool
     hex_case: bool
@@ -136,6 +137,7 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     newline_after_function=False,
     newline_after_if=False,
     newline_before_else=False,
+    switch_indent_level=1,
     pointer_style_left=False,
     unknown_underscore=False,
     hex_case=False,
@@ -159,12 +161,12 @@ class Formatter:
         return self.indent_step * max(indent + self.extra_indent, 0) + line
 
     @contextlib.contextmanager
-    def indented(self) -> Iterator[None]:
+    def indented(self, amt: int = 1) -> Iterator[None]:
         try:
-            self.extra_indent += 1
+            self.extra_indent += amt
             yield
         finally:
-            self.extra_indent -= 1
+            self.extra_indent -= amt
 
     def format_array(self, elements: List[str]) -> str:
         # If there are no newlines & the output would be short, put it all on one line.
