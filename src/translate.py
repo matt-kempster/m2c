@@ -2441,6 +2441,13 @@ def simplify_condition(expr: Expression) -> Expression:
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
         right = simplify_condition(expr.right)
+        if isinstance(left, UnaryOp) and left.op == "!" and right == Literal(0):
+            # `!(expr) == 0` is equivalent to `expr`
+            if expr.op == "==":
+                return left.expr
+            # `!(expr) != 0` is equivalent to `!expr`
+            if expr.op == "!=":
+                return left
         if (
             isinstance(left, BinaryOp)
             and (left.is_comparison() or left.op == "&")
