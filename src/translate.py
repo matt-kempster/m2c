@@ -1092,19 +1092,6 @@ class BinaryOp(Condition):
         if self.op in PSEUDO_FUNCTION_OPS:
             return f"{self.op}({lhs}, {rhs})"
 
-        # Write out flag checks such as '(var & literal) == 0' or '(var & literal) != 0' to be (var & literal) or !(var & literal)
-        if (
-            fmt.coding_style.brief_flag_checks
-            and isinstance(left_expr, BinaryOp)
-            and left_expr.op == "&"
-            and isinstance(right_expr, Literal)
-            and right_expr.value == 0
-        ):
-            if self.op == "==":
-                return f"!({strip_parens(lhs)})"
-            elif self.op == "!=":
-                return f"({strip_parens(lhs)})"
-
         return f"({lhs} {self.op} {rhs})"
 
 
@@ -2454,7 +2441,11 @@ def simplify_condition(expr: Expression) -> Expression:
     if isinstance(expr, BinaryOp):
         left = simplify_condition(expr.left)
         right = simplify_condition(expr.right)
-        if isinstance(left, BinaryOp) and left.is_comparison() and right == Literal(0):
+        if (
+            isinstance(left, BinaryOp)
+            and (left.is_comparison() or left.op == "&")
+            and right == Literal(0)
+        ):
             if expr.op == "==":
                 return simplify_condition(left.negated())
             if expr.op == "!=":
@@ -2470,6 +2461,7 @@ def simplify_condition(expr: Expression) -> Expression:
                 right=left,
                 type=expr.type,
             )
+
         return BinaryOp(left=left, op=expr.op, right=right, type=expr.type)
     return expr
 
@@ -2490,18 +2482,12 @@ def balanced_parentheses(string: str) -> bool:
     return bal == 0
 
 
-def strip_parens(expr: str) -> str:
-    """Remove outer parens from an expression"""
-    ret = expr
-
-    while ret.startswith("(") and balanced_parentheses(ret[1:-1]):
-        ret = ret[1:-1]
-    return ret
-
-
 def format_expr(expr: Expression, fmt: Formatter) -> str:
     """Stringify an expression, stripping unnecessary parentheses around it."""
-    return strip_parens(expr.format(fmt))
+    ret = expr.format(fmt)
+    if ret.startswith("(") and balanced_parentheses(ret[1:-1]):
+        return ret[1:-1]
+    return ret
 
 
 def format_assignment(
