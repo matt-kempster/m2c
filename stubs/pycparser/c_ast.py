@@ -46,6 +46,7 @@ Expression = Union_[
     "ExprList",
     "FuncCall",
     "ID",
+    "StructRef",
     "TernaryOp",
     "UnaryOp",
 ]
