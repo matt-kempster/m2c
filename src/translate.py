@@ -1717,11 +1717,27 @@ class EvalOnceExpr(Expression):
     # the phi.
     is_used: bool = False
 
+    def dependency(self, may_move_forward: bool) -> Optional[Expression]:
+        # (It is a bit iffy to have this method depend on state that changes over time,
+        # but it improves uses_expr. Ideally we'd know dependencies ahead of time so
+        # _prevent_later_uses can do a better job.)
+        if self.trivial:
+            return self.wrapped_expr
+        if self.var.is_emitted:
+            return None
+        if not self.transparent and self.is_used and not may_move_forward:
+            # If the expression is already used once, any further use of it will cause
+            # a var to be emitted, meaning we don't have a dependency on it at this
+            # point in time -- that dependency only existed at the time of the var
+            # assignment. The exception to this is if the expression is marked as
+            # emit_exactly_once, or is recursively contained within an EvalOnceExpr
+            # which is: in that case the use may be moved forward in time which breaks
+            # this reasoning.
+            return None
+        return self.wrapped_expr
+
     def dependencies(self) -> List[Expression]:
-        # (this is a bit iffy since state can change over time, but improves uses_expr)
-        if self.uses_var():
-            return []
-        return [self.wrapped_expr]
+        assert False, "never called, and it's unclear what to pass for may_move_forward"
 
     def use(self) -> None:
         if self.trivial or (self.transparent and not self.var.is_emitted):
@@ -2559,12 +2575,19 @@ def uses_expr(
     expr: Expression,
     expr_filter: Callable[[Expression], bool],
     parent: Optional[Expression] = None,
+    may_move_forward: bool = False,
 ) -> bool:
     if expr_filter(expr) and not isinstance(parent, AddressOf):
         return True
-    for e in expr.dependencies():
-        if uses_expr(e, expr_filter, expr):
-            return True
+    if isinstance(expr, EvalOnceExpr):
+        e = expr.dependency(may_move_forward)
+        return e is not None and (
+            uses_expr(e, expr_filter, expr, may_move_forward or expr.emit_exactly_once)
+        )
+    else:
+        for e in expr.dependencies():
+            if uses_expr(e, expr_filter, expr, may_move_forward):
+                return True
     return False
 
 

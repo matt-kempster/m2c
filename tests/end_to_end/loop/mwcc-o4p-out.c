@@ -2,9 +2,9 @@ void test(s32 arg0, s32 arg1) {
     s32 temp_r5;
     s32 var_ctr_2;
     s32 var_r6;
-    s8 *temp_r5_2;
     s8 *var_r3;
     u32 var_ctr;
+    void *temp_r5_2;
 
     var_r6 = 0;
     if (arg1 > 0) {
