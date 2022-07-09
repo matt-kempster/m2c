@@ -21,6 +21,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    BinOp,
     JumpTarget,
     Macro,
     Register,
@@ -462,6 +463,26 @@ class PpcArch(Arch):
             )
 
         args = instr.args
+        base_mnemonic = instr.mnemonic.rstrip(".")
+        dot = instr.mnemonic[len(base_mnemonic) :]
+
+        def sub(a: Argument, b: Argument) -> Argument:
+            if isinstance(a, AsmLiteral) and isinstance(b, AsmLiteral):
+                return AsmLiteral(a.value - b.value)
+            else:
+                return BinOp("-", a, b)
+
+        def add(a: Argument, b: Argument) -> Argument:
+            if isinstance(a, AsmLiteral) and isinstance(b, AsmLiteral):
+                return AsmLiteral(a.value + b.value)
+            else:
+                return BinOp("+", a, b)
+
+        def make_dotted(mn: str, args: List[Argument]) -> AsmInstruction:
+            return AsmInstruction(mn + dot, args)
+
+        lit = AsmLiteral
+
         r0_index = cls.INSTRS_R0_AS_ZERO.get(instr.mnemonic)
         if r0_index is not None and len(args) > r0_index:
             # If the argument at the given index is $r0, replace it with $zero
@@ -477,6 +498,26 @@ class PpcArch(Arch):
                 return PpcArch.normalize_instruction(
                     AsmInstruction(instr.mnemonic, new_args)
                 )
+        if len(args) == 4:
+            if base_mnemonic == "extlwi":
+                return make_dotted(
+                    "rlwinm", args[:2] + [args[3], lit(0), sub(args[2], lit(1))]
+                )
+            if base_mnemonic == "extrwi":
+                return make_dotted(
+                    "rlwinm",
+                    args[:2] + [add(args[2], args[3]), sub(lit(32), args[2]), lit(31)],
+                )
+            if base_mnemonic == "rotlwi":
+                return make_dotted("rlwinm", args[:2] + [args[2], lit(0), lit(31)])
+            if base_mnemonic == "rotrwi":
+                return make_dotted(
+                    "rlwinm", args[:2] + [sub(lit(32), args[2]), lit(0), lit(31)]
+                )
+            if base_mnemonic == "clrlslwi":
+                b = args[2]
+                n = args[3]
+                return make_dotted("rlwinm", args[:2] + [n, sub(b, n), sub(lit(31), n)])
         if len(args) == 3:
             if (
                 instr.mnemonic == "addi"
@@ -485,10 +526,24 @@ class PpcArch(Arch):
                 and args[2].macro_name in ("sda2", "sda21")
             ):
                 return AsmInstruction("li", [args[0], args[2].argument])
+            if base_mnemonic == "slwi":
+                return make_dotted(
+                    "rlwinm", args[:2] + [args[2], lit(0), sub(lit(31), args[2])]
+                )
+            if base_mnemonic == "srwi":
+                return make_dotted(
+                    "rlwinm", args[:2] + [sub(lit(32), args[2]), args[2], lit(31)]
+                )
+            if base_mnemonic == "clrlwi":
+                return make_dotted("rlwinm", args[:2] + [lit(0), args[2], lit(31)])
+            if base_mnemonic == "clrrwi":
+                return make_dotted(
+                    "rlwinm", args[:2] + [lit(0), lit(0), sub(lit(31), args[2])]
+                )
         if len(args) == 2:
             if instr.mnemonic == "lis" and isinstance(args[1], AsmLiteral):
-                lit = AsmLiteral((args[1].value & 0xFFFF) << 16)
-                return AsmInstruction("li", [args[0], lit])
+                val = lit((args[1].value & 0xFFFF) << 16)
+                return AsmInstruction("li", [args[0], val])
             if (
                 instr.mnemonic == "lis"
                 and isinstance(args[1], Macro)
@@ -499,8 +554,8 @@ class PpcArch(Arch):
                 value = args[1].argument.value
                 if value & 0x8000:
                     value += 0x10000
-                lit = AsmLiteral(value & 0xFFFF0000)
-                return AsmInstruction("li", [args[0], lit])
+                val = lit(value & 0xFFFF0000)
+                return AsmInstruction("li", [args[0], val])
             if instr.mnemonic.startswith("cmp"):
                 # For the two-argument form of cmpw, the insert an implicit CR0 as the first arg
                 cr0: Argument = Register("cr0")
@@ -1088,28 +1143,6 @@ class PpcArch(Arch):
         ),
         "rlwinm": lambda a: handle_rlwinm(
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
-        ),
-        "extlwi": lambda a: handle_rlwinm(
-            a.reg(1), a.imm_value(3), 0, a.imm_value(2) - 1
-        ),
-        "extrwi": lambda a: handle_rlwinm(
-            a.reg(1), a.imm_value(3) + a.imm_value(2), 32 - a.imm_value(2), 31
-        ),
-        "rotlwi": lambda a: handle_rlwinm(a.reg(1), a.imm_value(2), 0, 31),
-        "rotrwi": lambda a: handle_rlwinm(a.reg(1), 32 - a.imm_value(2), 0, 31),
-        "slwi": lambda a: handle_rlwinm(
-            a.reg(1), a.imm_value(2), 0, 31 - a.imm_value(2)
-        ),
-        "srwi": lambda a: handle_rlwinm(
-            a.reg(1), 32 - a.imm_value(2), a.imm_value(2), 31
-        ),
-        "clrlwi": lambda a: handle_rlwinm(a.reg(1), 0, a.imm_value(2), 31),
-        "clrrwi": lambda a: handle_rlwinm(a.reg(1), 0, 0, 31 - a.imm_value(2)),
-        "clrlslwi": lambda a: handle_rlwinm(
-            a.reg(1),
-            a.imm_value(3),
-            a.imm_value(2) - a.imm_value(3),
-            31 - a.imm_value(3),
         ),
         "slw": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
