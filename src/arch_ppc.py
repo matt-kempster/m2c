@@ -127,6 +127,29 @@ class FcmpoCrorPattern(SimpleAsmPattern):
         return None
 
 
+class MfcrPattern(SimpleAsmPattern):
+    """Comparison results extracted as ints."""
+
+    pattern = make_pattern(
+        "mfcr $x",
+        "rlwinm $x, $x, N, 31, 31",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        x = m.regs["x"]
+        if m.literals["N"] == 0:
+            reg = Register("cr0_lt")
+        elif m.literals["N"] == 1:
+            reg = Register("cr0_gt")
+        elif m.literals["N"] == 2:
+            reg = Register("cr0_eq")
+        elif m.literals["N"] == 3:
+            reg = Register("cr0_so")
+        else:
+            return None
+        return Replacement([AsmInstruction("move.fictive", [x, reg])], len(m.body))
+
+
 class TailCallPattern(AsmPattern):
     """
     If a function ends in `return fn(...);` then the compiler may perform tail-call
@@ -980,6 +1003,7 @@ class PpcArch(Arch):
 
     asm_patterns = [
         FcmpoCrorPattern(),
+        MfcrPattern(),
         TailCallPattern(),
         BoolCastPattern(),
         BranchCtrPattern(),
