@@ -7,6 +7,7 @@ s32 foo(s32);                                       /* static */
     s32 temp_r31;
     s32 temp_r31_2;
     s32 temp_r3;
+    s32 temp_r3_2;
 
     temp_r0 = arg0 + arg1;
     temp_r31 = arg1 + arg2;
@@ -16,7 +17,8 @@ s32 foo(s32);                                       /* static */
         if (temp_r3 > 0xA) {
             temp_r30 = foo(temp_r3 + arg1);
             temp_r31_2 = foo(temp_r31 + arg2);
-            if ((temp_r30 != 0) && (temp_r31_2 != 0) && (foo(temp_r29 + arg3) != 0)) {
+            temp_r3_2 = foo(temp_r29 + arg3);
+            if ((temp_r30 != 0) && (temp_r31_2 != 0) && (temp_r3_2 != 0)) {
                 return 1;
             }
         }

@@ -3621,6 +3621,11 @@ def create_dominated_node_state(
     clobbered_vars = vars_clobbered_until_dominator(stack_info, child)
     child_state.prevent_later_var_uses(clobbered_vars)
 
+    # Prevent function calls from being moved across basic blocks, except for
+    # trivial return stubs.
+    if len(child.parents) != 1 or len(parent_state.node.children()) != 1:
+        child_state.prevent_later_function_calls()
+
     return child_state
 
 

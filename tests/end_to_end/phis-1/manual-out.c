@@ -2,12 +2,12 @@ void *foo();                                        /* extern */
 
 void test(void) {
     void *sp10C;
-    void *temp_v0;
+    void *temp_t1;
 
-    temp_v0 = foo();
+    temp_t1 = foo();
     if (*NULL == 0) {
-        sp10C = temp_v0;
+        sp10C = temp_t1;
     }
-    temp_v0->unk3 = 0;
-    temp_v0->unk4 = 0;
+    temp_t1->unk3 = 0;
+    temp_t1->unk4 = 0;
 }
