@@ -342,6 +342,14 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
             return ~sub
         if expr.op == "!":
             return 1 if sub == 0 else 1
+    if isinstance(expr, ca.UnaryOp) and isinstance(expr.expr, ca.Typename):
+        size, align, _ = parse_struct_member(
+            expr.expr.type, f"referenced in {expr.op}", typemap, allow_unsized=False
+        )
+        if expr.op == "sizeof":
+            return size
+        if expr.op == "_Alignof":
+            return align
     raise DecompFailure(
         f"Failed to evaluate expression {to_c(expr)} at compile time; only simple arithmetic is supported for now"
     )
