@@ -155,6 +155,8 @@ def do_disassembly_step(
         index = "0x" + section_line[51:][:5]
         size = "0x" + section_line[58:][:5]
         break
+    else:
+        raise Exception("missing .text section in ELF file")
 
     arg = f"{addr}:{index}+{size}"
     entry_point_str = entry_point.decode("utf-8", "replace")
