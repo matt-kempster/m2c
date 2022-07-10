@@ -95,9 +95,6 @@ BRANCH_MNEMONICS: Set[CsMnemonic] = {
     cs.ppc.PPC_INS_BDZ,
     cs.ppc.PPC_INS_BDNZ,
     cs.ppc.PPC_INS_BC,
-    cs.ppc.PPC_INS_BEQ,
-    cs.ppc.PPC_INS_BGE,
-    cs.ppc.PPC_INS_BNE,
 }
 
 # These name substitutions are performed by doldisasm.py so that all symbols
