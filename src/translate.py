@@ -2795,12 +2795,15 @@ class Abi:
     possible_slots: List[AbiArgSlot]
 
 
-def vars_clobbered_until_dominator(stack_info: StackInfo, node: Node) -> Set[Var]:
+def find_clobbers_until_dominator(
+    stack_info: StackInfo, node: Node
+) -> Tuple[Set[Var], bool]:
     assert node.immediate_dominator is not None
 
     seen = {node.immediate_dominator}
     stack = node.parents[:]
-    clobbered = set()
+    clobbered_vars = set()
+    has_fn_call = False
     while stack:
         n = stack.pop()
         if n in seen:
@@ -2811,9 +2814,11 @@ def vars_clobbered_until_dominator(stack_info: StackInfo, node: Node) -> Set[Var
                 if isinstance(loc, Register):
                     var = stack_info.get_planned_var(loc, instr)
                     if var is not None:
-                        clobbered.add(var)
+                        clobbered_vars.add(var)
+            if instr.function_target is not None:
+                has_fn_call = True
         stack.extend(n.parents)
-    return clobbered
+    return clobbered_vars, has_fn_call
 
 
 def reg_sources(node: Node, reg: Register) -> Tuple[List[InstructionSource], bool]:
@@ -3616,15 +3621,21 @@ def create_dominated_node_state(
     # If we inherit an expression from the dominator that mentions a var,
     # and that var gets assigned to somewhere along a path to the dominator,
     # using that expression requires it to be made into a temp.
-    # TODO: we should really do this with other prevents as well, e.g. prevent
-    # reads/calls if there are function calls along a path to the dominator.
-    clobbered_vars = vars_clobbered_until_dominator(stack_info, child)
+    clobbered_vars, has_fn_call = find_clobbers_until_dominator(stack_info, child)
     child_state.prevent_later_var_uses(clobbered_vars)
 
     # Prevent function calls from being moved across basic blocks, except for
     # trivial return stubs.
     if len(child.parents) != 1 or len(parent_state.node.children()) != 1:
         child_state.prevent_later_function_calls()
+
+    # Prevent reads if there are function calls on the path to the dominator.
+    # TODO: we should also prevent reads if there are overlapping writes,
+    # matching the prevent_later_value_uses call in `store_memory`, but that's
+    # much harder, because store targets are only available during actual
+    # translation.
+    if has_fn_call:
+        child_state.prevent_later_reads()
 
     return child_state
 
