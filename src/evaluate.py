@@ -1004,18 +1004,24 @@ def handle_add_double(args: InstrArgs) -> Expression:
     return BinaryOp.f64(args.dreg(1), "+", args.dreg(2))
 
 
+def fold_shift_bgez(expr: Expression) -> Optional[Condition]:
+    uw_expr = early_unwrap(expr)
+    if not isinstance(uw_expr, BinaryOp) or not isinstance(uw_expr.right, Literal):
+        return None
+    value = uw_expr.right.value
+    if uw_expr.op == "<<":
+        shift = value
+    elif uw_expr.op == "*" and value > 0 and (value & (value - 1)) == 0:
+        shift = value.bit_length() - 1
+    else:
+        return None
+    bitand = BinaryOp.int(uw_expr.left, "&", Literal(1 << (31 - shift)))
+    return UnaryOp("!", bitand, type=Type.bool())
+
+
 def handle_bgez(args: InstrArgs) -> Condition:
     expr = args.reg(0)
-    uw_expr = early_unwrap(expr)
-    if (
-        isinstance(uw_expr, BinaryOp)
-        and uw_expr.op == "<<"
-        and isinstance(uw_expr.right, Literal)
-    ):
-        shift = uw_expr.right.value
-        bitand = BinaryOp.int(uw_expr.left, "&", Literal(1 << (31 - shift)))
-        return UnaryOp("!", bitand, type=Type.bool())
-    return BinaryOp.scmp(expr, ">=", Literal(0))
+    return fold_shift_bgez(expr) or BinaryOp.scmp(expr, ">=", Literal(0))
 
 
 def rlwi_mask(mask_begin: int, mask_end: int) -> int:
