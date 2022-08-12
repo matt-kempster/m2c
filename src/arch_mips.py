@@ -1052,7 +1052,7 @@ class MipsArch(Arch):
         "bnez": lambda a: BinaryOp.icmp(a.reg(0), "!=", Literal(0)),
         "blez": lambda a: BinaryOp.scmp(a.reg(0), "<=", Literal(0)),
         "bgtz": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
-        "bltz": lambda a: BinaryOp.scmp(a.reg(0), "<", Literal(0)),
+        "bltz": lambda a: handle_bgez(a).negated(),
         "bgez": lambda a: handle_bgez(a),
     }
     instrs_no_dest: StmtInstrMap = {
