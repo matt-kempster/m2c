@@ -2138,17 +2138,18 @@ class RegInfo:
         meta.is_read = True
         if meta.inherited:
             self.read_inherited.add(key)
-        uw_ret = early_unwrap(ret)
         if isinstance(ret, EvalOnceExpr) and ret.trivial:
             # Unwrap trivial wrappers eagerly: this helps phi equality checks, and
             # removes the need for unwrapping at each place that deals with literals.
             return ret.wrapped_expr
-        if isinstance(uw_ret, PassedInArg) and meta.initial:
-            # Use accessed argument registers as a signal for determining which
-            # arguments actually exist.
-            val, arg = self.stack_info.get_argument(uw_ret.value)
-            self.stack_info.add_argument(arg)
-            val.type.unify(ret.type)
+        if meta.initial:
+            uw_ret = unwrap_deep(ret)
+            if isinstance(uw_ret, PassedInArg):
+                # Use accessed argument registers as a signal for determining which
+                # arguments actually exist.
+                val, arg = self.stack_info.get_argument(uw_ret.value)
+                self.stack_info.add_argument(arg)
+                val.type.unify(ret.type)
         if meta.force:
             assert isinstance(ret, EvalOnceExpr)
             ret.force()
@@ -3095,10 +3096,13 @@ class NodeState:
             # (otherwise this will be marked used once is_used becomes true)
             expr.use()
 
+        force = False
         if planned_var is not None:
             var = planned_var
             expr = as_type(expr, var.type, silent=True)
             self.prevent_later_var_uses({var})
+            if uses_expr(expr, lambda e: var_for_expr(e) == var):
+                force = True
         else:
             prefix = self.stack_info.function.reg_formatter.format(reg)
             if prefix == "condition_bit":
@@ -3130,6 +3134,8 @@ class NodeState:
             # don't.)
             var.is_emitted = True
             expr.use()
+            if force:
+                expr.force()
 
         return expr
 

@@ -7,6 +7,6 @@ void test(void) {
     gChar = 0;
     do {
         var_v0 += 1;
-        var_v0[1].unk-1 = 0;
+        var_v0->unk-1 = 0;
     } while (0 != 0);
 }
