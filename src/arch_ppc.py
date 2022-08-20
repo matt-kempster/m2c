@@ -175,6 +175,44 @@ class TailCallPattern(AsmPattern):
         return None
 
 
+class SaveRestoreRegsFnPattern(SimpleAsmPattern):
+    """Expand calls to MWCC's built-in `_{save,rest}{gpr,fpr}_` functions into
+    register saves/restores."""
+
+    pattern = make_pattern(
+        "addi $r11, $r1, N",
+        "bl",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        addend = m.literals["N"]
+        bl = m.body[1]
+        assert isinstance(bl, Instruction)
+        assert isinstance(bl.args[0], AsmGlobalSymbol)
+        parts = bl.args[0].symbol_name.split("_")
+        if len(parts) != 3 or parts[0]:
+            return None
+        if parts[1] in ("savegpr", "restgpr"):
+            mnemonic = "stw" if parts[1] == "savegpr" else "lwz"
+            size = 4
+            reg_prefix = "r"
+        elif parts[1] in ("savefpr", "restfpr"):
+            mnemonic = "stfd" if parts[1] == "savefpr" else "lfd"
+            size = 8
+            reg_prefix = "f"
+        else:
+            return None
+        regnum = int(parts[2])
+        new_instrs = []
+        for i in range(regnum, 32):
+            reg = Register(reg_prefix + str(i))
+            stack_pos = AsmAddressMode(
+                AsmLiteral(size * (i - 32) + addend), Register("r1")
+            )
+            new_instrs.append(AsmInstruction(mnemonic, [reg, stack_pos]))
+        return Replacement(new_instrs, len(m.body))
+
+
 class BoolCastPattern(SimpleAsmPattern):
     """Cast to bool (a 1 bit type in MWCC), which also can be emitted from `!!x`."""
 
@@ -1005,6 +1043,7 @@ class PpcArch(Arch):
         FcmpoCrorPattern(),
         MfcrPattern(),
         TailCallPattern(),
+        SaveRestoreRegsFnPattern(),
         BoolCastPattern(),
         BranchCtrPattern(),
         FloatishToUintPattern(),

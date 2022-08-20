@@ -1,6 +1,6 @@
 import abc
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Dict, List, Optional, Sequence, Tuple, TypeVar, Union
 
 from .asm_file import Label
 from .asm_instruction import (
@@ -46,7 +46,7 @@ def make_pattern(*parts: str) -> Pattern:
 
 @dataclass
 class Replacement:
-    new_body: List[ReplacementPart]
+    new_body: Sequence[ReplacementPart]
     num_consumed: int
 
 
