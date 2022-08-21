@@ -150,6 +150,9 @@ class Instruction:
         """Combine architecture name with mnemonic for pattern matching"""
         return f"{arch.arch}:{self.mnemonic}"
 
+    def clone(self) -> "Instruction":
+        return replace(self, meta=self.meta.derived())
+
 
 class ArchAsm(ArchAsmParsing):
     """Arch-specific information that relates to the asm level. Extends ArchAsmParsing."""

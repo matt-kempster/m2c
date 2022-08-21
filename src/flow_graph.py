@@ -1,7 +1,7 @@
 import abc
 import copy
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
@@ -123,7 +123,11 @@ class Block:
         self.block_info = block_info
 
     def clone(self) -> "Block":
-        return copy.deepcopy(self)
+        ret = replace(self, instruction_refs=[])
+        ret.instruction_refs = [
+            InstrRef(ref.instruction.clone(), ret) for ref in self.instruction_refs
+        ]
+        return ret
 
     def __str__(self) -> str:
         name = f"{self.index} ({self.approx_label_name})"
@@ -406,7 +410,7 @@ def build_blocks(
             r = next_item.args[0] if next_item.args else None
             if all(a != r for a in next_item.args[1:]):
                 process_after.append(label)
-                process_after.append(next_item)
+                process_after.append(next_item.clone())
             else:
                 msg = [
                     f"Label {label.name} refers to a delay slot; this is currently not supported.",
@@ -446,10 +450,10 @@ def build_blocks(
             block_builder.add_instruction(
                 arch.parse("b", [target], item.meta.derived())
             )
-            block_builder.add_instruction(nop)
+            block_builder.add_instruction(nop.clone())
             block_builder.new_block()
             block_builder.set_label(Label(temp_label.target))
-            block_builder.add_instruction(nop)
+            block_builder.add_instruction(nop.clone())
 
         elif item.function_target is not None:
             # Move the delay slot instruction to before the call so it
@@ -533,6 +537,14 @@ def build_blocks(
         block_builder.new_block()
 
     return block_builder.get_blocks()
+
+
+def verify_no_duplicate_instructions(blocks: List[Block]) -> None:
+    seen = set()
+    for block in blocks:
+        for instr in block.instructions:
+            assert instr not in seen, "Instructions must be clone()ed if emitted twice"
+            seen.add(instr)
 
 
 # Split out dataclass from abc due to a mypy limitation:
@@ -1479,6 +1491,7 @@ def build_flowgraph(
     for analyzing IR patterns which do not need to be normalized in the same way.
     """
     blocks = build_blocks(function, asm_data, arch, fragment=fragment)
+    verify_no_duplicate_instructions(blocks)
 
     nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
     warn_on_safeguard_use(nodes, arch)
