@@ -208,9 +208,9 @@ class InstrProcessingFailure(Exception):
 
 
 @contextmanager
-def current_instr(instr: Instruction) -> Iterator[None]:
+def set_current_instr(instr: Instruction) -> Iterator[None]:
     """Mark an instruction as being the one currently processed, for the
-    purposes of error messages. Use like |with current_instr(instr): ...|"""
+    purposes of error messages. Use like |with set_current_instr(instr): ...|"""
     try:
         yield
     except Exception as e:

@@ -311,7 +311,7 @@ def add_imm(
         # architecture). Don't do this in the case "var_x = var_x + imm": that
         # happens with loops over subarrays and it's better to expose the raw
         # immediate.
-        dest_var = stack_info.get_planned_var(output_reg, args.instruction)
+        dest_var = stack_info.get_planned_var(output_reg, args.instruction_ref)
         inplace = dest_var is not None and var_for_expr(source) == dest_var
         if isinstance(imm, Literal) and not imm.likely_partial_offset() and not inplace:
             array_access = array_access_from_add(

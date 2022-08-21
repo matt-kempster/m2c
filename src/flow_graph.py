@@ -540,6 +540,8 @@ def build_blocks(
 
 
 def verify_no_duplicate_instructions(blocks: List[Block]) -> None:
+    # (The invariant that this checks isn't super important, but it seems like
+    # a good footgun to avoid.)
     seen = set()
     for block in blocks:
         for instr in block.instructions:
