@@ -3346,9 +3346,24 @@ class NodeState:
         self.prevent_later_function_calls()
         self.write_statement(StoreStmt(source=source, dest=dest))
 
+    def _reg_probably_meant_as_function_argument(
+        self, reg: Register, call_instr: InstrRef
+    ) -> bool:
+        for source in self.stack_info.flow_graph.instr_inputs[call_instr].get(reg):
+            uses = self.stack_info.flow_graph.instr_uses[source].get(reg)
+            assert call_instr in uses
+            if (
+                len(uses) == 1
+                and isinstance(source, InstrRef)
+                and source.instruction.function_target is None
+            ):
+                return True
+        return False
+
     def make_function_call(
         self, fn_target: Expression, outputs: List[Location]
     ) -> None:
+        call_instr = self.regs.current_instr_ref()
         arch = self.stack_info.global_info.arch
         fn_target = as_function_ptr(fn_target)
         fn_sig = fn_target.type.get_function_pointer_signature()
@@ -3372,6 +3387,7 @@ class NodeState:
                 arch.arch == Target.ArchEnum.PPC
                 and not fn_sig.is_variadic
                 and (data.meta.inherited or data.meta.function_return)
+                and not self._reg_probably_meant_as_function_argument(reg, call_instr)
             ):
                 likely_regs[reg] = False
             elif data.meta.in_pattern:
