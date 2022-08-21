@@ -3365,8 +3365,13 @@ class NodeState:
             # - `meta.function_return` will only be accurate for registers set within this
             #   basic block because we have not called `propagate_register_meta` yet.
             #   Within this block, it will be True for registers that were return values.
-            if arch.arch == Target.ArchEnum.PPC and (
-                data.meta.inherited or data.meta.function_return
+            #
+            # We don't do this stricter filtering for variadic functions, though, since
+            # those don't provide "fix the context" as a way out if we get it wrong.
+            if (
+                arch.arch == Target.ArchEnum.PPC
+                and not fn_sig.is_variadic
+                and (data.meta.inherited or data.meta.function_return)
             ):
                 likely_regs[reg] = False
             elif data.meta.in_pattern:
