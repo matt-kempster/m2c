@@ -174,6 +174,22 @@ def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
     return 4
 
 
+def primitive_range(type: Union[ca.Enum, ca.IdentifierType]) -> Optional[range]:
+    bits = 8 * primitive_size(type)
+    signed = True
+    if not isinstance(type, ca.Enum):
+        names = type.names
+        if "double" in names or "float" in names or "void" in names:
+            return None
+        if "unsigned" in names:
+            signed = False
+    if signed:
+        bits -= 1
+        return range(-(2**bits), 2**bits)
+    else:
+        return range(0, 2**bits)
+
+
 def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
     type = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl) or isinstance(type, ArrayDecl):
@@ -350,6 +366,15 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
             return size
         if expr.op == "_Alignof":
             return align
+    if isinstance(expr, ca.Cast):
+        value = parse_constant_int(expr.expr, typemap)
+        type = resolve_typedefs(expr.to_type.type, typemap)
+        if isinstance(type, ca.TypeDecl) and isinstance(
+            type.type, (ca.Enum, ca.IdentifierType)
+        ):
+            rng = primitive_range(type.type)
+            if rng is not None:
+                return rng.start + (value - rng.start) % (rng.stop - rng.start)
     raise DecompFailure(
         f"Failed to evaluate expression {to_c(expr)} at compile time; only simple arithmetic is supported for now"
     )
