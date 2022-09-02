@@ -506,6 +506,7 @@ class StackInfo:
                 f"Allocated stack size: {self.allocated_stack_size}",
                 f"Leaf? {self.is_leaf}",
                 f"Bounds of callee-saved vars region: {self.callee_save_reg_region}",
+                f"Subroutine arg top: {self.subroutine_arg_top}",
                 f"Callee save registers: {self.callee_save_regs}",
             ]
         )
@@ -626,7 +627,7 @@ def get_stack_info(
                 if (
                     arch_mnemonic in ["mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
-                    and inst.args[1].rhs == arch.stack_pointer_reg
+                    and info.is_stack_reg(inst.args[1].rhs)
                     and inst.args[1].lhs_as_literal() >= 16
                 ):
                     info.subroutine_arg_top = min(
@@ -634,8 +635,10 @@ def get_stack_info(
                     )
                 elif (
                     arch_mnemonic == "mips:addiu"
-                    and inst.args[0] != arch.stack_pointer_reg
-                    and inst.args[1] == arch.stack_pointer_reg
+                    and isinstance(inst.args[1], Register)
+                    and info.is_stack_reg(inst.args[1])
+                    and isinstance(inst.args[0], Register)
+                    and not info.is_stack_reg(inst.args[0])
                     and isinstance(inst.args[2], AsmLiteral)
                     and inst.args[2].value < info.allocated_stack_size
                 ):
