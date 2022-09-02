@@ -556,7 +556,7 @@ class MipsArch(Arch):
             "gp",
         ]
     ]
-    all_regs = saved_regs + temp_regs + [stack_pointer_reg]
+    all_regs = saved_regs + temp_regs + [stack_pointer_reg, Register("zero")]
 
     aliased_gp_regs = {
         "s8": Register("fp"),
