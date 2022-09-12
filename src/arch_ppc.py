@@ -631,7 +631,7 @@ class PpcArch(Arch):
         clobbers: List[Location] = []
         outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
-        function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
+        function_target: Optional[Argument] = None
         is_conditional = False
         is_return = False
         is_store = False
@@ -711,7 +711,7 @@ class PpcArch(Arch):
             eval_fn = lambda s, a: s.set_switch_expr(a.regs[Register("ctr")])
         elif mnemonic == "bl":
             # Function call to label
-            assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
+            assert len(args) == 1
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)

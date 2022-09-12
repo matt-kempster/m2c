@@ -2372,10 +2372,13 @@ class InstrArgs:
         assert isinstance(raw_imm, Literal)
         return Literal(raw_imm.value << 16)
 
-    def sym_imm(self, index: int) -> AddressOf:
+    def sym_imm(self, index: int) -> Expression:
         arg = self.raw_arg(index)
-        assert isinstance(arg, AsmGlobalSymbol)
-        return self.stack_info.global_info.address_of_gsym(arg.symbol_name)
+        if isinstance(arg, AsmGlobalSymbol):
+            return self.stack_info.global_info.address_of_gsym(arg.symbol_name)
+        if isinstance(arg, AsmLiteral):
+            return self.full_imm(index)
+        raise DecompFailure(f"Bad function call operand {arg}")
 
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))

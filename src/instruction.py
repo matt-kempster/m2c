@@ -123,7 +123,7 @@ class Instruction:
     eval_fn: Optional[Callable[..., object]]
 
     jump_target: Optional[Union[JumpTarget, Register]] = None
-    function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
+    function_target: Optional[Argument] = None
     is_conditional: bool = False
     is_return: bool = False
     is_store: bool = False

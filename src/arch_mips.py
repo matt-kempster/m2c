@@ -680,7 +680,7 @@ class MipsArch(Arch):
         clobbers: List[Location] = []
         outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
-        function_target: Optional[Union[AsmGlobalSymbol, Register]] = None
+        function_target: Optional[Argument] = None
         has_delay_slot = False
         is_branch_likely = False
         is_conditional = False
@@ -732,7 +732,7 @@ class MipsArch(Arch):
             eval_fn = lambda s, a: s.set_switch_expr(a.reg(0))
         elif mnemonic == "jal" or mnemonic == "bal":
             # Function call to label
-            assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol)
+            assert len(args) == 1
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
