@@ -2366,6 +2366,18 @@ class InstrArgs:
             raise DecompFailure(f"Invalid macro argument {arg.argument}")
         return ref
 
+    def maybe_got_imm(self, index: int) -> Optional[RawSymbolRef]:
+        arg = self.raw_arg(index)
+        if not isinstance(arg, AsmAddressMode) or arg.rhs != Register("gp"):
+            return None
+        val = arg.lhs
+        if not isinstance(val, Macro) or val.macro_name not in ("got", "call16"):
+            return None
+        ref = parse_symbol_ref(val.argument)
+        if ref is None:
+            raise DecompFailure(f"Invalid macro argument {val.argument}")
+        return ref
+
     def shifted_imm(self, index: int) -> Expression:
         # TODO: Should this be part of hi_imm? Do we need to handle @ha?
         raw_imm = self.unsigned_imm(index)

@@ -194,8 +194,17 @@ def handle_la(args: InstrArgs) -> Expression:
             )
         )
 
-    var = stack_info.global_info.address_of_gsym(target.sym.symbol_name)
-    return add_imm(output_reg, var, Literal(target.offset), args)
+    sym = stack_info.global_info.address_of_gsym(target.sym.symbol_name)
+    return add_imm(output_reg, sym, Literal(target.offset), args)
+
+
+def handle_lw(args: InstrArgs) -> Expression:
+    ref = args.maybe_got_imm(1)
+    if ref is not None:
+        # Handle `lw $a, %got(x + offset)($gp)` as an address load rather than a load.
+        sym = args.stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
+        return add_imm(args.reg_ref(0), sym, Literal(ref.offset), args)
+    return handle_load(args, type=Type.reg32(likely_float=False))
 
 
 def handle_or(left: Expression, right: Expression) -> Expression:
