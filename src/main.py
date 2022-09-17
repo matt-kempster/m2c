@@ -453,7 +453,7 @@ def parse_flags(flags: List[str]) -> Options:
         type=Target.parse,
         default="mips-ido-c",
         help="Target architecture, compiler, and language triple. "
-        "Supported triples: mips-ido-c, mips-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
+        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
         "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
     )
     group.add_argument(

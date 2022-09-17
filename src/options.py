@@ -36,6 +36,10 @@ class Target:
         MIPS = "mips"
         PPC = "ppc"
 
+    class EndianEnum(ChoicesEnum):
+        LITTLE = "little"
+        BIG = "big"
+
     class CompilerEnum(ChoicesEnum):
         IDO = "ido"
         GCC = "gcc"
@@ -46,8 +50,12 @@ class Target:
         CXX = "c++"
 
     arch: ArchEnum
+    endian: EndianEnum
     compiler: CompilerEnum
     language: LanguageEnum
+
+    def is_big_endian(self) -> bool:
+        return self.endian == Target.EndianEnum.BIG
 
     @staticmethod
     def parse(name: str) -> "Target":
@@ -57,9 +65,14 @@ class Target:
         If `-compiler` is missing, use the default for the arch.
         (This makes `mips` an alias for `mips-ido-c`, etc.)
         """
+        endian = Target.EndianEnum.BIG
         terms = name.split("-")
         try:
-            arch = Target.ArchEnum(terms[0])
+            arch_name = terms[0]
+            if arch_name.endswith("el"):
+                arch_name = arch_name[:-2]
+                endian = Target.EndianEnum.LITTLE
+            arch = Target.ArchEnum(arch_name)
             if len(terms) >= 2:
                 compiler = Target.CompilerEnum(terms[1])
             elif arch == Target.ArchEnum.PPC:
@@ -78,6 +91,7 @@ class Target:
 
         return Target(
             arch=arch,
+            endian=endian,
             compiler=compiler,
             language=language,
         )
