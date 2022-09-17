@@ -470,6 +470,20 @@ class TrapuvPattern(SimpleAsmPattern):
         return Replacement([m.body[2], new_instr], len(m.body))
 
 
+class GpJumpPattern(SimpleAsmPattern):
+    """Remove additions of $gp used for position-independent jump tables. It's
+    possible that this could be done for all additions of $gp, not just jumps,
+    but we are conservative for now."""
+
+    pattern = make_pattern(
+        "addu $x, $x, $gp",
+        "jr $x",
+    )
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        return Replacement([m.body[1]], len(m.body))
+
+
 class MipsArch(Arch):
     arch = Target.ArchEnum.MIPS
 
@@ -1022,6 +1036,7 @@ class MipsArch(Arch):
         Mips1DoubleLoadStorePattern(),
         GccSqrtPattern(),
         TrapuvPattern(),
+        GpJumpPattern(),
     ]
 
     instrs_ignore: Set[str] = {
