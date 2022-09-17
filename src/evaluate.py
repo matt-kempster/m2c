@@ -427,17 +427,22 @@ def handle_lwl(args: InstrArgs) -> Expression:
 
 def handle_lwr(args: InstrArgs) -> Expression:
     # Unaligned load for the right part of a register. This lwr may merge with an
-    # existing lwl, if it loads from the same target but with an offset that's +3.
+    # existing lwl, if it loads from the same target but with an offset that's ±3.
     uw_old_value = early_unwrap(args.reg(0))
     ref = args.memory_ref(1)
     lwl_key: Tuple[int, object]
+    delta = -3 if args.stack_info.global_info.target.is_big_endian() else 3
     if isinstance(ref, AddressMode):
-        lwl_key = (ref.offset - 3, args.regs[ref.rhs])
+        lwl_key = (ref.offset + delta, args.regs[ref.rhs])
     else:
-        lwl_key = (ref.offset - 3, ref.sym)
+        lwl_key = (ref.offset + delta, ref.sym)
     if isinstance(uw_old_value, Lwl) and uw_old_value.key[0] == lwl_key[0]:
         return UnalignedLoad(uw_old_value.load_expr)
-    if ref.offset % 4 == 2:
+    # IDO may copy 3 bytes between 4-byte-aligned addresses using lwr+swr, e.g. for
+    # the purpose of array initializers. Little endian can use lwl+swl instead,
+    # but other compilers don't seem to emit this pattern so we don't handle that
+    # at the moment.
+    if ref.offset % 4 == 2 and args.stack_info.global_info.target.is_big_endian():
         left_mem_ref = replace(ref, offset=ref.offset - 2)
         load_expr = deref_unaligned(left_mem_ref, args.regs, args.stack_info)
         return Load3Bytes(load_expr)
