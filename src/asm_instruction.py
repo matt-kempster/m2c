@@ -290,7 +290,7 @@ def parse_arg_elems(
             assert value is None
             arg_elems.pop(0)
             macro_name = parse_word(arg_elems)
-            assert macro_name in ("hi", "lo", "got", "call16")
+            assert macro_name in ("hi", "lo", "got", "gp_rel", "call16")
             expect("(")
             # Get the argument of the macro (which must exist).
             m = parse_arg_elems(

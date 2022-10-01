@@ -2371,7 +2371,11 @@ class InstrArgs:
         if not isinstance(arg, AsmAddressMode) or arg.rhs != Register("gp"):
             return None
         val = arg.lhs
-        if not isinstance(val, Macro) or val.macro_name not in ("got", "call16"):
+        if not isinstance(val, Macro) or val.macro_name not in (
+            "got",
+            "gp_rel",
+            "call16",
+        ):
             return None
         ref = parse_symbol_ref(val.argument)
         if ref is None:
