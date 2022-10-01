@@ -281,7 +281,7 @@ def parse_arg_elems(
             assert value is None
             arg_elems.pop(0)
             word = parse_word(arg_elems)
-            if word in ["data", "rodata", "bss", "text"]:
+            if word in ["data", "rodata", "rdata", "bss", "sbss", "text"]:
                 value = asm_section_global_symbol(word, 0)
             else:
                 value = JumpTarget(word)
