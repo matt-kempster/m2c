@@ -1,4 +1,5 @@
 import argparse
+import gc
 import re
 import sys
 import traceback
@@ -537,6 +538,13 @@ def parse_flags(flags: List[str]) -> Options:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    group.add_argument(
+        "--disable-gc",
+        dest="disable_gc",
+        action="store_true",
+        help="Disable Python garbage collection. Can improve performance at "
+        "the risk of running out of memory.",
+    )
 
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
@@ -598,6 +606,7 @@ def parse_flags(flags: List[str]) -> Options:
         passes=args.passes,
         incbin_dirs=args.incbin_dirs,
         deterministic_vars=args.deterministic_vars,
+        disable_gc=args.disable_gc,
     )
 
 
@@ -606,6 +615,9 @@ def main() -> None:
     # CPython default. Cap to INT_MAX to avoid an OverflowError, though.
     sys.setrecursionlimit(min(2**31 - 1, 10 * sys.getrecursionlimit()))
     options = parse_flags(sys.argv[1:])
+    if options.disable_gc:
+        gc.disable()
+        gc.set_threshold(0)
     sys.exit(run(options))
 
 

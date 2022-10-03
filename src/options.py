@@ -137,6 +137,7 @@ class Options:
     passes: int
     incbin_dirs: List[Path]
     deterministic_vars: bool
+    disable_gc: bool
 
     def formatter(self) -> "Formatter":
         return Formatter(
