@@ -26,6 +26,7 @@ class PathsToBinaries:
     IDO_CC: Optional[Path]
     SM64_TOOLS: Optional[Path]
     MWCC_CC: Optional[Path]
+    WINE: Optional[Path]
 
 
 def get_environment_variables() -> PathsToBinaries:
@@ -54,7 +55,11 @@ def get_environment_variables() -> PathsToBinaries:
     MWCC_CC = load(
         "MWCC_CC", "env variable MWCC_CC should point to a PPC cc binary (mwcceppc.exe)"
     )
-    return PathsToBinaries(IDO_CC=IDO_CC, SM64_TOOLS=SM64_TOOLS, MWCC_CC=MWCC_CC)
+    if MWCC_CC and sys.platform.startswith("linux"):
+        WINE = load("WINE", "env variable WINE should point to wine or wibo binary")
+    return PathsToBinaries(
+        IDO_CC=IDO_CC, SM64_TOOLS=SM64_TOOLS, MWCC_CC=MWCC_CC, WINE=WINE
+    )
 
 
 @dataclass
@@ -66,8 +71,7 @@ class Compiler:
         return replace(self, cc_command=self.cc_command + flags)
 
 
-def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
-    compilers: List[Tuple[str, Compiler]] = []
+def get_ido_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     if paths.IDO_CC is not None and paths.SM64_TOOLS is not None:
         ido = Compiler(
             name="ido",
@@ -86,13 +90,17 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
                 "-signed",
             ],
         )
-        compilers.append(("irix-g", ido.with_cc_flags(["-g", "-mips2"])))
-        compilers.append(("irix-o2", ido.with_cc_flags(["-O2", "-mips2"])))
-        # compilers.append(("irix-g-mips1", ido.with_cc_flags(["-O2", "-mips1"])))
-        # compilers.append(("irix-o2-mips1", ido.with_cc_flags(["-O2", "-mips1"])))
-    else:
-        logger.warning("IDO tools not found; skipping MIPS compilers")
+        return [
+            ("irix-g", ido.with_cc_flags(["-g", "-mips2"])),
+            ("irix-o2", ido.with_cc_flags(["-O2", "-mips2"])),
+            # ("irix-g-mips1", ido.with_cc_flags(["-O2", "-mips1"]))
+            # ("irix-o2-mips1", ido.with_cc_flags(["-O2", "-mips1"]))
+        ]
+    logger.warning("IDO tools not found; skipping MIPS compilers")
+    return []
 
+
+def get_mwcc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     if paths.MWCC_CC is not None:
         cc_command = [
             str(paths.MWCC_CC),
@@ -107,17 +115,29 @@ def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
             "int",
             "-nodefaults",
         ]
+        ok = True
         if paths.MWCC_CC.suffix == ".exe" and sys.platform.startswith("linux"):
-            cc_command.insert(0, "/usr/bin/wine")
-        mwcc = Compiler(
-            name="mwcc",
-            cc_command=cc_command,
-        )
-        compilers.append(("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])))
-        # compilers.append(("mwcc-o4p-s0", mwcc.with_cc_flags(["-O4,p", "-sdata", "0", "-sdata2", "0"])))
-    else:
-        logger.warning("MWCC tools not found; skipping PPC compilers")
+            if paths.WINE:
+                cc_command.insert(0, str(paths.WINE))
+            else:
+                ok = False
+        if ok:
+            mwcc = Compiler(
+                name="mwcc",
+                cc_command=cc_command,
+            )
+            return [
+                ("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])),
+                # ("mwcc-o4p-s0", mwcc.with_cc_flags(["-O4,p", "-sdata", "0", "-sdata2", "0"]))
+            ]
+    logger.warning("MWCC tools not found; skipping PPC compilers")
+    return []
 
+
+def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
+    compilers: List[Tuple[str, Compiler]] = []
+    compilers.extend(get_ido_compilers(paths))
+    compilers.extend(get_mwcc_compilers(paths))
     return compilers
 
 
