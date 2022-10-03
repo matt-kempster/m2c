@@ -53,6 +53,7 @@ class Replacement:
 @dataclass
 class AsmMatch:
     body: List[BodyPart]
+    wildcard_items: List[BodyPart]
     regs: Dict[str, Register]
     literals: Dict[str, int]
 
@@ -85,6 +86,7 @@ class TryMatchState:
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_labels: Dict[str, str] = field(default_factory=dict)
     symbolic_literals: Dict[str, int] = field(default_factory=dict)
+    wildcard_items: List[BodyPart] = field(default_factory=list)
 
     T = TypeVar("T")
 
@@ -136,7 +138,7 @@ class TryMatchState:
         if isinstance(e, AsmAddressMode):
             return (
                 isinstance(a, AsmAddressMode)
-                and a.lhs == e.lhs
+                and self.match_arg(a.lhs, e.lhs)
                 and self.match_reg(a.rhs, e.rhs)
             )
         if isinstance(e, JumpTarget):
@@ -149,6 +151,7 @@ class TryMatchState:
 
     def match_one(self, actual: BodyPart, exp: PatternPart) -> bool:
         if exp is None:
+            self.wildcard_items.append(actual)
             return True
         if isinstance(exp, Label):
             return isinstance(actual, Label) and self.match_var(
@@ -167,6 +170,11 @@ class TryMatchState:
                     return False
         return True
 
+    def match_meta(self, ins: AsmInstruction) -> bool:
+        assert ins.mnemonic == ".eq"
+        res = self.eval_math(ins.args[1])
+        return self.match_arg(AsmLiteral(res), ins.args[0])
+
 
 @dataclass
 class AsmMatcher:
@@ -179,12 +187,16 @@ class AsmMatcher:
 
         start_index = index = self.index
         for (pat, optional) in pattern:
-            if index < len(self.input) and state.match_one(self.input[index], pat):
+            if isinstance(pat, AsmInstruction) and pat.mnemonic[0] == ".":
+                if not state.match_meta(pat) and not optional:
+                    return None
+            elif index < len(self.input) and state.match_one(self.input[index], pat):
                 index += 1
             elif not optional:
                 return None
         return AsmMatch(
             self.input[start_index:index],
+            state.wildcard_items,
             state.symbolic_registers,
             state.symbolic_literals,
         )

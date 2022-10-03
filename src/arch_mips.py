@@ -12,6 +12,7 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Target
+from .asm_file import Label
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -32,6 +33,7 @@ from .asm_pattern import (
     AsmMatch,
     AsmMatcher,
     AsmPattern,
+    Pattern,
     Replacement,
     SimpleAsmPattern,
     make_pattern,
@@ -468,6 +470,178 @@ class TrapuvPattern(SimpleAsmPattern):
     def replace(self, m: AsmMatch) -> Replacement:
         new_instr = AsmInstruction("trapuv.fictive", [])
         return Replacement([m.body[2], new_instr], len(m.body))
+
+
+class MemcpyPatternBase(AsmPattern):
+    """IDO unrolled memcpy, used e.g. for struct copies. Slightly different patterns
+    are used for -mips1 vs -mips2, and for >=4 vs <4 byte alignment."""
+
+    pattern_mips1: Pattern
+    pattern_mips2: Pattern
+    epilogue1: Pattern
+    epilogue2: Pattern
+    instruction_name: str
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        for pattern in (self.pattern_mips1, self.pattern_mips2):
+            m = matcher.try_match(pattern)
+            if m:
+                break
+        else:
+            return None
+
+        # Find length by searching backwards for an "addiu $e, $x, ..." where
+        # $x = $i or there's a "move $i, $x".
+        length: Optional[int] = None
+        e_src: Optional[Instruction] = None
+        i_src: Optional[Instruction] = None
+        for i in range(matcher.index - 1, -1, -1):
+            item = matcher.input[i]
+            if isinstance(item, Label):
+                break
+            if not i_src and m.regs["i"] in item.outputs:
+                i_src = item
+            if not e_src and m.regs["e"] in item.outputs:
+                e_src = item
+        if e_src is None or e_src.mnemonic != "addiu":
+            return None
+        if e_src.args[1] != m.regs["i"] and (
+            i_src is None or i_src.mnemonic != "move" or i_src.args[1] != e_src.args[1]
+        ):
+            return None
+        assert isinstance(e_src.args[2], AsmLiteral)
+        length = e_src.args[2].value
+
+        # Extend the pattern to include additional bytes copied when the total size
+        # isn't a multiple of three. (This doesn't really work well at the moment,
+        # see the comment in AlignedMemcpyPattern...)
+        added_length = length
+        m2 = matcher.try_match(pattern + self.epilogue1)
+        if m2:
+            m = m2
+            length += 4
+            m3 = matcher.try_match(pattern + self.epilogue1 + self.epilogue2)
+            if m3:
+                m = m3
+                length += 4
+
+        from_reg = Register("from")
+        to_reg = Register("to")
+        from_offset = AsmLiteral(m.literals["N"])
+        to_offset = AsmLiteral(m.literals["M"])
+        added_len_arg = AsmLiteral(added_length)
+        len_arg = AsmLiteral(length)
+        return Replacement(
+            [
+                m.body[0],
+                AsmInstruction("addiu", [from_reg, m.regs["i"], from_offset]),
+                AsmInstruction("addiu", [to_reg, m.regs["o"], to_offset]),
+                AsmInstruction(self.instruction_name, [to_reg, from_reg, len_arg]),
+                AsmInstruction("addiu", [m.regs["o"], m.regs["o"], added_len_arg]),
+                AsmInstruction("addiu", [m.regs["i"], m.regs["i"], added_len_arg]),
+            ]
+            + list(m.wildcard_items)
+            + [AsmInstruction("nop", [])],
+            len(m.body),
+        )
+
+
+class AlignedMemcpyPattern(MemcpyPatternBase):
+    pattern_mips1 = make_pattern(
+        ".loop:",
+        "lw $at, N($i)",
+        "addiu $i, $i, 12",
+        "sw $at, M($o)",
+        "lw $at, (N-8)($i)",
+        "addiu $o, $o, 12",
+        "sw $at, (M-8)($o)",
+        "lw $at, (N-4)($i)",
+        "bne $i, $e, .loop",
+        "sw $at, (M-4)($o)",
+    )
+    pattern_mips2 = make_pattern(
+        ".loop:",
+        "lw $at, N($i)",
+        "addiu $i, $i, 12",
+        "addiu $o, $o, 12",
+        "sw $at, MM($o)",
+        ".eq M, MM+12",
+        "lw $at, (N-8)($i)",
+        "sw $at, (M-8)($o)",
+        "lw $at, (N-4)($i)",
+        "bne $i, $e, .loop",
+        "sw $at, (M-4)($o)",
+    )
+    # TODO: the * should not be there on -mips2, and the very last instruction can be
+    # reordered to be further down. (Luckily the effects of failing to capture this is
+    # just an extra word copy after the memcpy.)
+    epilogue1 = make_pattern(
+        "lw $x, N($i)",
+        "*",
+        "sw $x, M($o)",
+    )
+    epilogue2 = make_pattern(
+        "lw $y, (N+4)($i)",
+        "*",
+        "sw $y, (M+4)($o)",
+    )
+    instruction_name = "memcpy.aligned.fictive"
+
+
+class UnalignedMemcpyPattern(MemcpyPatternBase):
+    pattern_mips1 = make_pattern(
+        ".loop:",
+        "lwl $at, N($i)",
+        "lwr $at, (N+3)($i)",
+        "addiu $i, $i, 12",
+        "swl $at, M($o)",
+        "swr $at, (M+3)($o)",
+        "lwl $at, (N-8)($i)",
+        "lwr $at, (N-5)($i)",
+        "addiu $o, $o, 12",
+        "swl $at, (M-8)($o)",
+        "swr $at, (M-5)($o)",
+        "lwl $at, (N-4)($i)",
+        "lwr $at, (N-1)($i)",
+        "nop",
+        "swl $at, (M-4)($o)",
+        "bne $i, $e, .loop",
+        "swr $at, (M-1)($o)",
+    )
+    pattern_mips2 = make_pattern(
+        ".loop:",
+        "lwl $at, N($i)",
+        "lwr $at, (N+3)($i)",
+        "addiu $i, $i, 12",
+        "addiu $o, $o, 12",
+        "swl $at, MM($o)",
+        ".eq M, MM+12",
+        "swr $at, (M-9)($o)",
+        "lwl $at, (N-8)($i)",
+        "lwr $at, (N-5)($i)",
+        "swl $at, (M-8)($o)",
+        "swr $at, (M-5)($o)",
+        "lwl $at, (N-4)($i)",
+        "lwr $at, (N-1)($i)",
+        "swl $at, (M-4)($o)",
+        "bne $i, $e, .loop",
+        "swr $at, (M-1)($o)",
+    )
+    epilogue1 = make_pattern(
+        "lwl $x, N($i)",
+        "lwr $x, (N+3)($i)",
+        "*",
+        "swl $x, M($o)",
+        "swr $x, (M+3)($o)",
+    )
+    epilogue2 = make_pattern(
+        "lwl $y, (N+4)($i)",
+        "lwr $y, (N+7)($i)",
+        "*",
+        "swl $y, (M+4)($o)",
+        "swr $y, (M+7)($o)",
+    )
+    instruction_name = "memcpy.unaligned.fictive"
 
 
 class GpJumpPattern(SimpleAsmPattern):
@@ -1036,6 +1210,8 @@ class MipsArch(Arch):
         Mips1DoubleLoadStorePattern(),
         GccSqrtPattern(),
         TrapuvPattern(),
+        AlignedMemcpyPattern(),
+        UnalignedMemcpyPattern(),
         GpJumpPattern(),
     ]
 
@@ -1115,6 +1291,12 @@ class MipsArch(Arch):
         ),
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
+        "memcpy.aligned.fictive": lambda a: void_fn_op(
+            "M2C_MEMCPY_ALIGNED", [a.reg(0), a.reg(1), a.imm(2)]
+        ),
+        "memcpy.unaligned.fictive": lambda a: void_fn_op(
+            "M2C_MEMCPY_UNALIGNED", [a.reg(0), a.reg(1), a.imm(2)]
+        ),
     }
     instrs_float_comp: InstrMap = {
         # Float comparisons that don't raise exception on nan
