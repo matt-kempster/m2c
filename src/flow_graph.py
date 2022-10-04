@@ -298,6 +298,8 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
                 and before_target is next_item
                 and item.mnemonic != "b"
             ):
+                # Handle the GCC pattern where the branch likely crosses just a single
+                # instruction.
                 mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
                 item = arch.parse(mn_inverted, item.args, item.meta.derived())
                 new_nop = arch.parse("nop", [], item.meta.derived())
@@ -311,8 +313,9 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
                 and str(before_target) == str(next_item)
                 and (item.mnemonic != "b" or next_item.mnemonic != "nop")
             ):
+                # Handle the IDO pattern.
                 if id(before_target) not in label_before_instr:
-                    new_label = old_label + "_before"
+                    new_label = f"_m2c_{old_label}_before"
                     label_before_instr[id(before_target)] = new_label
                     insert_label_before[id(before_target)] = new_label
                 new_target = JumpTarget(label_before_instr[id(before_target)])
@@ -324,6 +327,7 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
                 new_body.append((orig_item, item))
                 new_body.append((orig_next_item, next_item))
             else:
+                # Fall back to not transforming the branch likely at all.
                 new_body.append((item, item))
                 new_body.append((next_item, next_item))
         else:
@@ -405,13 +409,9 @@ def build_blocks(
 
             assert isinstance(next_item, Instruction), "Cannot have two labels in a row"
 
-            # Best-effort check for whether the instruction can be executed twice in a row.
-            # TODO: This may be able to be improved to use the other fields in Instruction?
-            r = next_item.args[0] if next_item.args else None
-            if all(a != r for a in next_item.args[1:]):
-                process_after.append(label)
-                process_after.append(next_item.clone())
-            else:
+            if item.is_branch_likely or item.function_target is not None:
+                # (we could handle these cases too with some care, they're just very
+                # rare so we don't bother)
                 msg = [
                     f"Label {label.name} refers to a delay slot; this is currently not supported.",
                     "Please modify the assembly to work around it (e.g. copy the instruction",
@@ -426,6 +426,40 @@ def build_blocks(
                         "execute its delay slot unconditionally.",
                     ]
                 raise DecompFailure("\n".join(msg))
+            elif (
+                all(x not in next_item.inputs for x in next_item.outputs)
+                and not next_item.is_store
+            ):
+                # It should be okay to execute this instruction twice. This check isn't
+                # technically required, but it avoids creating new blocks which could
+                # throw if_statements off guard.
+                process_after.append(label)
+                process_after.append(next_item.clone())
+            else:
+                target = item.jump_target
+                assert isinstance(target, JumpTarget), "has delay slot and isn't a call"
+                temp_label = JumpTarget(f"_m2c_{label.name}_skip")
+                meta = item.meta.derived()
+                nop = arch.parse("nop", [], meta)
+                block_builder.add_instruction(
+                    arch.parse(item.mnemonic, item.args[:-1] + [temp_label], item.meta)
+                )
+                block_builder.add_instruction(nop)
+                block_builder.new_block()
+                block_builder.add_instruction(
+                    arch.parse("b", [JumpTarget(label.name)], item.meta.derived())
+                )
+                block_builder.add_instruction(nop.clone())
+                block_builder.new_block()
+                block_builder.set_label(Label(temp_label.target))
+                block_builder.add_instruction(
+                    arch.parse("b", [target], item.meta.derived())
+                )
+                block_builder.add_instruction(next_item.clone())
+                block_builder.new_block()
+                block_builder.set_label(label)
+                block_builder.add_instruction(next_item)
+                return
 
         if next_item.has_delay_slot:
             raise DecompFailure(
@@ -438,7 +472,7 @@ def build_blocks(
             branch_likely_counts[target.target] += 1
             index = branch_likely_counts[target.target]
             mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-            temp_label = JumpTarget(f"{target.target}_branchlikelyskip_{index}")
+            temp_label = JumpTarget(f"_m2c_{target.target}_branchlikelyskip_{index}")
             branch_not = arch.parse(
                 mn_inverted, item.args[:-1] + [temp_label], item.meta.derived()
             )
@@ -454,11 +488,10 @@ def build_blocks(
             block_builder.new_block()
             block_builder.set_label(Label(temp_label.target))
             block_builder.add_instruction(nop.clone())
-
         elif item.function_target is not None:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
-            if next_item.args and next_item.args[0] == item.args[0]:
+            if len(item.args) >= 2 and item.args[1] in next_item.outputs:
                 raise DecompFailure(
                     f"Instruction after {item.mnemonic} clobbers its source\n"
                     "register, which is currently not supported.\n\n"
@@ -488,7 +521,7 @@ def build_blocks(
 
         if item.is_conditional and item.is_return:
             if cond_return_target is None:
-                cond_return_target = JumpTarget(f"_conditionalreturn_")
+                cond_return_target = JumpTarget(f"_m2c_conditionalreturn_")
             # Strip the "lr" off of the instruction
             assert item.mnemonic[-2:] == "lr"
             branch_instr = arch.parse(
