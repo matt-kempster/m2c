@@ -472,6 +472,25 @@ class TrapuvPattern(SimpleAsmPattern):
         return Replacement([m.body[2], new_instr], len(m.body))
 
 
+class SetGpPattern(AsmPattern):
+    """Strip PIC .cpload pattern at the top of functions."""
+
+    pattern = make_pattern(
+        "*",
+        "addiu $gp, $gp, _",
+        "addu $gp, $gp, $t9",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        if matcher.index != 0:
+            return None
+        m = matcher.try_match(self.pattern)
+        if m is None:
+            return None
+        nop = AsmInstruction("nop", [])
+        return Replacement([nop], len(m.body))
+
+
 class MemcpyPatternBase(AsmPattern):
     """IDO unrolled memcpy, used e.g. for struct copies. Slightly different patterns
     are used for -mips1 vs -mips2, and for >=4 vs <4 byte alignment."""
@@ -1210,6 +1229,7 @@ class MipsArch(Arch):
         Mips1DoubleLoadStorePattern(),
         GccSqrtPattern(),
         TrapuvPattern(),
+        SetGpPattern(),
         AlignedMemcpyPattern(),
         UnalignedMemcpyPattern(),
         GpJumpPattern(),

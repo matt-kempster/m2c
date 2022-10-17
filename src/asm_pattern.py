@@ -133,6 +133,8 @@ class TryMatchState:
                 return isinstance(a, AsmLiteral) and self.match_var(
                     self.symbolic_literals, e.symbol_name, a.value
                 )
+            elif e.symbol_name == "_":
+                return True
             else:
                 return isinstance(a, AsmGlobalSymbol) and a.symbol_name == e.symbol_name
         if isinstance(e, AsmAddressMode):
