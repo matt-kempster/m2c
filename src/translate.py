@@ -1509,14 +1509,30 @@ class GlobalSymbol(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def is_string_constant(self) -> bool:
+    def is_likely_char(self, c: int) -> bool:
+        return 0x20 <= c < 0x7F or c in (0, 7, 8, 9, 10, 13, 27)
+
+    def is_string_constant(self, fmt: Formatter) -> bool:
         ent = self.asm_data_entry
-        if not ent or not ent.is_string:
+        if not ent or len(ent.data) != 1 or not isinstance(ent.data[0], bytes):
             return False
-        return len(ent.data) == 1 and isinstance(ent.data[0], bytes)
+        if ent.is_string:
+            return True
+        element_type, _ = self.type.get_array()
+        if (
+            fmt.heuristic_strings
+            and element_type is not None
+            and element_type.is_int()
+            and element_type.get_size_bytes() == 1
+            and len(ent.data[0]) > 1
+            and ent.data[0][0] != 0
+            and all(self.is_likely_char(x) for x in ent.data[0])
+        ):
+            return True
+        return False
 
     def format_string_constant(self, fmt: Formatter) -> str:
-        assert self.is_string_constant(), "checked by caller"
+        assert self.is_string_constant(fmt), "checked by caller"
         assert self.asm_data_entry and isinstance(self.asm_data_entry.data[0], bytes)
 
         has_trailing_null = False
@@ -1633,7 +1649,7 @@ class AddressOf(Expression):
 
     def format(self, fmt: Formatter) -> str:
         if isinstance(self.expr, GlobalSymbol):
-            if self.expr.is_string_constant():
+            if self.expr.is_string_constant(fmt):
                 return self.expr.format_string_constant(fmt)
         if self.expr.type.is_array():
             return f"{self.expr.format(fmt)}"
@@ -4110,7 +4126,7 @@ class GlobalInfo:
                     comments.append("const")
 
                     # Float & string constants are almost always inlined and can be omitted
-                    if sym.is_string_constant():
+                    if sym.is_string_constant(fmt):
                         continue
                     if array_dim is None and sym.type.is_likely_float():
                         continue

@@ -516,6 +516,12 @@ def parse_flags(flags: List[str]) -> Options:
         ),
     )
     group.add_argument(
+        "--heuristic-strings",
+        dest="heuristic_strings",
+        action="store_true",
+        help="Heuristically detect strings in rodata even when not defined using .asci/.asciz.",
+    )
+    group.add_argument(
         "--reg-vars",
         metavar="REGISTERS",
         dest="reg_vars",
@@ -586,6 +592,7 @@ def parse_flags(flags: List[str]) -> Options:
         andor_detection=args.andor_detection,
         skip_casts=args.skip_casts,
         zfill_constants=args.zfill_constants,
+        heuristic_strings=args.heuristic_strings,
         reg_vars=reg_vars,
         goto_patterns=args.goto_patterns,
         stop_on_error=args.stop_on_error,
