@@ -41,7 +41,7 @@ from .flow_graph import (
     locs_clobbered_until_dominator,
 )
 from .ir_pattern import IrPattern, simplify_ir_patterns
-from .options import CodingStyle, Formatter, Options, Target
+from .options import ArchEnum, CodingStyle, Formatter, Language, Options, Target
 from .asm_file import AsmData, AsmDataEntry
 from .asm_instruction import (
     Argument,
@@ -270,7 +270,7 @@ class StackInfo:
         return prefix + (f"_{counter}" if counter > 1 else "")
 
     def in_subroutine_arg_region(self, location: int) -> bool:
-        if self.global_info.arch.arch == Target.ArchEnum.PPC:
+        if self.global_info.arch.arch == ArchEnum.PPC:
             return False
         if self.is_leaf:
             return False
@@ -282,7 +282,7 @@ class StackInfo:
             return True
         # PPC saves LR in the header of the previous stack frame
         if (
-            self.global_info.arch.arch == Target.ArchEnum.PPC
+            self.global_info.arch.arch == ArchEnum.PPC
             and location == self.allocated_stack_size + 4
         ):
             return True
@@ -2326,7 +2326,7 @@ class InstrArgs:
         ret = self.regs[reg]
 
         # PPC: FPR's hold doubles (64 bits), so we don't need to do anything special
-        if self.stack_info.global_info.arch.arch == Target.ArchEnum.PPC:
+        if self.stack_info.global_info.arch.arch == ArchEnum.PPC:
             return ret
 
         # MIPS: Look at the paired FPR to get the full 64-bit value
@@ -3422,7 +3422,7 @@ class NodeState:
             # We don't do this stricter filtering for variadic functions, though, since
             # those don't provide "fix the context" as a way out if we get it wrong.
             if (
-                arch.arch == Target.ArchEnum.PPC
+                arch.arch == ArchEnum.PPC
                 and not fn_sig.is_variadic
                 and (data.meta.inherited or data.meta.function_return)
                 and not self._reg_probably_meant_as_function_argument(reg, call_instr)
@@ -3805,7 +3805,7 @@ class GlobalInfo:
         else:
             demangled_symbol: Optional[CxxSymbol] = None
             demangled_str: Optional[str] = None
-            if self.target.language == Target.LanguageEnum.CXX:
+            if self.target.language == Language.CXX:
                 try:
                     demangled_symbol = demangle_codewarrior_parse(sym_name)
                 except ValueError:
@@ -3822,7 +3822,7 @@ class GlobalInfo:
 
             # If the symbol is a C++ vtable, try to build a custom type for it by parsing it
             if (
-                self.target.language == Target.LanguageEnum.CXX
+                self.target.language == Language.CXX
                 and sym_name.startswith("__vt__")
                 and sym.asm_data_entry is not None
             ):
@@ -4140,7 +4140,7 @@ class GlobalInfo:
                 # In modes except "all", skip vtable decls when compiling C++
                 if (
                     decls != Options.GlobalDeclsEnum.ALL
-                    and self.target.language == Target.LanguageEnum.CXX
+                    and self.target.language == Language.CXX
                     and name.startswith("__vt__")
                 ):
                     continue

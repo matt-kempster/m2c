@@ -11,7 +11,7 @@ from typing import (
 )
 
 from .error import DecompFailure
-from .options import Target
+from .options import ArchEnum
 from .asm_file import Label
 from .asm_instruction import (
     Argument,
@@ -678,7 +678,7 @@ class GpJumpPattern(SimpleAsmPattern):
 
 
 class MipsArch(Arch):
-    arch = Target.ArchEnum.MIPS
+    arch = ArchEnum.MIPS
 
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")

@@ -11,7 +11,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Options, Target
+from .options import Compiler, Options
 from .translate import (
     BinaryOp,
     BlockInfo,
@@ -851,7 +851,7 @@ def try_build_irregular_switch(
                     node_queue.append((node.fallthrough_edge, bounds.without(val)))
                 elif cond.op == "!=" and (
                     node.block.index > node.conditional_edge.block.index
-                    or context.options.target.compiler != Target.CompilerEnum.IDO
+                    or context.options.target.compiler != Compiler.IDO
                 ):
                     if val in cases:
                         return None
@@ -893,7 +893,7 @@ def try_build_irregular_switch(
             continue
 
         values = bounds.values(max_count=1)
-        if values and context.options.target.compiler != Target.CompilerEnum.IDO:
+        if values and context.options.target.compiler != Compiler.IDO:
             # The bounds only have a few possible values, so add this node to the set of cases
             # IDO won't make implicit cases like this, however.
             for value in values:
@@ -1444,7 +1444,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         local_vars = function_info.stack_info.local_vars
         # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`)
         # IDO's and MWCC's stack is ordered high-to-low (e.g. `int sp14; int sp10;`)
-        if options.target.compiler != Target.CompilerEnum.GCC:
+        if options.target.compiler != Compiler.GCC:
             local_vars = local_vars[::-1]
         for local_var in local_vars:
             type_decl = local_var.toplevel_decl(fmt)

@@ -18,7 +18,7 @@ from typing import (
 )
 
 from .error import DecompFailure, static_assert_unreachable
-from .options import Formatter, Options, Target
+from .options import ArchEnum, Formatter, Options
 from .asm_file import AsmData, Function, Label
 from .asm_instruction import (
     AsmAddressMode,
@@ -370,7 +370,7 @@ def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Funct
 def build_blocks(
     function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
 ) -> List[Block]:
-    if arch.arch == Target.ArchEnum.MIPS:
+    if arch.arch == ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
         function = normalize_likely_branches(function, arch)
 
@@ -538,7 +538,7 @@ def build_blocks(
             block_builder.new_block()
 
     for item in body_iter:
-        if arch.arch == Target.ArchEnum.MIPS:
+        if arch.arch == ArchEnum.MIPS:
             process_mips(item)
         else:
             process_no_delay_slots(item)

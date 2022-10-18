@@ -30,32 +30,36 @@ class CodingStyle:
     comment_column: int
 
 
+class ArchEnum(ChoicesEnum):
+    MIPS = "mips"
+    PPC = "ppc"
+
+
+class Endian(ChoicesEnum):
+    LITTLE = "little"
+    BIG = "big"
+
+
+class Compiler(ChoicesEnum):
+    IDO = "ido"
+    GCC = "gcc"
+    MWCC = "mwcc"
+
+
+class Language(ChoicesEnum):
+    C = "c"
+    CXX = "c++"
+
+
 @dataclass
 class Target:
-    class ArchEnum(ChoicesEnum):
-        MIPS = "mips"
-        PPC = "ppc"
-
-    class EndianEnum(ChoicesEnum):
-        LITTLE = "little"
-        BIG = "big"
-
-    class CompilerEnum(ChoicesEnum):
-        IDO = "ido"
-        GCC = "gcc"
-        MWCC = "mwcc"
-
-    class LanguageEnum(ChoicesEnum):
-        C = "c"
-        CXX = "c++"
-
     arch: ArchEnum
-    endian: EndianEnum
-    compiler: CompilerEnum
-    language: LanguageEnum
+    endian: Endian
+    compiler: Compiler
+    language: Language
 
     def is_big_endian(self) -> bool:
-        return self.endian == Target.EndianEnum.BIG
+        return self.endian == Endian.BIG
 
     @staticmethod
     def parse(name: str) -> "Target":
@@ -65,27 +69,27 @@ class Target:
         If `-compiler` is missing, use the default for the arch.
         (This makes `mips` an alias for `mips-ido-c`, etc.)
         """
-        endian = Target.EndianEnum.BIG
+        endian = Endian.BIG
         terms = name.split("-")
         try:
             arch_name = terms[0]
             if arch_name.endswith("el"):
                 arch_name = arch_name[:-2]
-                endian = Target.EndianEnum.LITTLE
-            arch = Target.ArchEnum(arch_name)
+                endian = Endian.LITTLE
+            arch = ArchEnum(arch_name)
             if len(terms) >= 2:
-                compiler = Target.CompilerEnum(terms[1])
-            elif arch == Target.ArchEnum.PPC:
-                compiler = Target.CompilerEnum.MWCC
+                compiler = Compiler(terms[1])
+            elif arch == ArchEnum.PPC:
+                compiler = Compiler.MWCC
             else:
-                compiler = Target.CompilerEnum.IDO
+                compiler = Compiler.IDO
 
             if len(terms) >= 3:
-                language = Target.LanguageEnum(terms[2])
-            elif compiler == Target.CompilerEnum.MWCC:
-                language = Target.LanguageEnum.CXX
+                language = Language(terms[2])
+            elif compiler == Compiler.MWCC:
+                language = Language.CXX
             else:
-                language = Target.LanguageEnum.C
+                language = Language.C
         except ValueError as e:
             raise ValueError(f"Unable to parse Target '{name}' ({e})")
 

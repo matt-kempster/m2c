@@ -10,7 +10,7 @@ from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text
-from .options import CodingStyle, Options, Target
+from .options import ArchEnum, CodingStyle, Options, Target
 from .asm_file import AsmData, Function, parse_file
 from .instruction import InstrProcessingFailure
 from .translate import (
@@ -65,9 +65,9 @@ def print_exception_as_comment(
 
 def run(options: Options) -> int:
     arch: Arch
-    if options.target.arch == Target.ArchEnum.MIPS:
+    if options.target.arch == ArchEnum.MIPS:
         arch = MipsArch()
-    elif options.target.arch == Target.ArchEnum.PPC:
+    elif options.target.arch == ArchEnum.PPC:
         arch = PpcArch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")

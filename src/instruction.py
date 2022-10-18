@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
-from .options import Target
+from .options import ArchEnum
 from .asm_instruction import (
     ArchAsmParsing,
     Argument,
@@ -157,7 +157,7 @@ class Instruction:
 class ArchAsm(ArchAsmParsing):
     """Arch-specific information that relates to the asm level. Extends ArchAsmParsing."""
 
-    arch: Target.ArchEnum
+    arch: ArchEnum
 
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]

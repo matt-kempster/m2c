@@ -14,7 +14,7 @@ from typing import (
 from .error import DecompFailure
 from .flow_graph import FlowGraph
 from .ir_pattern import IrMatch, IrPattern
-from .options import Target
+from .options import ArchEnum
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -331,7 +331,7 @@ class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
 
 
 class PpcArch(Arch):
-    arch = Target.ArchEnum.PPC
+    arch = ArchEnum.PPC
 
     stack_pointer_reg = Register("r1")
     frame_pointer_reg = Register("r30")
