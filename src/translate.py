@@ -1518,12 +1518,9 @@ class GlobalSymbol(Expression):
             return False
         if ent.is_string:
             return True
-        element_type, _ = self.type.get_array()
         if (
             fmt.heuristic_strings
-            and element_type is not None
-            and element_type.is_int()
-            and element_type.get_size_bytes() == 1
+            and ent.is_readonly
             and len(ent.data[0]) > 1
             and ent.data[0][0] != 0
             and all(self.is_likely_char(x) for x in ent.data[0])
