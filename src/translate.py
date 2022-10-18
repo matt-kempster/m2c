@@ -1467,6 +1467,9 @@ class StructAccess(Expression):
         if (
             isinstance(var, AddressOf)
             and not var.expr.type.is_array()
+            and not (
+                isinstance(var.expr, GlobalSymbol) and var.expr.is_string_constant(fmt)
+            )
             and field_name.startswith("->")
         ):
             var = var.expr
