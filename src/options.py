@@ -49,6 +49,7 @@ class Compiler(ChoicesEnum):
 class Language(ChoicesEnum):
     C = "c"
     CXX = "c++"
+    PASCAL = "pascal"
 
 
 @dataclass
@@ -147,6 +148,7 @@ class Options:
     def formatter(self) -> "Formatter":
         return Formatter(
             self.coding_style,
+            self.target.language,
             skip_casts=self.skip_casts,
             zfill_constants=self.zfill_constants,
             heuristic_strings=self.heuristic_strings,
@@ -170,6 +172,7 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
 @dataclass
 class Formatter:
     coding_style: CodingStyle = DEFAULT_CODING_STYLE
+    language: Language = Language.C
     indent_step: str = " " * 4
     skip_casts: bool = False
     extra_indent: int = 0
@@ -194,20 +197,32 @@ class Formatter:
         # If there are no newlines & the output would be short, put it all on one line.
         # Here, "line length" is just used as a rough guideline: we aren't accounting
         # for the LHS of the assignment or any indentation.
+        l = "[" if self.language == Language.PASCAL else "{"
+        r = "]" if self.language == Language.PASCAL else "}"
         if not any("\n" in el or len(el) > self.line_length for el in elements):
-            output = f"{{ {', '.join(elements)} }}"
+            output = f"{l} {', '.join(elements)} {r}"
             if len(output) < self.line_length:
                 return output
 
         # Otherwise, put each element on its own line (and include a trailing comma)
-        output = "{\n"
+        output = l + "\n"
         for el in elements:
             # Add 1 indentation level to the string
             el = el.replace("\n", "\n" + self.indent_step)
             output += self.indent(f"{el},\n", 1)
-        output += "}"
+        output += r
 
         return output
+
+    def oneline_comment(self, message: str) -> str:
+        if self.language == Language.PASCAL:
+            return f"{{ {message} }}"
+        return f"// {message}"
+
+    def multiline_comment(self, message: str) -> str:
+        if self.language == Language.PASCAL:
+            return f"{{ {message} }}"
+        return f"/* {message} */"
 
     def with_comments(self, line: str, comments: List[str], *, indent: int = 0) -> str:
         """Indent `line` and append a list of `comments` joined with ';'"""
@@ -223,10 +238,11 @@ class Formatter:
         padding = ""
         if line:
             padding = max(1, self.coding_style.comment_column - len(base)) * " "
+        comment_str = "; ".join(comments)
         if self.coding_style.comment_style == CodingStyle.CommentStyle.ONELINE:
-            comment = f"// {'; '.join(comments)}"
+            comment = self.oneline_comment(comment_str)
         else:
-            comment = f"/* {'; '.join(comments)} */"
+            comment = self.multiline_comment(comment_str)
         return f"{base}{padding}{comment}"
 
     def format_hex(self, val: int) -> str:
@@ -245,7 +261,8 @@ class Formatter:
         if len(hex_digits) == 7:
             hex_digits = f"0{hex_digits}"
 
+        prefix = "16#" if self.language == Language.PASCAL else "0x"
         if val < 0:
-            return f"-0x{hex_digits}"
+            return f"-{prefix}{hex_digits}"
         else:
-            return f"0x{hex_digits}"
+            return f"{prefix}{hex_digits}"

@@ -709,7 +709,7 @@ def format_hex(val: int) -> str:
     return format(val, "x").upper()
 
 
-def escape_byte(b: int) -> bytes:
+def escape_byte(b: int, quote: bytes) -> bytes:
     table = {
         b"\0": b"\\0",
         b"\b": b"\\b",
@@ -719,8 +719,8 @@ def escape_byte(b: int) -> bytes:
         b"\t": b"\\t",
         b"\v": b"\\v",
         b"\\": b"\\\\",
-        b'"': b'\\"',
     }
+    table[quote] = b"\\" + quote
     bs = bytes([b])
     if bs in table:
         return table[bs]
@@ -839,8 +839,8 @@ class CommentExpr(Expression):
         if fmt.coding_style.comment_style == CodingStyle.CommentStyle.NONE:
             return expr_str
 
-        prefix_str = f"/* {self.prefix} */ " if self.prefix is not None else ""
-        suffix_str = f" /* {self.suffix} */" if self.suffix is not None else ""
+        prefix_str = fmt.multiline_comment(self.prefix) + " " if self.prefix else ""
+        suffix_str = fmt.multiline_comment(self.suffix) + " " if self.suffix else ""
         return f"{prefix_str}{expr_str}{suffix_str}"
 
     @staticmethod
@@ -1099,7 +1099,14 @@ class BinaryOp(Condition):
         if self.op in PSEUDO_FUNCTION_OPS:
             return f"{self.op}({lhs}, {rhs})"
 
-        return f"({lhs} {self.op} {rhs})"
+        op = self.op
+        if fmt.language == Language.PASCAL:
+            fn_op = {"^": "bitxor", "<<": "lshift", ">>": "rshift"}.get(op)
+            if fn_op:
+                return f"{fn_op}({lhs}, {rhs})"
+            op = {"==": "=", "!=": "<>", "&&": "and", "||": "or"}.get(op, op)
+
+        return f"({lhs} {op} {rhs})"
 
 
 @dataclass(frozen=True, eq=False)
@@ -1147,7 +1154,10 @@ class UnaryOp(Condition):
         if self.op in PSEUDO_FUNCTION_OPS:
             return f"{self.op}({format_expr(self.expr, fmt)})"
 
-        return f"{self.op}{self.expr.format(fmt)}"
+        op = self.op
+        if fmt.language == Language.PASCAL:
+            op = {"!": "not"}.get(op, op)
+        return f"{op}{self.expr.format(fmt)}"
 
 
 @dataclass(frozen=True, eq=False)
@@ -1163,8 +1173,9 @@ class ExprCondition(Condition):
         return ExprCondition(self.expr, self.type, not self.is_negated)
 
     def format(self, fmt: Formatter) -> str:
-        neg = "!" if self.is_negated else ""
-        return f"{neg}{self.expr.format(fmt)}"
+        if self.is_negated:
+            return UnaryOp("!", self.expr, self.type).format(fmt)
+        return self.expr.format(fmt)
 
 
 @dataclass(frozen=True, eq=False)
@@ -1534,13 +1545,18 @@ class GlobalSymbol(Expression):
     def format_string_constant(self, fmt: Formatter) -> str:
         assert self.is_string_constant(fmt), "checked by caller"
         assert self.asm_data_entry and isinstance(self.asm_data_entry.data[0], bytes)
+        data = self.asm_data_entry.data[0]
+
+        if fmt.language == Language.PASCAL:
+            data = b"".join(escape_byte(x, quote=b"'") for x in data)
+            strdata = data.decode("utf-8", "backslashreplace").rstrip(" ")
+            return f"'{strdata}'"
 
         has_trailing_null = False
-        data = self.asm_data_entry.data[0]
         while data and data[-1] == 0:
             data = data[:-1]
             has_trailing_null = True
-        data = b"".join(map(escape_byte, data))
+        data = b"".join(escape_byte(x, quote=b'"') for x in data)
 
         strdata = data.decode("utf-8", "backslashreplace")
         ret = f'"{strdata}"'
@@ -1603,16 +1619,17 @@ class Literal(Expression):
             if self.type.get_size_bits() == 64:
                 return format_f64_imm(self.value)
             else:
-                return format_f32_imm(self.value) + "f"
+                suffix = "" if fmt.language == Language.PASCAL else "f"
+                return format_f32_imm(self.value) + suffix
         if self.type.is_pointer() and self.value == 0:
-            return "NULL"
+            return "nil" if fmt.language == Language.PASCAL else "NULL"
 
         prefix = ""
         suffix = ""
         if not fmt.skip_casts and not self.elide_cast:
             if self.type.is_pointer():
                 prefix = f"({self.type.format(fmt)})"
-            if self.type.is_unsigned():
+            if self.type.is_unsigned() and fmt.language != Language.PASCAL:
                 suffix = "U"
 
         if force_dec:
@@ -2065,7 +2082,7 @@ class CommentStmt(Statement):
         return True
 
     def format(self, fmt: Formatter) -> str:
-        return f"// {self.contents}"
+        return fmt.oneline_comment(self.contents)
 
 
 @dataclass(frozen=True)
@@ -2591,7 +2608,11 @@ def format_assignment(
     else:
         is_dest = lambda e: var_for_expr(e) == dest
     source = late_unwrap(source)
-    if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
+    if (
+        isinstance(source, BinaryOp)
+        and source.op in COMPOUND_ASSIGNMENT_OPS
+        and fmt.language != Language.PASCAL
+    ):
         source = source.normalize_for_formatting()
         rhs = None
         if is_dest(late_unwrap(source.left)):
@@ -2600,7 +2621,8 @@ def format_assignment(
             rhs = source.left
         if rhs is not None:
             return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
-    return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
+    op = ":=" if fmt.language == Language.PASCAL else "="
+    return f"{dest.format(fmt)} {op} {format_expr(source, fmt)};"
 
 
 def var_for_expr(expr: Expression) -> Optional[Var]:
