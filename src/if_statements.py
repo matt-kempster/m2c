@@ -11,7 +11,7 @@ from .flow_graph import (
     SwitchNode,
     TerminalNode,
 )
-from .options import Compiler, Options
+from .options import Compiler, Language, Options
 from .translate import (
     BinaryOp,
     BlockInfo,
@@ -61,29 +61,40 @@ class IfElseStatement:
         cond_str = format_expr(condition, fmt)
         after_ifelse = f"\n{space}" if fmt.coding_style.newline_after_if else " "
         before_else = f"\n{space}" if fmt.coding_style.newline_before_else else " "
+        begin = "begin" if fmt.language == Language.PASCAL else "{"
+        end = "end" if fmt.language == Language.PASCAL else "}"
         with fmt.indented():
+            body = self.if_body.format(fmt)
+            if fmt.language == Language.PASCAL:
+                if_head = f"if {cond_str} then"
+            else:
+                if_head = f"if ({cond_str})"
             if_str = "\n".join(
                 [
-                    f"{space}if ({cond_str}){after_ifelse}{{",
-                    self.if_body.format(fmt),  # has its own indentation
-                    f"{space}}}",
+                    f"{space}{if_head}{after_ifelse}{begin}",
+                    body,  # has its own indentation
+                    f"{space}{end}",
                 ]
             )
+        has_elseif = False
         if self.else_body is not None and not self.else_body.is_empty():
             sub_if = self.else_body.get_lone_if_statement()
             if sub_if:
                 sub_if_str = sub_if.format(fmt).lstrip()
                 else_str = f"{before_else}else {sub_if_str}"
+                has_elseif = True
             else:
                 with fmt.indented():
                     else_str = "\n".join(
                         [
-                            f"{before_else}else{after_ifelse}{{",
+                            f"{before_else}else{after_ifelse}{begin}",
                             self.else_body.format(fmt),
-                            f"{space}}}",
+                            f"{space}{end}",
                         ]
                     )
-            if_str = if_str + else_str
+            if_str += else_str
+        if fmt.language == Language.PASCAL and not has_elseif:
+            if_str += ";"
         return if_str
 
 
@@ -115,18 +126,24 @@ class SwitchStatement:
             comments.append("unable to parse jump table")
         elif body_is_empty:
             comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
-        head = f"switch ({format_expr(self.jump.control_expr, fmt)})"
+        e = format_expr(self.jump.control_expr, fmt)
+        head = f"case {e} of" if fmt.language == Language.PASCAL else f"switch ({e})"
         if body_is_empty:
             lines.append(fmt.with_comments(f"{head};", comments))
         else:
-            if fmt.coding_style.newline_after_if:
+            if fmt.language == Language.PASCAL:
+                lines.append(fmt.with_comments(f"{head}", comments))
+            elif fmt.coding_style.newline_after_if:
                 lines.append(fmt.with_comments(f"{head}", comments))
                 lines.append(fmt.indent("{"))
             else:
                 lines.append(fmt.with_comments(f"{head} {{", comments))
             with fmt.indented(fmt.coding_style.switch_indent_level):
                 lines.append(self.body.format(fmt))
-            lines.append(fmt.indent("}"))
+            if fmt.language == Language.PASCAL:
+                lines.append(fmt.indent("end;"))
+            else:
+                lines.append(fmt.indent("}"))
         return "\n".join(lines)
 
 
@@ -168,9 +185,27 @@ class LabelStatement:
     def format(self, fmt: Formatter) -> str:
         lines = []
         if self.node in self.context.case_nodes:
-            for (switch, case_label) in self.context.case_nodes[self.node]:
-                comments = comments_for_switch(switch)
-                lines.append(fmt.with_comments(f"{case_label}:", comments, indent=-1))
+            if fmt.language == Language.PASCAL:
+                defaults = [
+                    switch
+                    for (switch, case_label) in self.context.case_nodes[self.node]
+                    if case_label == "default"
+                ]
+                if defaults:
+                    comments = [c for s in defaults for c in comments_for_switch(s)]
+                    lines.append(fmt.with_comments(f"otherwise", comments, indent=-1))
+                else:
+                    nodes = self.context.case_nodes[self.node]
+                    for i, (switch, case_label) in enumerate(nodes):
+                        label = case_label[5:] + (":" if i == len(nodes) - 1 else ",")
+                        comments = comments_for_switch(switch)
+                        lines.append(fmt.with_comments(f"{label}", comments, indent=-1))
+            else:
+                for (switch, case_label) in self.context.case_nodes[self.node]:
+                    comments = comments_for_switch(switch)
+                    lines.append(
+                        fmt.with_comments(f"{case_label}:", comments, indent=-1)
+                    )
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
         return "\n".join(lines)
@@ -186,16 +221,25 @@ class DoWhileLoop:
 
     def format(self, fmt: Formatter) -> str:
         space = fmt.indent("")
-        after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
-        cond = format_expr(simplify_condition(self.condition), fmt)
-        with fmt.indented():
-            return "\n".join(
-                [
+        if fmt.language == Language.PASCAL:
+            sep = f"\n{space}" if fmt.coding_style.newline_after_if else " "
+            cond = format_expr(simplify_condition(self.condition.negated()), fmt)
+            with fmt.indented():
+                lines = [
+                    f"{space}repeat{sep}begin",
+                    self.body.format(fmt),
+                    f"{space}end{sep}until {cond};",
+                ]
+        else:
+            after_do = f"\n{space}" if fmt.coding_style.newline_after_if else " "
+            cond = format_expr(simplify_condition(self.condition), fmt)
+            with fmt.indented():
+                lines = [
                     f"{space}do{after_do}{{",
                     self.body.format(fmt),
                     f"{space}}} while ({cond});",
                 ]
-            )
+        return "\n".join(lines)
 
 
 Statement = Union[
@@ -425,7 +469,7 @@ def add_labels_for_switch(
     switch_index = context.switch_nodes[node]
 
     # Force hex for case labels if the highest label is above 50, and there are no negative labels
-    indexes = sorted([i for i, _ in cases])
+    indexes = sorted(i for i, _ in cases)
     use_hex = context.fmt.coding_style.hex_case or (
         min(indexes) >= 0 and max(indexes) > 50
     )
@@ -440,7 +484,7 @@ def add_labels_for_switch(
         if enum_name:
             case_label = f"case {enum_name}"
         elif use_hex:
-            case_label = f"case 0x{index:X}"
+            case_label = f"case {context.fmt.format_int_hex(index)}"
         else:
             case_label = f"case {index}"
 
@@ -1436,6 +1480,10 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     function_lines.append(f"{fn_header}{whitespace}{{")
 
     any_decl = False
+
+    if fmt.language == Language.PASCAL:
+        for node in context.goto_nodes:
+            function_lines.append(f"label {label_for_node(context, node)};")
 
     with fmt.indented():
         # Format the body first, because this can result in additional type inferencce

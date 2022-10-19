@@ -251,7 +251,9 @@ class Formatter:
     def format_int(self, val: int, size_bits: Optional[int] = None) -> str:
         if abs(val) < 10:
             return str(val)
+        return self.format_int_hex(val, size_bits)
 
+    def format_int_hex(self, val: int, size_bits: Optional[int] = None) -> str:
         if self.zfill_constants and size_bits is not None:
             hex_digits = f"{abs(val):0{size_bits // 4}X}"
         else:

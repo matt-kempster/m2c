@@ -1426,8 +1426,9 @@ class StructDeclaration:
 
             def offset_comment(offset: int) -> str:
                 # Indicate the offset of the field (in hex), written to the *left* of the field
-                nonlocal offset_str_digits
-                return f"/* 0x{fmt.format_hex(offset).zfill(offset_str_digits)} */"
+                return fmt.multiline_comment(
+                    f"0x{fmt.format_hex(offset).zfill(offset_str_digits)}"
+                )
 
             position = 0
             prev_field: Optional[StructDeclaration.StructField] = None
