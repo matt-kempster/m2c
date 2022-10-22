@@ -166,7 +166,7 @@ class RegFormatter:
         return self.used_names.get(reg, reg.register_name)
 
 
-valid_word = string.ascii_letters + string.digits + "_$"
+valid_word = string.ascii_letters + string.digits + "_$."
 valid_number = "-xX" + string.hexdigits
 
 
@@ -281,7 +281,7 @@ def parse_arg_elems(
             assert value is None
             arg_elems.pop(0)
             word = parse_word(arg_elems)
-            if word in ["data", "rodata", "rdata", "bss", "sbss", "text"]:
+            if word in ["data", "sdata", "rodata", "rdata", "bss", "sbss", "text"]:
                 value = asm_section_global_symbol(word, 0)
             else:
                 value = JumpTarget(word)
