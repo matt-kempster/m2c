@@ -1156,7 +1156,7 @@ class UnaryOp(Condition):
 
         op = self.op
         if fmt.language == Language.PASCAL:
-            op = {"!": "not"}.get(op, op)
+            op = {"!": "not "}.get(op, op)
         return f"{op}{self.expr.format(fmt)}"
 
 
@@ -1679,6 +1679,8 @@ class AddressOf(Expression):
             ref = self.expr.make_reference()
             if ref:
                 return f"{ref.format(fmt)}"
+        if fmt.language == Language.PASCAL:
+            return f"addr({format_expr(self.expr, fmt)})"
         return f"&{self.expr.format(fmt)}"
 
 
