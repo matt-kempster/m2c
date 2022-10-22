@@ -1102,6 +1102,7 @@ def build_switch_statement(
     The nodes must already be labeled with `add_labels_for_switch` before calling this.
     """
     switch_body = Body(print_node_comment=context.options.debug)
+    break_text = None if context.fmt.language == Language.PASCAL else "break;"
 
     # If there are any case labels to jump to the `end` node immediately after the
     # switch block, emit them as `case ...: break;` at the start of the switch block
@@ -1116,7 +1117,7 @@ def build_switch_statement(
         else:
             remaining_labels.append((index, case_label))
     if len(remaining_labels) != len(context.case_nodes[end]):
-        switch_body.add_statement(SimpleStatement(f"break;", is_jump=True))
+        switch_body.add_statement(SimpleStatement(break_text, is_jump=True))
         context.case_nodes[end] = remaining_labels
 
     # Order case blocks by their position in the asm, not by their order in the jump table
@@ -1142,7 +1143,7 @@ def build_switch_statement(
         else:
             switch_body.extend(build_flowgraph_between(context, case, end))
             if not switch_body.ends_in_jump():
-                switch_body.add_statement(SimpleStatement("break;", is_jump=True))
+                switch_body.add_statement(SimpleStatement(break_text, is_jump=True))
     return SwitchStatement(jump, switch_body, switch_index)
 
 
