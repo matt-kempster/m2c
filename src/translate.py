@@ -1145,7 +1145,7 @@ class UnaryOp(Condition):
     def format(self, fmt: Formatter) -> str:
         # These aren't real operators (or functions); format them as a fn call
         if self.op in PSEUDO_FUNCTION_OPS:
-            return f"{self.op}({self.expr.format(fmt)})"
+            return f"{self.op}({format_expr(self.expr, fmt)})"
 
         return f"{self.op}{self.expr.format(fmt)}"
 
