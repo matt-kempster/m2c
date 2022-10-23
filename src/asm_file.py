@@ -299,7 +299,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
-    re_local_glabel = re.compile("L(_U_)?[0-9A-F]{8}")
+    re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{8}")
     re_local_label = re.compile("loc_|locret_|def_|lbl_")
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
@@ -336,12 +336,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             elif curr_section == ".bss":
                 asm_file.new_data_label(label, is_readonly=False, is_bss=True)
             elif curr_section == ".text":
-                re_local = re_local_glabel if glabel else re_local_label
                 if label.startswith("."):
                     if asm_file.current_function is None:
                         raise DecompFailure(f"Label {label} is not within a function!")
                     asm_file.new_label(label.lstrip("."))
-                elif re_local.match(label) and asm_file.current_function is not None:
+                elif (
+                    re_local_glabel.match(label)
+                    or (not glabel and re_local_label.match(label))
+                ) and asm_file.current_function is not None:
                     # Don't treat labels as new functions if they follow a
                     # specific naming pattern. This is used for jump table
                     # targets in both IDA and old n64split output.
