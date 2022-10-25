@@ -4053,12 +4053,12 @@ class GlobalInfo:
                     # Skip externally-declared symbols that are defined in other files
                     continue
 
-                # TODO: Use original AsmFile ordering for variables
                 sort_order = (
                     not sym.type.is_function(),
                     is_global,
                     is_in_file,
                     is_const,
+                    data_entry.sort_order if data_entry is not None else ("", 0),
                     name,
                 )
                 qualifier = ""

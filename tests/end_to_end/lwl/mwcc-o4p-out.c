@@ -3,8 +3,8 @@
 extern ? a1;
 extern ? a2;
 extern s32 a3;
-static ? $$24;                                      /* unable to generate initializer */
 static ? buf;
+static ? $$24;                                      /* unable to generate initializer */
 static s32 $$22 = 0x61626364;                       /* const */
 
 void test(void) {

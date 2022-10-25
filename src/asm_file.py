@@ -54,6 +54,7 @@ class Function:
 
 @dataclass
 class AsmDataEntry:
+    sort_order: Tuple[str, int]
     data: List[Union[str, bytes]] = field(default_factory=list)
     is_string: bool = False
     is_readonly: bool = False
@@ -105,7 +106,7 @@ class AsmFile:
     functions: List[Function] = field(default_factory=list)
     asm_data: AsmData = field(default_factory=AsmData)
     current_function: Optional[Function] = field(default=None, repr=False)
-    current_data: AsmDataEntry = field(default_factory=AsmDataEntry)
+    current_data: Optional[AsmDataEntry] = field(default=None)
 
     def new_function(self, name: str) -> None:
         self.current_function = Function(name=name)
@@ -128,14 +129,20 @@ class AsmFile:
         self.current_function.new_label(label_name)
 
     def new_data_label(self, symbol_name: str, is_readonly: bool, is_bss: bool) -> None:
-        self.current_data = AsmDataEntry(is_readonly=is_readonly, is_bss=is_bss)
+        sort_order = (self.filename, len(self.asm_data.values))
+        self.current_data = AsmDataEntry(
+            sort_order, is_readonly=is_readonly, is_bss=is_bss
+        )
         self.asm_data.values[symbol_name] = self.current_data
 
     def new_data_sym(self, sym: str) -> None:
-        self.current_data.data.append(sym)
+        if self.current_data is not None:
+            self.current_data.data.append(sym)
         self.asm_data.mentioned_labels.add(sym.lstrip("."))
 
     def new_data_bytes(self, data: bytes, *, is_string: bool = False) -> None:
+        if self.current_data is None:
+            return
         if not self.current_data.data and is_string:
             self.current_data.is_string = True
         if self.current_data.data and isinstance(self.current_data.data[-1], bytes):
