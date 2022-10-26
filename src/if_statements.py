@@ -1469,22 +1469,30 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
             arg_strs.append(arg.type.to_decl(arg.format(fmt), fmt))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
-    arg_str = ", ".join(arg_strs) or "void"
+    arg_str = ", ".join(arg_strs)
+    if not arg_str and fmt.language != Language.PASCAL:
+        arg_str = "void"
 
     fn_header = f"{fn_name}({arg_str})"
 
-    if context.is_void:
-        fn_header = f"void {fn_header}"
+    ret_type = Type.void() if context.is_void else function_info.return_type
+    if fmt.language == Language.PASCAL:
+        if ret_type.is_void():
+            fn_header = f"procedure {fn_header}"
+        else:
+            fn_header = f"function {ret_type.to_decl(fn_header, fmt)}"
+        function_lines.append(f"{fn_header};")
     else:
-        fn_header = function_info.return_type.to_decl(fn_header, fmt)
-    whitespace = "\n" if fmt.coding_style.newline_after_function else " "
-    function_lines.append(f"{fn_header}{whitespace}{{")
-
-    any_decl = False
+        fn_header = ret_type.to_decl(fn_header, fmt)
+        whitespace = "\n" if fmt.coding_style.newline_after_function else " "
+        function_lines.append(f"{fn_header}{whitespace}{{")
 
     if fmt.language == Language.PASCAL:
         for node in context.goto_nodes:
             function_lines.append(f"label {label_for_node(context, node)};")
+
+    decl_lines = []
+    any_decl = False
 
     with fmt.indented():
         # Format the body first, because this can result in additional type inferencce
@@ -1501,7 +1509,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
                 comments = []
                 if local_var.value in function_info.stack_info.weak_stack_var_locations:
                     comments = ["compiler-managed"]
-                function_lines.append(
+                decl_lines.append(
                     SimpleStatement(f"{type_decl};", comments=comments).format(fmt)
                 )
                 any_decl = True
@@ -1513,11 +1521,11 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
                 temp_decls.append(f"{type_decl};")
                 any_decl = True
         for decl in sorted(temp_decls):
-            function_lines.append(SimpleStatement(decl).format(fmt))
+            decl_lines.append(SimpleStatement(decl).format(fmt))
 
         for phi_var in function_info.stack_info.naive_phi_vars:
             type_decl = phi_var.type.to_decl(phi_var.get_var_name(), fmt)
-            function_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
+            decl_lines.append(SimpleStatement(f"{type_decl};").format(fmt))
             any_decl = True
 
         # Create a variable to cast the original first argument to the assumed type
@@ -1528,12 +1536,19 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
             lhs = replaced_arg.type.to_decl(replaced_arg.format(fmt), fmt)
             rhs = f"({replaced_arg.type.format(fmt)}) {original_name}"
-            function_lines.append(SimpleStatement(f"{lhs} = {rhs};").format(fmt))
+            decl_lines.append(SimpleStatement(f"{lhs} = {rhs};").format(fmt))
 
-        if any_decl:
-            function_lines.append("")
+        if decl_lines:
+            if fmt.language == Language.PASCAL:
+                function_lines.append("var")
+            function_lines.extend(decl_lines)
+            if fmt.language != Language.PASCAL:
+                function_lines.append("")
+
+        if fmt.language == Language.PASCAL:
+            function_lines.append("begin")
 
         function_lines.append(formatted_body)
-        function_lines.append("}")
+        function_lines.append("end;" if fmt.language == Language.PASCAL else "}")
     full_function_text: str = "\n".join(function_lines)
     return full_function_text
