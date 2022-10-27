@@ -3343,9 +3343,9 @@ class NodeState:
     def write_statement(self, stmt: Statement) -> None:
         self.to_write.append(stmt)
 
-    def store_memory(
-        self, *, source: Expression, dest: Expression, reg: Register
-    ) -> None:
+    def store_memory(self, store: StoreStmt, reg: Register) -> None:
+        source = store.source
+        dest = store.dest
         if isinstance(dest, SubroutineArg):
             # About to call a subroutine with this argument. Skip arguments for the
             # first four stack slots; they are also passed in registers.
@@ -3353,15 +3353,24 @@ class NodeState:
                 self.subroutine_args[dest.value] = source
             return
 
+        raw_value = source
+        if isinstance(raw_value, Cast) and raw_value.reinterpret:
+            raw_value = raw_value.expr
+
         if isinstance(dest, LocalVar):
             self.stack_info.add_local_var(dest)
-            raw_value = source
-            if isinstance(raw_value, Cast) and raw_value.reinterpret:
-                # When preserving values on the stack across function calls,
-                # ignore the type of the stack variable. The same stack slot
-                # might be used to preserve values of different types.
-                raw_value = raw_value.expr
+            # When preserving values on the stack across function calls,
+            # ignore the type of the stack variable. The same stack slot
+            # might be used to preserve values of different types.
             self.local_var_writes[dest] = (reg, raw_value)
+
+        if (
+            isinstance(dest, (LocalVar, PassedInArg))
+            and early_unwrap(raw_value) == dest
+        ):
+            # Elide self assignments for stack locations. This commonly happens
+            # for variables preserved across multiple function calls.
+            return
 
         # Emit a write. This includes four steps:
         # - mark the expression as used (since writes are always emitted)
@@ -3382,7 +3391,7 @@ class NodeState:
         dest.use()
         self.prevent_later_value_uses(dest)
         self.prevent_later_function_calls()
-        self.write_statement(StoreStmt(source=source, dest=dest))
+        self.write_statement(store)
 
     def _reg_probably_meant_as_function_argument(
         self, reg: Register, call_instr: InstrRef

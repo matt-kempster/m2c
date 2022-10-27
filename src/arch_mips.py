@@ -1066,9 +1066,7 @@ class MipsArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
                 if store is not None:
-                    s.store_memory(
-                        source=store.source, dest=store.dest, reg=a.reg_ref(0)
-                    )
+                    s.store_memory(store, a.reg_ref(0))
 
         elif mnemonic == "mtc1":
             # Floating point moving instruction, source first

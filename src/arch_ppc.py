@@ -768,9 +768,7 @@ class PpcArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
                 if store is not None:
-                    s.store_memory(
-                        source=store.source, dest=store.dest, reg=a.reg_ref(0)
-                    )
+                    s.store_memory(store, a.reg_ref(0))
 
         elif mnemonic in cls.instrs_store_update:
             assert isinstance(args[0], Register) and size is not None
@@ -803,9 +801,7 @@ class PpcArch(Arch):
                 )
 
                 if store is not None:
-                    s.store_memory(
-                        source=store.source, dest=store.dest, reg=a.reg_ref(0)
-                    )
+                    s.store_memory(store, a.reg_ref(0))
 
         elif mnemonic in cls.instrs_load:
             assert isinstance(args[0], Register) and size is not None
