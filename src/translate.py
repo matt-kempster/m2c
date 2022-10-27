@@ -3122,7 +3122,7 @@ class NodeState:
     stack_info: StackInfo = field(repr=False)
     regs: RegInfo = field(repr=False)
 
-    local_var_writes: Dict[LocalVar, Tuple[Register, Expression]] = field(
+    local_var_writes: Dict[LocalVar, Tuple[Register, Expression, bool]] = field(
         default_factory=dict
     )
     subroutine_args: Dict[int, Expression] = field(default_factory=dict)
@@ -3216,6 +3216,11 @@ class NodeState:
 
                 self.regs.update_meta(r, replace(data.meta, force=True))
 
+        # Do the same for values saved across function calls.
+        for loc, (reg, write, force) in self.local_var_writes.items():
+            if not force and uses_expr(write, expr_filter):
+                self.local_var_writes[loc] = (reg, write, True)
+
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
         subexpression."""
@@ -3271,9 +3276,15 @@ class NodeState:
             if expr in self.local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
-                orig_reg, orig_expr = self.local_var_writes[expr]
+                orig_reg, orig_expr, force = self.local_var_writes[expr]
                 if orig_reg == reg:
                     expr = orig_expr
+                    if force:
+                        base_expr = expr
+                        if isinstance(base_expr, Cast):
+                            base_expr = base_expr.expr
+                        if isinstance(base_expr, EvalOnceExpr):
+                            base_expr.force()
 
         return self.set_reg_real(reg, expr)
 
@@ -3362,7 +3373,7 @@ class NodeState:
             # When preserving values on the stack across function calls,
             # ignore the type of the stack variable. The same stack slot
             # might be used to preserve values of different types.
-            self.local_var_writes[dest] = (reg, raw_value)
+            self.local_var_writes[dest] = (reg, raw_value, False)
 
         if (
             isinstance(dest, (LocalVar, PassedInArg))
