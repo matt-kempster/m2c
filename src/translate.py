@@ -2474,6 +2474,16 @@ def should_wrap_transparently(expr: Expression) -> bool:
         return all(should_wrap_transparently(e) for e in expr.dependencies())
     if isinstance(expr, Cast):
         return expr.should_wrap_transparently()
+    if (
+        isinstance(expr, StructAccess)
+        and isinstance(expr.struct_var, AddressOf)
+        and isinstance(expr.struct_var.expr, GlobalSymbol)
+    ):
+        # Don't emit temps for reads of globals: they are usually compiler
+        # generated, and prevent_later_var_uses/prevent_later_reads tend to be
+        # good enough at turning wrappers non-transparent when they aren't that
+        # we are fine being a bit liberal here.
+        return True
     return False
 
 
