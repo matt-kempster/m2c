@@ -457,7 +457,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 elif curr_section in (".rodata", ".data", ".bss"):
                     _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
-                    if directive in (".word", ".4byte"):
+                    if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
                             if not w or w[0].isdigit() or w[0] == "-" or w in defines:
                                 ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
