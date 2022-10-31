@@ -215,7 +215,44 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
+def normalize_gcc_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
+    """GCC sometimes emits branch-likely instructions that cross just a single
+    instruction:
+    ```
+    beqzl $a0, .label
+     instr
+    .label:
+    ```
+    This acts as a one-instruction if statement, that runs the instruction only if
+    the branch is taken. Normalize this kind of branch-likely into
+    ```
+    bnez $a0, .label
+     nop
+    instr
+    .label:
+    ```
+    to reduce the amount of branch likelies we have to deal with: they make control
+    flow and block splitting more complex."""
+    new_function = function.bodyless_copy()
+    new_body = new_function.body
+    for i, item in enumerate(function.body):
+        if (
+            isinstance(item, Instruction)
+            and item.is_branch_likely
+            and isinstance(item.jump_target, JumpTarget)
+            and i + 2 < len(function.body)
+            and isinstance(function.body[i + 1], Instruction)
+            and function.body[i + 2] == Label(item.jump_target.target)
+        ):
+            mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
+            new_body.append(arch.parse(mn_inverted, item.args, item.meta.derived()))
+            new_body.append(arch.parse("nop", [], item.meta.derived()))
+        else:
+            new_body.append(item)
+    return new_function
+
+
+def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
     taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
@@ -233,14 +270,7 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
 
     Branch-likely instructions that do not appear in this pattern are kept.
 
-    We also do this for b instructions, which sometimes occur in the same pattern,
-    and also fix up the pattern
-
-    <branch likely instr> .label
-     X
-    .label:
-
-    which GCC emits."""
+    We also do this for b instructions, which sometimes occur in the same pattern."""
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[int, str] = {}
     instr_before_instr: Dict[int, Instruction] = {}
@@ -293,19 +323,6 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
                 # introduce a label in a delay slot.
                 new_body.append((item, item))
                 new_body.append((next_item, next_item))
-            elif (
-                isinstance(next_item, Instruction)
-                and before_target is next_item
-                and item.mnemonic != "b"
-            ):
-                # Handle the GCC pattern where the branch likely crosses just a single
-                # instruction.
-                mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-                item = arch.parse(mn_inverted, item.args, item.meta.derived())
-                new_nop = arch.parse("nop", [], item.meta.derived())
-                new_body.append((orig_item, item))
-                new_body.append((new_nop, new_nop))
-                new_body.append((orig_next_item, next_item))
             elif (
                 isinstance(next_item, Instruction)
                 and before_target is not None
@@ -372,7 +389,9 @@ def build_blocks(
 ) -> List[Block]:
     if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
-        function = normalize_likely_branches(function, arch)
+        function = prune_unreferenced_labels(function, asm_data)
+        function = normalize_gcc_likely_branches(function, arch)
+        function = normalize_ido_likely_branches(function, arch)
 
     function = prune_unreferenced_labels(function, asm_data)
     function = simplify_standard_patterns(function, arch)
