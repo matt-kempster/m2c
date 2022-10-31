@@ -271,19 +271,22 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
     Branch-likely instructions that do not appear in this pattern are kept.
 
     We also do this for b instructions, which sometimes occur in the same pattern."""
+    seen_instrs: Set[Instruction] = set()
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
-    label_before_instr: Dict[int, str] = {}
-    instr_before_instr: Dict[int, Instruction] = {}
+    label_before_instr: Dict[Instruction, str] = {}
+    instr_before_instr: Dict[Instruction, Instruction] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
     prev_item: Union[Instruction, Label, None] = None
     for item in function.body:
         if isinstance(item, Instruction):
+            assert item not in seen_instrs
+            seen_instrs.add(item)
             if prev_label is not None:
-                label_before_instr[id(item)] = prev_label.name
+                label_before_instr[item] = prev_label.name
                 prev_label = None
             if isinstance(prev_item, Instruction):
-                instr_before_instr[id(item)] = prev_item
+                instr_before_instr[item] = prev_item
             prev_instr = item
         elif isinstance(item, Label):
             label_prev_instr[item.name] = prev_instr
@@ -291,7 +294,7 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
             prev_instr = None
         prev_item = item
 
-    insert_label_before: Dict[int, str] = {}
+    insert_label_before: Dict[Instruction, str] = {}
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
@@ -308,7 +311,7 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
                 )
             before_target = label_prev_instr[old_label]
             before_before_target = (
-                instr_before_instr.get(id(before_target))
+                instr_before_instr.get(before_target)
                 if before_target is not None
                 else None
             )
@@ -331,11 +334,11 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
                 and (item.mnemonic != "b" or next_item.mnemonic != "nop")
             ):
                 # Handle the IDO pattern.
-                if id(before_target) not in label_before_instr:
+                if before_target not in label_before_instr:
                     new_label = f"_m2c_{old_label}_before"
-                    label_before_instr[id(before_target)] = new_label
-                    insert_label_before[id(before_target)] = new_label
-                new_target = JumpTarget(label_before_instr[id(before_target)])
+                    label_before_instr[before_target] = new_label
+                    insert_label_before[before_target] = new_label
+                new_target = JumpTarget(label_before_instr[before_target])
                 mn_unlikely = item.mnemonic[:-1] or "b"
                 item = arch.parse(
                     mn_unlikely, item.args[:-1] + [new_target], item.meta.derived()
@@ -352,8 +355,8 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
 
     new_function = function.bodyless_copy()
     for (orig_item, new_item) in new_body:
-        if id(orig_item) in insert_label_before:
-            new_function.new_label(insert_label_before[id(orig_item)])
+        if isinstance(orig_item, Instruction) and orig_item in insert_label_before:
+            new_function.new_label(insert_label_before[orig_item])
         new_function.body.append(new_item)
 
     return new_function
