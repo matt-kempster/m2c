@@ -145,7 +145,6 @@ class Options:
             self.coding_style,
             skip_casts=self.skip_casts,
             zfill_constants=self.zfill_constants,
-            heuristic_strings=self.heuristic_strings,
             valid_syntax=self.valid_syntax,
         )
 
@@ -173,7 +172,6 @@ class Formatter:
     valid_syntax: bool = False
     line_length: int = 80
     zfill_constants: bool = False
-    heuristic_strings: bool = False
 
     def indent(self, line: str, indent: int = 0) -> str:
         return self.indent_step * max(indent + self.extra_indent, 0) + line

@@ -84,6 +84,8 @@ def run(options: Options) -> int:
             all_functions.update((fn.name, fn) for fn in asm_file.functions)
             asm_file.asm_data.merge_into(asm_data)
 
+        if options.heuristic_strings:
+            asm_data.detect_heuristic_strings()
         typemap = build_typemap(options.c_contexts, use_cache=options.use_cache)
     except Exception as e:
         print_exception_as_comment(

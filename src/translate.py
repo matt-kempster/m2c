@@ -1468,7 +1468,7 @@ class StructAccess(Expression):
             isinstance(var, AddressOf)
             and not var.expr.type.is_array()
             and not (
-                isinstance(var.expr, GlobalSymbol) and var.expr.is_string_constant(fmt)
+                isinstance(var.expr, GlobalSymbol) and var.expr.is_string_constant()
             )
             and field_name.startswith("->")
         ):
@@ -1512,27 +1512,14 @@ class GlobalSymbol(Expression):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def is_likely_char(self, c: int) -> bool:
-        return 0x20 <= c < 0x7F or c in (0, 7, 8, 9, 10, 13, 27)
-
-    def is_string_constant(self, fmt: Formatter) -> bool:
+    def is_string_constant(self) -> bool:
         ent = self.asm_data_entry
         if not ent or len(ent.data) != 1 or not isinstance(ent.data[0], bytes):
             return False
-        if ent.is_string:
-            return True
-        if (
-            fmt.heuristic_strings
-            and ent.is_readonly
-            and len(ent.data[0]) > 1
-            and ent.data[0][0] != 0
-            and all(self.is_likely_char(x) for x in ent.data[0])
-        ):
-            return True
-        return False
+        return ent.is_string
 
     def format_string_constant(self, fmt: Formatter) -> str:
-        assert self.is_string_constant(fmt), "checked by caller"
+        assert self.is_string_constant(), "checked by caller"
         assert self.asm_data_entry and isinstance(self.asm_data_entry.data[0], bytes)
 
         has_trailing_null = False
@@ -1649,7 +1636,7 @@ class AddressOf(Expression):
 
     def format(self, fmt: Formatter) -> str:
         if isinstance(self.expr, GlobalSymbol):
-            if self.expr.is_string_constant(fmt):
+            if self.expr.is_string_constant():
                 return self.expr.format_string_constant(fmt)
         if self.expr.type.is_array():
             return f"{self.expr.format(fmt)}"
@@ -2460,7 +2447,6 @@ def should_wrap_transparently(expr: Expression) -> bool:
         (
             EvalOnceExpr,
             Literal,
-            GlobalSymbol,
             LocalVar,
             PassedInArg,
             NaivePhiExpr,
@@ -2470,14 +2456,17 @@ def should_wrap_transparently(expr: Expression) -> bool:
         ),
     ):
         return True
+    if isinstance(expr, GlobalSymbol):
+        return not expr.is_string_constant()
     if isinstance(expr, AddressOf):
-        return all(should_wrap_transparently(e) for e in expr.dependencies())
+        return should_wrap_transparently(expr.expr)
     if isinstance(expr, Cast):
         return expr.should_wrap_transparently()
     if (
         isinstance(expr, StructAccess)
         and isinstance(expr.struct_var, AddressOf)
         and isinstance(expr.struct_var.expr, GlobalSymbol)
+        and should_wrap_transparently(expr.struct_var.expr)
     ):
         # Don't emit temps for reads of globals: they are usually compiler
         # generated, and prevent_later_var_uses/prevent_later_reads tend to be
@@ -4156,7 +4145,7 @@ class GlobalInfo:
                     comments.append("const")
 
                     # Float & string constants are almost always inlined and can be omitted
-                    if sym.is_string_constant(fmt):
+                    if sym.is_string_constant():
                         continue
                     if array_dim is None and sym.type.is_likely_float():
                         continue

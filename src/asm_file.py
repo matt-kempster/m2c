@@ -99,6 +99,21 @@ class AsmData:
         for label in self.mentioned_labels:
             other.mentioned_labels.add(label)
 
+    def is_likely_char(self, c: int) -> bool:
+        return 0x20 <= c < 0x7F or c in (0, 7, 8, 9, 10, 13, 27)
+
+    def detect_heuristic_strings(self) -> None:
+        for ent in self.values.values():
+            if (
+                ent.is_readonly
+                and len(ent.data) == 1
+                and isinstance(ent.data[0], bytes)
+                and len(ent.data[0]) > 1
+                and ent.data[0][0] != 0
+                and all(self.is_likely_char(x) for x in ent.data[0])
+            ):
+                ent.is_string = True
+
 
 @dataclass
 class AsmFile:
