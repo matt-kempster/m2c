@@ -80,6 +80,7 @@ from .evaluate import (
     handle_add,
     handle_add_double,
     handle_add_float,
+    handle_add_real,
     handle_addi,
     handle_bgez,
     handle_conditional_move,
@@ -1162,6 +1163,8 @@ class MipsArch(Arch):
                 and isinstance(args[2], Register)
             )
             inputs = [args[1], args[2]]
+            if mnemonic in ("madd", "maddu"):
+                inputs.append(Register("lo"))
             outputs = [Register("hi"), Register("lo")]
             if args[0] != Register("zero"):
                 outputs.append(args[0])
@@ -1361,9 +1364,9 @@ class MipsArch(Arch):
     }
     instrs_hi_lo: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
-        # PS2's mult/multu instructions additionally support an output register
-        # to copy LO to, $zero meaning no copying, and GNU as extends that as a
-        # pseudo-instruction to div instructions too.
+        # PS2's mult/multu/madd/maddu instructions additionally support an output
+        # register to copy LO to, $zero meaning no copying, and GNU as extends
+        # that as a pseudo-instruction to div instructions too.
         "div": lambda a: (
             BinaryOp.sint(a.reg(1), "%", a.reg(2)),
             BinaryOp.sint(a.reg(1), "/", a.reg(2)),
@@ -1395,6 +1398,27 @@ class MipsArch(Arch):
         "dmultu": lambda a: (
             BinaryOp.int64(a.reg(1), "DMULTU_HI", a.reg(2)),
             BinaryOp.int64(a.reg(1), "*", a.reg(2)),
+        ),
+        # madd/maddu are PS2 extensions, and act as u64(HI|LO) += x * y.
+        # In practice, compiler-generated code only uses the lo part of the
+        # output, which means we also only need the lo part of the input.
+        "madd": lambda a: (
+            ErrorExpr("madd top half"),
+            handle_add_real(
+                Register("lo"),
+                a.regs[Register("lo")],
+                BinaryOp.int(a.reg(1), "*", a.reg(2)),
+                a,
+            ),
+        ),
+        "maddu": lambda a: (
+            ErrorExpr("maddu top half"),
+            handle_add_real(
+                Register("lo"),
+                a.regs[Register("lo")],
+                BinaryOp.int(a.reg(1), "*", a.reg(2)),
+                a,
+            ),
         ),
     }
     instrs_destination_first: InstrMap = {
