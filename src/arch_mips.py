@@ -856,7 +856,7 @@ class MipsArch(Arch):
                 return AsmInstruction("li", [args[0], lit])
             if instr.mnemonic == "jalr" and args[0] != Register("ra"):
                 raise DecompFailure("Two-argument form of jalr is not supported.")
-            if instr.mnemonic in ("mult", "multu", "dmult", "dmultu"):
+            if instr.mnemonic in ("mult", "multu", "dmult", "dmultu", "madd", "maddu"):
                 return AsmInstruction(instr.mnemonic, [Register("zero"), *args])
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
