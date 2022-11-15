@@ -159,17 +159,10 @@ LENGTH_THREE: Set[str] = {
     "dsra",
     "dsra32",
     "dsrav",
-}
-
-DIV_MULT_INSTRUCTIONS: Set[str] = {
     "div",
     "divu",
     "ddiv",
     "ddivu",
-    "mult",
-    "multu",
-    "dmult",
-    "dmultu",
 }
 
 
@@ -834,10 +827,6 @@ class MipsArch(Arch):
                 return AsmInstruction("not", [args[0], args[1]])
             if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
                 return AsmInstruction("move", args[:2])
-            if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
-                if args[0] != Register("zero"):
-                    raise DecompFailure("first argument to div/mult must be $zero")
-                return AsmInstruction(instr.mnemonic, args[1:])
             if (
                 instr.mnemonic == "ori"
                 and args[1] == Register("zero")
@@ -867,6 +856,8 @@ class MipsArch(Arch):
                 return AsmInstruction("li", [args[0], lit])
             if instr.mnemonic == "jalr" and args[0] != Register("ra"):
                 raise DecompFailure("Two-argument form of jalr is not supported.")
+            if instr.mnemonic in ("mult", "multu", "dmult", "dmultu"):
+                return AsmInstruction(instr.mnemonic, [Register("zero"), *args])
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
@@ -1165,17 +1156,23 @@ class MipsArch(Arch):
             )
         elif mnemonic in cls.instrs_hi_lo:
             assert (
-                len(args) == 2
+                len(args) == 3
                 and isinstance(args[0], Register)
                 and isinstance(args[1], Register)
+                and isinstance(args[2], Register)
             )
-            inputs = [args[0], args[1]]
+            inputs = [args[1], args[2]]
             outputs = [Register("hi"), Register("lo")]
+            if args[0] != Register("zero"):
+                outputs.append(args[0])
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 hi, lo = cls.instrs_hi_lo[mnemonic](a)
                 s.set_reg(Register("hi"), hi)
                 s.set_reg(Register("lo"), lo)
+                copy_lo_to = a.reg_ref(0)
+                if copy_lo_to != Register("zero"):
+                    s.set_reg(copy_lo_to, lo)
 
         elif mnemonic in cls.instrs_ignore:
             pass
@@ -1364,37 +1361,40 @@ class MipsArch(Arch):
     }
     instrs_hi_lo: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
+        # PS2's mult/multu instructions additionally support an output register
+        # to copy LO to, $zero meaning no copying, and GNU as extends that as a
+        # pseudo-instruction to div instructions too.
         "div": lambda a: (
-            BinaryOp.sint(a.reg(0), "%", a.reg(1)),
-            BinaryOp.sint(a.reg(0), "/", a.reg(1)),
+            BinaryOp.sint(a.reg(1), "%", a.reg(2)),
+            BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         ),
         "divu": lambda a: (
-            BinaryOp.uint(a.reg(0), "%", a.reg(1)),
-            BinaryOp.uint(a.reg(0), "/", a.reg(1)),
+            BinaryOp.uint(a.reg(1), "%", a.reg(2)),
+            BinaryOp.uint(a.reg(1), "/", a.reg(2)),
         ),
         "ddiv": lambda a: (
-            BinaryOp.s64(a.reg(0), "%", a.reg(1)),
-            BinaryOp.s64(a.reg(0), "/", a.reg(1)),
+            BinaryOp.s64(a.reg(1), "%", a.reg(2)),
+            BinaryOp.s64(a.reg(1), "/", a.reg(2)),
         ),
         "ddivu": lambda a: (
-            BinaryOp.u64(a.reg(0), "%", a.reg(1)),
-            BinaryOp.u64(a.reg(0), "/", a.reg(1)),
+            BinaryOp.u64(a.reg(1), "%", a.reg(2)),
+            BinaryOp.u64(a.reg(1), "/", a.reg(2)),
         ),
         "mult": lambda a: (
-            fold_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
-            BinaryOp.int(a.reg(0), "*", a.reg(1)),
+            fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
+            BinaryOp.int(a.reg(1), "*", a.reg(2)),
         ),
         "multu": lambda a: (
-            fold_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
-            BinaryOp.int(a.reg(0), "*", a.reg(1)),
+            fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
+            BinaryOp.int(a.reg(1), "*", a.reg(2)),
         ),
         "dmult": lambda a: (
-            BinaryOp.int64(a.reg(0), "DMULT_HI", a.reg(1)),
-            BinaryOp.int64(a.reg(0), "*", a.reg(1)),
+            BinaryOp.int64(a.reg(1), "DMULT_HI", a.reg(2)),
+            BinaryOp.int64(a.reg(1), "*", a.reg(2)),
         ),
         "dmultu": lambda a: (
-            BinaryOp.int64(a.reg(0), "DMULTU_HI", a.reg(1)),
-            BinaryOp.int64(a.reg(0), "*", a.reg(1)),
+            BinaryOp.int64(a.reg(1), "DMULTU_HI", a.reg(2)),
+            BinaryOp.int64(a.reg(1), "*", a.reg(2)),
         ),
     }
     instrs_destination_first: InstrMap = {

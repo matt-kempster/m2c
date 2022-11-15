@@ -3295,7 +3295,7 @@ class NodeState:
         transparent: Optional[bool] = None,
         emit_exactly_once: bool = False,
         function_return: bool = False,
-    ) -> Optional[Expression]:
+    ) -> Expression:
         source = self.regs.current_instr_ref()
 
         if transparent is None:
