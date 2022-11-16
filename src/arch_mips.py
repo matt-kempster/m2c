@@ -671,6 +671,20 @@ class GpJumpPattern(SimpleAsmPattern):
         return Replacement([m.body[1]], len(m.body))
 
 
+class OriSpPattern(SimpleAsmPattern):
+    """Some versions of PS2 compilers emit ori for small stack additions instead
+    of addiu. Normalize."""
+
+    pattern = make_pattern("ori $x, $sp, N")
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        n = m.literals["N"]
+        if 0 <= n < 16 and m.regs["x"] != Register("sp"):
+            ins = AsmInstruction("addiu", [m.regs["x"], Register("sp"), AsmLiteral(n)])
+            return Replacement([ins], len(m.body))
+        return None
+
+
 class MipsArch(Arch):
     arch = Target.ArchEnum.MIPS
 
@@ -1237,6 +1251,7 @@ class MipsArch(Arch):
         AlignedMemcpyPattern(),
         UnalignedMemcpyPattern(),
         GpJumpPattern(),
+        OriSpPattern(),
     ]
 
     instrs_ignore: Set[str] = {
