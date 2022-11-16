@@ -1177,6 +1177,12 @@ class MipsArch(Arch):
                 if copy_lo_to != Register("zero"):
                     s.set_reg(copy_lo_to, lo)
 
+        elif mnemonic in ("mtlo", "mthi"):
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            output_reg = Register("hi") if mnemonic == "mthi" else Register("lo")
+            outputs = [output_reg]
+            eval_fn = lambda s, a: s.set_reg(output_reg, a.reg(0))
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
