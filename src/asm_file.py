@@ -99,6 +99,21 @@ class AsmData:
         for label in self.mentioned_labels:
             other.mentioned_labels.add(label)
 
+    def is_likely_char(self, c: int) -> bool:
+        return 0x20 <= c < 0x7F or c in (0, 7, 8, 9, 10, 13, 27)
+
+    def detect_heuristic_strings(self) -> None:
+        for ent in self.values.values():
+            if (
+                ent.is_readonly
+                and len(ent.data) == 1
+                and isinstance(ent.data[0], bytes)
+                and len(ent.data[0]) > 1
+                and ent.data[0][0] != 0
+                and all(self.is_likely_char(x) for x in ent.data[0])
+            ):
+                ent.is_string = True
+
 
 @dataclass
 class AsmFile:
@@ -457,7 +472,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 elif curr_section in (".rodata", ".data", ".bss"):
                     _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
-                    if directive in (".word", ".4byte"):
+                    if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
                             if not w or w[0].isdigit() or w[0] == "-" or w in defines:
                                 ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF

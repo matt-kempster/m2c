@@ -215,7 +215,44 @@ def invert_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
-def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
+def normalize_gcc_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
+    """GCC sometimes emits branch-likely instructions that cross just a single
+    instruction:
+    ```
+    beqzl $a0, .label
+     instr
+    .label:
+    ```
+    This acts as a one-instruction if statement, that runs the instruction only if
+    the branch is taken. Normalize this kind of branch-likely into
+    ```
+    bnez $a0, .label
+     nop
+    instr
+    .label:
+    ```
+    to reduce the amount of branch likelies we have to deal with: they make control
+    flow and block splitting more complex."""
+    new_function = function.bodyless_copy()
+    new_body = new_function.body
+    for i, item in enumerate(function.body):
+        if (
+            isinstance(item, Instruction)
+            and item.is_branch_likely
+            and isinstance(item.jump_target, JumpTarget)
+            and i + 2 < len(function.body)
+            and isinstance(function.body[i + 1], Instruction)
+            and function.body[i + 2] == Label(item.jump_target.target)
+        ):
+            mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
+            new_body.append(arch.parse(mn_inverted, item.args, item.meta.derived()))
+            new_body.append(arch.parse("nop", [], item.meta.derived()))
+        else:
+            new_body.append(item)
+    return new_function
+
+
+def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
     taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
@@ -233,27 +270,23 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
 
     Branch-likely instructions that do not appear in this pattern are kept.
 
-    We also do this for b instructions, which sometimes occur in the same pattern,
-    and also fix up the pattern
-
-    <branch likely instr> .label
-     X
-    .label:
-
-    which GCC emits."""
+    We also do this for b instructions, which sometimes occur in the same pattern."""
+    seen_instrs: Set[Instruction] = set()
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
-    label_before_instr: Dict[int, str] = {}
-    instr_before_instr: Dict[int, Instruction] = {}
+    label_before_instr: Dict[Instruction, str] = {}
+    instr_before_instr: Dict[Instruction, Instruction] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
     prev_item: Union[Instruction, Label, None] = None
     for item in function.body:
         if isinstance(item, Instruction):
+            assert item not in seen_instrs
+            seen_instrs.add(item)
             if prev_label is not None:
-                label_before_instr[id(item)] = prev_label.name
+                label_before_instr[item] = prev_label.name
                 prev_label = None
             if isinstance(prev_item, Instruction):
-                instr_before_instr[id(item)] = prev_item
+                instr_before_instr[item] = prev_item
             prev_instr = item
         elif isinstance(item, Label):
             label_prev_instr[item.name] = prev_instr
@@ -261,7 +294,7 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
             prev_instr = None
         prev_item = item
 
-    insert_label_before: Dict[int, str] = {}
+    insert_label_before: Dict[Instruction, str] = {}
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
@@ -278,7 +311,7 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
                 )
             before_target = label_prev_instr[old_label]
             before_before_target = (
-                instr_before_instr.get(id(before_target))
+                instr_before_instr.get(before_target)
                 if before_target is not None
                 else None
             )
@@ -295,30 +328,17 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
                 new_body.append((next_item, next_item))
             elif (
                 isinstance(next_item, Instruction)
-                and before_target is next_item
-                and item.mnemonic != "b"
-            ):
-                # Handle the GCC pattern where the branch likely crosses just a single
-                # instruction.
-                mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-                item = arch.parse(mn_inverted, item.args, item.meta.derived())
-                new_nop = arch.parse("nop", [], item.meta.derived())
-                new_body.append((orig_item, item))
-                new_body.append((new_nop, new_nop))
-                new_body.append((orig_next_item, next_item))
-            elif (
-                isinstance(next_item, Instruction)
                 and before_target is not None
                 and before_target is not next_item
                 and str(before_target) == str(next_item)
                 and (item.mnemonic != "b" or next_item.mnemonic != "nop")
             ):
                 # Handle the IDO pattern.
-                if id(before_target) not in label_before_instr:
+                if before_target not in label_before_instr:
                     new_label = f"_m2c_{old_label}_before"
-                    label_before_instr[id(before_target)] = new_label
-                    insert_label_before[id(before_target)] = new_label
-                new_target = JumpTarget(label_before_instr[id(before_target)])
+                    label_before_instr[before_target] = new_label
+                    insert_label_before[before_target] = new_label
+                new_target = JumpTarget(label_before_instr[before_target])
                 mn_unlikely = item.mnemonic[:-1] or "b"
                 item = arch.parse(
                     mn_unlikely, item.args[:-1] + [new_target], item.meta.derived()
@@ -335,8 +355,8 @@ def normalize_likely_branches(function: Function, arch: ArchFlowGraph) -> Functi
 
     new_function = function.bodyless_copy()
     for (orig_item, new_item) in new_body:
-        if id(orig_item) in insert_label_before:
-            new_function.new_label(insert_label_before[id(orig_item)])
+        if isinstance(orig_item, Instruction) and orig_item in insert_label_before:
+            new_function.new_label(insert_label_before[orig_item])
         new_function.body.append(new_item)
 
     return new_function
@@ -372,7 +392,9 @@ def build_blocks(
 ) -> List[Block]:
     if arch.arch == ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
-        function = normalize_likely_branches(function, arch)
+        function = prune_unreferenced_labels(function, asm_data)
+        function = normalize_gcc_likely_branches(function, arch)
+        function = normalize_ido_likely_branches(function, arch)
 
     function = prune_unreferenced_labels(function, asm_data)
     function = simplify_standard_patterns(function, arch)

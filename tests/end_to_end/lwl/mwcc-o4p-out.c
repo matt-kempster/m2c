@@ -11,17 +11,13 @@ void test(void) {
     u8 spE;
     u16 spC;
     s32 sp8;
-    s32 temp_r5;
-    u16 temp_r4;
 
-    temp_r4 = (u16) $$22;
     sp8 = $$22;
-    spC = temp_r4;
+    spC = (u16) $$22;
     spE = (u8) $$22;
-    foo(&sp8, temp_r4);
+    foo(&sp8, (u16) $$22);
     a1.unk1 = (s32) a2.unk1;
-    temp_r5 = a1.unk0;
-    a3 = temp_r5;
+    a3 = a1.unk0;
     a3 = (u8) a1.unk0;
-    strcpy(&buf, &$$24, temp_r5);
+    strcpy(&buf, &$$24, a1.unk0);
 }

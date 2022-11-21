@@ -172,7 +172,7 @@ def load_upper(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
     source = stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
     imm = Literal(ref.offset)
-    return handle_addi_real(args.reg_ref(0), None, source, imm, stack_info, args)
+    return handle_addi_real(args.reg_ref(0), None, source, imm, args)
 
 
 def handle_convert(expr: Expression, dest_type: Type, source_type: Type) -> Cast:
@@ -272,7 +272,7 @@ def handle_addi(args: InstrArgs) -> Expression:
         return add_imm(
             output_reg, uw_source.left, Literal(imm.value + uw_source.right.value), args
         )
-    return handle_addi_real(output_reg, source_reg, source, imm, stack_info, args)
+    return handle_addi_real(output_reg, source_reg, source, imm, args)
 
 
 def handle_addis(args: InstrArgs) -> Expression:
@@ -280,7 +280,7 @@ def handle_addis(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.shifted_imm(2)
-    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, stack_info, args)
+    return handle_addi_real(args.reg_ref(0), source_reg, source, imm, args)
 
 
 def handle_addi_real(
@@ -288,9 +288,9 @@ def handle_addi_real(
     source_reg: Optional[Register],
     source: Expression,
     imm: Expression,
-    stack_info: StackInfo,
     args: InstrArgs,
 ) -> Expression:
+    stack_info = args.stack_info
     if source_reg is not None and stack_info.is_stack_reg(source_reg):
         # Adding to sp, i.e. passing an address.
         assert isinstance(imm, Literal)
@@ -970,9 +970,29 @@ def array_access_from_add(
 
 
 def handle_add(args: InstrArgs) -> Expression:
+    stack_info = args.stack_info
+    output_reg = args.reg_ref(0)
     lhs = args.reg(1)
     rhs = args.reg(2)
+
+    # addiu instructions can sometimes be emitted as addu instead, when the
+    # offset is too large.
+    if isinstance(rhs, Literal):
+        return handle_addi_real(output_reg, args.reg_ref(1), lhs, rhs, args)
+    if isinstance(lhs, Literal):
+        return handle_addi_real(output_reg, args.reg_ref(2), rhs, lhs, args)
+
+    return handle_add_real(output_reg, lhs, rhs, args)
+
+
+def handle_add_real(
+    output_reg: Register,
+    lhs: Expression,
+    rhs: Expression,
+    args: InstrArgs,
+) -> Expression:
     stack_info = args.stack_info
+
     type = Type.intptr()
     # Because lhs & rhs are in registers, it shouldn't be possible for them to be arrays.
     # If they are, treat them the same as pointers anyways.
@@ -980,17 +1000,6 @@ def handle_add(args: InstrArgs) -> Expression:
         type = Type.ptr()
     elif rhs.type.is_pointer_or_array():
         type = Type.ptr()
-
-    # addiu instructions can sometimes be emitted as addu instead, when the
-    # offset is too large.
-    if isinstance(rhs, Literal):
-        return handle_addi_real(
-            args.reg_ref(0), args.reg_ref(1), lhs, rhs, stack_info, args
-        )
-    if isinstance(lhs, Literal):
-        return handle_addi_real(
-            args.reg_ref(0), args.reg_ref(2), rhs, lhs, stack_info, args
-        )
 
     expr = BinaryOp(left=as_intptr(lhs), op="+", right=as_intptr(rhs), type=type)
     folded_expr = fold_mul_chains(expr)

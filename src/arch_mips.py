@@ -80,6 +80,7 @@ from .evaluate import (
     handle_add,
     handle_add_double,
     handle_add_float,
+    handle_add_real,
     handle_addi,
     handle_bgez,
     handle_conditional_move,
@@ -159,17 +160,10 @@ LENGTH_THREE: Set[str] = {
     "dsra",
     "dsra32",
     "dsrav",
-}
-
-DIV_MULT_INSTRUCTIONS: Set[str] = {
     "div",
     "divu",
     "ddiv",
     "ddivu",
-    "mult",
-    "multu",
-    "dmult",
-    "dmultu",
 }
 
 
@@ -677,6 +671,20 @@ class GpJumpPattern(SimpleAsmPattern):
         return Replacement([m.body[1]], len(m.body))
 
 
+class OriSpPattern(SimpleAsmPattern):
+    """Some versions of PS2 compilers emit ori for small stack additions instead
+    of addiu. Normalize."""
+
+    pattern = make_pattern("ori $x, $sp, N")
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        n = m.literals["N"]
+        if 0 <= n < 16 and m.regs["x"] != Register("sp"):
+            ins = AsmInstruction("addiu", [m.regs["x"], Register("sp"), AsmLiteral(n)])
+            return Replacement([ins], len(m.body))
+        return None
+
+
 class MipsArch(Arch):
     arch = ArchEnum.MIPS
 
@@ -834,10 +842,6 @@ class MipsArch(Arch):
                 return AsmInstruction("not", [args[0], args[1]])
             if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
                 return AsmInstruction("move", args[:2])
-            if instr.mnemonic in DIV_MULT_INSTRUCTIONS:
-                if args[0] != Register("zero"):
-                    raise DecompFailure("first argument to div/mult must be $zero")
-                return AsmInstruction(instr.mnemonic, args[1:])
             if (
                 instr.mnemonic == "ori"
                 and args[1] == Register("zero")
@@ -867,6 +871,8 @@ class MipsArch(Arch):
                 return AsmInstruction("li", [args[0], lit])
             if instr.mnemonic == "jalr" and args[0] != Register("ra"):
                 raise DecompFailure("Two-argument form of jalr is not supported.")
+            if instr.mnemonic in ("mult", "multu", "dmult", "dmultu", "madd", "maddu"):
+                return AsmInstruction(instr.mnemonic, [Register("zero"), *args])
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
@@ -1066,9 +1072,7 @@ class MipsArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
                 if store is not None:
-                    s.store_memory(
-                        source=store.source, dest=store.dest, reg=a.reg_ref(0)
-                    )
+                    s.store_memory(store, a.reg_ref(0))
 
         elif mnemonic == "mtc1":
             # Floating point moving instruction, source first
@@ -1167,18 +1171,32 @@ class MipsArch(Arch):
             )
         elif mnemonic in cls.instrs_hi_lo:
             assert (
-                len(args) == 2
+                len(args) == 3
                 and isinstance(args[0], Register)
                 and isinstance(args[1], Register)
+                and isinstance(args[2], Register)
             )
-            inputs = [args[0], args[1]]
+            inputs = [args[1], args[2]]
+            if mnemonic in ("madd", "maddu"):
+                inputs.append(Register("lo"))
             outputs = [Register("hi"), Register("lo")]
+            if args[0] != Register("zero"):
+                outputs.append(args[0])
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 hi, lo = cls.instrs_hi_lo[mnemonic](a)
                 s.set_reg(Register("hi"), hi)
                 s.set_reg(Register("lo"), lo)
+                copy_lo_to = a.reg_ref(0)
+                if copy_lo_to != Register("zero"):
+                    s.set_reg(copy_lo_to, lo)
 
+        elif mnemonic in ("mtlo", "mthi"):
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            output_reg = Register("hi") if mnemonic == "mthi" else Register("lo")
+            outputs = [output_reg]
+            eval_fn = lambda s, a: s.set_reg(output_reg, a.reg(0))
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
@@ -1233,6 +1251,7 @@ class MipsArch(Arch):
         AlignedMemcpyPattern(),
         UnalignedMemcpyPattern(),
         GpJumpPattern(),
+        OriSpPattern(),
     ]
 
     instrs_ignore: Set[str] = {
@@ -1366,37 +1385,61 @@ class MipsArch(Arch):
     }
     instrs_hi_lo: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
+        # PS2's mult/multu/madd/maddu instructions additionally support an output
+        # register to copy LO to, $zero meaning no copying, and GNU as extends
+        # that as a pseudo-instruction to div instructions too.
         "div": lambda a: (
-            BinaryOp.sint(a.reg(0), "%", a.reg(1)),
-            BinaryOp.sint(a.reg(0), "/", a.reg(1)),
+            BinaryOp.sint(a.reg(1), "%", a.reg(2)),
+            BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         ),
         "divu": lambda a: (
-            BinaryOp.uint(a.reg(0), "%", a.reg(1)),
-            BinaryOp.uint(a.reg(0), "/", a.reg(1)),
+            BinaryOp.uint(a.reg(1), "%", a.reg(2)),
+            BinaryOp.uint(a.reg(1), "/", a.reg(2)),
         ),
         "ddiv": lambda a: (
-            BinaryOp.s64(a.reg(0), "%", a.reg(1)),
-            BinaryOp.s64(a.reg(0), "/", a.reg(1)),
+            BinaryOp.s64(a.reg(1), "%", a.reg(2)),
+            BinaryOp.s64(a.reg(1), "/", a.reg(2)),
         ),
         "ddivu": lambda a: (
-            BinaryOp.u64(a.reg(0), "%", a.reg(1)),
-            BinaryOp.u64(a.reg(0), "/", a.reg(1)),
+            BinaryOp.u64(a.reg(1), "%", a.reg(2)),
+            BinaryOp.u64(a.reg(1), "/", a.reg(2)),
         ),
         "mult": lambda a: (
-            fold_divmod(BinaryOp.int(a.reg(0), "MULT_HI", a.reg(1))),
-            BinaryOp.int(a.reg(0), "*", a.reg(1)),
+            fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
+            BinaryOp.int(a.reg(1), "*", a.reg(2)),
         ),
         "multu": lambda a: (
-            fold_divmod(BinaryOp.int(a.reg(0), "MULTU_HI", a.reg(1))),
-            BinaryOp.int(a.reg(0), "*", a.reg(1)),
+            fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
+            BinaryOp.int(a.reg(1), "*", a.reg(2)),
         ),
         "dmult": lambda a: (
-            BinaryOp.int64(a.reg(0), "DMULT_HI", a.reg(1)),
-            BinaryOp.int64(a.reg(0), "*", a.reg(1)),
+            BinaryOp.int64(a.reg(1), "DMULT_HI", a.reg(2)),
+            BinaryOp.int64(a.reg(1), "*", a.reg(2)),
         ),
         "dmultu": lambda a: (
-            BinaryOp.int64(a.reg(0), "DMULTU_HI", a.reg(1)),
-            BinaryOp.int64(a.reg(0), "*", a.reg(1)),
+            BinaryOp.int64(a.reg(1), "DMULTU_HI", a.reg(2)),
+            BinaryOp.int64(a.reg(1), "*", a.reg(2)),
+        ),
+        # madd/maddu are PS2 extensions, and act as u64(HI|LO) += x * y.
+        # In practice, compiler-generated code only uses the lo part of the
+        # output, which means we also only need the lo part of the input.
+        "madd": lambda a: (
+            ErrorExpr("madd top half"),
+            handle_add_real(
+                Register("lo"),
+                a.regs[Register("lo")],
+                BinaryOp.int(a.reg(1), "*", a.reg(2)),
+                a,
+            ),
+        ),
+        "maddu": lambda a: (
+            ErrorExpr("maddu top half"),
+            handle_add_real(
+                Register("lo"),
+                a.regs[Register("lo")],
+                BinaryOp.int(a.reg(1), "*", a.reg(2)),
+                a,
+            ),
         ),
     }
     instrs_destination_first: InstrMap = {
