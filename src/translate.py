@@ -1105,6 +1105,8 @@ class BinaryOp(Condition):
             if fn_op:
                 return f"{fn_op}({lhs}, {rhs})"
             op = {"==": "=", "!=": "<>", "&&": "and", "||": "or"}.get(op, op)
+            if op == "/" and not self.is_floating():
+                op = "div"
 
         return f"({lhs} {op} {rhs})"
 
