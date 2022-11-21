@@ -22,7 +22,7 @@ from .c_types import (
 )
 from .demangle_codewarrior import CxxName, CxxSymbol, CxxTerm, CxxType
 from .error import DecompFailure, static_assert_unreachable
-from .options import Formatter
+from .options import Formatter, Language
 
 # AccessPath represents a struct/array path, with ints for array access, and
 # strs for struct fields. Ex: `["foo", 3, "bar"]` represents `.foo[3].bar`
@@ -1410,10 +1410,14 @@ class StructDeclaration:
         TODO: This does not correctly handle nested anonymous structs/unions, though it
         is possible for the user to reconstruct these by hand from the "offset" comments.
         """
-        keyword = "union" if self.is_union else "struct"
-        decl = f"{keyword} {self.tag_name}" if self.tag_name else f"{keyword}"
-        head = f"typedef {decl} {{" if self.typedef_name else f"{decl} {{"
-        tail = f"}} {self.typedef_name};" if self.typedef_name else f"}};"
+        if fmt.language == Language.PASCAL:
+            head = f"type {self.tag_name or self.typedef_name} = record"
+            tail = "end;"
+        else:
+            keyword = "union" if self.is_union else "struct"
+            decl = f"{keyword} {self.tag_name}" if self.tag_name else f"{keyword}"
+            head = f"typedef {decl} {{" if self.typedef_name else f"{decl} {{"
+            tail = f"}} {self.typedef_name};" if self.typedef_name else f"}};"
 
         # If there are no fields or padding, return everything on one line
         if self.size == 0 and not self.fields:
