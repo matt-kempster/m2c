@@ -247,7 +247,8 @@ class Formatter:
         return format(val, "x").upper()
 
     def format_int(self, val: int, size_bits: Optional[int] = None) -> str:
-        if abs(val) < 10:
+        hex_cap = 256 if self.language == Language.PASCAL else 10
+        if abs(val) < hex_cap:
             return str(val)
         return self.format_int_hex(val, size_bits)
 
