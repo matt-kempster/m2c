@@ -1245,10 +1245,12 @@ class Cast(Expression):
         if fmt.skip_casts:
             return self.expr.format(fmt)
 
+        if fmt.language == Language.PASCAL:
+            return f"{self.type.format(fmt)}({self.expr.format(fmt)})"
+
         # Function casts require special logic because function calls have
         # higher precedence than casts
-        fn_sig = self.type.get_function_pointer_signature()
-        if fn_sig:
+        if self.type.get_function_pointer_signature():
             return f"(({self.type.format(fmt)}) {self.expr.format(fmt)})"
 
         return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
