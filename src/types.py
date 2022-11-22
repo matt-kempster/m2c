@@ -1164,10 +1164,11 @@ def format_pascal_type(type: CType) -> str:
     if isinstance(type, ca.ArrayDecl):
         dims = "?"
         if type.dim is not None:
-            upper_bound: "ca.Expression" = ca.BinaryOp("-", type.dim, ca.ID("1"))
-            if isinstance(type.dim, ca.ID):
+            const = lambda v: ca.Constant("", str(v))
+            upper_bound: "ca.Expression" = ca.BinaryOp("-", type.dim, const(1))
+            if isinstance(type.dim, ca.Constant):
                 try:
-                    upper_bound = ca.ID(str(int(type.dim.name, 0) - 1))
+                    upper_bound = const(int(type.dim.value, 0) - 1)
                 except ValueError:
                     pass
             dims = f"0..{to_c(upper_bound)}"
