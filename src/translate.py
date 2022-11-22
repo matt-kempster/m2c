@@ -1624,7 +1624,16 @@ class Literal(Expression):
         suffix = ""
         if not fmt.skip_casts and not self.elide_cast:
             if self.type.is_pointer():
-                prefix = f"({self.type.format(fmt)})"
+                return (
+                    Cast(
+                        Literal(self.value, type=Type.intish()),
+                        type=self.type,
+                        reinterpret=True,
+                        silent=False,
+                    )
+                    .format(fmt)
+                    .replace(") ", ")")
+                )
             if self.type.is_unsigned() and fmt.language != Language.PASCAL:
                 suffix = "U"
 
