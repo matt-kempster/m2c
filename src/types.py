@@ -12,6 +12,7 @@ from .c_types import (
     TypeMap,
     UndefinedStructError,
     is_unk_type,
+    is_void,
     parse_constant_int,
     parse_function,
     parse_struct,
@@ -623,9 +624,14 @@ class Type:
         return None
 
     def to_decl(self, name: str, fmt: Formatter) -> str:
+        c_type = self._to_ctype(set(), fmt)
+        if fmt.language == Language.PASCAL:
+            prefix = f"{name}: " if name else ""
+            return prefix + format_pascal_type(c_type)
+
         decl = ca.Decl(
             name=name,
-            type=self._to_ctype(set(), fmt),
+            type=c_type,
             quals=[],
             align=[],
             storage=[],
@@ -1146,6 +1152,65 @@ class Type:
             else:
                 assert False, term.kind
         return type
+
+
+def format_pascal_type(type: CType) -> str:
+    if isinstance(type, ca.PtrDecl):
+        if is_void(type.type):
+            return "pointer"
+        else:
+            return "^" + format_pascal_type(type.type)
+
+    if isinstance(type, ca.ArrayDecl):
+        dims = "?"
+        if type.dim is not None:
+            upper_bound: "ca.Expression" = ca.BinaryOp("-", type.dim, ca.ID("1"))
+            if isinstance(type.dim, ca.ID):
+                try:
+                    upper_bound = ca.ID(str(int(type.dim.name, 0) - 1))
+                except ValueError:
+                    pass
+            dims = f"0..{to_c(upper_bound)}"
+        return f"packed array [{dims}] of " + format_pascal_type(type.type)
+
+    if isinstance(type, ca.TypeDecl):
+        inner = type.type
+        if isinstance(inner, ca.Struct):
+            return inner.name or "<anonymous struct>"
+        if isinstance(inner, ca.Union):
+            return inner.name or "<anonymous union>"
+        if isinstance(inner, ca.Enum):
+            return inner.name or "<anonymous enum>"
+        if inner.names == ["f32"]:
+            return "single"
+        if inner.names == ["f64"]:
+            return "double"
+        if inner.names == ["s32"]:
+            return "integer"
+        if inner.names == ["u32"]:
+            return "cardinal"
+        return " ".join(inner.names)
+
+    if isinstance(type, ca.FuncDecl):
+        arg_strs = []
+        if type.args is not None:
+            for i, param in enumerate(type.args.params):
+                if isinstance(param, (ca.Decl, ca.Typename)):
+                    tp = f"a{i}: " + format_pascal_type(param.type)
+                elif isinstance(param, ca.EllipsisParam):
+                    tp = "..."
+                elif isinstance(param, ca.ID):
+                    tp = param.name
+                else:
+                    static_assert_unreachable(param)
+                arg_strs.append(tp)
+        arg_str = "; ".join(arg_strs)
+        if is_void(type.type):
+            return f"procedure({arg_str})"
+        else:
+            return f"function({arg_str}): " + format_pascal_type(type.type)
+
+    static_assert_unreachable(type)
 
 
 @dataclass(eq=False)
