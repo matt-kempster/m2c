@@ -1236,16 +1236,7 @@ class Cast(Expression):
         # higher precedence than casts
         fn_sig = self.type.get_function_pointer_signature()
         if fn_sig:
-            prototype_sig = self.expr.type.get_function_pointer_signature()
-            if not prototype_sig or not prototype_sig.unify_with_args(fn_sig):
-                # A function pointer cast is required if the inner expr is not
-                # a function pointer, or has incompatible argument types
-                return f"(({self.type.format(fmt)}) {self.expr.format(fmt)})"
-            if not prototype_sig.return_type.unify(fn_sig.return_type):
-                # Only cast the return value of the call
-                return f"({fn_sig.return_type.format(fmt)}) {self.expr.format(fmt)}"
-            # No cast needed
-            return self.expr.format(fmt)
+            return f"(({self.type.format(fmt)}) {self.expr.format(fmt)})"
 
         return f"({self.type.format(fmt)}) {self.expr.format(fmt)}"
 
@@ -1260,11 +1251,25 @@ class FuncCall(Expression):
         return self.args + [self.function]
 
     def format(self, fmt: Formatter) -> str:
+        target = late_unwrap(self.function)
+        fn_sig = target.type.get_function_pointer_signature()
+        if fn_sig and isinstance(target, Cast) and target.reinterpret:
+            prototype_sig = target.expr.type.get_function_pointer_signature()
+            if prototype_sig and prototype_sig.unify_with_args(fn_sig):
+                # We only have to cast the return value of the call, not the
+                # whole function pointer.
+                return Cast(
+                    FuncCall(target.expr, self.args, prototype_sig.return_type),
+                    self.type,
+                    reinterpret=True,
+                    silent=True,
+                ).format(fmt)
+
         # TODO: The function type may have a different number of params than it had
         # when the FuncCall was created. Should we warn that there may be the wrong
         # number of arguments at this callsite?
         args = ", ".join(format_expr(arg, fmt) for arg in self.args)
-        return f"{self.function.format(fmt)}({args})"
+        return f"{target.format(fmt)}({args})"
 
 
 @dataclass(frozen=True, eq=True)

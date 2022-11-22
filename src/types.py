@@ -1212,7 +1212,7 @@ class FunctionSignature:
             return False
         if not self.is_variadic and len(self.params) != len(concrete.params):
             return False
-        can_unify = self.return_type.unify(concrete.return_type)
+        can_unify = True
         for x, y in zip(self.params, concrete.params):
             can_unify &= x.type.unify(y.type)
         return can_unify
