@@ -1469,9 +1469,12 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
             arg_strs.append(arg.type.to_decl(arg.format(fmt), fmt))
     if function_info.stack_info.is_variadic:
         arg_strs.append("...")
-    arg_str = ", ".join(arg_strs)
-    if not arg_str and fmt.language != Language.PASCAL:
-        arg_str = "void"
+    if fmt.language == Language.PASCAL:
+        arg_str = "; ".join(arg_strs)
+    else:
+        arg_str = ", ".join(arg_strs)
+        if not arg_str:
+            arg_str = "void"
 
     fn_header = f"{fn_name}({arg_str})"
 
