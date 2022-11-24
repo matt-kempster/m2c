@@ -1302,8 +1302,9 @@ class LocalVar(Expression):
             return fallback_name
 
         name = StructAccess.access_path_to_field_name(self.path, fmt)
-        if name.startswith("->"):
-            return name[2:]
+        arrow = StructAccess.ptr_arrow(fmt)
+        if name.startswith(arrow):
+            return name[len(arrow) :]
         return fallback_name
 
     def toplevel_decl(self, fmt: Formatter) -> Optional[str]:
@@ -1391,6 +1392,10 @@ class StructAccess(Expression):
             path and isinstance(path[0], int)
         ), "The first element of the field path, if present, must be an int"
 
+    @staticmethod
+    def ptr_arrow(fmt: Formatter) -> str:
+        return "^." if fmt.language == Language.PASCAL else "->"
+
     @classmethod
     def access_path_to_field_name(cls, path: AccessPath, fmt: Formatter) -> str:
         """
@@ -1406,7 +1411,7 @@ class StructAccess(Expression):
 
         # Replace an initial "[0]." with "->"
         if len(path) >= 2 and path[0] == 0 and isinstance(path[1], str):
-            output += f"->{path[1]}"
+            output += cls.ptr_arrow(fmt) + path[1]
             path = path[2:]
 
         for p in path:
@@ -1484,21 +1489,28 @@ class StructAccess(Expression):
 
         # Rewrite `(&x)->y` to `x.y` by stripping `AddressOf` & setting deref=False
         deref = True
+        arrow = self.ptr_arrow(fmt)
         if (
             isinstance(var, AddressOf)
             and not var.expr.type.is_array()
             and not (
                 isinstance(var.expr, GlobalSymbol) and var.expr.is_string_constant()
             )
-            and field_name.startswith("->")
+            and field_name.startswith(arrow)
         ):
             var = var.expr
-            field_name = field_name.replace("->", ".", 1)
+            field_name = field_name.replace(arrow, ".", 1)
             deref = False
 
         # Rewrite `x->unk0` to `*x` and `x.unk0` to `x`, unless has_nonzero_access
         if self.offset == 0 and not has_nonzero_access:
-            return f"{'*' if deref else ''}{var.format(fmt)}"
+            ret = var.format(fmt)
+            if deref:
+                if fmt.language == Language.PASCAL:
+                    ret += "^"
+                else:
+                    ret = "*" + ret
+            return ret
 
         return f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
