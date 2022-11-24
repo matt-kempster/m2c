@@ -1,6 +1,6 @@
 import copy
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 import pycparser.c_ast as ca
 
@@ -1164,7 +1164,7 @@ def format_pascal_type(type: CType) -> str:
     if isinstance(type, ca.ArrayDecl):
         dims = "?"
         if type.dim is not None:
-            const = lambda v: ca.Constant("", str(v))
+            const: Callable[[int], "ca.Expression"] = lambda v: ca.Constant("", str(v))
             upper_bound: "ca.Expression" = ca.BinaryOp("-", type.dim, const(1))
             if isinstance(type.dim, ca.Constant):
                 try:
