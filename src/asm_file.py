@@ -517,7 +517,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             asm_file.new_data_bytes(data)
 
         elif ifdef_level == 0:
-            if directive in ("glabel", "dlabel"):
+            if directive in ("glabel", "dlabel", "jlabel"):
                 parts = line.split()
                 if len(parts) >= 2:
                     process_label(parts[1], glabel=True)
