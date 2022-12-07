@@ -259,9 +259,16 @@ def parse_incbin(
     args: List[str], options: Options, warnings: List[str]
 ) -> Optional[bytes]:
     try:
-        filename = args[0]
-        offset = int(args[1], 0)
-        size = int(args[2], 0)
+        if len(args) == 3:
+            filename = args[0]
+            offset = int(args[1], 0)
+            size = int(args[2], 0)
+        elif len(args) == 1:
+            filename = args[0]
+            offset = 0
+            size = -1
+        else:
+            raise ValueError
     except ValueError:
         raise DecompFailure(f"Could not parse asm_data .incbin directive: {args}")
 
@@ -283,7 +290,7 @@ def parse_incbin(
         except MemoryError:
             data = b""
 
-        if len(data) != size:
+        if size >= 0 and len(data) != size:
             add_warning(
                 warnings,
                 f"Unable to read {size} bytes from {full_path} at {offset:#x} (got {len(data)} bytes)",
