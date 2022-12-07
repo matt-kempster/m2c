@@ -10,18 +10,13 @@
 
 from typing import Optional
 
-
 class Coord:
     file: str
     line: int
     column: Optional[int]
 
-    def __init__(self, file: str, line: int, column: Optional[int] = None):
-        ...
-
-    def __str__(self) -> str:
-        ...
-
+    def __init__(self, file: str, line: int, column: Optional[int] = None): ...
+    def __str__(self) -> str: ...
 
 class ParseError(Exception):
     pass
