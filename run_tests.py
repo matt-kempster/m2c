@@ -17,6 +17,8 @@ from src.options import Options
 
 CRASH_STRING = "CRASHED\n"
 
+PATH_FLAGS = {"--context", "--incbin-dir"}
+
 
 @dataclass(frozen=True)
 class TestOptions:
@@ -53,16 +55,11 @@ def get_test_flags(flags_path: Path) -> List[str]:
     flags_str = flags_path.read_text()
     flags_list = shlex.split(flags_str)
     for i, flag in enumerate(flags_list):
-        if flag != "--context":
+        if flag not in PATH_FLAGS:
             continue
-        try:
-            relative_context_path: str = flags_list[i + 1]
-        except IndexError:
-            raise Exception(
-                f"{flags_path} contains --context without argument"
-            ) from None
-        absolute_context_path: Path = flags_path.parent / relative_context_path
-        flags_list[i + 1] = str(absolute_context_path)
+        if i + 1 >= len(flags_list):
+            raise Exception(f"{flags_path} contains {flag} without argument")
+        flags_list[i + 1] = str(flags_path.parent / flags_list[i + 1])
 
     return flags_list
 
