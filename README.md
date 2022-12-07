@@ -15,12 +15,9 @@ See the `tests/` directory for some example input and output.
 
 ## Install
 
-This project requires Python 3.6 or later. To install the Python dependencies:
+This project requires Python 3.7 or later. To install the Python dependencies:
 ```bash
 python3 -m pip install --upgrade pycparser
-
-# Optional: If you are on python3.6, you will also need to install "dataclasses"
-python3.6 -m pip install --upgrade dataclasses
 ```
 
 You might need to install `pip` first; on Ubuntu this can be done with:
