@@ -2642,24 +2642,46 @@ def elide_literal_casts(expr: Expression) -> Expression:
     return uw_expr
 
 
-def uses_expr(
+def uses_expr_sub(
     expr: Expression,
     expr_filter: Callable[[Expression], bool],
-    parent: Optional[Expression] = None,
-    may_move_forward: bool = False,
+    is_parent_addressof: bool,
+    may_move_forward: bool,
+    seen: Set[Tuple[int, bool, bool]],
 ) -> bool:
-    if expr_filter(expr) and not isinstance(parent, AddressOf):
+    cache_key = (id(expr), may_move_forward, is_parent_addressof)
+    if cache_key in seen:
+        return False
+    seen.add(cache_key)
+    if expr_filter(expr) and not is_parent_addressof:
         return True
     if isinstance(expr, EvalOnceExpr):
         e = expr.dependency(may_move_forward)
         return e is not None and (
-            uses_expr(e, expr_filter, expr, may_move_forward or expr.emit_exactly_once)
+            uses_expr_sub(
+                e, expr_filter, False, may_move_forward or expr.emit_exactly_once, seen
+            )
         )
+    elif isinstance(expr, AddressOf):
+        return uses_expr_sub(expr.expr, expr_filter, True, may_move_forward, seen)
     else:
         for e in expr.dependencies():
-            if uses_expr(e, expr_filter, expr, may_move_forward):
+            if uses_expr_sub(e, expr_filter, False, may_move_forward, seen):
                 return True
-    return False
+        return False
+
+
+def uses_expr(
+    expr: Expression,
+    expr_filter: Callable[[Expression], bool],
+) -> bool:
+    return uses_expr_sub(
+        expr,
+        expr_filter,
+        is_parent_addressof=False,
+        may_move_forward=False,
+        seen=set(),
+    )
 
 
 def late_unwrap(expr: Expression) -> Expression:
