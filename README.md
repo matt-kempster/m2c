@@ -15,6 +15,8 @@ See the `tests/` directory for some example input and output.
 
 ## Install
 
+### Locally
+
 This project requires Python 3.7 or later. To install the Python dependencies:
 ```bash
 python3 -m pip install --upgrade pycparser
@@ -24,6 +26,14 @@ You might need to install `pip` first; on Ubuntu this can be done with:
 ```bash
 sudo apt update
 sudo apt install python3-pip
+```
+
+### With Poetry
+
+You can include `m2c` as a dependency in your project with [Poetry](https://python-poetry.org/) by adding the following to your `pyproject.toml`:
+```toml
+[tool.poetry.dependencies]
+m2c = {git="https://github.com/matt-kempster/m2c.git"}
 ```
 
 ## Usage
