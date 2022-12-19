@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "m2c"
+version = "0.1.0"
+description = "MIPS and PowerPC decompiler"
+authors = [
+    "Matt Kempster <kidpixel@gmail.com>",
+    "Simon Lindholm <simon.lindholm10@gmail.com>",
+    "Zach Banks <zjbanks@gmail.com>",
+    "Ethan Roseman <ethteck@gmail.com>"
+]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/matt-kempster/m2c"
+packages = [{include = "m2c"}]
+
+[tool.poetry.dependencies]
+python = "^3.7"
+pycparser = "^2.21"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
