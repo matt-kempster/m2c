@@ -3723,7 +3723,8 @@ def create_dominated_node_state(
     # and that var gets assigned to somewhere along a path to the dominator,
     # using that expression requires it to be made into a temp.
     clobbered_vars, has_fn_call = find_clobbers_until_dominator(stack_info, child)
-    child_state.prevent_later_var_uses(clobbered_vars)
+    if clobbered_vars:
+        child_state.prevent_later_var_uses(clobbered_vars)
 
     # Prevent function calls from being moved across basic blocks, except for
     # trivial return stubs.
