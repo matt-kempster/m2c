@@ -377,7 +377,7 @@ Finally, `git add` your test to track it.
 git add tests/end_to_end/my-new-test
 ```
 
-### Installatio nwith Poetry
+### Installation with Poetry
 
 You can include `m2c` as a dependency in your project with [Poetry](https://python-poetry.org/) by adding the following to your `pyproject.toml`:
 ```toml
