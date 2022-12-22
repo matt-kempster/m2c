@@ -8,7 +8,7 @@ authors = [
     "Zach Banks <zjbanks@gmail.com>",
     "Ethan Roseman <ethteck@gmail.com>"
 ]
-license = "GPL-3.0-or-later"
+license = "GPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/matt-kempster/m2c"
 packages = [{include = "m2c"}]
