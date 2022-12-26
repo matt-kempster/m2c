@@ -12,7 +12,7 @@ class ChoicesEnum(enum.Enum):
         return str(self.value)
 
 
-@dataclass
+@dataclass(frozen=True)
 class CodingStyle:
     class CommentStyle(ChoicesEnum):
         MULTILINE = "multiline"
