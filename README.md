@@ -8,7 +8,7 @@ It originally targeted popular compilers of the late 1990's, but it also works w
 Its focus on finding "matching" C source differentiates it from other decompilation suites, such as IDA or Ghidra.
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
 
-The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
+The input is expected to match the GNU `as` assembly format, produced by tools like [`spimdisasm`](https://github.com/Decompollaborate/spimdisasm).
 See the `tests/` directory for some example input and output.
 
 [An online version is also available](https://simonsoftware.se/other/m2c.html).
