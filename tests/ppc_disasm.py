@@ -190,8 +190,12 @@ def instruction_to_text(
         # Reloc R_PPC_EMB_SDA21, the linker sets the register to either
         # $r13 or $r2 based on the section name.
         if reloc.relocation_type == 109:
-            assert reloc.symbol.section is not None
-            reg = "r13" if reloc.symbol.section.name.endswith("2") else "r2"
+            if reloc.symbol.section is None:
+                reg = "r0"
+            elif reloc.symbol.section.name.endswith("2"):
+                reg = "r13"
+            else:
+                reg = "r2"
             if insn.id == cs.ppc.PPC_INS_LI:
                 return "addi %s, %s, %s@sda21" % (
                     insn.reg_name(insn.operands[0].value.reg),
