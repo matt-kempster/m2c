@@ -87,6 +87,3 @@ venv.bak/
 # Temporary files used by the test runner
 .stdout
 .stderr
-
-# Poetry
-poetry.lock
