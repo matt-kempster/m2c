@@ -362,7 +362,7 @@ class CxxTerm:
             return "wchar_t"
         if self.kind == CxxTerm.Kind.ELLIPSIS:
             return "..."
-        return self.kind.name.lower()
+        return str(self.kind.name).lower()
 
 
 @dataclass

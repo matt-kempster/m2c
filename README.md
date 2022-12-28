@@ -8,7 +8,7 @@ It originally targeted popular compilers of the late 1990's, but it also works w
 Its focus on finding "matching" C source differentiates it from other decompilation suites, such as IDA or Ghidra.
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
 
-The input is expected to match a particular assembly format, such as that produced by tools like [`mipsdisasm`](https://github.com/queueRAM/sm64tools).
+The input is expected to match the GNU `as` assembly format, produced by tools like [`spimdisasm`](https://github.com/Decompollaborate/spimdisasm).
 See the `tests/` directory for some example input and output.
 
 [An online version is also available](https://simonsoftware.se/other/m2c.html).
@@ -350,7 +350,7 @@ By default, this will generate an HTML coverage report `./htmlcov/index.html`.
 
 You are encouraged to add new end-to-end tests using the `./tests/add_test.py` script.
 
-You'll need the IDO `cc` compiler and [sm64tools](https://github.com/queueRAM/sm64tools).
+For MIPS tests, you'll need the IDO `cc` compiler and the `spimdisasm` pip package.
 
 A good reference test to base your new test on is [`array-access`](tests/end_to_end/array-access).
 
@@ -358,11 +358,10 @@ Create a new directory in `tests/end_to_end`, and write the `orig.c` test case.
 If you want the test to pass in C context, also add `irix-o2-flags.txt` & `irix-g-flags.txt` files.
 
 After writing these files, run `add_test.py` with the path to the new `orig.c` file, as shown below.
-This example assumes that sm64tools is cloned & built in your home directory, and that the IDO compiler is available from the OOT decompilation project.
-You should change these exported paths to match your system.
+This example assumes that the IDO compiler is available from the OOT decompilation project.
+You should change this exported path to match your system.
 
 ```bash
-export SM64_TOOLS=$HOME/sm64tools/build/
 export IDO_CC=$HOME/oot/tools/ido_recomp/linux/7.1/cc
 ./tests/add_test.py $PWD/tests/end_to_end/my-new-test/orig.c
 ```
@@ -376,6 +375,9 @@ Finally, `git add` your test to track it.
 ./run_tests.py --overwrite
 git add tests/end_to_end/my-new-test
 ```
+
+For PowerPC, the `MWCC_CC` environment variable should be set to point to a PPC cc binary (mwcceppc.exe),
+and on non-Windows, `WINE` set to point to wine or equivalent ([wibo](https://github.com/decompals/wibo) also works).
 
 ### Installation with Poetry
 
