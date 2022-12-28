@@ -13,7 +13,7 @@ from coverage import Coverage  # type: ignore
 from pathlib import Path
 from typing import Any, Iterator, List, Optional, Pattern, Tuple
 
-from src.options import Options
+from m2c.options import Options
 
 CRASH_STRING = "CRASHED\n"
 
@@ -68,7 +68,7 @@ def decompile_and_compare(
     test_case: TestCase, test_options: TestOptions
 ) -> Tuple[Optional[bool], str]:
     # This import is deferred so it can be profiled by the coverage tool
-    from src.main import parse_flags
+    from m2c.main import parse_flags
 
     logging.debug(
         f"Decompiling {test_case.asm_file}"
@@ -113,7 +113,7 @@ def decompile_and_compare(
 
 def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
     # This import is deferred so it can be profiled by the coverage tool
-    from src.main import run as decompile
+    from m2c.main import run as decompile
 
     out_string = io.StringIO()
     with contextlib.redirect_stdout(out_string):

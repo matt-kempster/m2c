@@ -378,3 +378,11 @@ git add tests/end_to_end/my-new-test
 
 For PowerPC, the `MWCC_CC` environment variable should be set to point to a PPC cc binary (mwcceppc.exe),
 and on non-Windows, `WINE` set to point to wine or equivalent ([wibo](https://github.com/decompals/wibo) also works).
+
+### Installation with Poetry
+
+You can include `m2c` as a dependency in your project with [Poetry](https://python-poetry.org/) by adding the following to your `pyproject.toml`:
+```toml
+[tool.poetry.dependencies]
+m2c = {git="https://github.com/matt-kempster/m2c.git"}
+```
