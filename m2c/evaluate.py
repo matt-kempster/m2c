@@ -844,6 +844,9 @@ def array_access_from_add(
     target_size: Optional[int],
     ptr: bool,
 ) -> Optional[Expression]:
+    """Given `expr` of the form `a + (imm * b + Y)` and an `offset` X, try to
+    create a corresponding expression of the form `a->unk(X + Y)[b]` if type
+    information allows."""
     expr = early_unwrap(expr)
     if not isinstance(expr, BinaryOp) or expr.op != "+":
         return None
@@ -851,6 +854,15 @@ def array_access_from_add(
     addend = expr.right
     if addend.type.is_pointer_or_array() and not base.type.is_pointer_or_array():
         base, addend = addend, base
+
+    uw_addend = early_unwrap(addend)
+    if isinstance(uw_addend, BinaryOp) and uw_addend.op == "+":
+        if isinstance(uw_addend.right, Literal):
+            offset += uw_addend.right.value
+            addend = uw_addend.left
+        elif isinstance(uw_addend.left, Literal):
+            offset += uw_addend.left.value
+            addend = uw_addend.right
 
     index = addend
     scale = 1
