@@ -485,6 +485,13 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     offset = 0
     bit_offset = 0
     has_bitfields = False
+
+    def flush_bitfields() -> None:
+        nonlocal offset, bit_offset
+        if not is_union and bit_offset != 0:
+            bit_offset = 0
+            offset += 1
+
     for decl in struct.decls:
         if not isinstance(decl, ca.Decl):
             # Ignore pragmas
@@ -502,6 +509,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                 pass
             else:
                 # C extension: anonymous struct/union, whose members are flattened
+                flush_bitfields()
                 align = max(align, substruct.align)
                 offset = (offset + substruct.align - 1) & -substruct.align
                 for off, sfields in substruct.fields.items():
@@ -550,31 +558,28 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                 bit_offset &= 7
             continue
 
-        if not is_union and bit_offset != 0:
-            bit_offset = 0
-            offset += 1
+        if decl.name is None:
+            continue
 
-        if decl.name is not None:
-            ssize, salign, substr = parse_struct_member(
-                type, field_name, typemap, allow_unsized=False
+        flush_bitfields()
+        ssize, salign, substr = parse_struct_member(
+            type, field_name, typemap, allow_unsized=False
+        )
+        align = max(align, salign)
+        offset = (offset + salign - 1) & -salign
+        fields[offset].append(
+            StructField(
+                type=type,
+                size=ssize,
+                name=decl.name,
             )
-            align = max(align, salign)
-            offset = (offset + salign - 1) & -salign
-            fields[offset].append(
-                StructField(
-                    type=type,
-                    size=ssize,
-                    name=decl.name,
-                )
-            )
-            if is_union:
-                union_size = max(union_size, ssize)
-            else:
-                offset += ssize
+        )
+        if is_union:
+            union_size = max(union_size, ssize)
+        else:
+            offset += ssize
 
-    if not is_union and bit_offset != 0:
-        bit_offset = 0
-        offset += 1
+    flush_bitfields()
 
     # If there is a typedef for this struct, prefer using that name
     if struct in typemap.struct_typedefs:
