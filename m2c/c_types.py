@@ -489,11 +489,35 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
         if not isinstance(decl, ca.Decl):
             # Ignore pragmas
             continue
-        if isinstance(decl.type, (ca.Struct, ca.Union, ca.Enum)):
-            continue
-        field_name = f"{struct.name}.{decl.name}"
-        type = decl.type
 
+        type = decl.type
+        if isinstance(type, (ca.Struct, ca.Union)):
+            if type.decls is None:
+                continue
+            substruct = parse_struct(type, typemap)
+            if type.name is not None:
+                # Struct defined within another, which is silly but valid C.
+                # parse_struct already makes sure it gets defined in the global
+                # namespace, so no more to do here.
+                pass
+            else:
+                # C extension: anonymous struct/union, whose members are flattened
+                align = max(align, substruct.align)
+                offset = (offset + substruct.align - 1) & -substruct.align
+                for off, sfields in substruct.fields.items():
+                    for field in sfields:
+                        fields[offset + off].append(field)
+                if is_union:
+                    union_size = max(union_size, substruct.size)
+                else:
+                    offset += substruct.size
+            continue
+
+        if isinstance(type, ca.Enum):
+            parse_enum(type, typemap)
+            continue
+
+        field_name = f"{struct.name}.{decl.name}"
         if decl.bitsize is not None:
             # A bitfield "type a : b;" has the following effects on struct layout:
             # - align the struct as if it contained a 'type' field.
@@ -547,26 +571,6 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                 union_size = max(union_size, ssize)
             else:
                 offset += ssize
-        elif isinstance(type, (ca.Struct, ca.Union)) and type.decls is not None:
-            substr = parse_struct(type, typemap)
-            if type.name is not None:
-                # Struct defined within another, which is silly but valid C.
-                # parse_struct already makes sure it gets defined in the global
-                # namespace, so no more to do here.
-                pass
-            else:
-                # C extension: anonymous struct/union, whose members are flattened
-                align = max(align, substr.align)
-                offset = (offset + substr.align - 1) & -substr.align
-                for off, sfields in substr.fields.items():
-                    for field in sfields:
-                        fields[offset + off].append(field)
-                if is_union:
-                    union_size = max(union_size, substr.size)
-                else:
-                    offset += substr.size
-        elif isinstance(type, ca.Enum):
-            parse_enum(type, typemap)
 
     if not is_union and bit_offset != 0:
         bit_offset = 0
