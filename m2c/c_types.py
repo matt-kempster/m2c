@@ -128,9 +128,16 @@ def resolve_typedefs(type: CType, typemap: TypeMap) -> CType:
     return type
 
 
+def type_of_var_decl(decl: ca.Decl) -> CType:
+    assert not isinstance(
+        decl.type, (ca.Struct, ca.Union, ca.Enum)
+    ), "decls that declare variables have CType types"
+    return decl.type
+
+
 def type_from_global_decl(decl: ca.Decl) -> CType:
     """Get the CType of a global Decl, stripping names of function parameters."""
-    tp = decl.type
+    tp = type_of_var_decl(decl)
     if not isinstance(tp, ca.FuncDecl) or not tp.args:
         return tp
 
@@ -138,7 +145,9 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
         param = copy.deepcopy(param)
         param.name = None
         set_decl_name(param)
-        return ca.Typename(name=None, quals=param.quals, type=param.type, align=[])
+        return ca.Typename(
+            name=None, quals=param.quals, type=type_of_var_decl(param), align=[]
+        )
 
     new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
         anonymize_param(param) if isinstance(param, ca.Decl) else param
@@ -259,7 +268,7 @@ def parse_function(fn: CType) -> Optional[Function]:
             if isinstance(arg, ca.EllipsisParam):
                 is_variadic = True
             elif isinstance(arg, ca.Decl):
-                params.append(Param(type=arg.type, name=arg.name))
+                params.append(Param(type=type_of_var_decl(arg), name=arg.name))
             elif isinstance(arg, ca.ID):
                 raise DecompFailure(
                     "K&R-style function header is not supported: " + to_c(fn)
@@ -478,6 +487,9 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     has_bitfields = False
     for decl in struct.decls:
         if not isinstance(decl, ca.Decl):
+            # Ignore pragmas
+            continue
+        if isinstance(decl.type, (ca.Struct, ca.Union, ca.Enum)):
             continue
         field_name = f"{struct.name}.{decl.name}"
         type = decl.type
@@ -721,7 +733,7 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
                     typemap.struct_typedefs[item.type.type] = typedef
             if isinstance(item, ca.FuncDef):
                 assert item.decl.name is not None, "cannot define anonymous function"
-                fn = parse_function(item.decl.type)
+                fn = parse_function(type_of_var_decl(item.decl))
                 assert fn is not None
                 typemap.functions[item.decl.name] = fn
             if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
@@ -772,7 +784,7 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
 def set_decl_name(decl: ca.Decl) -> None:
     name = decl.name
-    type = decl.type
+    type = type_of_var_decl(decl)
     while not isinstance(type, TypeDecl):
         type = type.type
     type.declname = name
