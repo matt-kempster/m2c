@@ -732,7 +732,7 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
         for item in ast.ext:
             if isinstance(item, ca.Typedef):
-                typemap.typedefs[item.name] = item.type
+                typemap.typedefs[item.name] = resolve_typedefs(item.type, typemap)
                 if isinstance(item.type, TypeDecl) and isinstance(
                     item.type.type, (ca.Struct, ca.Union)
                 ):

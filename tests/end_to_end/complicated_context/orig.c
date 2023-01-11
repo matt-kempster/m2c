@@ -10,6 +10,9 @@ union SomeUnion {
     char char_innerfield;
 };
 
+typedef int Int;
+typedef Int Int;
+
 enum SomeEnum
 {
     FIRST_ELEM,
@@ -21,7 +24,7 @@ enum SomeEnum
 
 struct SomeBitfield {
     char char_bit : 1;
-    int int_bit : 4;
+    Int int_bit : 4;
     short short_bit : 16;
     char : 0;
     unsigned char unsigned_bit : 7;
@@ -29,7 +32,7 @@ struct SomeBitfield {
 
 struct SomeStruct
 {
-    int int_field;
+    Int int_field;
     float float_field;
     void *pointer_field;
     union SomeUnion data_field;

@@ -16,7 +16,7 @@ SomeBitfield: size 0x8, align 4
 SubStruct: size 0x4, align 4
   0x0: x (int)
 SomeStruct: size 0x330, align 8
-  0x0: int_field (int)
+  0x0: int_field (Int)
   0x4: float_field (float)
   0x8: pointer_field (void *)
   0x10: data_field (union SomeUnion)
