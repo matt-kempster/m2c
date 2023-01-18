@@ -445,6 +445,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 ifdef_level += 1
             elif directive == ".endm":
                 ifdef_level -= 1
+            elif directive == ".fn":
+                _, _, args_str = line.partition(" ")
+                args = split_arg_list(args_str)
+                asm_file.new_function(args[0])
             elif ifdef_level == 0:
                 if directive == ".section":
                     curr_section = line.split()[1].split(",")[0]
