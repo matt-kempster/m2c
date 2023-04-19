@@ -871,7 +871,7 @@ class MipsArch(Arch):
                 return AsmInstruction("li", [args[0], lit])
             if instr.mnemonic == "jalr" and args[0] != Register("ra"):
                 raise DecompFailure("Two-argument form of jalr is not supported.")
-            if instr.mnemonic in ("mult", "multu", "dmult", "dmultu", "madd", "maddu"):
+            if instr.mnemonic in ("mult", "multu", "dmult", "dmultu", "madd", "maddu", "msub", "msubu"):
                 return AsmInstruction(instr.mnemonic, [Register("zero"), *args])
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
@@ -1182,6 +1182,13 @@ class MipsArch(Arch):
             outputs = [Register("hi"), Register("lo")]
             if args[0] != Register("zero"):
                 outputs.append(args[0])
+               
+            inputs = [args[1], args[2]]
+            if mnemonic in ("msub", "msubu"):
+                inputs.append(Register("lo"))
+            outputs = [Register("hi"), Register("lo")]
+            if args[0] != Register("zero"):
+                outputs.append(args[0])
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 hi, lo = cls.instrs_hi_lo[mnemonic](a)
@@ -1441,6 +1448,24 @@ class MipsArch(Arch):
                 a,
             ),
         ),
+        "msub": lambda a: (
+            ErrorExpr("msub top half"),
+            handle_add_real(
+                Register("lo"),
+                a.regs[Register("lo")],
+                UnaryOp("-", BinaryOp.int(a.reg(1), "*", a.reg(2))),
+                a,
+            ),
+    ),
+    "msubu": lambda a: (
+        ErrorExpr("msubu top half"),
+        handle_add_real(
+            Register("lo"),
+            a.regs[Register("lo")],
+            UnaryOp("-", BinaryOp.int(a.reg(1), "*", a.reg(2))),
+            a,
+        ),
+    ),
     }
     instrs_destination_first: InstrMap = {
         # Flag-setting instructions
