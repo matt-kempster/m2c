@@ -1456,16 +1456,16 @@ class MipsArch(Arch):
                 UnaryOp("-", BinaryOp.int(a.reg(1), "*", a.reg(2))),
                 a,
             ),
-    ),
-    "msubu": lambda a: (
-        ErrorExpr("msubu top half"),
-        handle_add_real(
-            Register("lo"),
-            a.regs[Register("lo")],
-            UnaryOp("-", BinaryOp.int(a.reg(1), "*", a.reg(2))),
-            a,
         ),
-    ),
+        "msubu": lambda a: (
+            ErrorExpr("msubu top half"),
+            handle_add_real(
+                Register("lo"),
+                a.regs[Register("lo")],
+                UnaryOp("-", BinaryOp.int(a.reg(1), "*", a.reg(2))),
+                a,
+            ),
+        ),
     }
     instrs_destination_first: InstrMap = {
         # Flag-setting instructions
