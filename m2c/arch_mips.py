@@ -1177,14 +1177,7 @@ class MipsArch(Arch):
                 and isinstance(args[2], Register)
             )
             inputs = [args[1], args[2]]
-            if mnemonic in ("madd", "maddu"):
-                inputs.append(Register("lo"))
-            outputs = [Register("hi"), Register("lo")]
-            if args[0] != Register("zero"):
-                outputs.append(args[0])
-               
-            inputs = [args[1], args[2]]
-            if mnemonic in ("msub", "msubu"):
+            if mnemonic in ("madd", "maddu", "msub", "msubu"):
                 inputs.append(Register("lo"))
             outputs = [Register("hi"), Register("lo")]
             if args[0] != Register("zero"):
