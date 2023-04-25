@@ -4102,8 +4102,8 @@ class GlobalInfo:
 
                 sort_order = (
                     not sym.type.is_function(),
-                    is_global,
                     is_in_file,
+                    is_global if not is_in_file else False,
                     is_const,
                     data_entry.sort_order if data_entry is not None else ("", 0),
                     name,
