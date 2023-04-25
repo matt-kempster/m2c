@@ -429,8 +429,8 @@ def parse_flags(flags: List[str]) -> Options:
         help="Column number to justify comments to. Set to 0 to disable justification. Default: 52",
     )
     group.add_argument(
-        "--disable-qualifiers-hints",
-        dest="disable_qualifiers_hints",
+        "--no-qualifiers-hints",
+        dest="no_qualifiers_hints",
         action="store_true",
         help="Turns off qualifiers hints for functions and variables. externs qualifiers for data are not disabled by this flag",
     )
@@ -583,7 +583,7 @@ def parse_flags(flags: List[str]) -> Options:
         hex_case=args.hex_case,
         comment_style=args.comment_style,
         comment_column=args.comment_column,
-        disable_qualifiers_hints=args.disable_qualifiers_hints,
+        no_qualifiers_hints=args.no_qualifiers_hints,
     )
 
     functions: List[Union[int, str]] = []

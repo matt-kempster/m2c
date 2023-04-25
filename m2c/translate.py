@@ -4117,11 +4117,11 @@ class GlobalInfo:
                     qualifier = "extern"
                 elif is_in_file and is_global:
                     qualifier = ""
-                elif not fmt.coding_style.disable_qualifiers_hints:
+                elif not fmt.coding_style.no_qualifiers_hints:
                     qualifier = "static"
 
                 if sym.type.is_function():
-                    if not fmt.coding_style.disable_qualifiers_hints:
+                    if not fmt.coding_style.no_qualifiers_hints:
                         comments.append(qualifier)
                     qualifier = ""
 
