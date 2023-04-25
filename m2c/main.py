@@ -432,7 +432,7 @@ def parse_flags(flags: List[str]) -> Options:
         "--disable-qualifiers-hints",
         dest="disable_qualifiers_hints",
         action="store_true",
-        help="Turns off qualifiers hints for functions and data",
+        help="Turns off qualifiers hints for functions and variables. externs qualifiers for data are not disabled by this flag",
     )
     group.add_argument(
         "--no-casts",
