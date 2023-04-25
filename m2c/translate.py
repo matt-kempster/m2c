@@ -4113,7 +4113,7 @@ class GlobalInfo:
                 comments = []
 
                 # Determine type qualifier: static, extern, or neither
-                if is_in_file and is_global:
+                if (is_in_file and is_global) or fmt.coding_style.disable_qualifiers_hints:
                     qualifier = ""
                 elif is_in_file:
                     qualifier = "static"
