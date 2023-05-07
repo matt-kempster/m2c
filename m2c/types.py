@@ -748,10 +748,14 @@ class Type:
                 return simple_ctype(data.struct.typedef_name)
             # If there's no typedef or tag name, then label it as `_anonymous`
             name = data.struct.tag_name or "_anonymous"
-            Class = ca.Union if data.struct.is_union else ca.Struct
+            type: Union[ca.Union, ca.Struct] = (
+                ca.Union(name=name, decls=None)
+                if data.struct.is_union
+                else ca.Struct(name=name, decls=None)
+            )
             return ca.TypeDecl(
                 declname=name,
-                type=ca.Struct(name=name, decls=None),
+                type=type,
                 quals=[],
                 align=[],
             )
