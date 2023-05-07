@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import (
     ClassVar,
     Dict,
-    Iterator,
     List,
     Match,
     Optional,

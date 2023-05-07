@@ -10,7 +10,6 @@ import typing
 from typing import (
     AbstractSet,
     Callable,
-    Collection,
     DefaultDict,
     Dict,
     Iterator,

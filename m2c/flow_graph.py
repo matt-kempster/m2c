@@ -1,5 +1,4 @@
 import abc
-import copy
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import (
@@ -17,15 +16,13 @@ from typing import (
     Union,
 )
 
-from .error import DecompFailure, static_assert_unreachable
+from .error import DecompFailure
 from .options import Formatter, Options, Target
 from .asm_file import AsmData, Function, Label
 from .asm_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
-    AsmLiteral,
-    BinOp,
     JumpTarget,
     Macro,
     Register,
@@ -33,7 +30,6 @@ from .asm_instruction import (
 from .instruction import (
     ArchAsm,
     Instruction,
-    InstructionMeta,
     Location,
 )
 from .asm_pattern import simplify_patterns, AsmPattern

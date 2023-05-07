@@ -5,7 +5,6 @@ from typing import (
     Callable,
     List,
     Optional,
-    Set,
     Tuple,
     Union,
 )
@@ -23,7 +22,6 @@ from .translate import (
     Cast,
     Condition,
     ErrorExpr,
-    EvalOnceExpr,
     ExprCondition,
     ExprStmt,
     Expression,

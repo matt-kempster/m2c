@@ -1,12 +1,11 @@
 import argparse
 import gc
-import re
 import sys
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from .c_types import TypeMap, build_typemap, dump_typemap
+from .c_types import build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
 from .if_statements import get_function_text

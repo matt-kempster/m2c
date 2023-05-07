@@ -1,4 +1,3 @@
-import copy
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -7,7 +6,6 @@ import pycparser.c_ast as ca
 from .c_types import (
     CType,
     Enum,
-    Struct,
     StructUnion as CStructUnion,
     TypeMap,
     UndefinedStructError,
