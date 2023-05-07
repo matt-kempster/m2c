@@ -1061,8 +1061,6 @@ class Type:
         for term in sym_type.terms[::-1]:
             if term.kind == CxxTerm.Kind.CONST:
                 pass
-            elif term.kind == CxxTerm.Kind.UNSIGNED:
-                unsigned = True
             elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
                 type = Type.ptr(type)
             elif term.kind == CxxTerm.Kind.BOOL:
