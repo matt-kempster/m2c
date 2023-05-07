@@ -365,7 +365,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             elif curr_section == ".bss":
                 asm_file.new_data_label(label, is_readonly=False, is_bss=True)
             elif curr_section == ".text":
-                if label.startswith(".") or glabel == False:
+                if label.startswith(".") or glabel is False:
                     if asm_file.current_function is None:
                         raise DecompFailure(f"Label {label} is not within a function!")
                     asm_file.new_label(label.lstrip("."))

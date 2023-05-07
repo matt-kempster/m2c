@@ -99,7 +99,6 @@ def deref(
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
-    field_name: Optional[str] = None
     type: Type = stack_info.unique_type_for("struct", (uw_var, offset), Type.any())
 
     # Struct access with type information.
@@ -251,7 +250,6 @@ def handle_sltiu(args: InstrArgs) -> Expression:
 
 
 def handle_addi(args: InstrArgs) -> Expression:
-    stack_info = args.stack_info
     output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)
     source = args.reg(1)
@@ -274,7 +272,6 @@ def handle_addi(args: InstrArgs) -> Expression:
 
 
 def handle_addis(args: InstrArgs) -> Expression:
-    stack_info = args.stack_info
     source_reg = args.reg_ref(1)
     source = args.reg(1)
     imm = args.shifted_imm(2)
@@ -980,7 +977,6 @@ def array_access_from_add(
 
 
 def handle_add(args: InstrArgs) -> Expression:
-    stack_info = args.stack_info
     output_reg = args.reg_ref(0)
     lhs = args.reg(1)
     rhs = args.reg(2)

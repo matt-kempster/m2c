@@ -539,7 +539,7 @@ def build_blocks(
 
         if item.is_conditional and item.is_return:
             if cond_return_target is None:
-                cond_return_target = JumpTarget(f"_m2c_conditionalreturn_")
+                cond_return_target = JumpTarget("_m2c_conditionalreturn_")
             # Strip the "lr" off of the instruction
             assert item.mnemonic[-2:] == "lr"
             branch_instr = arch.parse(
@@ -1525,7 +1525,7 @@ def nodes_to_flowgraph(
         print(f"Warning: in {function.name}, regs were read before being written to:")
         for reg, ref in missing_regs:
             print(f"   {reg} at {ref}: {ref.instruction}")
-        print(f"*/")
+        print("*/")
 
     return flow_graph
 

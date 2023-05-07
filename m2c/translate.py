@@ -2927,7 +2927,6 @@ def reg_sources(node: Node, reg: Register) -> Tuple[List[Reference], bool]:
         if n in seen:
             continue
         seen.add(n)
-        clobbered: Optional[bool] = None
         for instr_ref in reversed(list(n.block.instruction_refs)):
             instr = instr_ref.instruction
             if reg in instr.outputs:

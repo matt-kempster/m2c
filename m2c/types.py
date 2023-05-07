@@ -476,12 +476,10 @@ class Type:
             # One option is to return the whole struct itself. Do not do this if the struct
             # is marked as a stack struct, or if `target_size` is specified and does not match.
             possible_results: List[Type.GetFieldResult] = []
-            can_return_self = False
             if not data.struct.is_stack and (
                 target_size is None or target_size == self.get_size_bytes()
             ):
                 possible_results.append(([], self, offset))
-                can_return_self = True
 
             # Recursively check each of the `possible_fields` to find the best matches
             # for fields at the given offset.
@@ -1411,11 +1409,11 @@ class StructDeclaration:
         keyword = "union" if self.is_union else "struct"
         decl = f"{keyword} {self.tag_name}" if self.tag_name else f"{keyword}"
         head = f"typedef {decl} {{" if self.typedef_name else f"{decl} {{"
-        tail = f"}} {self.typedef_name};" if self.typedef_name else f"}};"
+        tail = f"}} {self.typedef_name};" if self.typedef_name else "};"
 
         # If there are no fields or padding, return everything on one line
         if self.size == 0 and not self.fields:
-            return fmt.with_comments(head + tail, [f"size 0x0"])
+            return fmt.with_comments(head + tail, ["size 0x0"])
 
         lines = []
         lines.append(fmt.indent(head))
