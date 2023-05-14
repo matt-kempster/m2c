@@ -818,7 +818,7 @@ class ErrorExpr(Condition):
 
     def format(self, fmt: Formatter) -> str:
         if self.desc is not None:
-            return f"M2C_ERROR({self.desc})"
+            return f"M2C_ERROR(/* {self.desc} */)"
         return "M2C_ERROR()"
 
 
