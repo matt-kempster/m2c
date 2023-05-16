@@ -2380,7 +2380,6 @@ class InstrArgs:
         val = arg.lhs
         if not isinstance(val, Macro) or val.macro_name not in (
             "got",
-            "gp_rel",
             "call16",
         ):
             return None
@@ -2406,11 +2405,12 @@ class InstrArgs:
     def memory_ref(self, index: int) -> Union[AddressMode, RawSymbolRef]:
         ret = strip_macros(self.raw_arg(index))
 
-        # In MIPS, we want to allow "lw $v0, symbol + 4", which is outputted by
+        # For MIPS, we want to allow "lw $v0, symbol + 4", which is outputted by
         # some disassemblers (like IDA) even though it isn't valid assembly.
-        # For PPC, we want to allow "lwz $r1, symbol@sda21($r13)" where $r13 is
-        # assumed to point to the start of a small data area (SDA).
-        # (strip_macros removes the AsmAddressMode wrapper for sda21 relocs.)
+        # We also want to allow "lw $v0, %gp_rel(symbol + 4)($gp)", where $gp is
+        # assumed to point to the start of a small data area.
+        # (strip_macros removes the AsmAddressMode wrapper for gp_rel relocs.)
+        # PPC sda2/sda21 relocs also behave this way.
         ref = parse_symbol_ref(ret)
         if ref is not None:
             return ref
@@ -2861,7 +2861,7 @@ def strip_macros(arg: Argument) -> Argument:
             return AsmLiteral(arg.argument.value)
         return AsmLiteral(0)
     elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
-        if arg.lhs.macro_name in ["sda2", "sda21"]:
+        if arg.lhs.macro_name in ["sda2", "sda21", "gp_rel"]:
             return arg.lhs.argument
         if arg.lhs.macro_name not in ["lo", "l"]:
             raise DecompFailure(
