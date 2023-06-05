@@ -4023,7 +4023,11 @@ class GlobalInfo:
             # Type kinds K_FN and K_VOID do not have initializers
             return None
 
-        return for_type(sym.type)
+        type = sym.type.get_array()[0]
+        if sym.is_string_constant() and type is not None and type.get_size_bytes() == 1:
+            return sym.format_string_constant(fmt)
+        else:
+            return for_type(sym.type)
 
     def find_forward_declares_needed(self, functions: List[FunctionInfo]) -> Set[str]:
         funcs_seen = set()
