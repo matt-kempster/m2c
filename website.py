@@ -40,7 +40,7 @@ if "source" in form:
         cmd.append("--no-casts")
     if "allman" in form:
         cmd.append("--allman")
-    if "knr" in form:
+    elif "knr" in form:
         cmd.append("--knr")
     if "extraswitchindent" in form:
         cmd.append("--indent-switch-contents")
