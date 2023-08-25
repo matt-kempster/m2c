@@ -776,9 +776,7 @@ class PpcArch(Arch):
                     # Update the register in the second argument
                     update = a.reg_ref(1)
                     offset = a.reg(2)
-                    s.set_reg(
-                        update, add_imm(update, a.regs[update], offset, a)
-                    )
+                    s.set_reg(update, add_imm(update, a.regs[update], offset, a))
 
                     if store is not None:
                         s.store_memory(store, a.reg_ref(0))
@@ -799,7 +797,9 @@ class PpcArch(Arch):
                         )
                     s.set_reg(
                         update.rhs,
-                        add_imm(update.rhs, a.regs[update.rhs], Literal(update.offset), a),
+                        add_imm(
+                            update.rhs, a.regs[update.rhs], Literal(update.offset), a
+                        ),
                     )
 
                     if store is not None:
