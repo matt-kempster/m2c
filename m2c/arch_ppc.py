@@ -769,27 +769,41 @@ class PpcArch(Arch):
                 )
                 inputs = [args[0], args[1], args[2]]
                 outputs = [args[1]]
+
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    store = cls.instrs_store_update[mnemonic](a)
+
+                    # Update the register in the second argument
+                    update = a.reg_ref(1)
+                    offset = a.reg(2)
+                    s.set_reg(
+                        update, add_imm(update, a.regs[update], offset, a)
+                    )
+
+                    if store is not None:
+                        s.store_memory(store, a.reg_ref(0))
+
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].rhs]
                 outputs = make_memory_access(args[1], size) + [args[1].rhs]
 
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                store = cls.instrs_store_update[mnemonic](a)
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    store = cls.instrs_store_update[mnemonic](a)
 
-                # Update the register in the second argument
-                update = a.memory_ref(1)
-                if not isinstance(update, AddressMode):
-                    raise DecompFailure(
-                        f"Unhandled store-and-update arg in {instr_str}: {update!r}"
+                    # Update the register in the second argument
+                    update = a.memory_ref(1)
+                    if not isinstance(update, AddressMode):
+                        raise DecompFailure(
+                            f"Unhandled store-and-update arg in {instr_str}: {update!r}"
+                        )
+                    s.set_reg(
+                        update.rhs,
+                        add_imm(update.rhs, a.regs[update.rhs], Literal(update.offset), a),
                     )
-                s.set_reg(
-                    update.rhs,
-                    add_imm(update.rhs, a.regs[update.rhs], Literal(update.offset), a),
-                )
 
-                if store is not None:
-                    s.store_memory(store, a.reg_ref(0))
+                    if store is not None:
+                        s.store_memory(store, a.reg_ref(0))
 
         elif mnemonic in cls.instrs_load:
             assert isinstance(args[0], Register) and size is not None
