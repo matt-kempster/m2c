@@ -694,9 +694,6 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
         expr = left_expr
         left_expr = early_unwrap_ints(expr.left)
         right_expr = early_unwrap_ints(expr.right)
-        # Normalize MULT_HI(N, x) to MULT_HI(x, N)
-        if isinstance(left_expr, Literal) and not isinstance(right_expr, Literal):
-            left_expr, right_expr = right_expr, left_expr
 
         # Remove inner addition: (MULT_HI(x, N) + x) >> M --> MULT_HI(x, N) >> M
         # MULT_HI performs signed multiplication, so the `+ x` acts as setting the 32nd bit
@@ -706,11 +703,18 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
             isinstance(left_expr, BinaryOp)
             and left_expr.op == "MULT_HI"
             and expr.op == "+"
-            and early_unwrap_ints(left_expr.left) == right_expr
+            and (
+                right_expr == early_unwrap_ints(left_expr.left)
+                or right_expr == early_unwrap_ints(left_expr.right)
+            )
         ):
             expr = left_expr
             left_expr = early_unwrap_ints(expr.left)
             right_expr = early_unwrap_ints(expr.right)
+
+        # Normalize MULT_HI(N, x) to MULT_HI(x, N)
+        if isinstance(left_expr, Literal) and not isinstance(right_expr, Literal):
+            left_expr, right_expr = right_expr, left_expr
 
     # Shift on the LHS of the mul: MULT_HI(x >> M, N) --> MULT_HI(x, N) >> M
     if (
