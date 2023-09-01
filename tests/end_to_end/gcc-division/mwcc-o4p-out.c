@@ -9,19 +9,17 @@ void test(u32 a) {
 
 void test_s8(s8 c) {
     s8 sp8;
-    s8 temp_r4;
 
     sp8 = c;
     func_00400090((u32) ((s8) (u8) sp8 / 2));
-    func_00400090(MULT_HI(0x55555556, (s8) (u8) sp8) + ((s8) (u8) sp8 / 6442450941));
+    func_00400090((s8) (u8) sp8 / 3);
     func_00400090((s8) (u8) sp8 / 5);
     func_00400090((s8) (u8) sp8 / 7);
     func_00400090((s8) (u8) sp8 / 10);
     func_00400090((s8) (u8) sp8 / 100);
     func_00400090((s8) (u8) sp8 / 255);
     func_00400090((s8) (u8) sp8 % 2);
-    temp_r4 = (s8) (u8) sp8;
-    func_00400090(temp_r4 - ((MULT_HI(0x55555556, temp_r4) + ((s8) (u8) sp8 / 6442450941)) * 3));
+    func_00400090((s8) (u8) sp8 % 3);
     func_00400090((s8) (u8) sp8 % 5);
     func_00400090((s8) (u8) sp8 % 7);
     func_00400090((s8) (u8) sp8 % 10);
@@ -34,7 +32,7 @@ void test_s16(s16 h) {
 
     sp8 = h;
     func_00400090((u32) (sp8 / 2));
-    func_00400090(MULT_HI(0x55555556, sp8) + (sp8 / 6442450941));
+    func_00400090(sp8 / 3);
     func_00400090(sp8 / 5);
     func_00400090(sp8 / 7);
     func_00400090(sp8 / 10);
@@ -43,7 +41,7 @@ void test_s16(s16 h) {
     func_00400090(sp8 / 360);
     func_00400090(sp8 / 65534);
     func_00400090(sp8 % 2);
-    func_00400090(sp8 - ((MULT_HI(0x55555556, sp8) + (sp8 / 6442450941)) * 3));
+    func_00400090(sp8 % 3);
     func_00400090(sp8 % 5);
     func_00400090(sp8 % 7);
     func_00400090(sp8 % 10);
@@ -71,10 +69,10 @@ void test_s32_div(s32 d) {
     sp8 = d;
     func_00400090((u32) d);
     func_00400090((u32) (sp8 / 2));
-    func_00400090(MULT_HI(0x55555556, sp8) + (sp8 / 6442450941));
+    func_00400090(sp8 / 3);
     func_00400090((u32) (sp8 / 4));
     func_00400090(sp8 / 5);
-    func_00400090(MULT_HI(0x2AAAAAAB, sp8) + (sp8 / 12884901882));
+    func_00400090(sp8 / 6);
     func_00400090(sp8 / 7);
     func_00400090((u32) (sp8 / 8));
     func_00400090(sp8 / 9);
@@ -118,13 +116,13 @@ void test_s32_div(s32 d) {
     func_00400090((u32) (sp8 / 1073741824));
     temp_r0_3 = sp8 / 1073741824;
     func_00400090(temp_r0_3 + (temp_r0_3 >> 0x1FU));
-    temp_r0_4 = sp8 / 2147483644;
+    temp_r0_4 = sp8 / 2147483648;
     func_00400090(temp_r0_4 + (temp_r0_4 >> 0x1FU));
     temp_r0_5 = sp8 / 2147483645;
     func_00400090(temp_r0_5 + (temp_r0_5 >> 0x1FU));
-    temp_r0_6 = sp8 / 2147483646;
+    temp_r0_6 = sp8 / 2147483648;
     func_00400090(temp_r0_6 + (temp_r0_6 >> 0x1FU));
-    func_00400090(MULTU_HI(2, sp8));
+    func_00400090(sp8 / 2147483648);
     temp_r0_7 = sp8 / 715827883;
     func_00400090(temp_r0_7 + (temp_r0_7 >> 0x1FU));
     temp_r0_8 = (s32) (MULT_HI(0x7FFFFFFD, sp8) - sp8) >> 0x1E;
@@ -136,7 +134,7 @@ void test_s32_div(s32 d) {
     temp_r0_11 = (s32) MULT_HI(0x99999999, sp8) >> 1;
     func_00400090(temp_r0_11 + ((u32) temp_r0_11 >> 0x1FU));
     func_00400090((u32) -(sp8 / 4));
-    temp_r0_12 = (s32) (MULT_HI(0x55555555, sp8) - sp8) >> 1;
+    temp_r0_12 = (s32) ((sp8 / 3) - sp8) >> 1;
     func_00400090(temp_r0_12 + ((u32) temp_r0_12 >> 0x1FU));
     func_00400090((u32) -(sp8 / 2));
     func_00400090((u32) (d / -1));
@@ -162,10 +160,10 @@ void test_s32_mod(s32 d) {
     sp8 = d;
     func_00400090(0U);
     func_00400090(sp8 % 2);
-    func_00400090(sp8 - ((MULT_HI(0x55555556, sp8) + (sp8 / 6442450941)) * 3));
+    func_00400090(sp8 % 3);
     func_00400090(sp8 % 4);
     func_00400090(sp8 % 5);
-    func_00400090(sp8 - ((MULT_HI(0x2AAAAAAB, sp8) + (sp8 / 12884901882)) * 6));
+    func_00400090(sp8 % 6);
     func_00400090(sp8 % 7);
     func_00400090(sp8 % 8);
     func_00400090(sp8 % 9);
@@ -209,13 +207,13 @@ void test_s32_mod(s32 d) {
     func_00400090(sp8 - ((sp8 / 1073741824) << 0x1E));
     temp_r0_2 = sp8 / 1073741824;
     func_00400090(sp8 - ((temp_r0_2 + (temp_r0_2 >> 0x1FU)) * 0x40000001));
-    temp_r0_3 = sp8 / 2147483644;
+    temp_r0_3 = sp8 / 2147483648;
     func_00400090(sp8 - ((temp_r0_3 + (temp_r0_3 >> 0x1FU)) * 0x7FFFFFFD));
     temp_r3_2 = sp8 / 2147483645;
     func_00400090(sp8 - ((temp_r3_2 + (temp_r3_2 >> 0x1FU)) * 0x7FFFFFFE));
-    temp_r0_4 = sp8 / 2147483646;
+    temp_r0_4 = sp8 / 2147483648;
     func_00400090(sp8 - ((temp_r0_4 + (temp_r0_4 >> 0x1FU)) * 0x7FFFFFFF));
-    func_00400090(d - (MULTU_HI(2, d) * 0x80000000));
+    func_00400090(d % 2147483648);
     temp_r0_5 = sp8 / 715827883;
     func_00400090(sp8 - ((temp_r0_5 + (temp_r0_5 >> 0x1FU)) * 0x80000001));
     temp_r3_3 = (s32) (MULT_HI(0x7FFFFFFD, sp8) - sp8) >> 0x1E;
@@ -226,11 +224,11 @@ void test_s32_mod(s32 d) {
     func_00400090(sp8 - ((temp_r0_7 + ((u32) temp_r0_7 >> 0x1FU)) * -7));
     temp_r0_8 = (s32) MULT_HI(0x99999999, sp8) >> 1;
     func_00400090(sp8 - ((temp_r0_8 + ((u32) temp_r0_8 >> 0x1FU)) * -5));
-    temp_r0_9 = (s32) (MULT_HI(0x7FFFFFFF, sp8) - sp8) >> 1;
+    temp_r0_9 = (s32) ((sp8 / 2) - sp8) >> 1;
     func_00400090(sp8 - ((temp_r0_9 + ((u32) temp_r0_9 >> 0x1FU)) * -4));
-    temp_r0_10 = (s32) (MULT_HI(0x55555555, sp8) - sp8) >> 1;
+    temp_r0_10 = (s32) ((sp8 / 3) - sp8) >> 1;
     func_00400090(sp8 - ((temp_r0_10 + ((u32) temp_r0_10 >> 0x1FU)) * -3));
-    temp_r0_11 = MULT_HI(0x7FFFFFFF, sp8) - sp8;
+    temp_r0_11 = (sp8 / 2) - sp8;
     func_00400090(sp8 - ((temp_r0_11 + (temp_r0_11 >> 0x1FU)) * -2));
     func_00400090(sp8 % -1);
 }
@@ -258,7 +256,7 @@ void test_u32_div(u32 u) {
     func_00400090(sp8 >> 2U);
     func_00400090(sp8 / 5);
     func_00400090(sp8 / 6);
-    temp_r3 = MULTU_HI(0x24924925, sp8);
+    temp_r3 = sp8 / 7;
     func_00400090((u32) (((u32) (sp8 - temp_r3) >> 1U) + temp_r3) >> 2U);
     func_00400090(sp8 >> 3U);
     func_00400090(sp8 / 9);
@@ -266,7 +264,7 @@ void test_u32_div(u32 u) {
     func_00400090(sp8 / 11);
     func_00400090(sp8 / 12);
     func_00400090(sp8 / 13);
-    temp_r3_2 = MULTU_HI(0x24924925, sp8);
+    temp_r3_2 = sp8 / 7;
     func_00400090((u32) (((u32) (sp8 - temp_r3_2) >> 1U) + temp_r3_2) >> 3U);
     func_00400090(sp8 / 15);
     func_00400090(sp8 >> 4U);
@@ -284,11 +282,11 @@ void test_u32_div(u32 u) {
     func_00400090(sp8 / 26);
     temp_r3_5 = MULTU_HI(0x2F684BDB, sp8);
     func_00400090((u32) (((u32) (sp8 - temp_r3_5) >> 1U) + temp_r3_5) >> 4U);
-    temp_r3_6 = MULTU_HI(0x24924925, sp8);
+    temp_r3_6 = sp8 / 7;
     func_00400090((u32) (((u32) (sp8 - temp_r3_6) >> 1U) + temp_r3_6) >> 4U);
     func_00400090(sp8 / 29);
     func_00400090(sp8 / 30);
-    temp_r3_7 = MULTU_HI(0x08421085, sp8);
+    temp_r3_7 = sp8 / 31;
     func_00400090((u32) (((u32) (sp8 - temp_r3_7) >> 1U) + temp_r3_7) >> 4U);
     func_00400090(sp8 >> 5U);
     func_00400090(sp8 / 33);
@@ -305,16 +303,16 @@ void test_u32_div(u32 u) {
     func_00400090(sp8 / 100000000);
     func_00400090(sp8 >> 0x1EU);
     func_00400090((u32) MULTU_HI(-3, sp8) >> 0x1EU);
-    temp_r3_10 = MULTU_HI(5, sp8);
+    temp_r3_10 = sp8 / 858993459;
     func_00400090((u32) (((u32) (sp8 - temp_r3_10) >> 1U) + temp_r3_10) >> 0x1EU);
-    temp_r3_11 = MULTU_HI(3, sp8);
+    temp_r3_11 = sp8 / 1431655765;
     func_00400090((u32) (((u32) (sp8 - temp_r3_11) >> 1U) + temp_r3_11) >> 0x1EU);
-    func_00400090(MULTU_HI(2, sp8));
+    func_00400090(sp8 / 2147483648);
     temp_r3_12 = MULTU_HI(-3, sp8);
     func_00400090((u32) (((u32) (sp8 - temp_r3_12) >> 1U) + temp_r3_12) >> 0x1FU);
-    temp_r3_13 = MULTU_HI(3, sp8);
+    temp_r3_13 = sp8 / 1431655765;
     func_00400090((u32) (((u32) (sp8 - temp_r3_13) >> 1U) + temp_r3_13) >> 0x1FU);
-    func_00400090(sp8 / 4294967294);
+    func_00400090((u32) (sp8 / 2) >> 0x1FU);
 }
 
 void test_u32_mod(u32 u) {
@@ -340,7 +338,7 @@ void test_u32_mod(u32 u) {
     func_00400090(sp8 >> 2U);
     func_00400090(sp8 / 5);
     func_00400090(sp8 / 6);
-    temp_r3 = MULTU_HI(0x24924925, sp8);
+    temp_r3 = sp8 / 7;
     func_00400090((u32) (((u32) (sp8 - temp_r3) >> 1U) + temp_r3) >> 2U);
     func_00400090(sp8 >> 3U);
     func_00400090(sp8 / 9);
@@ -348,7 +346,7 @@ void test_u32_mod(u32 u) {
     func_00400090(sp8 / 11);
     func_00400090(sp8 / 12);
     func_00400090(sp8 / 13);
-    temp_r3_2 = MULTU_HI(0x24924925, sp8);
+    temp_r3_2 = sp8 / 7;
     func_00400090((u32) (((u32) (sp8 - temp_r3_2) >> 1U) + temp_r3_2) >> 3U);
     func_00400090(sp8 / 15);
     func_00400090(sp8 >> 4U);
@@ -366,11 +364,11 @@ void test_u32_mod(u32 u) {
     func_00400090(sp8 / 26);
     temp_r3_5 = MULTU_HI(0x2F684BDB, sp8);
     func_00400090((u32) (((u32) (sp8 - temp_r3_5) >> 1U) + temp_r3_5) >> 4U);
-    temp_r3_6 = MULTU_HI(0x24924925, sp8);
+    temp_r3_6 = sp8 / 7;
     func_00400090((u32) (((u32) (sp8 - temp_r3_6) >> 1U) + temp_r3_6) >> 4U);
     func_00400090(sp8 / 29);
     func_00400090(sp8 / 30);
-    temp_r3_7 = MULTU_HI(0x08421085, sp8);
+    temp_r3_7 = sp8 / 31;
     func_00400090((u32) (((u32) (sp8 - temp_r3_7) >> 1U) + temp_r3_7) >> 4U);
     func_00400090(sp8 >> 5U);
     func_00400090(sp8 / 33);
@@ -387,14 +385,14 @@ void test_u32_mod(u32 u) {
     func_00400090(sp8 / 100000000);
     func_00400090(sp8 >> 0x1EU);
     func_00400090((u32) MULTU_HI(-3, sp8) >> 0x1EU);
-    temp_r3_10 = MULTU_HI(5, sp8);
+    temp_r3_10 = sp8 / 858993459;
     func_00400090((u32) (((u32) (sp8 - temp_r3_10) >> 1U) + temp_r3_10) >> 0x1EU);
-    temp_r3_11 = MULTU_HI(3, sp8);
+    temp_r3_11 = sp8 / 1431655765;
     func_00400090((u32) (((u32) (sp8 - temp_r3_11) >> 1U) + temp_r3_11) >> 0x1EU);
-    func_00400090(MULTU_HI(2, sp8));
+    func_00400090(sp8 / 2147483648);
     temp_r3_12 = MULTU_HI(-3, sp8);
     func_00400090((u32) (((u32) (sp8 - temp_r3_12) >> 1U) + temp_r3_12) >> 0x1FU);
-    temp_r3_13 = MULTU_HI(3, sp8);
+    temp_r3_13 = sp8 / 1431655765;
     func_00400090((u32) (((u32) (sp8 - temp_r3_13) >> 1U) + temp_r3_13) >> 0x1FU);
-    func_00400090(sp8 / 4294967294);
+    func_00400090((u32) (sp8 / 2) >> 0x1FU);
 }

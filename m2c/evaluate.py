@@ -568,6 +568,10 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
     right_expr = early_unwrap_ints(expr.right)
     divisor_shift = 0
 
+    # Normalize MULT_HI(N, x) to MULT_HI(x, N)
+    if isinstance(left_expr, Literal) and not isinstance(right_expr, Literal):
+        left_expr, right_expr = right_expr, left_expr
+
     # Detect signed power-of-two division: (x >> N) + M2C_CARRY --> x / (1 << N)
     if (
         isinstance(left_expr, BinaryOp)
