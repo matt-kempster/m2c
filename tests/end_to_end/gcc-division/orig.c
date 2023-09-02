@@ -1,4 +1,3 @@
-void func_00400090(unsigned int a); // until gcc/mwcc get redisassembled with a more reasonable function name
 void foo(unsigned int a);
 
 // If there are too many cases in a single function, GCC starts putting
