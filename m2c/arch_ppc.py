@@ -557,12 +557,6 @@ class PpcArch(Arch):
                     "rlwinm",
                     args[:2] + [add(args[2], args[3]), sub(lit(32), args[2]), lit(31)],
                 )
-            if base_mnemonic == "rotlwi":
-                return make_dotted("rlwinm", args[:2] + [args[2], lit(0), lit(31)])
-            if base_mnemonic == "rotrwi":
-                return make_dotted(
-                    "rlwinm", args[:2] + [sub(lit(32), args[2]), lit(0), lit(31)]
-                )
             if base_mnemonic == "clrlslwi":
                 b = args[2]
                 n = args[3]
@@ -575,6 +569,12 @@ class PpcArch(Arch):
                 and args[2].macro_name in ("sda2", "sda21")
             ):
                 return AsmInstruction("li", [args[0], args[2].argument])
+            if base_mnemonic == "rotlwi":
+                return make_dotted("rlwinm", args[:2] + [args[2], lit(0), lit(31)])
+            if base_mnemonic == "rotrwi":
+                return make_dotted(
+                    "rlwinm", args[:2] + [sub(lit(32), args[2]), lit(0), lit(31)]
+                )
             if base_mnemonic == "slwi":
                 return make_dotted(
                     "rlwinm", args[:2] + [args[2], lit(0), sub(lit(31), args[2])]
