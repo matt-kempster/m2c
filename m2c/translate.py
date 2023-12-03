@@ -3825,6 +3825,11 @@ class FunctionInfo:
 
 
 @dataclass
+class FailedToGenerateInitializer(Exception):
+    reason: str
+
+
+@dataclass
 class GlobalInfo:
     asm_data: AsmData
     arch: Arch
@@ -3950,19 +3955,24 @@ class GlobalInfo:
             return False
         return fn.ret_type is None
 
-    def initializer_for_symbol(
-        self, sym: GlobalSymbol, fmt: Formatter
-    ) -> Optional[str]:
+    def initializer_for_symbol(self, sym: GlobalSymbol, fmt: Formatter) -> str:
         assert sym.asm_data_entry is not None
         data = sym.asm_data_entry.data[:]
 
-        def read_uint(n: int) -> Optional[int]:
+        def read_uint(n: int) -> int:
             """Read the next `n` bytes from `data` as an (long) integer"""
             assert 0 < n <= 8
-            if not data or not isinstance(data[0], bytes):
-                return None
+            if not data:
+                raise FailedToGenerateInitializer("not enough data")
+            if not isinstance(data[0], bytes):
+                raise FailedToGenerateInitializer(f"cannot parse {data[0]} as integer")
             if len(data[0]) < n:
-                return None
+                if len(data) > 1:
+                    sym = data[1]
+                    assert isinstance(sym, str)
+                    raise FailedToGenerateInitializer(f"partial read of {sym}")
+                else:
+                    raise FailedToGenerateInitializer("not enough data")
             bs = data[0][:n]
             data[0] = data[0][n:]
             if not data[0]:
@@ -3972,7 +3982,7 @@ class GlobalInfo:
                 value = (value << 8) | b
             return value
 
-        def read_pointer() -> Optional[Expression]:
+        def try_read_pointer() -> Optional[Expression]:
             """Read the next label from `data`"""
             if not data or not isinstance(data[0], str):
                 return None
@@ -3981,12 +3991,15 @@ class GlobalInfo:
             data.pop(0)
             return self.address_of_gsym(label)
 
-        def for_type(type: Type) -> Optional[str]:
+        def for_type(type: Type) -> str:
             """Return the initializer for a single element of type `type`"""
             if type.is_struct() or type.is_array():
                 struct_fields = type.get_initializer_fields()
                 if not struct_fields:
-                    return None
+                    if type.is_array():
+                        raise FailedToGenerateInitializer("unsized array")
+                    else:
+                        raise FailedToGenerateInitializer("confusing struct layout")
                 members = []
                 for field in struct_fields:
                     if isinstance(field, int):
@@ -3994,34 +4007,33 @@ class GlobalInfo:
                         for i in range(field):
                             padding = read_uint(1)
                             if padding != 0:
-                                return None
+                                raise FailedToGenerateInitializer("non-zero padding")
                     else:
-                        m = for_type(field)
-                        if m is None:
-                            return None
-                        members.append(m)
+                        members.append(for_type(field))
                 return fmt.format_array(members)
 
             if type.is_reg():
                 size = type.get_size_bytes()
                 if not size:
-                    return None
+                    raise FailedToGenerateInitializer("unknown size")
 
                 if size == 4:
-                    ptr = read_pointer()
+                    ptr = try_read_pointer()
                     if ptr is not None:
                         return as_type(ptr, type, silent=True).format(fmt)
 
                 value = read_uint(size)
-                if value is not None:
-                    enum_name = type.get_enum_name(value)
-                    if enum_name is not None:
-                        return enum_name
-                    expr = as_type(Literal(value), type, True)
-                    return elide_literal_casts(expr).format(fmt)
+                enum_name = type.get_enum_name(value)
+                if enum_name is not None:
+                    return enum_name
+                expr = as_type(Literal(value), type, True)
+                return elide_literal_casts(expr).format(fmt)
+
+            if type.get_size_bits() is None:
+                raise FailedToGenerateInitializer("unknown type")
 
             # Type kinds K_FN and K_VOID do not have initializers
-            return None
+            raise FailedToGenerateInitializer("bad type")
 
         type = sym.type.get_array()[0]
         if sym.is_string_constant() and type is not None and type.get_size_bytes() == 1:
@@ -4165,11 +4177,12 @@ class GlobalInfo:
 
                 # Try to convert the data from .data/.rodata into an initializer
                 if data_entry and not data_entry.is_bss:
-                    value = self.initializer_for_symbol(sym, fmt)
-                    if value is None:
+                    try:
+                        value = self.initializer_for_symbol(sym, fmt)
+                    except FailedToGenerateInitializer as e:
                         # This warning helps distinguish .bss symbols from .data/.rodata,
                         # IDO only puts symbols in .bss if they don't have any initializer
-                        comments.append("unable to generate initializer")
+                        comments.append(f"unable to generate initializer: {e.reason}")
 
                 if is_const:
                     comments.append("const")
