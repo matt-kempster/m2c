@@ -252,6 +252,12 @@ def handle_sltiu(args: InstrArgs) -> Expression:
 def handle_addi(args: InstrArgs) -> Expression:
     output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)
+
+    ref = args.maybe_gprel_imm(2)
+    if ref is not None and source_reg == Register("gp"):
+        sym = args.stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
+        return add_imm(output_reg, sym, Literal(ref.offset), args)
+
     source = args.reg(1)
     imm = args.imm(2)
 
