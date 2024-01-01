@@ -19,10 +19,14 @@ from .instruction import (
 
 @dataclass(frozen=True)
 class Label:
-    name: str
+    # Various pattern matching code assumes that there cannot be consecutive
+    # labels, and to deal with this we allow for consecutive labels to be
+    # merged together. As a consequence, we allow a Label to have more than one
+    # name. When we need a single name to refer to one, we use the first one.
+    names: List[str]
 
     def __str__(self) -> str:
-        return f"  .{self.name}:"
+        return "." + self.names[0]
 
 
 @dataclass
@@ -32,7 +36,7 @@ class Function:
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
     def new_label(self, name: str) -> None:
-        label = Label(name)
+        label = Label([name])
         if self.body and self.body[-1] == label:
             # Skip repeated labels
             return
@@ -48,7 +52,10 @@ class Function:
         )
 
     def __str__(self) -> str:
-        body = "\n".join(str(item) for item in self.body)
+        body = "\n".join(
+            str(item) if isinstance(item, Instruction) else f"  {item}:"
+            for item in self.body
+        )
         return f"glabel {self.name}\n{body}"
 
 

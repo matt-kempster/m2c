@@ -164,19 +164,11 @@ class BlockBuilder:
         self._curr_instructions.append(instruction)
 
     def set_label(self, label: Label) -> None:
-        if label == self._curr_label:
-            # It's okay to repeat a label (e.g. once with glabel, once as a
-            # standard label -- this often occurs for switches).
-            return
-        # We could support multiple labels at the same position, and output
-        # empty blocks. For now we don't, however.
-        if self._curr_label:
-            raise DecompFailure(
-                "A block is currently not allowed to have more than one label,\n"
-                f"but {self._curr_label.name}/{label.name} is given two."
-            )
+        assert (
+            not self._curr_label
+        ), "Cannot have two labels in a row ({label} vs {self._curr_label})"
         self._curr_label = label
-        self._last_label_name = label.name
+        self._last_label_name = label.names[0]
         self._label_counter = 0
 
     def is_empty(self) -> bool:
@@ -195,7 +187,7 @@ def verify_no_trailing_delay_slot(function: Function) -> None:
         raise DecompFailure(f"Last instruction is missing a delay slot:\n{last_ins}")
 
 
-def invert_branch_mnemonic(mnemonic: str) -> str:
+def invert_mips_branch_mnemonic(mnemonic: str) -> str:
     inverses = {
         "beq": "bne",
         "bne": "beq",
@@ -237,14 +229,19 @@ def normalize_gcc_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
             and item.is_branch_likely
             and isinstance(item.jump_target, JumpTarget)
             and i + 2 < len(function.body)
-            and isinstance(function.body[i + 1], Instruction)
-            and function.body[i + 2] == Label(item.jump_target.target)
         ):
-            mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-            new_body.append(arch.parse(mn_inverted, item.args, item.meta.derived()))
-            new_body.append(arch.parse("nop", [], item.meta.derived()))
-        else:
-            new_body.append(item)
+            ins = function.body[i + 1]
+            label = function.body[i + 2]
+            if (
+                isinstance(ins, Instruction)
+                and isinstance(label, Label)
+                and item.jump_target.target in label.names
+            ):
+                mn_inverted = invert_mips_branch_mnemonic(item.mnemonic[:-1])
+                new_body.append(arch.parse(mn_inverted, item.args, item.meta.derived()))
+                new_body.append(arch.parse("nop", [], item.meta.derived()))
+                continue
+        new_body.append(item)
     return new_function
 
 
@@ -279,13 +276,14 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
             assert item not in seen_instrs
             seen_instrs.add(item)
             if prev_label is not None:
-                label_before_instr[item] = prev_label.name
+                label_before_instr[item] = prev_label.names[0]
                 prev_label = None
             if isinstance(prev_item, Instruction):
                 instr_before_instr[item] = prev_item
             prev_instr = item
         elif isinstance(item, Label):
-            label_prev_instr[item.name] = prev_instr
+            for name in item.names:
+                label_prev_instr[name] = prev_instr
             prev_label = item
             prev_instr = None
         prev_item = item
@@ -358,20 +356,30 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
     return new_function
 
 
-def prune_unreferenced_labels(function: Function, asm_data: AsmData) -> Function:
+def minimize_labels(function: Function, asm_data: AsmData) -> Function:
     labels_used: Set[str] = {
-        label.name
+        name
         for label in function.body
-        if isinstance(label, Label) and label.name in asm_data.mentioned_labels
+        if isinstance(label, Label)
+        for name in label.names
+        if name in asm_data.mentioned_labels
     }
     for item in function.body:
         if isinstance(item, Instruction) and isinstance(item.jump_target, JumpTarget):
             labels_used.add(item.jump_target.target)
 
     new_function = function.bodyless_copy()
+    cur_label: List[str] = []
     for item in function.body:
-        if not (isinstance(item, Label) and item.name not in labels_used):
+        if isinstance(item, Label):
+            cur_label.extend(name for name in item.names if name in labels_used)
+        else:
+            if cur_label:
+                new_function.body.append(Label(cur_label))
+                cur_label = []
             new_function.body.append(item)
+    if cur_label:
+        new_function.body.append(Label(cur_label))
 
     return new_function
 
@@ -388,13 +396,13 @@ def build_blocks(
 ) -> List[Block]:
     if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
-        function = prune_unreferenced_labels(function, asm_data)
+        function = minimize_labels(function, asm_data)
         function = normalize_gcc_likely_branches(function, arch)
         function = normalize_ido_likely_branches(function, arch)
 
-    function = prune_unreferenced_labels(function, asm_data)
+    function = minimize_labels(function, asm_data)
     function = simplify_standard_patterns(function, arch)
-    function = prune_unreferenced_labels(function, asm_data)
+    function = minimize_labels(function, asm_data)
 
     block_builder = BlockBuilder()
 
@@ -431,11 +439,11 @@ def build_blocks(
                 # (we could handle these cases too with some care, they're just very
                 # rare so we don't bother)
                 msg = [
-                    f"Label {label.name} refers to a delay slot; this is currently not supported.",
+                    f"Label {label} refers to a delay slot; this is currently not supported.",
                     "Please modify the assembly to work around it (e.g. copy the instruction",
                     "to all jump sources and move the label, or add a nop to the delay slot).",
                 ]
-                if "_before" in label.name:
+                if "_before" in label.names[0]:
                     msg += [
                         "",
                         "This label was auto-generated as the target for a branch-likely",
@@ -456,20 +464,24 @@ def build_blocks(
             else:
                 target = item.jump_target
                 assert isinstance(target, JumpTarget), "has delay slot and isn't a call"
-                temp_label = JumpTarget(f"_m2c_{label.name}_skip")
+                temp_label = f"_m2c_{label.names[0]}_skip"
                 meta = item.meta.derived()
                 nop = arch.parse("nop", [], meta)
                 block_builder.add_instruction(
-                    arch.parse(item.mnemonic, item.args[:-1] + [temp_label], item.meta)
+                    arch.parse(
+                        item.mnemonic,
+                        item.args[:-1] + [JumpTarget(temp_label)],
+                        item.meta,
+                    )
                 )
                 block_builder.add_instruction(nop)
                 block_builder.new_block()
                 block_builder.add_instruction(
-                    arch.parse("b", [JumpTarget(label.name)], item.meta.derived())
+                    arch.parse("b", [JumpTarget(label.names[0])], item.meta.derived())
                 )
                 block_builder.add_instruction(nop.clone())
                 block_builder.new_block()
-                block_builder.set_label(Label(temp_label.target))
+                block_builder.set_label(Label([temp_label]))
                 block_builder.add_instruction(
                     arch.parse("b", [target], item.meta.derived())
                 )
@@ -489,10 +501,12 @@ def build_blocks(
             target = item.jump_target
             branch_likely_counts[target.target] += 1
             index = branch_likely_counts[target.target]
-            mn_inverted = invert_branch_mnemonic(item.mnemonic[:-1])
-            temp_label = JumpTarget(f"_m2c_{target.target}_branchlikelyskip_{index}")
+            mn_inverted = invert_mips_branch_mnemonic(item.mnemonic[:-1])
+            temp_label = f"_m2c_{target.target}_branchlikelyskip_{index}"
             branch_not = arch.parse(
-                mn_inverted, item.args[:-1] + [temp_label], item.meta.derived()
+                mn_inverted,
+                item.args[:-1] + [JumpTarget(temp_label)],
+                item.meta.derived(),
             )
             nop = arch.parse("nop", [], item.meta.derived())
             block_builder.add_instruction(branch_not)
@@ -504,7 +518,7 @@ def build_blocks(
             )
             block_builder.add_instruction(nop.clone())
             block_builder.new_block()
-            block_builder.set_label(Label(temp_label.target))
+            block_builder.set_label(Label([temp_label]))
             block_builder.add_instruction(nop.clone())
         elif item.function_target is not None:
             # Move the delay slot instruction to before the call so it
@@ -582,7 +596,7 @@ def build_blocks(
 
     if cond_return_target is not None:
         # Add an empty return block at the end of the function
-        block_builder.set_label(Label(cond_return_target.target))
+        block_builder.set_label(Label([cond_return_target.target]))
         for instr in arch.missing_return():
             block_builder.add_instruction(instr)
         block_builder.new_block()
@@ -786,7 +800,7 @@ def build_graph_from_block(
 
     def find_block_by_label(label: str) -> Optional[Block]:
         for block in blocks:
-            if block.label and block.label.name == label:
+            if block.label and label in block.label.names:
                 return block
         return None
 
