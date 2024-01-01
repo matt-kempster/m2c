@@ -26,7 +26,7 @@ class Label:
     names: List[str]
 
     def __str__(self) -> str:
-        return "." + self.names[0]
+        return self.names[0]
 
 
 @dataclass
@@ -160,7 +160,7 @@ class AsmFile:
     def new_data_sym(self, sym: str) -> None:
         if self.current_data is not None:
             self.current_data.data.append(sym)
-        self.asm_data.mentioned_labels.add(sym.lstrip("."))
+        self.asm_data.mentioned_labels.add(sym)
 
     def new_data_bytes(self, data: bytes, *, is_string: bool = False) -> None:
         if self.current_data is None:
@@ -375,7 +375,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 if label.startswith(".") or glabel is False:
                     if asm_file.current_function is None:
                         raise DecompFailure(f"Label {label} is not within a function!")
-                    asm_file.new_label(label.lstrip("."))
+                    asm_file.new_label(label)
                 elif (
                     re_local_glabel.match(label)
                     or (not glabel and re_local_label.match(label))

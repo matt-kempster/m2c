@@ -99,7 +99,7 @@ class JumpTarget:
     target: str
 
     def __str__(self) -> str:
-        return f".{self.target}"
+        return f"{self.target}"
 
 
 Argument = Union[
@@ -284,7 +284,7 @@ def parse_arg_elems(
             if word in ["data", "sdata", "rodata", "rdata", "bss", "sbss", "text"]:
                 value = asm_section_global_symbol(word, 0)
             else:
-                value = JumpTarget(word)
+                value = JumpTarget("." + word)
         elif tok == "%":
             # A MIPS reloc macro, e.g. %hi(...) or %lo(...).
             assert value is None
