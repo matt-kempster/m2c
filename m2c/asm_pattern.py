@@ -145,7 +145,11 @@ class TryMatchState:
         if isinstance(e, Register):
             return isinstance(a, Register) and self.match_reg(a, e)
         if isinstance(e, AsmGlobalSymbol):
-            if e.symbol_name.isupper():
+            if e.symbol_name.startswith("."):
+                return isinstance(a, AsmGlobalSymbol) and self.match_label_use(
+                    e.symbol_name, a.symbol_name
+                )
+            elif e.symbol_name.isupper():
                 return isinstance(a, AsmLiteral) and self.match_var(
                     self.symbolic_literals, e.symbol_name, a.value
                 )
@@ -158,10 +162,6 @@ class TryMatchState:
                 isinstance(a, AsmAddressMode)
                 and self.match_arg(a.lhs, e.lhs)
                 and self.match_reg(a.rhs, e.rhs)
-            )
-        if isinstance(e, JumpTarget):
-            return isinstance(a, JumpTarget) and self.match_label_use(
-                e.target, a.target
             )
         if isinstance(e, BinOp):
             return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
@@ -198,6 +198,7 @@ class TryMatchState:
 @dataclass
 class AsmMatcher:
     input: List[BodyPart]
+    labels: Set[str]
     output: List[BodyPart] = field(default_factory=list)
     index: int = 0
 
@@ -225,6 +226,9 @@ class AsmMatcher:
             if isinstance(part, Instruction):
                 return part.meta.derived()
         return InstructionMeta.missing()
+
+    def branch_target_exists(self, name: str) -> bool:
+        return name in self.labels
 
     def apply(self, repl: Replacement, arch: ArchAsm) -> None:
         # Track which registers are overwritten/clobbered in the replacement asm
@@ -262,7 +266,8 @@ def simplify_patterns(
     """Detect and simplify asm standard patterns emitted by known compilers. This is
     especially useful for patterns that involve branches, which are hard to deal with
     in the translate phase."""
-    matcher = AsmMatcher(body)
+    labels = {name for item in body if isinstance(item, Label) for name in item.names}
+    matcher = AsmMatcher(body, labels)
     while matcher.index < len(matcher.input):
         for pattern in patterns:
             m = pattern.match(matcher)

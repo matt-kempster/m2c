@@ -332,10 +332,12 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
                     new_label = f"_m2c_{old_label}_before"
                     label_before_instr[before_target] = new_label
                     insert_label_before[before_target] = new_label
-                new_target = JumpTarget(label_before_instr[before_target])
+                new_target = label_before_instr[before_target]
                 mn_unlikely = item.mnemonic[:-1] or "b"
                 item = arch.parse(
-                    mn_unlikely, item.args[:-1] + [new_target], item.meta.derived()
+                    mn_unlikely,
+                    item.args[:-1] + [AsmGlobalSymbol(new_target)],
+                    item.meta.derived(),
                 )
                 next_item = arch.parse("nop", [], item.meta.derived())
                 new_body.append((orig_item, item))
@@ -408,7 +410,7 @@ def build_blocks(
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
     branch_likely_counts: Counter[str] = Counter()
-    cond_return_target: Optional[JumpTarget] = None
+    cond_return_target: Optional[str] = None
 
     def process_mips(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
@@ -462,28 +464,32 @@ def build_blocks(
                 process_after.append(label)
                 process_after.append(next_item.clone())
             else:
-                target = item.jump_target
-                assert isinstance(target, JumpTarget), "has delay slot and isn't a call"
+                assert isinstance(
+                    item.jump_target, JumpTarget
+                ), "has delay slot and isn't a call"
+                target = item.jump_target.target
                 temp_label = f"_m2c_{label.names[0]}_skip"
                 meta = item.meta.derived()
                 nop = arch.parse("nop", [], meta)
                 block_builder.add_instruction(
                     arch.parse(
                         item.mnemonic,
-                        item.args[:-1] + [JumpTarget(temp_label)],
+                        item.args[:-1] + [AsmGlobalSymbol(temp_label)],
                         item.meta,
                     )
                 )
                 block_builder.add_instruction(nop)
                 block_builder.new_block()
                 block_builder.add_instruction(
-                    arch.parse("b", [JumpTarget(label.names[0])], item.meta.derived())
+                    arch.parse(
+                        "b", [AsmGlobalSymbol(label.names[0])], item.meta.derived()
+                    )
                 )
                 block_builder.add_instruction(nop.clone())
                 block_builder.new_block()
                 block_builder.set_label(Label([temp_label]))
                 block_builder.add_instruction(
-                    arch.parse("b", [target], item.meta.derived())
+                    arch.parse("b", [AsmGlobalSymbol(target)], item.meta.derived())
                 )
                 block_builder.add_instruction(next_item.clone())
                 block_builder.new_block()
@@ -498,14 +504,14 @@ def build_blocks(
 
         if item.is_branch_likely:
             assert isinstance(item.jump_target, JumpTarget)
-            target = item.jump_target
-            branch_likely_counts[target.target] += 1
-            index = branch_likely_counts[target.target]
+            target = item.jump_target.target
+            branch_likely_counts[target] += 1
+            index = branch_likely_counts[target]
             mn_inverted = invert_mips_branch_mnemonic(item.mnemonic[:-1])
-            temp_label = f"_m2c_{target.target}_branchlikelyskip_{index}"
+            temp_label = f"_m2c_{target}_branchlikelyskip_{index}"
             branch_not = arch.parse(
                 mn_inverted,
-                item.args[:-1] + [JumpTarget(temp_label)],
+                item.args[:-1] + [AsmGlobalSymbol(temp_label)],
                 item.meta.derived(),
             )
             nop = arch.parse("nop", [], item.meta.derived())
@@ -514,7 +520,7 @@ def build_blocks(
             block_builder.new_block()
             block_builder.add_instruction(next_item)
             block_builder.add_instruction(
-                arch.parse("b", [target], item.meta.derived())
+                arch.parse("b", [AsmGlobalSymbol(target)], item.meta.derived())
             )
             block_builder.add_instruction(nop.clone())
             block_builder.new_block()
@@ -553,11 +559,13 @@ def build_blocks(
 
         if item.is_conditional and item.is_return:
             if cond_return_target is None:
-                cond_return_target = JumpTarget("_m2c_conditionalreturn_")
+                cond_return_target = "_m2c_conditionalreturn_"
             # Strip the "lr" off of the instruction
             assert item.mnemonic[-2:] == "lr"
             branch_instr = arch.parse(
-                item.mnemonic[:-2], [cond_return_target], item.meta.derived()
+                item.mnemonic[:-2],
+                [AsmGlobalSymbol(cond_return_target)],
+                item.meta.derived(),
             )
             block_builder.add_instruction(branch_instr)
             block_builder.new_block()
@@ -596,7 +604,7 @@ def build_blocks(
 
     if cond_return_target is not None:
         # Add an empty return block at the end of the function
-        block_builder.set_label(Label([cond_return_target.target]))
+        block_builder.set_label(Label([cond_return_target]))
         for instr in arch.missing_return():
             block_builder.add_instruction(instr)
         block_builder.new_block()
