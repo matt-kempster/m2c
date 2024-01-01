@@ -1,5 +1,6 @@
 import csv
 from dataclasses import dataclass, field
+from enum import Enum
 import re
 import struct
 import typing
@@ -341,6 +342,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     T = TypeVar("T")
 
+    class LabelKind(Enum):
+        GLOBAL = "global"
+        LOCAL = "local"
+        JUMP_TARGET = "jump_target"
+
     def try_parse(parser: Callable[[], T]) -> T:
         try:
             return parser()
@@ -364,7 +370,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         line = re.sub(re_whitespace_or_string, re_comment_replacer, line)
         line = line.strip()
 
-        def process_label(label: str, *, glabel: Optional[bool]) -> None:
+        def process_label(label: str, *, kind: LabelKind) -> None:
             if curr_section == ".rodata":
                 asm_file.new_data_label(label, is_readonly=True, is_bss=False)
             elif curr_section == ".data":
@@ -372,13 +378,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             elif curr_section == ".bss":
                 asm_file.new_data_label(label, is_readonly=False, is_bss=True)
             elif curr_section == ".text":
-                if label.startswith(".") or glabel is False:
+                if label.startswith(".") or kind == LabelKind.JUMP_TARGET:
                     if asm_file.current_function is None:
                         raise DecompFailure(f"Label {label} is not within a function!")
                     asm_file.new_label(label)
                 elif (
                     re_local_glabel.match(label)
-                    or (not glabel and re_local_label.match(label))
+                    or (kind != LabelKind.GLOBAL and re_local_label.match(label))
                 ) and asm_file.current_function is not None:
                     # Don't treat labels as new functions if they follow a
                     # specific naming pattern. This is used for jump table
@@ -399,7 +405,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
             label = g.group(1) or g.group(2)
             if ifdef_level == 0:
-                process_label(label, glabel=None)
+                process_label(label, kind=LabelKind.LOCAL)
 
             line = line[len(g.group(0)) :].strip()
 
@@ -535,10 +541,15 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             asm_file.new_data_bytes(data)
 
         elif ifdef_level == 0:
-            if directive in ("glabel", "dlabel", "jlabel"):
+            if directive == "jlabel":
                 parts = line.split()
                 if len(parts) >= 2:
-                    process_label(parts[1], glabel=(directive != "jlabel"))
+                    process_label(parts[1], kind=LabelKind.JUMP_TARGET)
+
+            elif directive in ("glabel", "dlabel"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    process_label(parts[1], kind=LabelKind.GLOBAL)
 
             elif curr_section == ".text":
                 meta = InstructionMeta(
