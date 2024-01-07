@@ -1171,7 +1171,7 @@ def terminate_infinite_loops(nodes: List[Node]) -> None:
 
     # Fixed-point iteration
     while True:
-        # Find the set of nodes which are rechable from the TerminalNode, backwards
+        # Find the set of nodes which are reachable from the TerminalNode, backwards
         seen = set()
         queue: Set[Node] = {terminal_node}
         while queue:
