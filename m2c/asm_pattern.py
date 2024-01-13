@@ -12,6 +12,7 @@ from .asm_instruction import (
     AsmLiteral,
     BinOp,
     JumpTarget,
+    Macro,
     NaiveParsingArch,
     Register,
     RegFormatter,
@@ -165,6 +166,12 @@ class TryMatchState:
             )
         if isinstance(e, BinOp):
             return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
+        if isinstance(e, Macro):
+            return (
+                isinstance(a, Macro)
+                and a.macro_name == e.macro_name
+                and self.match_arg(a.argument, e.argument)
+            )
         assert False, f"bad pattern part: {e}"
 
     def match_one(self, actual: BodyPart, exp: PatternPart) -> bool:

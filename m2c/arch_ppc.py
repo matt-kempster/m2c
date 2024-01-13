@@ -447,7 +447,7 @@ class PpcArch(Arch):
     def missing_return(cls) -> List[Instruction]:
         return [cls.parse("blr", [], InstructionMeta.missing())]
 
-    # List of all instructions where `$r0` as certian args is interpreted as `0`
+    # List of all instructions where `$r0` as certain args is interpreted as `0`
     # instead of the contents of `$r0`. The dict value represents the argument
     # index that is affected.
     INSTRS_R0_AS_ZERO: ClassVar[Dict[str, int]] = {
