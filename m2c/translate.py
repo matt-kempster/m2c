@@ -114,7 +114,14 @@ class Arch(ArchFlowGraph):
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
-PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI", "CLZ"}
+PSEUDO_FUNCTION_OPS: Set[str] = {
+    "MULT_HI",
+    "MULTU_HI",
+    "DMULT_HI",
+    "DMULTU_HI",
+    "GLUE_F64",
+    "CLZ",
+}
 
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
@@ -2343,14 +2350,12 @@ class InstrArgs:
                 f"register {reg}"
             )
         other = self.regs[Register(f"f{reg_num+1}")]
-        if not isinstance(other, Literal) or other.type.get_size_bits() == 64:
-            raise DecompFailure(
-                f"Unable to determine a value for double-precision register {reg} "
-                "whose second half is non-static. This is a m2c restriction "
-                "which may be lifted in the future."
-            )
-        value = ret.value | (other.value << 32)
-        return Literal(value, type=Type.f64())
+        if isinstance(other, Literal) and other.type.get_size_bits() != 64:
+            value = ret.value | (other.value << 32)
+            return Literal(value, type=Type.f64())
+        ret.type.unify(Type.uintish())
+        other.type.unify(Type.uintish())
+        return BinaryOp(op="GLUE_F64", left=other, right=ret, type=Type.f64())
 
     def cmp_reg(self, key: str) -> Condition:
         cond = self.regs[Register(key)]
