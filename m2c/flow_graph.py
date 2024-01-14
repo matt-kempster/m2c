@@ -203,6 +203,11 @@ def invert_mips_branch_mnemonic(mnemonic: str) -> str:
     return inverses[mnemonic]
 
 
+def internal_label(base: str, related: str = "") -> str:
+    rel = related.lstrip(".") + "_" if related else ""
+    return f"._m2c_{related}{base}"
+
+
 def normalize_gcc_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
     """GCC sometimes emits branch-likely instructions that cross just a single
     instruction:
@@ -329,7 +334,7 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
             ):
                 # Handle the IDO pattern.
                 if before_target not in label_before_instr:
-                    new_label = f"_m2c_{old_label}_before"
+                    new_label = internal_label("before", old_label)
                     label_before_instr[before_target] = new_label
                     insert_label_before[before_target] = new_label
                 new_target = label_before_instr[before_target]
@@ -468,7 +473,7 @@ def build_blocks(
                     item.jump_target, JumpTarget
                 ), "has delay slot and isn't a call"
                 target = item.jump_target.target
-                temp_label = f"_m2c_{label.names[0]}_skip"
+                temp_label = internal_label("skip", label.names[0])
                 meta = item.meta.derived()
                 nop = arch.parse("nop", [], meta)
                 block_builder.add_instruction(
@@ -508,7 +513,7 @@ def build_blocks(
             branch_likely_counts[target] += 1
             index = branch_likely_counts[target]
             mn_inverted = invert_mips_branch_mnemonic(item.mnemonic[:-1])
-            temp_label = f"_m2c_{target}_branchlikelyskip_{index}"
+            temp_label = internal_label(f"branchlikelyskip_{index}", target)
             branch_not = arch.parse(
                 mn_inverted,
                 item.args[:-1] + [AsmGlobalSymbol(temp_label)],
@@ -559,7 +564,7 @@ def build_blocks(
 
         if item.is_conditional and item.is_return:
             if cond_return_target is None:
-                cond_return_target = "_m2c_conditionalreturn_"
+                cond_return_target = internal_label("conditionalreturn")
             # Strip the "lr" off of the instruction
             assert item.mnemonic[-2:] == "lr"
             branch_instr = arch.parse(
@@ -984,7 +989,7 @@ def warn_on_safeguard_use(nodes: List[Node], arch: ArchFlowGraph) -> None:
     if node:
         label = node.block.approx_label_name
         return_instrs = arch.missing_return()
-        print(f'Warning: missing "{return_instrs[0]}" in last block (.{label}).\n')
+        print(f'Warning: missing "{return_instrs[0]}" in last block ({label}).\n')
 
 
 def is_premature_return(
