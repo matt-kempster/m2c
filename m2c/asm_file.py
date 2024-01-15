@@ -102,7 +102,7 @@ class AsmData:
     mentioned_labels: Set[str] = field(default_factory=set)
 
     def merge_into(self, other: "AsmData") -> None:
-        for (sym, value) in self.values.items():
+        for sym, value in self.values.items():
             other.values[sym] = value
         for label in self.mentioned_labels:
             other.mentioned_labels.add(label)

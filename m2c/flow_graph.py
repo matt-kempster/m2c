@@ -350,7 +350,7 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
             new_body.append((orig_item, item))
 
     new_function = function.bodyless_copy()
-    for (orig_item, new_item) in new_body:
+    for orig_item, new_item in new_body:
         if isinstance(orig_item, Instruction) and orig_item in insert_label_before:
             new_function.new_label(insert_label_before[orig_item])
         new_function.body.append(new_item)

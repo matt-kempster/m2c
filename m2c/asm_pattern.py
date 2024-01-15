@@ -191,7 +191,7 @@ class TryMatchState:
         if exp.args:
             if len(ins.args) != len(exp.args):
                 return False
-            for (a, e) in zip(ins.args, exp.args):
+            for a, e in zip(ins.args, exp.args):
                 if not self.match_arg(a, e):
                     return False
         return True
@@ -213,7 +213,7 @@ class AsmMatcher:
         state = TryMatchState()
 
         start_index = index = self.index
-        for (pat, optional) in pattern:
+        for pat, optional in pattern:
             if isinstance(pat, AsmInstruction) and pat.mnemonic[0] == ".":
                 if not state.match_meta(pat) and not optional:
                     return None
