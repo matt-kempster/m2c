@@ -119,6 +119,14 @@ PSEUDO_FUNCTION_OPS: Set[str] = {"MULT_HI", "MULTU_HI", "DMULT_HI", "DMULTU_HI",
 
 def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     type = type.weaken_void_ptr()
+    if isinstance(expr, Literal):
+        # In an interesting twist from how types behave everywhere else, for
+        # literals we (try to) avoid ever propagating information backwards,
+        # by creating a clone of the literal before casting it. This helps
+        # avoid casts when literals are used in multiple unrelated places.
+        # Importantly, we do keep information about maybe-floatness and
+        # 64-bitness of values.
+        expr = Literal(expr.value, expr.type.clone_literal_type())
     ptr_target_type = type.get_pointer_target()
     if expr.type.unify(type):
         if silent or isinstance(expr, Literal):

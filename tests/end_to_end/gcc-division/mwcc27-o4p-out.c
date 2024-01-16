@@ -424,5 +424,5 @@ void test_u32_mod(u32 u) {
     foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_4) >> 1U) + temp_r4_4) >> 0x1FU) * 0x80000001));
     temp_r4_5 = sp8 / 1431655765;
     foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_5) >> 1U) + temp_r4_5) >> 0x1FU) * -0x10002));
-    foo(sp8 % -65537U);
+    foo(sp8 % -65537);
 }
