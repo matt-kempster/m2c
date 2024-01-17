@@ -703,7 +703,7 @@ class MipsArch(Arch):
     frame_pointer_reg = Register("fp")
     return_address_reg = Register("ra")
 
-    base_return_regs = [Register(r) for r in ["v0", "f0"]]
+    base_return_regs = [(Register("v0"), False), (Register("f0"), True)]
     all_return_regs = [Register(r) for r in ["v0", "v1", "f0", "f1"]]
     argument_regs = [
         Register(r) for r in ["a0", "a1", "a2", "a3", "f12", "f13", "f14", "f15"]

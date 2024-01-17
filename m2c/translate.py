@@ -74,6 +74,11 @@ StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
 
 
 class Arch(ArchFlowGraph):
+    """Arch-specific information that relates to the translation level.
+    Extends ArchFlowGraph."""
+
+    base_return_regs: List[Tuple[Register, bool]]
+
     @abc.abstractmethod
     def function_abi(
         self,
@@ -3111,9 +3116,10 @@ def propagate_register_meta(nodes: List[Node], reg: Register) -> None:
 
 def determine_return_register(
     return_blocks: List[BlockInfo], fn_decl_provided: bool, arch: Arch
-) -> Optional[Register]:
+) -> Optional[Tuple[Register, bool]]:
     """Determine which of the arch's base_return_regs (i.e. v0, f0) is the most
-    likely to contain the return value, or if the function is likely void."""
+    likely to contain the return value, or if the function is likely void.
+    Returns a tuple (register, is float)."""
 
     def priority(block_info: BlockInfo, reg: Register) -> int:
         meta = block_info.final_register_states.get_meta(reg)
@@ -3130,9 +3136,9 @@ def determine_return_register(
     if not return_blocks:
         return None
 
-    best_reg: Optional[Register] = None
+    best_reg: Optional[Tuple[Register, bool]] = None
     best_prio = -1
-    for reg in arch.base_return_regs:
+    for reg, floating in arch.base_return_regs:
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
         if max_prio == 4:
@@ -3145,7 +3151,7 @@ def determine_return_register(
             continue
         if max_prio > best_prio:
             best_prio = max_prio
-            best_reg = reg
+            best_reg = reg, floating
     return best_reg
 
 
@@ -4393,11 +4399,11 @@ def translate_to_ast(
 
     # Guess return register and mark returns (we should really base this on
     # function signature if known, but so far the heuristic is reliable enough)
-    for reg in arch.base_return_regs:
+    for reg, _ in arch.base_return_regs:
         propagate_register_meta(flow_graph.nodes, reg)
 
     return_type = fn_sig.return_type
-    return_reg: Optional[Register] = None
+    return_reg: Optional[Tuple[Register, bool]] = None
 
     if not options.void and not return_type.is_void():
         return_reg = determine_return_register(
@@ -4405,9 +4411,15 @@ def translate_to_ast(
         )
 
     if return_reg is not None:
+        reg, is_floating = return_reg
+        if is_floating:
+            return_type.unify(Type.floatish())
+        else:
+            return_type.unify(Type.intptr())
+
         for b in return_blocks:
-            if return_reg in b.final_register_states:
-                ret_val = b.final_register_states[return_reg]
+            if reg in b.final_register_states:
+                ret_val = b.final_register_states[reg]
                 ret_val = as_type(ret_val, return_type, True)
                 ret_val.use()
                 b.return_value = ret_val

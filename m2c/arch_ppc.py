@@ -326,7 +326,7 @@ class PpcArch(Arch):
     frame_pointer_reg = Register("r30")
     return_address_reg = Register("lr")
 
-    base_return_regs = [Register(r) for r in ["r3", "f1"]]
+    base_return_regs = [(Register("r3"), False), (Register("f1"), True)]
     all_return_regs = [Register(r) for r in ["f1", "r3", "r4"]]
     argument_regs = [
         Register(r)

@@ -1,4 +1,4 @@
-? test(s32 arg0) {
+s32 test(s32 arg0) {
     s32 temp_t1;
 
     M2C_BREAK();
