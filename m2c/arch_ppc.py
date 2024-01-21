@@ -152,7 +152,7 @@ class TailCallPattern(AsmPattern):
             isinstance(instr, Instruction)
             and instr.mnemonic == "b"
             and isinstance(instr.args[0], AsmGlobalSymbol)
-            and not matcher.branch_target_exists(instr.args[0].symbol_name)
+            and not matcher.is_local_label(instr.args[0].symbol_name)
         ):
             return Replacement(
                 [

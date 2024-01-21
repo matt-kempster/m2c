@@ -15,6 +15,7 @@ from .asm_file import Label
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
+    AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
     JumpTarget,
@@ -696,6 +697,32 @@ class OriSpPattern(SimpleAsmPattern):
         return None
 
 
+class TailCallPattern(AsmPattern):
+    """
+    `return fn(...);` may be optimized to perform a `j fn` instead of
+    `jal fn; jr $ra` (plus stack restores).
+    """
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if (
+            isinstance(instr, Instruction)
+            and instr.mnemonic == "j"
+            and isinstance(instr.args[0], AsmGlobalSymbol)
+            and not matcher.is_local_label(instr.args[0].symbol_name)
+        ):
+            return Replacement(
+                [
+                    AsmInstruction("jal", instr.args),
+                    AsmInstruction("nop", []),
+                    AsmInstruction("jr", [Register("ra")]),
+                    AsmInstruction("nop", []),
+                ],
+                1,
+            )
+        return None
+
+
 class MipsArch(Arch):
     arch = Target.ArchEnum.MIPS
 
@@ -1264,6 +1291,7 @@ class MipsArch(Arch):
         UnalignedMemcpyPattern(),
         GpJumpPattern(),
         OriSpPattern(),
+        TailCallPattern(),
     ]
 
     instrs_ignore: Set[str] = {

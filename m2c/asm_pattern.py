@@ -234,7 +234,7 @@ class AsmMatcher:
                 return part.meta.derived()
         return InstructionMeta.missing()
 
-    def branch_target_exists(self, name: str) -> bool:
+    def is_local_label(self, name: str) -> bool:
         return name in self.labels
 
     def apply(self, repl: Replacement, arch: ArchAsm) -> None:
