@@ -33,6 +33,13 @@ typedef s64 M2C_UNK64;
 #define M2C_BREAK() (0)
 #define M2C_SYNC() (0)
 
+#define GLUE_F64(a, b) (0.0)
+#define MULT_HI(a, b) (0)
+#define MULTU_HI(a, b) (0)
+#define DMULT_HI(a, b) (0)
+#define DMULTU_HI(a, b) (0)
+#define CLZ(x) (0)
+
 /* Carry bit from partially-implemented instructions */
 #define M2C_CARRY 0
 
