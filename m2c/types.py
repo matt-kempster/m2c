@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -35,18 +36,18 @@ class TypePool:
 
     unknown_field_prefix: str
     unk_inference: bool
-    structs: Set["StructDeclaration"] = field(default_factory=set)
-    structs_by_tag_name: Dict[str, "StructDeclaration"] = field(default_factory=dict)
-    structs_by_ctype: Dict[CStructUnion, "StructDeclaration"] = field(
+    structs: Set[StructDeclaration] = field(default_factory=set)
+    structs_by_tag_name: Dict[str, StructDeclaration] = field(default_factory=dict)
+    structs_by_ctype: Dict[CStructUnion, StructDeclaration] = field(
         default_factory=dict
     )
-    unknown_decls: Dict[str, "Type"] = field(default_factory=dict)
+    unknown_decls: Dict[str, Type] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
     def get_struct_for_ctype(
         self,
         ctype: CStructUnion,
-    ) -> Optional["StructDeclaration"]:
+    ) -> Optional[StructDeclaration]:
         """Return the StructDeclaration for a given ctype struct, if known"""
         struct = self.structs_by_ctype.get(ctype)
         if struct is not None:
@@ -62,7 +63,7 @@ class TypePool:
         *,
         size: Optional[int] = None,
         with_typedef: bool = False,
-    ) -> "StructDeclaration":
+    ) -> StructDeclaration:
         struct = self.get_struct_by_tag_name(tag_name, typemap)
         if struct is not None:
             return struct
@@ -75,7 +76,7 @@ class TypePool:
         self,
         tag_name: str,
         typemap: Optional[TypeMap],
-    ) -> Optional["StructDeclaration"]:
+    ) -> Optional[StructDeclaration]:
         """
         Return the StructDeclaration with the given tag name, if available.
         If the struct is not already known and typemap is provided, try to find it there.
@@ -92,7 +93,7 @@ class TypePool:
 
     def add_struct(
         self,
-        struct: "StructDeclaration",
+        struct: StructDeclaration,
         ctype_or_tag_name: Union[CStructUnion, str],
     ) -> None:
         """Add the struct declaration to the set of known structs for later access"""
@@ -152,21 +153,21 @@ class TypeData:
     kind: int = K_ANY
     likely_kind: int = K_ANY  # subset of kind
     size_bits: Optional[int] = None
-    uf_parent: Optional["TypeData"] = None
+    uf_parent: Optional[TypeData] = None
 
     sign: int = ANY_SIGN  # K_INT
-    ptr_to: Optional["Type"] = None  # K_PTR | K_ARRAY
-    fn_sig: Optional["FunctionSignature"] = None  # K_FN
+    ptr_to: Optional[Type] = None  # K_PTR | K_ARRAY
+    fn_sig: Optional[FunctionSignature] = None  # K_FN
     array_dim: Optional[int] = None  # K_ARRAY
-    struct: Optional["StructDeclaration"] = None  # K_STRUCT
+    struct: Optional[StructDeclaration] = None  # K_STRUCT
     enum: Optional[Enum] = None  # K_INT
-    new_field_within: Set["StructDeclaration"] = field(default_factory=set)
+    new_field_within: Set[StructDeclaration] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         assert self.kind
         self.likely_kind &= self.kind
 
-    def get_representative(self) -> "TypeData":
+    def get_representative(self) -> TypeData:
         # Follow `uf_parent` links until we hit the "root" TypeData
         equivalent_typedatas = set()
         root = self
@@ -196,7 +197,7 @@ class Type:
 
     _data: TypeData
 
-    def unify(self, other: "Type", *, seen: Optional[Set["TypeData"]] = None) -> bool:
+    def unify(self, other: Type, *, seen: Optional[Set[TypeData]] = None) -> bool:
         """
         Try to set this type equal to another. Returns true on success.
         Once set equal, the types will always be equal (we use a union-find
@@ -284,7 +285,7 @@ class Type:
         y.uf_parent = x
         return True
 
-    def data(self) -> "TypeData":
+    def data(self) -> TypeData:
         if self._data.uf_parent is None:
             return self._data
         self._data = self._data.get_representative()
@@ -351,14 +352,14 @@ class Type:
         size = (self.get_size_bits() or 32) // 8
         return size, size
 
-    def get_pointer_target(self) -> Optional["Type"]:
+    def get_pointer_target(self) -> Optional[Type]:
         """If self is a pointer-to-a-Type, return the Type"""
         data = self.data()
         if self.is_pointer() and data.ptr_to is not None:
             return data.ptr_to
         return None
 
-    def reference(self) -> "Type":
+    def reference(self) -> Type:
         """Return a pointer to self. If self is an array, decay the type to a pointer"""
         if self.is_array():
             data = self.data()
@@ -366,7 +367,7 @@ class Type:
             return Type.ptr(data.ptr_to)
         return Type.ptr(self)
 
-    def decay(self) -> "Type":
+    def decay(self) -> Type:
         """If self is an array, return a pointer to the element type. Otherwise, return self."""
         if self.is_array():
             data = self.data()
@@ -374,14 +375,14 @@ class Type:
             return Type.ptr(data.ptr_to)
         return self
 
-    def weaken_void_ptr(self) -> "Type":
+    def weaken_void_ptr(self) -> Type:
         """If self is an explicit `void *`, return `Type.ptr()` without an target type."""
         target = self.get_pointer_target()
         if target is not None and target.is_void():
             return Type.ptr()
         return self
 
-    def get_array(self) -> Tuple[Optional["Type"], Optional[int]]:
+    def get_array(self) -> Tuple[Optional[Type], Optional[int]]:
         """If self is an array, return a tuple of the inner Type & the array dimension"""
         if not self.is_array():
             return None, None
@@ -389,7 +390,7 @@ class Type:
         assert data.ptr_to is not None
         return (data.ptr_to, data.array_dim)
 
-    def get_function_pointer_signature(self) -> Optional["FunctionSignature"]:
+    def get_function_pointer_signature(self) -> Optional[FunctionSignature]:
         """If self is a function pointer, return the FunctionSignature"""
         data = self.data()
         if self.is_pointer() and data.ptr_to is not None:
@@ -398,7 +399,7 @@ class Type:
                 return ptr_to.fn_sig
         return None
 
-    def get_struct_declaration(self) -> Optional["StructDeclaration"]:
+    def get_struct_declaration(self) -> Optional[StructDeclaration]:
         """If self is a struct, return the StructDeclaration"""
         if self.is_struct():
             data = self.data()
@@ -406,7 +407,7 @@ class Type:
             return data.struct
         return None
 
-    def clone_literal_type(self) -> "Type":
+    def clone_literal_type(self) -> Type:
         data = self.data()
         size_bits = 64 if data.size_bits == 64 else None
         return Type(
@@ -569,7 +570,7 @@ class Type:
 
     def get_initializer_fields(
         self,
-    ) -> Optional[List[Union[int, "Type"]]]:
+    ) -> Optional[List[Union[int, Type]]]:
         """
         If self is a struct or array (i.e. initialized with `{...}` syntax), then
         return a list of fields suitable for creating an initializer.
@@ -655,7 +656,7 @@ class Type:
 
         return ret
 
-    def _to_ctype(self, seen: Set["TypeData"], fmt: Formatter) -> CType:
+    def _to_ctype(self, seen: Set[TypeData], fmt: Formatter) -> CType:
         def simple_ctype(typename: str) -> ca.TypeDecl:
             return ca.TypeDecl(
                 type=ca.IdentifierType(names=[typename]),
@@ -797,15 +798,15 @@ class Type:
         return f"Type({signstr + kindstr + sizestr})"
 
     @staticmethod
-    def any() -> "Type":
+    def any() -> Type:
         return Type(TypeData())
 
     @staticmethod
-    def any_reg() -> "Type":
+    def any_reg() -> Type:
         return Type(TypeData(kind=TypeData.K_ANYREG))
 
     @staticmethod
-    def any_field(*, new_within: "Optional[StructDeclaration]" = None) -> "Type":
+    def any_field(*, new_within: Optional[StructDeclaration] = None) -> Type:
         return Type(
             TypeData(
                 kind=TypeData.K_ANY & ~TypeData.K_VOID,
@@ -814,116 +815,116 @@ class Type:
         )
 
     @staticmethod
-    def intish() -> "Type":
+    def intish() -> Type:
         return Type(TypeData(kind=TypeData.K_INT))
 
     @staticmethod
-    def uintish() -> "Type":
+    def uintish() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def sintish() -> "Type":
+    def sintish() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, sign=TypeData.SIGNED))
 
     @staticmethod
-    def intptr() -> "Type":
+    def intptr() -> Type:
         return Type(TypeData(kind=TypeData.K_INTPTR))
 
     @staticmethod
-    def uintptr() -> "Type":
+    def uintptr() -> Type:
         return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def sintptr() -> "Type":
+    def sintptr() -> Type:
         return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.SIGNED))
 
     @staticmethod
-    def ptr(type: Optional["Type"] = None) -> "Type":
+    def ptr(type: Optional[Type] = None) -> Type:
         return Type(TypeData(kind=TypeData.K_PTR, size_bits=32, ptr_to=type))
 
     @staticmethod
-    def function(fn_sig: Optional["FunctionSignature"] = None) -> "Type":
+    def function(fn_sig: Optional[FunctionSignature] = None) -> Type:
         if fn_sig is None:
             fn_sig = FunctionSignature()
         return Type(TypeData(kind=TypeData.K_FN, fn_sig=fn_sig))
 
     @staticmethod
-    def f32() -> "Type":
+    def f32() -> Type:
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=32))
 
     @staticmethod
-    def floatish() -> "Type":
+    def floatish() -> Type:
         return Type(TypeData(kind=TypeData.K_FLOAT))
 
     @staticmethod
-    def f64() -> "Type":
+    def f64() -> Type:
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=64))
 
     @staticmethod
-    def f128() -> "Type":
+    def f128() -> Type:
         return Type(TypeData(kind=TypeData.K_FLOAT, size_bits=128))
 
     @staticmethod
-    def s8() -> "Type":
+    def s8() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=8, sign=TypeData.SIGNED))
 
     @staticmethod
-    def u8() -> "Type":
+    def u8() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=8, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def s16() -> "Type":
+    def s16() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=16, sign=TypeData.SIGNED))
 
     @staticmethod
-    def u16() -> "Type":
+    def u16() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=16, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def s32() -> "Type":
+    def s32() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=32, sign=TypeData.SIGNED))
 
     @staticmethod
-    def u32() -> "Type":
+    def u32() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=32, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def s64() -> "Type":
+    def s64() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=64, sign=TypeData.SIGNED))
 
     @staticmethod
-    def u64() -> "Type":
+    def u64() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=64, sign=TypeData.UNSIGNED))
 
     @staticmethod
-    def int64() -> "Type":
+    def int64() -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=64))
 
     @staticmethod
-    def int_of_size(size_bits: int) -> "Type":
+    def int_of_size(size_bits: int) -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits))
 
     @staticmethod
-    def reg32(*, likely_float: bool) -> "Type":
+    def reg32(*, likely_float: bool) -> Type:
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INTPTR
         return Type(TypeData(kind=TypeData.K_ANYREG, likely_kind=likely, size_bits=32))
 
     @staticmethod
-    def reg64(*, likely_float: bool) -> "Type":
+    def reg64(*, likely_float: bool) -> Type:
         kind = TypeData.K_FLOAT | TypeData.K_INT
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INT
         return Type(TypeData(kind=kind, likely_kind=likely, size_bits=64))
 
     @staticmethod
-    def bool() -> "Type":
+    def bool() -> Type:
         return Type.intish()
 
     @staticmethod
-    def void() -> "Type":
+    def void() -> Type:
         return Type(TypeData(kind=TypeData.K_VOID, size_bits=0))
 
     @staticmethod
-    def array(type: "Type", dim: Optional[int]) -> "Type":
+    def array(type: Type, dim: Optional[int]) -> Type:
         # Array elements must have a known size
         el_size = type.get_size_bits()
         assert el_size is not None
@@ -936,12 +937,12 @@ class Type:
         )
 
     @staticmethod
-    def struct(st: "StructDeclaration") -> "Type":
+    def struct(st: StructDeclaration) -> Type:
         size_bits = st.size * 8 if st.size is not None else None
         return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=size_bits, struct=st))
 
     @staticmethod
-    def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> "Type":
+    def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> Type:
         real_ctype = resolve_typedefs(ctype, typemap)
         if typepool.unk_inference and is_unk_type(ctype, typemap):
             type = Type.any()
@@ -1025,9 +1026,7 @@ class Type:
         static_assert_unreachable(real_ctype)
 
     @staticmethod
-    def demangled_symbol(
-        typemap: TypeMap, typepool: TypePool, sym: CxxSymbol
-    ) -> "Type":
+    def demangled_symbol(typemap: TypeMap, typepool: TypePool, sym: CxxSymbol) -> Type:
         return Type.demangled_type(
             typemap, typepool, sym_type=sym.type, sym_name=sym.name
         )
@@ -1038,7 +1037,7 @@ class Type:
         typepool: TypePool,
         sym_type: CxxType,
         sym_name: Optional[CxxTerm] = None,
-    ) -> "Type":
+    ) -> Type:
         def type_for_class(qualified_name: List[CxxName]) -> Type:
             # TODO: Using "::" here matches the C++ qualified identifiers, but is not valid C
             # Maybe this seperator should depend on the --valid-syntax option?
@@ -1170,7 +1169,7 @@ class FunctionSignature:
     params_known: bool = False
     is_variadic: bool = False
 
-    def unify(self, other: "FunctionSignature", *, seen: Set[TypeData]) -> bool:
+    def unify(self, other: FunctionSignature, *, seen: Set[TypeData]) -> bool:
         if self.params_known and other.params_known:
             if self.is_variadic != other.is_variadic:
                 return False
@@ -1207,7 +1206,7 @@ class FunctionSignature:
 
         return True
 
-    def unify_with_args(self, concrete: "FunctionSignature") -> bool:
+    def unify_with_args(self, concrete: FunctionSignature) -> bool:
         """
         Unify a function's signature with a list of argument types.
         This is more flexible than unify() and is intended to check
@@ -1261,9 +1260,9 @@ class StructDeclaration:
 
     def unify(
         self,
-        other: "StructDeclaration",
+        other: StructDeclaration,
         *,
-        seen: Optional[Set["TypeData"]] = None,
+        seen: Optional[Set[TypeData]] = None,
     ) -> bool:
         # NB: Currently, the only structs that exist are defined from ctypes in the typemap,
         # so for now we can use reference equality to check if two structs are compatible.
@@ -1502,7 +1501,7 @@ class StructDeclaration:
     @staticmethod
     def unknown(
         typepool: TypePool, size: Optional[int], tag_name: str, align: int = 1
-    ) -> "StructDeclaration":
+    ) -> StructDeclaration:
         """Return an StructDeclaration without any known fields"""
         decl = StructDeclaration(
             size=size,
@@ -1516,7 +1515,7 @@ class StructDeclaration:
     @staticmethod
     def from_ctype(
         ctype: CStructUnion, typemap: TypeMap, typepool: TypePool
-    ) -> "StructDeclaration":
+    ) -> StructDeclaration:
         """
         Return StructDeclaration for a given ctype struct or union, constructing it
         and registering it in the typepool if it does not already exist.

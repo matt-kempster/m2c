@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -38,7 +39,7 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
-    def simplify_ir(self, flow_graph: "FlowGraph") -> None:
+    def simplify_ir(self, flow_graph: FlowGraph) -> None:
         ...
 
 
@@ -72,11 +73,11 @@ class InstrRef(Reference):
     """
 
     instruction: Instruction
-    block: "Block" = field(repr=False)
+    block: Block = field(repr=False)
 
     def add_instruction_before(
         self, asm: AsmInstruction, arch: ArchFlowGraph
-    ) -> "InstrRef":
+    ) -> InstrRef:
         """Add `asm` into the parent assembly before this instruction."""
         instr = arch.parse(asm.mnemonic, asm.args, self.instruction.meta.derived())
         ref = InstrRef(instr, self.block)
@@ -118,7 +119,7 @@ class Block:
         assert self.block_info is None
         self.block_info = block_info
 
-    def clone(self) -> "Block":
+    def clone(self) -> Block:
         ret = replace(self, instruction_refs=[])
         ret.instruction_refs = [
             InstrRef(ref.instruction.clone(), ret) for ref in self.instruction_refs
@@ -633,16 +634,16 @@ def verify_no_duplicate_instructions(blocks: List[Block]) -> None:
 class _BaseNode:
     block: Block
     emit_goto: bool
-    parents: List["Node"] = field(init=False, default_factory=list)
-    dominators: Set["Node"] = field(init=False, default_factory=set)
-    immediate_dominator: Optional["Node"] = field(init=False, default=None)
-    immediately_dominates: List["Node"] = field(init=False, default_factory=list)
-    postdominators: Set["Node"] = field(init=False, default_factory=set)
-    immediate_postdominator: Optional["Node"] = field(init=False, default=None)
-    immediately_postdominates: List["Node"] = field(init=False, default_factory=list)
+    parents: List[Node] = field(init=False, default_factory=list)
+    dominators: Set[Node] = field(init=False, default_factory=set)
+    immediate_dominator: Optional[Node] = field(init=False, default=None)
+    immediately_dominates: List[Node] = field(init=False, default_factory=list)
+    postdominators: Set[Node] = field(init=False, default_factory=set)
+    immediate_postdominator: Optional[Node] = field(init=False, default=None)
+    immediately_postdominates: List[Node] = field(init=False, default_factory=list)
     # This is only populated on the head node of the loop,
     # i.e. there is an invariant `(node.loop is None) or (node.loop.head is node)`
-    loop: Optional["NaturalLoop"] = field(init=False, default=None)
+    loop: Optional[NaturalLoop] = field(init=False, default=None)
 
 
 class BaseNode(_BaseNode, abc.ABC):
@@ -650,7 +651,7 @@ class BaseNode(_BaseNode, abc.ABC):
         return str(self.block.index)
 
     @abc.abstractmethod
-    def children(self) -> List["Node"]:
+    def children(self) -> List[Node]:
         ...
 
     def __repr__(self) -> str:
@@ -659,12 +660,12 @@ class BaseNode(_BaseNode, abc.ABC):
 
 @dataclass(eq=False, repr=False)
 class BasicNode(BaseNode):
-    successor: "Node"
+    successor: Node
     # Optional link to the TerminalNode, used to make infinite loops reducible.
     # Used by `compute_relations()`, but ignored when emitting code.
-    fake_successor: Optional["TerminalNode"] = None
+    fake_successor: Optional[TerminalNode] = None
 
-    def children(self) -> List["Node"]:
+    def children(self) -> List[Node]:
         # TODO: Should we also include the fallthrough node if `emit_goto` is True?
         if self.fake_successor is not None:
             return [self.successor, self.fake_successor]
@@ -683,10 +684,10 @@ class BasicNode(BaseNode):
 
 @dataclass(eq=False, repr=False)
 class ConditionalNode(BaseNode):
-    conditional_edge: "Node"
-    fallthrough_edge: "Node"
+    conditional_edge: Node
+    fallthrough_edge: Node
 
-    def children(self) -> List["Node"]:
+    def children(self) -> List[Node]:
         if self.conditional_edge == self.fallthrough_edge:
             return [self.conditional_edge]
         return [self.conditional_edge, self.fallthrough_edge]
@@ -708,9 +709,9 @@ class ConditionalNode(BaseNode):
 @dataclass(eq=False, repr=False)
 class ReturnNode(BaseNode):
     index: int
-    terminal: "TerminalNode"
+    terminal: TerminalNode
 
-    def children(self) -> List["Node"]:
+    def children(self) -> List[Node]:
         return [self.terminal]
 
     def name(self) -> str:
@@ -732,9 +733,9 @@ class ReturnNode(BaseNode):
 
 @dataclass(eq=False, repr=False)
 class SwitchNode(BaseNode):
-    cases: List["Node"]
+    cases: List[Node]
 
-    def children(self) -> List["Node"]:
+    def children(self) -> List[Node]:
         # Deduplicate nodes in `self.cases`
         seen = set()
         children = []
@@ -761,10 +762,10 @@ class TerminalNode(BaseNode):
     """
 
     @staticmethod
-    def terminal() -> "TerminalNode":
+    def terminal() -> TerminalNode:
         return TerminalNode(Block(-1, None, "", []), False)
 
-    def children(self) -> List["Node"]:
+    def children(self) -> List[Node]:
         return []
 
     def __str__(self) -> str:
@@ -1203,7 +1204,7 @@ class RefSet:
     refs: List[Reference] = field(default_factory=list)
 
     @staticmethod
-    def empty() -> "RefSet":
+    def empty() -> RefSet:
         """Represent a missing reference, such as an unset register"""
         return RefSet(refs=[])
 
@@ -1219,14 +1220,14 @@ class RefSet:
         if ref not in self.refs:
             self.refs.append(ref)
 
-    def update(self, other: "RefSet") -> None:
+    def update(self, other: RefSet) -> None:
         for ref in other.refs:
             self.add(ref)
 
     def remove(self, ref: Reference) -> None:
         self.refs.remove(ref)
 
-    def copy(self) -> "RefSet":
+    def copy(self) -> RefSet:
         return RefSet(refs=self.refs.copy())
 
     def __contains__(self, ref: Reference) -> bool:
@@ -1266,7 +1267,7 @@ class LocationRefSetDict:
     def remove(self, loc: Location) -> None:
         self.refs.pop(loc, None)
 
-    def copy(self) -> "LocationRefSetDict":
+    def copy(self) -> LocationRefSetDict:
         return LocationRefSetDict(refs=self.refs.copy())
 
     def items(self) -> ItemsView[Location, RefSet]:

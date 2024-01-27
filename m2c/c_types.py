@@ -1,6 +1,7 @@
 """This file handles variable types, function signatures and struct layouts
 based on a C AST. Based on the pycparser library."""
 
+from __future__ import annotations
 import copy
 import functools
 import hashlib
@@ -54,7 +55,7 @@ class Struct:
 
 @dataclass
 class Array:
-    subtype: "DetailedStructMember"
+    subtype: DetailedStructMember
     subctype: CType
     subsize: int
     dim: int

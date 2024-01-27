@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -45,7 +46,7 @@ class StackLocation:
         )
 
     @staticmethod
-    def from_offset(offset: Argument) -> Optional["StackLocation"]:
+    def from_offset(offset: Argument) -> Optional[StackLocation]:
         def align(x: int) -> int:
             return x & ~3
 
@@ -89,12 +90,12 @@ class InstructionMeta:
     synthetic: bool
 
     @staticmethod
-    def missing() -> "InstructionMeta":
+    def missing() -> InstructionMeta:
         return InstructionMeta(
             emit_goto=False, filename="<unknown>", lineno=0, synthetic=True
         )
 
-    def derived(self) -> "InstructionMeta":
+    def derived(self) -> InstructionMeta:
         return replace(self, synthetic=True)
 
     def loc_str(self) -> str:
@@ -146,11 +147,11 @@ class Instruction:
         args = ", ".join(str(arg) for arg in self.args)
         return f"{self.mnemonic} {args}"
 
-    def arch_mnemonic(self, arch: "ArchAsm") -> str:
+    def arch_mnemonic(self, arch: ArchAsm) -> str:
         """Combine architecture name with mnemonic for pattern matching"""
         return f"{arch.arch}:{self.mnemonic}"
 
-    def clone(self) -> "Instruction":
+    def clone(self) -> Instruction:
         return replace(self, meta=self.meta.derived())
 
 

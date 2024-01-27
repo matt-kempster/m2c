@@ -1,3 +1,4 @@
+from __future__ import annotations
 import csv
 from dataclasses import dataclass, field
 from enum import Enum
@@ -46,7 +47,7 @@ class Function:
     def new_instruction(self, instruction: Instruction) -> None:
         self.body.append(instruction)
 
-    def bodyless_copy(self) -> "Function":
+    def bodyless_copy(self) -> Function:
         return Function(
             name=self.name,
             reg_formatter=self.reg_formatter,
@@ -101,7 +102,7 @@ class AsmData:
     values: Dict[str, AsmDataEntry] = field(default_factory=dict)
     mentioned_labels: Set[str] = field(default_factory=set)
 
-    def merge_into(self, other: "AsmData") -> None:
+    def merge_into(self, other: AsmData) -> None:
         for sym, value in self.values.items():
             other.values[sym] = value
         for label in self.mentioned_labels:

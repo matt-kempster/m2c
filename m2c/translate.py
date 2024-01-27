@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 from collections import defaultdict
 from contextlib import contextmanager
@@ -87,7 +88,7 @@ class Arch(ArchFlowGraph):
         likely_regs: Dict[Register, bool],
         *,
         for_call: bool,
-    ) -> "Abi":
+    ) -> Abi:
         """
         Compute stack positions/registers used by a function based on its type
         information. Also computes a list of registers that may contain arguments,
@@ -96,7 +97,7 @@ class Arch(ArchFlowGraph):
         ...
 
     @abc.abstractmethod
-    def function_return(self, expr: "Expression") -> Dict[Register, "Expression"]:
+    def function_return(self, expr: Expression) -> Dict[Register, Expression]:
         """
         Compute register location(s) & values that will hold the return value
         of the function call `expr`.
@@ -125,7 +126,7 @@ PSEUDO_FUNCTION_OPS: Set[str] = {
 }
 
 
-def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
+def as_type(expr: Expression, type: Type, silent: bool) -> Expression:
     type = type.weaken_void_ptr()
     if isinstance(expr, Literal):
         # In an interesting twist from how types behave everywhere else, for
@@ -161,51 +162,51 @@ def as_type(expr: "Expression", type: Type, silent: bool) -> "Expression":
     return Cast(expr=expr, reinterpret=True, silent=False, type=type)
 
 
-def as_f32(expr: "Expression") -> "Expression":
+def as_f32(expr: Expression) -> Expression:
     return as_type(expr, Type.f32(), True)
 
 
-def as_f64(expr: "Expression") -> "Expression":
+def as_f64(expr: Expression) -> Expression:
     return as_type(expr, Type.f64(), True)
 
 
-def as_sintish(expr: "Expression", *, silent: bool = False) -> "Expression":
+def as_sintish(expr: Expression, *, silent: bool = False) -> Expression:
     return as_type(expr, Type.sintish(), silent)
 
 
-def as_uintish(expr: "Expression") -> "Expression":
+def as_uintish(expr: Expression) -> Expression:
     return as_type(expr, Type.uintish(), False)
 
 
-def as_u32(expr: "Expression") -> "Expression":
+def as_u32(expr: Expression) -> Expression:
     return as_type(expr, Type.u32(), False)
 
 
-def as_s64(expr: "Expression", *, silent: bool = False) -> "Expression":
+def as_s64(expr: Expression, *, silent: bool = False) -> Expression:
     return as_type(expr, Type.s64(), silent)
 
 
-def as_u64(expr: "Expression", *, silent: bool = False) -> "Expression":
+def as_u64(expr: Expression, *, silent: bool = False) -> Expression:
     return as_type(expr, Type.u64(), silent)
 
 
-def as_intish(expr: "Expression") -> "Expression":
+def as_intish(expr: Expression) -> Expression:
     return as_type(expr, Type.intish(), True)
 
 
-def as_int64(expr: "Expression") -> "Expression":
+def as_int64(expr: Expression) -> Expression:
     return as_type(expr, Type.int64(), True)
 
 
-def as_intptr(expr: "Expression") -> "Expression":
+def as_intptr(expr: Expression) -> Expression:
     return as_type(expr, Type.intptr(), True)
 
 
-def as_ptr(expr: "Expression") -> "Expression":
+def as_ptr(expr: Expression) -> Expression:
     return as_type(expr, Type.ptr(), True)
 
 
-def as_function_ptr(expr: "Expression") -> "Expression":
+def as_function_ptr(expr: Expression) -> Expression:
     return as_type(expr, Type.ptr(Type.function()), True)
 
 
@@ -217,9 +218,9 @@ class PlannedVar:
     """A persistent Var, that can be merged with other ones using a
     union-find-based setup."""
 
-    _parent: Optional["PlannedVar"] = None
+    _parent: Optional[PlannedVar] = None
 
-    def get_representative(self) -> "PlannedVar":
+    def get_representative(self) -> PlannedVar:
         """Find the representative PlannedVar of all the ones that have been
         merged with this one."""
         root = self
@@ -231,7 +232,7 @@ class PlannedVar:
             var._parent = root
         return root
 
-    def join(self, other: "PlannedVar") -> None:
+    def join(self, other: PlannedVar) -> None:
         a = self.get_representative()
         b = other.get_representative()
         if a != b:
@@ -267,7 +268,7 @@ class PersistentFunctionState:
 class StackInfo:
     function: Function
     persistent_state: PersistentFunctionState
-    global_info: "GlobalInfo"
+    global_info: GlobalInfo
     flow_graph: FlowGraph
     allocated_stack_size: int = 0
     is_leaf: bool = True
@@ -276,16 +277,16 @@ class StackInfo:
     subroutine_arg_top: int = 0
     callee_save_regs: Set[Register] = field(default_factory=set)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
-    unique_type_map: Dict[Tuple[str, object], "Type"] = field(default_factory=dict)
-    local_vars: List["LocalVar"] = field(default_factory=list)
-    temp_vars: List["Var"] = field(default_factory=list)
-    naive_phi_vars: List["NaivePhiExpr"] = field(default_factory=list)
-    reg_vars: Dict[Register, "Var"] = field(default_factory=dict)
-    planned_vars: Dict[Tuple[Register, Reference], "Var"] = field(default_factory=dict)
+    unique_type_map: Dict[Tuple[str, object], Type] = field(default_factory=dict)
+    local_vars: List[LocalVar] = field(default_factory=list)
+    temp_vars: List[Var] = field(default_factory=list)
+    naive_phi_vars: List[NaivePhiExpr] = field(default_factory=list)
+    reg_vars: Dict[Register, Var] = field(default_factory=dict)
+    planned_vars: Dict[Tuple[Register, Reference], Var] = field(default_factory=dict)
     used_reg_vars: Set[Register] = field(default_factory=set)
-    arguments: List["PassedInArg"] = field(default_factory=list)
+    arguments: List[PassedInArg] = field(default_factory=list)
     temp_name_counter: Dict[str, int] = field(default_factory=dict)
-    nonzero_accesses: Set["Expression"] = field(default_factory=set)
+    nonzero_accesses: Set[Expression] = field(default_factory=set)
     param_names: Dict[int, str] = field(default_factory=dict)
     stack_pointer_type: Optional[Type] = None
     replace_first_arg: Optional[Tuple[str, Type]] = None
@@ -363,20 +364,20 @@ class StackInfo:
     def get_param_name(self, offset: int) -> Optional[str]:
         return self.param_names.get(offset)
 
-    def add_local_var(self, var: "LocalVar") -> None:
+    def add_local_var(self, var: LocalVar) -> None:
         if any(v.value == var.value for v in self.local_vars):
             return
         self.local_vars.append(var)
         # Make sure the local vars stay sorted in order on the stack.
         self.local_vars.sort(key=lambda v: v.value)
 
-    def add_argument(self, arg: "PassedInArg") -> None:
+    def add_argument(self, arg: PassedInArg) -> None:
         if any(a.value == arg.value for a in self.arguments):
             return
         self.arguments.append(arg)
         self.arguments.sort(key=lambda a: a.value)
 
-    def get_argument(self, location: int) -> Tuple["Expression", "PassedInArg"]:
+    def get_argument(self, location: int) -> Tuple[Expression, PassedInArg]:
         real_location = location & -4
         arg = PassedInArg(
             real_location,
@@ -389,25 +390,25 @@ class StackInfo:
             return as_type(arg, Type.int_of_size(16), True), arg
         return arg, arg
 
-    def record_struct_access(self, ptr: "Expression", location: int) -> None:
+    def record_struct_access(self, ptr: Expression, location: int) -> None:
         if location:
             self.nonzero_accesses.add(unwrap_deep(ptr))
 
-    def has_nonzero_access(self, ptr: "Expression") -> bool:
+    def has_nonzero_access(self, ptr: Expression) -> bool:
         return unwrap_deep(ptr) in self.nonzero_accesses
 
-    def unique_type_for(self, category: str, key: object, default: Type) -> "Type":
+    def unique_type_for(self, category: str, key: object, default: Type) -> Type:
         key = (category, key)
         if key not in self.unique_type_map:
             self.unique_type_map[key] = default
         return self.unique_type_map[key]
 
-    def saved_reg_symbol(self, reg_name: str) -> "GlobalSymbol":
+    def saved_reg_symbol(self, reg_name: str) -> GlobalSymbol:
         sym_name = "saved_reg_" + reg_name
         type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
         return GlobalSymbol(symbol_name=sym_name, type=type)
 
-    def should_save(self, expr: "Expression", offset: Optional[int]) -> bool:
+    def should_save(self, expr: Expression, offset: Optional[int]) -> bool:
         expr = early_unwrap(expr)
         if isinstance(expr, GlobalSymbol) and (
             expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
@@ -419,7 +420,7 @@ class StackInfo:
             return True
         return False
 
-    def get_stack_var(self, location: int, *, store: bool) -> "Expression":
+    def get_stack_var(self, location: int, *, store: bool) -> Expression:
         # See `get_stack_info` for explanation
         if self.in_callee_save_reg_region(location):
             # Some annoying bookkeeping instruction. To avoid
@@ -472,7 +473,7 @@ class StackInfo:
 
             return LocalVar(location, type=field_type, path=field_path)
 
-    def maybe_get_register_var(self, reg: Register) -> Optional["Var"]:
+    def maybe_get_register_var(self, reg: Register) -> Optional[Var]:
         return self.reg_vars.get(reg)
 
     def add_register_var(self, reg: Register, name: str) -> None:
@@ -481,7 +482,7 @@ class StackInfo:
         self.reg_vars[reg] = var
         self.temp_vars.append(var)
 
-    def get_planned_var(self, reg: Register, source: Reference) -> Optional["Var"]:
+    def get_planned_var(self, reg: Register, source: Reference) -> Optional[Var]:
         # Ignore reg_vars for function calls and initial argument registers, to
         # avoid clutter.
         var = self.reg_vars.get(reg)
@@ -519,7 +520,7 @@ class StackInfo:
             return self.uses_framepointer
         return False
 
-    def get_struct_type_map(self) -> Dict["Expression", Dict[int, Type]]:
+    def get_struct_type_map(self) -> Dict[Expression, Dict[int, Type]]:
         """Reorganize struct information in unique_type_map by var & offset"""
         struct_type_map: Dict[Expression, Dict[int, Type]] = {}
         for (category, key), type in self.unique_type_map.items():
@@ -547,7 +548,7 @@ class StackInfo:
 def get_stack_info(
     function: Function,
     persistent_state: PersistentFunctionState,
-    global_info: "GlobalInfo",
+    global_info: GlobalInfo,
     flow_graph: FlowGraph,
 ) -> StackInfo:
     arch = global_info.arch
@@ -768,7 +769,7 @@ class Var:
     type: Type
     is_emitted: bool = False
     name: Optional[str] = None
-    debug_exprs: List["Expression"] = field(repr=False, default_factory=list)
+    debug_exprs: List[Expression] = field(repr=False, default_factory=list)
 
     def format(self, fmt: Formatter) -> str:
         # Assign names lazily, hopefully in approximate output source order.
@@ -785,7 +786,7 @@ class Expression(abc.ABC):
     type: Type
 
     @abc.abstractmethod
-    def dependencies(self) -> List["Expression"]:
+    def dependencies(self) -> List[Expression]:
         ...
 
     def use(self) -> None:
@@ -817,7 +818,7 @@ class Expression(abc.ABC):
 
 class Condition(Expression):
     @abc.abstractmethod
-    def negated(self) -> "Condition":
+    def negated(self) -> Condition:
         ...
 
 
@@ -846,7 +847,7 @@ class ErrorExpr(Condition):
     def dependencies(self) -> List[Expression]:
         return []
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Condition:
         return self
 
     def format(self, fmt: Formatter) -> str:
@@ -914,31 +915,31 @@ class BinaryOp(Condition):
     type: Type
 
     @staticmethod
-    def int(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def int(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_intish(left), op=op, right=as_intish(right), type=Type.intish()
         )
 
     @staticmethod
-    def int64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def int64(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_int64(left), op=op, right=as_int64(right), type=Type.int64()
         )
 
     @staticmethod
-    def intptr(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def intptr(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.intptr()
         )
 
     @staticmethod
-    def icmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def icmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_intptr(left), op=op, right=as_intptr(right), type=Type.bool()
         )
 
     @staticmethod
-    def scmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def scmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_sintish(left, silent=True),
             op=op,
@@ -947,7 +948,7 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def sintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def sintptr_cmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_type(left, Type.sintptr(), False),
             op=op,
@@ -956,13 +957,13 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def ucmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def ucmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_uintish(left), op=op, right=as_uintish(right), type=Type.bool()
         )
 
     @staticmethod
-    def uintptr_cmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def uintptr_cmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_type(left, Type.uintptr(), False),
             op=op,
@@ -971,7 +972,7 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def fcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def fcmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_f32(left),
             op=op,
@@ -980,7 +981,7 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def dcmp(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def dcmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_f64(left),
             op=op,
@@ -991,7 +992,7 @@ class BinaryOp(Condition):
     @staticmethod
     def sint(
         left: Expression, op: str, right: Expression, *, silent: bool = False
-    ) -> "BinaryOp":
+    ) -> BinaryOp:
         return BinaryOp(
             left=as_sintish(left, silent=silent),
             op=op,
@@ -1000,21 +1001,21 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def uint(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def uint(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_uintish(left), op=op, right=as_uintish(right), type=Type.u32()
         )
 
     @staticmethod
-    def s64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def s64(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(left=as_s64(left), op=op, right=as_s64(right), type=Type.s64())
 
     @staticmethod
-    def u64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def u64(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(left=as_u64(left), op=op, right=as_u64(right), type=Type.u64())
 
     @staticmethod
-    def f32(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def f32(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_f32(left),
             op=op,
@@ -1023,7 +1024,7 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
-    def f64(left: Expression, op: str, right: Expression) -> "BinaryOp":
+    def f64(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
             left=as_f64(left),
             op=op,
@@ -1037,7 +1038,7 @@ class BinaryOp(Condition):
     def is_floating(self) -> bool:
         return self.left.type.is_float() and self.right.type.is_float()
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Condition:
         if (
             self.op in ["&&", "||"]
             and isinstance(self.left, Condition)
@@ -1068,7 +1069,7 @@ class BinaryOp(Condition):
     def dependencies(self) -> List[Expression]:
         return [self.left, self.right]
 
-    def normalize_for_formatting(self) -> "BinaryOp":
+    def normalize_for_formatting(self) -> BinaryOp:
         right_expr = late_unwrap(self.right)
         if (
             not self.is_floating()
@@ -1161,7 +1162,7 @@ class UnaryOp(Condition):
         return [self.expr]
 
     @staticmethod
-    def sint(op: str, expr: Expression) -> "UnaryOp":
+    def sint(op: str, expr: Expression) -> UnaryOp:
         expr = as_sintish(expr, silent=True)
         return UnaryOp(
             op=op,
@@ -1169,7 +1170,7 @@ class UnaryOp(Condition):
             type=expr.type,
         )
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Condition:
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
             return self.expr
         return UnaryOp("!", self, type=Type.bool())
@@ -1191,7 +1192,7 @@ class ExprCondition(Condition):
     def dependencies(self) -> List[Expression]:
         return [self.expr]
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Condition:
         return ExprCondition(self.expr, self.type, not self.is_negated)
 
     def format(self, fmt: Formatter) -> str:
@@ -1201,15 +1202,15 @@ class ExprCondition(Condition):
 
 @dataclass(frozen=True, eq=False)
 class CommaConditionExpr(Condition):
-    statements: List["Statement"]
-    condition: "Condition"
+    statements: List[Statement]
+    condition: Condition
     type: Type = Type.bool()
 
     def dependencies(self) -> List[Expression]:
         assert False, "CommaConditionExpr should not be used within translate.py"
         return []
 
-    def negated(self) -> "Condition":
+    def negated(self) -> Condition:
         return CommaConditionExpr(self.statements, self.condition.negated())
 
     def format(self, fmt: Formatter) -> str:
@@ -1438,7 +1439,7 @@ class StructAccess(Expression):
     def dependencies(self) -> List[Expression]:
         return [self.struct_var]
 
-    def make_reference(self) -> Optional["StructAccess"]:
+    def make_reference(self) -> Optional[StructAccess]:
         field_path = self.late_field_path()
         if field_path and len(field_path) >= 2 and field_path[-1] == 0:
             return replace(self, field_path=field_path[:-1])
@@ -1867,7 +1868,7 @@ class NaivePhiExpr(Expression):
     type: Type
     sources: List[Reference]
     uses_dominator: bool
-    used_naive_phis: List["NaivePhiExpr"]  # reference to global shared list
+    used_naive_phis: List[NaivePhiExpr]  # reference to global shared list
     name: Optional[str] = None
     num_usages: int = 0
     replacement_expr: Optional[Expression] = None
@@ -1942,7 +1943,7 @@ class SwitchControl:
         return right_expr.value + int(cmp_exclusive) == jump_table_len
 
     @staticmethod
-    def irregular_from_expr(control_expr: Expression) -> "SwitchControl":
+    def irregular_from_expr(control_expr: Expression) -> SwitchControl:
         """
         Return a SwitchControl representing a "irregular" switch statement.
         The switch does not have a single jump table; instead it is a series of
@@ -1956,7 +1957,7 @@ class SwitchControl:
         )
 
     @staticmethod
-    def from_expr(expr: Expression) -> "SwitchControl":
+    def from_expr(expr: Expression) -> SwitchControl:
         """
         Try to convert `expr` into a SwitchControl from one of the following forms:
             - `*(&jump_table + (control_expr * 4))`

@@ -49,6 +49,7 @@
 #   OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 #   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
@@ -122,10 +123,10 @@ class CxxName:
     NUMBER_CHARS: ClassVar[Set[str]] = set("-0123456789")
 
     name: str
-    template_params: Optional[List["CxxType"]] = None
+    template_params: Optional[List[CxxType]] = None
 
     @staticmethod
-    def parse(src: TextIOBase) -> "CxxName":
+    def parse(src: TextIOBase) -> CxxName:
         # Numbers: either a template literal, or a length prefix
         number_str = ""
         while peek(src) in CxxName.NUMBER_CHARS:
@@ -269,13 +270,13 @@ class CxxTerm:
 
     # The following fields are only populated for the corresponding `kind`s
     array_dim: Optional[int] = None
-    function_params: Optional[List["CxxType"]] = None
-    function_return: Optional["CxxType"] = None
-    qualified_name: Optional[List["CxxName"]] = None
-    symbol_reference: Optional["CxxSymbol"] = None
+    function_params: Optional[List[CxxType]] = None
+    function_return: Optional[CxxType] = None
+    qualified_name: Optional[List[CxxName]] = None
+    symbol_reference: Optional[CxxSymbol] = None
 
     @staticmethod
-    def parse(src: TextIOBase) -> "CxxTerm":
+    def parse(src: TextIOBase) -> CxxTerm:
         if peek(src) in CxxName.NUMBER_CHARS:
             return CxxTerm(
                 kind=CxxTerm.Kind.QUALIFIED, qualified_name=[CxxName.parse(src)]
@@ -382,7 +383,7 @@ class CxxType:
     terms: List[CxxTerm] = field(default_factory=list)
 
     @staticmethod
-    def parse(src: TextIOBase) -> "CxxType":
+    def parse(src: TextIOBase) -> CxxType:
         terms = []
         while True:
             if peek(src) in (",", ">"):
@@ -407,7 +408,7 @@ class CxxSymbol:
     type: CxxType
 
     @staticmethod
-    def parse(src: TextIOBase) -> "CxxSymbol":
+    def parse(src: TextIOBase) -> CxxSymbol:
         # Find the `base_name`, which is the prefix of `src` which usually represents
         # original, unmangled name of the symbol. It's typically separated from the
         # type information by the rightmost "__", but there are many edge cases.
@@ -489,7 +490,7 @@ class CxxSymbol:
             class_name = None
 
         # Combine the `base_name` with the qualified class name to build a fully qualified symbol name.
-        qualified_name: List["CxxName"] = []
+        qualified_name: List[CxxName] = []
         if class_name is not None:
             assert len(class_name.terms) == 1
             assert class_name.terms[0].kind == CxxTerm.Kind.QUALIFIED

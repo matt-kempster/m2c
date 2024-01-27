@@ -1,3 +1,4 @@
+from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 import enum
@@ -58,7 +59,7 @@ class Target:
         return self.endian == Target.EndianEnum.BIG
 
     @staticmethod
-    def parse(name: str) -> "Target":
+    def parse(name: str) -> Target:
         """
         Parse an `arch-compiler-language` triple.
         If `-language` is missing, use the default for the compiler.
@@ -141,7 +142,7 @@ class Options:
     deterministic_vars: bool
     disable_gc: bool
 
-    def formatter(self) -> "Formatter":
+    def formatter(self) -> Formatter:
         return Formatter(
             self.coding_style,
             skip_casts=self.skip_casts,

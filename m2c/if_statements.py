@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import DefaultDict, Dict, List, Optional, Set, Tuple, Union
@@ -49,8 +50,8 @@ class Context:
 @dataclass
 class IfElseStatement:
     condition: Condition
-    if_body: "Body"
-    else_body: Optional["Body"] = None
+    if_body: Body
+    else_body: Optional[Body] = None
 
     def should_write(self) -> bool:
         return True
@@ -96,7 +97,7 @@ def comments_for_switch(index: int) -> List[str]:
 @dataclass
 class SwitchStatement:
     jump: SwitchControl
-    body: "Body"
+    body: Body
     # If there are multiple switch statements in a single function, each is given a
     # unique index starting at 1. This is used in comments to make control flow clear.
     index: int
@@ -178,7 +179,7 @@ class LabelStatement:
 
 @dataclass
 class DoWhileLoop:
-    body: "Body"
+    body: Body
     condition: Condition
 
     def should_write(self) -> bool:
@@ -212,7 +213,7 @@ class Body:
     print_node_comment: bool
     statements: List[Statement] = field(default_factory=list)
 
-    def extend(self, other: "Body") -> None:
+    def extend(self, other: Body) -> None:
         """Add the contents of `other` into ourselves"""
         self.print_node_comment |= other.print_node_comment
         self.statements.extend(other.statements)
@@ -312,7 +313,7 @@ class Body:
         )
 
 
-def rewrite_if_ands(condition: Condition, if_body: "Body") -> IfElseStatement:
+def rewrite_if_ands(condition: Condition, if_body: Body) -> IfElseStatement:
     """
     Iterate through the left-heavy `&&`-joined subconditions in `condition`, checking
     or CommaConditionExprs. When encountered, convert the original if statement into
@@ -556,10 +557,10 @@ class Bounds:
     def __post_init__(self) -> None:
         assert self.lower <= self.upper
 
-    def without(self, hole: int) -> "Bounds":
+    def without(self, hole: int) -> Bounds:
         return replace(self, holes=self.holes | {hole})
 
-    def at_most(self, val: int) -> "Bounds":
+    def at_most(self, val: int) -> Bounds:
         if self.lower <= val <= self.upper:
             return replace(self, upper=val)
         elif val > self.upper:
@@ -567,7 +568,7 @@ class Bounds:
         else:
             return Bounds.empty()
 
-    def at_least(self, val: int) -> "Bounds":
+    def at_least(self, val: int) -> Bounds:
         if self.lower <= val <= self.upper:
             return replace(self, lower=val)
         elif val < self.lower:
@@ -585,7 +586,7 @@ class Bounds:
         return values
 
     @staticmethod
-    def empty() -> "Bounds":
+    def empty() -> Bounds:
         return Bounds(lower=0, upper=0, holes={0})
 
 

@@ -1,4 +1,5 @@
 """Functions for evaluating assembly instructions and building Expression trees."""
+from __future__ import annotations
 from dataclasses import replace
 import struct
 from typing import (

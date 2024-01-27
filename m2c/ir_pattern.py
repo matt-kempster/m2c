@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -54,11 +55,11 @@ class IrPattern(abc.ABC):
     parts: ClassVar[List[str]]
     replacement: ClassVar[str]
 
-    def check(self, m: "IrMatch") -> bool:
+    def check(self, m: IrMatch) -> bool:
         """Override to perform additional checks before replacement."""
         return True
 
-    def compile(self, arch: ArchFlowGraph) -> "CompiledIrPattern":
+    def compile(self, arch: ArchFlowGraph) -> CompiledIrPattern:
         missing_meta = InstructionMeta.missing()
         regf = RegFormatter()
         replacement_instr = parse_instruction(

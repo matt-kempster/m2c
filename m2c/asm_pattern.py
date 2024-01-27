@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -62,7 +63,7 @@ class AsmMatch:
 
 class AsmPattern(abc.ABC):
     @abc.abstractmethod
-    def match(self, matcher: "AsmMatcher") -> Optional[Replacement]:
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         ...
 
 
@@ -73,10 +74,10 @@ class SimpleAsmPattern(AsmPattern):
         ...
 
     @abc.abstractmethod
-    def replace(self, m: "AsmMatch") -> Optional[Replacement]:
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
         ...
 
-    def match(self, matcher: "AsmMatcher") -> Optional[Replacement]:
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         m = matcher.try_match(self.pattern)
         if not m:
             return None

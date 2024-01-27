@@ -1,4 +1,5 @@
 """Functions and classes useful for parsing an arbitrary assembly instruction."""
+from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
 import string
@@ -15,7 +16,7 @@ class Register:
         name = self.register_name
         return bool(name) and name[0] == "f" and name != "fp"
 
-    def other_f64_reg(self) -> "Register":
+    def other_f64_reg(self) -> Register:
         assert (
             self.is_float()
         ), "tried to get complement reg of non-floating point register"
@@ -51,7 +52,7 @@ def asm_section_global_symbol(section_name: str, addend: int) -> AsmSectionGloba
 @dataclass(frozen=True)
 class Macro:
     macro_name: str
-    argument: "Argument"
+    argument: Argument
 
     def __str__(self) -> str:
         return f"%{self.macro_name}({self.argument})"
@@ -70,7 +71,7 @@ class AsmLiteral:
 
 @dataclass(frozen=True)
 class AsmAddressMode:
-    lhs: "Argument"
+    lhs: Argument
     rhs: Register
 
     def lhs_as_literal(self) -> int:
@@ -87,8 +88,8 @@ class AsmAddressMode:
 @dataclass(frozen=True)
 class BinOp:
     op: str
-    lhs: "Argument"
-    rhs: "Argument"
+    lhs: Argument
+    rhs: Argument
 
     def __str__(self) -> str:
         return f"{self.lhs} {self.op} {self.rhs}"
