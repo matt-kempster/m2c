@@ -158,7 +158,7 @@ class TypeData:
     sign: int = ANY_SIGN  # K_INT
     ptr_to: Optional[Type] = None  # K_PTR | K_ARRAY
     fn_sig: Optional[FunctionSignature] = None  # K_FN
-    array_dim: Optional[int] = None  # K_ARRAY
+    array_dim: Optional[int] = None  # K_PTR | K_ARRAY
     struct: Optional[StructDeclaration] = None  # K_STRUCT
     enum: Optional[Enum] = None  # K_INT
     new_field_within: Set[StructDeclaration] = field(default_factory=set)
@@ -260,8 +260,13 @@ class Type:
             if not x.fn_sig.unify(y.fn_sig, seen=seen):
                 return False
         if x.array_dim is not None and y.array_dim is not None:
-            if x.array_dim != y.array_dim:
-                return False
+            if kind == TypeData.K_ARRAY:
+                if x.array_dim != y.array_dim:
+                    return False
+            else:
+                assert kind == TypeData.K_PTR
+                if x.array_dim != y.array_dim:
+                    array_dim = 0
         if x.struct is not None and y.struct is not None:
             if not x.struct.unify(y.struct, seen=seen):
                 return False
@@ -364,7 +369,7 @@ class Type:
         if self.is_array():
             data = self.data()
             assert data.ptr_to is not None
-            return Type.ptr(data.ptr_to)
+            return Type.ptr(data.ptr_to, array_dim=data.array_dim)
         return Type.ptr(self)
 
     def decay(self) -> Type:
@@ -372,7 +377,7 @@ class Type:
         if self.is_array():
             data = self.data()
             assert data.ptr_to is not None
-            return Type.ptr(data.ptr_to)
+            return Type.ptr(data.ptr_to, array_dim=data.array_dim)
         return self
 
     def weaken_void_ptr(self) -> Type:
@@ -420,6 +425,10 @@ class Type:
 
     GetFieldResult = Tuple[Optional[AccessPath], "Type", int]
 
+    @staticmethod
+    def _no_matching_field() -> GetFieldResult:
+        return (None, Type.any(), 0)
+
     def get_field(
         self, offset: int, *, target_size: Optional[int], exact: bool = True
     ) -> GetFieldResult:
@@ -438,10 +447,8 @@ class Type:
         was *not* a field at the exact offset provided; the returned field is at
         `(offset - remaining_offset)`.
         """
-        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), 0)
-
         if offset < 0:
-            return NO_MATCHING_FIELD
+            return self._no_matching_field()
 
         if self.is_array():
             # Array types always have elements with known size
@@ -452,7 +459,7 @@ class Type:
 
             index, remaining_offset = divmod(offset, size)
             if data.array_dim is not None and index >= data.array_dim:
-                return NO_MATCHING_FIELD
+                return self._no_matching_field()
             assert index >= 0 and remaining_offset >= 0
 
             # Assume this is an array access at the computed `index`.
@@ -466,13 +473,13 @@ class Type:
                 # Success: prepend `index` and return
                 subpath.insert(0, index)
                 return subpath, subtype, sub_remaining_offset
-            return NO_MATCHING_FIELD
+            return self._no_matching_field()
 
         if self.is_struct():
             data = self.data()
             assert data.struct is not None
             if data.struct.size is not None and offset >= data.struct.size:
-                return NO_MATCHING_FIELD
+                return self._no_matching_field()
 
             # Get a list of fields which contain the byte at offset. There may be more
             # than one if the StructDeclaration is for a union.
@@ -483,7 +490,7 @@ class Type:
             # it's better for the caller to check for other fields (like in a union) than
             # to get a reference to a struct with bitfields.
             if not possible_fields and data.struct.has_bitfields:
-                return NO_MATCHING_FIELD
+                return self._no_matching_field()
 
             # One option is to return the whole struct itself. Do not do this if the struct
             # is marked as a stack struct, or if `target_size` is specified and does not match.
@@ -538,7 +545,7 @@ class Type:
             # The whole type itself is a match
             return [], self, offset
 
-        return NO_MATCHING_FIELD
+        return self._no_matching_field()
 
     def get_deref_field(
         self,
@@ -551,21 +558,37 @@ class Type:
         Similar to `.get_field()`, but treat self as a pointer and find the field in the
         pointer's target.  The return value has the same semantics as `.get_field()`.
 
-        If successful, the first item in the resulting `field_path` will be `0`.
-        This mirrors how `foo[0].bar` and `foo->bar` are equivalent in C.
+        If successful, the first item in the resulting `field_path` will be an integer,
+        usually `0`. This mirrors how `foo[0].bar` and `foo->bar` are equivalent in C.
         """
-        NO_MATCHING_FIELD: Type.GetFieldResult = (None, Type.any(), 0)
-
         target = self.get_pointer_target()
         if target is None:
-            return NO_MATCHING_FIELD
+            return self._no_matching_field()
 
-        # Assume the pointer is to a single object, and not an array.
+        size = target.get_size_bytes()
+        if size is not None and size != 0:
+            array_index = offset // size
+            offset %= size
+        else:
+            array_index = 0
+
+        # We don't usually trust pointers to point to arrays, because it often results
+        # in false positives. However, if the pointer is known to point to an array of
+        # fixed size, that's something we can believe in.
+        if array_index != 0:
+            known_array_size = self.data().array_dim
+            if (
+                known_array_size is None
+                or array_index < 0
+                or array_index >= known_array_size
+            ):
+                return self._no_matching_field()
+
         field_path, field_type, remaining_offset = target.get_field(
             offset, target_size=target_size, exact=exact
         )
         if field_path is not None:
-            field_path.insert(0, 0)
+            field_path.insert(0, array_index)
         return field_path, field_type, remaining_offset
 
     def get_initializer_fields(
@@ -839,8 +862,12 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INTPTR, sign=TypeData.SIGNED))
 
     @staticmethod
-    def ptr(type: Optional[Type] = None) -> Type:
-        return Type(TypeData(kind=TypeData.K_PTR, size_bits=32, ptr_to=type))
+    def ptr(type: Optional[Type] = None, *, array_dim: Optional[int] = None) -> Type:
+        return Type(
+            TypeData(
+                kind=TypeData.K_PTR, size_bits=32, array_dim=array_dim, ptr_to=type
+            )
+        )
 
     @staticmethod
     def function(fn_sig: Optional[FunctionSignature] = None) -> Type:
