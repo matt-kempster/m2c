@@ -1,3 +1,4 @@
+from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 class ElfSymbol:
     offset: int
     name: str
-    section: Optional["ElfSection"]
+    section: Optional[ElfSection]
 
 
 @dataclass(order=True)
@@ -37,7 +38,7 @@ class ElfFile:
     symbols: Dict[str, ElfSymbol] = field(default_factory=dict)
 
     @staticmethod
-    def parse(data: bytes) -> "ElfFile":
+    def parse(data: bytes) -> ElfFile:
         if not data:
             raise ValueError("Input data is empty")
         e_ident = data[:16]

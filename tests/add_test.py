@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import argparse
 import logging
 import os
@@ -57,7 +58,7 @@ class Compiler:
     name: str
     cc_command: List[str]
 
-    def with_cc_flags(self, flags: List[str]) -> "Compiler":
+    def with_cc_flags(self, flags: List[str]) -> Compiler:
         return replace(self, cc_command=self.cc_command + flags)
 
 
