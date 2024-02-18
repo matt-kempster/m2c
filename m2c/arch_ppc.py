@@ -1002,6 +1002,8 @@ class PpcArch(Arch):
                 maybe_dest_first = True
             else:
                 maybe_dest_first = False
+            if mnemonic.endswith("."):
+                outputs.extend(cr0_bits)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 error = ErrorExpr(f"unknown instruction: {instr_str}")
