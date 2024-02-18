@@ -571,6 +571,15 @@ class PpcArch(Arch):
                 and args[2].macro_name in ("sda2", "sda21")
             ):
                 return AsmInstruction("li", [args[0], args[2].argument])
+            if base_mnemonic in ("subi", "subis", "subic") and isinstance(
+                args[2], AsmLiteral
+            ):
+                mn = "add" + base_mnemonic[3:]
+                negated = AsmLiteral(-args[2].value)
+                return cls.normalize_instruction(make_dotted(mn, args[:2] + [negated]))
+            if base_mnemonic in ("sub", "subo", "subc", "subco"):
+                mn = "subf" + base_mnemonic[3:]
+                return make_dotted(mn, [args[0], args[2], args[1]])
             if base_mnemonic == "rotlwi":
                 return make_dotted("rlwinm", args[:2] + [args[2], lit(0), lit(31)])
             if base_mnemonic == "rotrwi":
