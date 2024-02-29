@@ -796,6 +796,7 @@ class NaturalLoop:
 def build_graph_from_block(
     block: Block,
     blocks: List[Block],
+    parent_blocks: List[Block],
     nodes: List[Node],
     asm_data: AsmData,
     arch: ArchFlowGraph,
@@ -830,7 +831,7 @@ def build_graph_from_block(
         # Recursively analyze.
         next_block = blocks[block.index + 1]
         new_node.successor = build_graph_from_block(
-            next_block, blocks, nodes, asm_data, arch
+            next_block, blocks, parent_blocks + [block], nodes, asm_data, arch
         )
     elif len(jumps) == 1:
         # There is a jump. This is either:
@@ -849,29 +850,39 @@ def build_graph_from_block(
             new_node = SwitchNode(block, False, [])
             nodes.append(new_node)
 
-            jtbl_names = []
-            for ins in block.instructions:
-                for arg in ins.args:
-                    if isinstance(arg, AsmAddressMode):
-                        arg = arg.lhs
-                    if (
-                        isinstance(arg, Macro)
-                        and arg.macro_name in ("lo", "l")
-                        and isinstance(arg.argument, AsmGlobalSymbol)
-                        and any(
-                            arg.argument.symbol_name.startswith(prefix)
-                            for prefix in ("jtbl", "jpt_", "lbl_")
-                        )
-                    ):
-                        jtbl_names.append(arg.argument.symbol_name)
-            if len(jtbl_names) != 1:
+            jtbl_names = set()
+            for jtbl_block in [block] + parent_blocks[::-1]:
+                for ins in jtbl_block.instructions:
+                    for arg in ins.args:
+                        if isinstance(arg, AsmAddressMode):
+                            arg = arg.lhs
+                        if (
+                            isinstance(arg, Macro)
+                            and arg.macro_name in ("lo", "l")
+                            and isinstance(arg.argument, AsmGlobalSymbol)
+                            and any(
+                                arg.argument.symbol_name.startswith(prefix)
+                                for prefix in ("jtbl", "jpt_", "lbl_")
+                            )
+                        ):
+                            jtbl_names.add(arg.argument.symbol_name)
+                if jtbl_names:
+                    break
+            if len(jtbl_names) > 1:
                 raise DecompFailure(
                     f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
-                    "There must be a read of a variable in the same block as\n"
-                    'the instruction, which has a name starting with "jtbl"/"jpt_"/"lbl_".'
+                    f"Found multiple candidates: {', '.join(sorted(jtbl_names))}\n"
+                    "You can help m2c's analysis by putting a copy of the jump table\n"
+                    "setup instructions within the same block as the jump instruction."
+                )
+            if not jtbl_names:
+                raise DecompFailure(
+                    f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
+                    "There must be a read of a variable before the instruction\n"
+                    'which has a name starting with with "jtbl"/"jpt_"/"lbl_".'
                 )
 
-            jtbl_name = jtbl_names[0]
+            jtbl_name = list(jtbl_names)[0]
             if jtbl_name not in asm_data.values:
                 raise DecompFailure(
                     f"Found {jump.mnemonic} instruction {jump.meta.loc_str()}, but the "
@@ -892,7 +903,7 @@ def build_graph_from_block(
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
                 case_node = build_graph_from_block(
-                    case_block, blocks, nodes, asm_data, arch
+                    case_block, blocks, parent_blocks + [block], nodes, asm_data, arch
                 )
                 new_node.cases.append(case_node)
             return new_node
@@ -913,7 +924,7 @@ def build_graph_from_block(
             nodes.append(new_node)
             # Recursively analyze.
             new_node.successor = build_graph_from_block(
-                branch_block, blocks, nodes, asm_data, arch
+                branch_block, blocks, parent_blocks + [block], nodes, asm_data, arch
             )
         else:
             # A conditional branch means the fallthrough block is the next
@@ -923,10 +934,10 @@ def build_graph_from_block(
             # Recursively analyze this too.
             next_block = blocks[block.index + 1]
             new_node.conditional_edge = build_graph_from_block(
-                branch_block, blocks, nodes, asm_data, arch
+                branch_block, blocks, parent_blocks + [block], nodes, asm_data, arch
             )
             new_node.fallthrough_edge = build_graph_from_block(
-                next_block, blocks, nodes, asm_data, arch
+                next_block, blocks, parent_blocks + [block], nodes, asm_data, arch
             )
     return new_node
 
@@ -974,7 +985,7 @@ def build_nodes(
 
     # Traverse through the block tree.
     entry_block = blocks[0]
-    build_graph_from_block(entry_block, blocks, graph, asm_data, arch)
+    build_graph_from_block(entry_block, blocks, [], graph, asm_data, arch)
 
     # Give the TerminalNode a new index so that it sorts to the end of the list
     assert [n for n in graph if isinstance(n, TerminalNode)] == [terminal_node]
