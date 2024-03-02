@@ -7,6 +7,7 @@ li      $t4,2
 mult    $a2,$a2,$t4
 mtlo    $a3
 madd    $a2,$t4
+msub    $a3,$t4
 jal     foo
  mflo    $a3
 lq      $ra,32($sp)
