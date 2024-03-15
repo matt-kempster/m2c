@@ -362,6 +362,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             return var_value
         return int(w, 0)
 
+    def emit_word(w: str) -> None:
+        if not w or w[0].isdigit() or w[0] == "-" or w in defines:
+            ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
+            asm_file.new_data_bytes(struct.pack(">I", ival))
+        else:
+            asm_file.new_data_sym(w)
+
     for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
@@ -499,11 +506,12 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
-                            if not w or w[0].isdigit() or w[0] == "-" or w in defines:
-                                ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
-                                asm_file.new_data_bytes(struct.pack(">I", ival))
-                            else:
-                                asm_file.new_data_sym(w)
+                            emit_word(w)
+                    elif directive == ".rel":
+                        # .rel is a common dtk disassembler macro used with jump tables.
+                        # ".rel name, label" expands to ".4byte name + (label - name)"
+                        assert len(args) == 2
+                        emit_word(args[1])
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
                             ival = try_parse(lambda: parse_int(w)) & 0xFFFF
