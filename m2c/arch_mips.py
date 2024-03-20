@@ -159,6 +159,7 @@ LENGTH_THREE: Set[str] = {
     "divu",
     "ddiv",
     "ddivu",
+    "paddub",
 }
 
 
@@ -881,6 +882,8 @@ class MipsArch(Arch):
                 return AsmInstruction("not", [args[0], args[1]])
             if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
                 return AsmInstruction("move", args[:2])
+            if instr.mnemonic == "paddub" and args[2] == AsmLiteral(0):
+                return AsmInstruction("move", args[:2])
             if (
                 instr.mnemonic == "ori"
                 and args[1] == Register("zero")
@@ -1494,6 +1497,7 @@ class MipsArch(Arch):
         "addiu": lambda a: handle_addi(a),
         "add": lambda a: handle_add(a),
         "addu": lambda a: handle_add(a),
+        "paddub": lambda a: handle_add(a),
         "sub": lambda a: (
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
