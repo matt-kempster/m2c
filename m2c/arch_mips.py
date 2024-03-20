@@ -951,6 +951,7 @@ class MipsArch(Arch):
             "h": 2,
             "w": 4,
             "d": 8,
+            "q": 16,
         }
         size = memory_sizes.get(mnemonic[1:2])
 
@@ -960,6 +961,8 @@ class MipsArch(Arch):
                 loc = StackLocation.from_offset(arg.lhs)
                 if loc is None:
                     return []
+                elif size == 16:
+                    return [loc, replace(loc, offset=loc.offset + 8)]
                 elif size == 8:
                     return [loc, replace(loc, offset=loc.offset + 4)]
                 else:
