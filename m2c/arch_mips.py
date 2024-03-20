@@ -1312,6 +1312,7 @@ class MipsArch(Arch):
         "sh": lambda a: make_store(a, type=Type.int_of_size(16)),
         "sw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
         "sd": lambda a: make_store(a, type=Type.reg64(likely_float=False)),
+        "sq": lambda a: make_store(a, type=Type.reg128(likely_float=False)),
         # Unaligned stores
         "swl": lambda a: handle_swl(a),
         "swr": lambda a: handle_swr(a),
@@ -1648,6 +1649,7 @@ class MipsArch(Arch):
         "lhu": lambda a: handle_load(a, type=Type.u16()),
         "lw": lambda a: handle_lw(a),
         "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
+        "lq": lambda a: handle_load(a, type=Type.reg128(likely_float=False)),
         "lwu": lambda a: handle_load(a, type=Type.u32()),
         "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
         "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),

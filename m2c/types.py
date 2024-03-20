@@ -928,6 +928,14 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=64))
 
     @staticmethod
+    def s128() -> Type:
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=128, sign=TypeData.SIGNED))
+
+    @staticmethod
+    def u128() -> Type:
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=128, sign=TypeData.UNSIGNED))
+
+    @staticmethod
     def int_of_size(size_bits: int) -> Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits))
 
@@ -941,6 +949,12 @@ class Type:
         kind = TypeData.K_FLOAT | TypeData.K_INT
         likely = TypeData.K_FLOAT if likely_float else TypeData.K_INT
         return Type(TypeData(kind=kind, likely_kind=likely, size_bits=64))
+
+    @staticmethod
+    def reg128(*, likely_float: bool) -> Type:
+        kind = TypeData.K_FLOAT | TypeData.K_INT
+        likely = TypeData.K_FLOAT if likely_float else TypeData.K_INT
+        return Type(TypeData(kind=kind, likely_kind=likely, size_bits=128))
 
     @staticmethod
     def bool() -> Type:
