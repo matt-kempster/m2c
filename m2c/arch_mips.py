@@ -882,7 +882,7 @@ class MipsArch(Arch):
                 return AsmInstruction("not", [args[0], args[1]])
             if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
                 return AsmInstruction("move", args[:2])
-            if instr.mnemonic == "paddub" and args[2] == AsmLiteral(0):
+            if instr.mnemonic == "paddub" and args[2] == Register("zero"):
                 return AsmInstruction("move", args[:2])
             if (
                 instr.mnemonic == "ori"
