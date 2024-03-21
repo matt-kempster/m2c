@@ -933,7 +933,9 @@ class Type:
 
     @staticmethod
     def u128() -> Type:
-        return Type(TypeData(kind=TypeData.K_INT, size_bits=128, sign=TypeData.UNSIGNED))
+        return Type(
+            TypeData(kind=TypeData.K_INT, size_bits=128, sign=TypeData.UNSIGNED)
+        )
 
     @staticmethod
     def int_of_size(size_bits: int) -> Type:
