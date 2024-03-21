@@ -159,7 +159,6 @@ LENGTH_THREE: Set[str] = {
     "divu",
     "ddiv",
     "ddivu",
-    "paddub",
 }
 
 
@@ -1315,7 +1314,7 @@ class MipsArch(Arch):
         "sh": lambda a: make_store(a, type=Type.int_of_size(16)),
         "sw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
         "sd": lambda a: make_store(a, type=Type.reg64(likely_float=False)),
-        "sq": lambda a: make_store(a, type=Type.reg128(likely_float=False)),
+        "sq": lambda a: make_store(a, type=Type.reg128()),
         # Unaligned stores
         "swl": lambda a: handle_swl(a),
         "swr": lambda a: handle_swr(a),
@@ -1501,7 +1500,6 @@ class MipsArch(Arch):
         "addiu": lambda a: handle_addi(a),
         "add": lambda a: handle_add(a),
         "addu": lambda a: handle_add(a),
-        "paddub": lambda a: handle_add(a),
         "sub": lambda a: (
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
@@ -1652,7 +1650,7 @@ class MipsArch(Arch):
         "lhu": lambda a: handle_load(a, type=Type.u16()),
         "lw": lambda a: handle_lw(a),
         "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
-        "lq": lambda a: handle_load(a, type=Type.reg128(likely_float=False)),
+        "lq": lambda a: handle_load(a, type=Type.reg128()),
         "lwu": lambda a: handle_load(a, type=Type.u32()),
         "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
         "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
