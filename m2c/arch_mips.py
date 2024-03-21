@@ -1652,16 +1652,17 @@ class MipsArch(Arch):
         "lwr": lambda a: handle_lwr(a),
     }
 
-    default_function_abi_candidate_slots = [
-        AbiArgSlot(0, Register("f12"), Type.floatish()),
-        AbiArgSlot(4, Register("f13"), Type.floatish()),
-        AbiArgSlot(4, Register("f14"), Type.floatish()),
-        AbiArgSlot(12, Register("f15"), Type.floatish()),
-        AbiArgSlot(0, Register("a0"), Type.intptr()),
-        AbiArgSlot(4, Register("a1"), Type.any_reg()),
-        AbiArgSlot(8, Register("a2"), Type.any_reg()),
-        AbiArgSlot(12, Register("a3"), Type.any_reg()),
-    ]
+    def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
+        return [
+            AbiArgSlot(0, Register("f12"), Type.floatish()),
+            AbiArgSlot(4, Register("f13"), Type.floatish()),
+            AbiArgSlot(4, Register("f14"), Type.floatish()),
+            AbiArgSlot(12, Register("f15"), Type.floatish()),
+            AbiArgSlot(0, Register("a0"), Type.intptr()),
+            AbiArgSlot(4, Register("a1"), Type.any_reg()),
+            AbiArgSlot(8, Register("a2"), Type.any_reg()),
+            AbiArgSlot(12, Register("a3"), Type.any_reg()),
+        ]
 
     def function_abi(
         self,
@@ -1755,17 +1756,7 @@ class MipsArch(Arch):
                     )
 
         else:
-            candidate_slots = self.default_function_abi_candidate_slots
-            # candidate_slots = [
-            #     AbiArgSlot(0, Register("f12"), Type.floatish()),
-            #     AbiArgSlot(4, Register("f13"), Type.floatish()),
-            #     AbiArgSlot(4, Register("f14"), Type.floatish()),
-            #     AbiArgSlot(12, Register("f15"), Type.floatish()),
-            #     AbiArgSlot(0, Register("a0"), Type.intptr()),
-            #     AbiArgSlot(4, Register("a1"), Type.any_reg()),
-            #     AbiArgSlot(8, Register("a2"), Type.any_reg()),
-            #     AbiArgSlot(12, Register("a3"), Type.any_reg()),
-            # ]
+            candidate_slots = self.default_function_abi_candidate_slots()
 
         valid_extra_regs: Set[Register] = {
             slot.reg for slot in known_slots if slot.reg is not None
@@ -2023,21 +2014,22 @@ class MipseeArch(MipsArch):
 
     aliased_regs = {**o32abi_float_regs, **aliased_gp_regs, **numeric_regs}
 
-    default_function_abi_candidate_slots = [
-        AbiArgSlot(0, Register("f12"), Type.floatish()),
-        AbiArgSlot(4, Register("f13"), Type.floatish()),
-        AbiArgSlot(8, Register("f14"), Type.floatish()),
-        AbiArgSlot(12, Register("f15"), Type.floatish()),
-        AbiArgSlot(16, Register("f16"), Type.floatish()),
-        AbiArgSlot(20, Register("f17"), Type.floatish()),
-        AbiArgSlot(24, Register("f18"), Type.floatish()),
-        AbiArgSlot(28, Register("f19"), Type.floatish()),
-        AbiArgSlot(0, Register("a0"), Type.intptr()),
-        AbiArgSlot(4, Register("a1"), Type.any_reg()),
-        AbiArgSlot(8, Register("a2"), Type.any_reg()),
-        AbiArgSlot(12, Register("a3"), Type.any_reg()),
-        AbiArgSlot(16, Register("a4"), Type.any_reg()),
-        AbiArgSlot(20, Register("a5"), Type.any_reg()),
-        AbiArgSlot(24, Register("a6"), Type.any_reg()),
-        AbiArgSlot(28, Register("a7"), Type.any_reg()),
-    ]
+    def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
+        return [
+            AbiArgSlot(0, Register("f12"), Type.floatish()),
+            AbiArgSlot(4, Register("f13"), Type.floatish()),
+            AbiArgSlot(8, Register("f14"), Type.floatish()),
+            AbiArgSlot(12, Register("f15"), Type.floatish()),
+            AbiArgSlot(16, Register("f16"), Type.floatish()),
+            AbiArgSlot(20, Register("f17"), Type.floatish()),
+            AbiArgSlot(24, Register("f18"), Type.floatish()),
+            AbiArgSlot(28, Register("f19"), Type.floatish()),
+            AbiArgSlot(0, Register("a0"), Type.intptr()),
+            AbiArgSlot(4, Register("a1"), Type.any_reg()),
+            AbiArgSlot(8, Register("a2"), Type.any_reg()),
+            AbiArgSlot(12, Register("a3"), Type.any_reg()),
+            AbiArgSlot(16, Register("a4"), Type.any_reg()),
+            AbiArgSlot(20, Register("a5"), Type.any_reg()),
+            AbiArgSlot(24, Register("a6"), Type.any_reg()),
+            AbiArgSlot(28, Register("a7"), Type.any_reg()),
+        ]
