@@ -961,7 +961,12 @@ class MipsArch(Arch):
                 if loc is None:
                     return []
                 elif size == 16:
-                    return [loc, replace(loc, offset=loc.offset + 4), replace(loc, offset=loc.offset + 8), replace(loc, offset=loc.offset + 12)] 
+                    return [
+                        loc,
+                        replace(loc, offset=loc.offset + 4),
+                        replace(loc, offset=loc.offset + 8),
+                        replace(loc, offset=loc.offset + 12),
+                    ]
                 elif size == 8:
                     return [loc, replace(loc, offset=loc.offset + 4)]
                 else:
