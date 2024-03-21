@@ -853,42 +853,7 @@ class MipsArch(Arch):
         "fs5f": Register("f31"),
     }
 
-    numeric_regs = {
-        "0": Register("zero"),
-        "1": Register("at"),
-        "2": Register("v0"),
-        "3": Register("v1"),
-        "4": Register("a0"),
-        "5": Register("a1"),
-        "6": Register("a2"),
-        "7": Register("a3"),
-        "8": Register("t0"),
-        "9": Register("t1"),
-        "10": Register("t2"),
-        "11": Register("t3"),
-        "12": Register("t4"),
-        "13": Register("t5"),
-        "14": Register("t6"),
-        "15": Register("t7"),
-        "16": Register("s0"),
-        "17": Register("s1"),
-        "18": Register("s2"),
-        "19": Register("s3"),
-        "20": Register("s4"),
-        "21": Register("s5"),
-        "22": Register("s6"),
-        "23": Register("s7"),
-        "24": Register("t8"),
-        "25": Register("t9"),
-        "26": Register("k0"),
-        "27": Register("k1"),
-        "28": Register("gp"),
-        "29": Register("sp"),
-        "30": Register("fp"),
-        "31": Register("ra"),
-    }
-
-    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs, **numeric_regs}
+    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs}
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:
@@ -1791,6 +1756,16 @@ class MipsArch(Arch):
 
         else:
             candidate_slots = self.default_function_abi_candidate_slots
+            # candidate_slots = [
+            #     AbiArgSlot(0, Register("f12"), Type.floatish()),
+            #     AbiArgSlot(4, Register("f13"), Type.floatish()),
+            #     AbiArgSlot(4, Register("f14"), Type.floatish()),
+            #     AbiArgSlot(12, Register("f15"), Type.floatish()),
+            #     AbiArgSlot(0, Register("a0"), Type.intptr()),
+            #     AbiArgSlot(4, Register("a1"), Type.any_reg()),
+            #     AbiArgSlot(8, Register("a2"), Type.any_reg()),
+            #     AbiArgSlot(12, Register("a3"), Type.any_reg()),
+            # ]
 
         valid_extra_regs: Set[Register] = {
             slot.reg for slot in known_slots if slot.reg is not None
