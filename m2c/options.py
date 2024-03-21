@@ -35,6 +35,7 @@ class CodingStyle:
 class Target:
     class ArchEnum(ChoicesEnum):
         MIPS = "mips"
+        MIPSEE = "mipsee"
         PPC = "ppc"
 
     class EndianEnum(ChoicesEnum):

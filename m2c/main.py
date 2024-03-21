@@ -21,7 +21,7 @@ from .translate import (
     narrow_func_call_outputs,
 )
 from .types import TypePool
-from .arch_mips import MipsArch
+from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
 
@@ -67,6 +67,8 @@ def run(options: Options) -> int:
     arch: Arch
     if options.target.arch == Target.ArchEnum.MIPS:
         arch = MipsArch()
+    elif options.target.arch == Target.ArchEnum.MIPSEE:
+        arch = MipseeArch()
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     else:

@@ -39,8 +39,7 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
-    def simplify_ir(self, flow_graph: FlowGraph) -> None:
-        ...
+    def simplify_ir(self, flow_graph: FlowGraph) -> None: ...
 
 
 class Reference(abc.ABC):
@@ -402,7 +401,7 @@ def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Funct
 def build_blocks(
     function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
 ) -> List[Block]:
-    if arch.arch == Target.ArchEnum.MIPS:
+    if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.MIPSEE):
         verify_no_trailing_delay_slot(function)
         function = minimize_labels(function, asm_data)
         function = normalize_gcc_likely_branches(function, arch)
@@ -584,7 +583,7 @@ def build_blocks(
             block_builder.new_block()
 
     for item in body_iter:
-        if arch.arch == Target.ArchEnum.MIPS:
+        if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.MIPSEE):
             process_mips(item)
         else:
             process_no_delay_slots(item)
@@ -651,8 +650,7 @@ class BaseNode(_BaseNode, abc.ABC):
         return str(self.block.index)
 
     @abc.abstractmethod
-    def children(self) -> List[Node]:
-        ...
+    def children(self) -> List[Node]: ...
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name()}>"

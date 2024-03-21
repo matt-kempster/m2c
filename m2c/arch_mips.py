@@ -853,7 +853,42 @@ class MipsArch(Arch):
         "fs5f": Register("f31"),
     }
 
-    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs}
+    numeric_regs = {
+        "0": Register("zero"),
+        "1": Register("at"),
+        "2": Register("v0"),
+        "3": Register("v1"),
+        "4": Register("a0"),
+        "5": Register("a1"),
+        "6": Register("a2"),
+        "7": Register("a3"),
+        "8": Register("t0"),
+        "9": Register("t1"),
+        "10": Register("t2"),
+        "11": Register("t3"),
+        "12": Register("t4"),
+        "13": Register("t5"),
+        "14": Register("t6"),
+        "15": Register("t7"),
+        "16": Register("s0"),
+        "17": Register("s1"),
+        "18": Register("s2"),
+        "19": Register("s3"),
+        "20": Register("s4"),
+        "21": Register("s5"),
+        "22": Register("s6"),
+        "23": Register("s7"),
+        "24": Register("t8"),
+        "25": Register("t9"),
+        "26": Register("k0"),
+        "27": Register("k1"),
+        "28": Register("gp"),
+        "29": Register("sp"),
+        "30": Register("fp"),
+        "31": Register("ra"),
+    }
+
+    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs, **numeric_regs}
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:
@@ -1652,8 +1687,19 @@ class MipsArch(Arch):
         "lwr": lambda a: handle_lwr(a),
     }
 
-    @staticmethod
+    default_function_abi_candidate_slots = [
+        AbiArgSlot(0, Register("f12"), Type.floatish()),
+        AbiArgSlot(4, Register("f13"), Type.floatish()),
+        AbiArgSlot(4, Register("f14"), Type.floatish()),
+        AbiArgSlot(12, Register("f15"), Type.floatish()),
+        AbiArgSlot(0, Register("a0"), Type.intptr()),
+        AbiArgSlot(4, Register("a1"), Type.any_reg()),
+        AbiArgSlot(8, Register("a2"), Type.any_reg()),
+        AbiArgSlot(12, Register("a3"), Type.any_reg()),
+    ]
+
     def function_abi(
+        self,
         fn_sig: FunctionSignature,
         likely_regs: Dict[Register, bool],
         *,
@@ -1744,16 +1790,7 @@ class MipsArch(Arch):
                     )
 
         else:
-            candidate_slots = [
-                AbiArgSlot(0, Register("f12"), Type.floatish()),
-                AbiArgSlot(4, Register("f13"), Type.floatish()),
-                AbiArgSlot(4, Register("f14"), Type.floatish()),
-                AbiArgSlot(12, Register("f15"), Type.floatish()),
-                AbiArgSlot(0, Register("a0"), Type.intptr()),
-                AbiArgSlot(4, Register("a1"), Type.any_reg()),
-                AbiArgSlot(8, Register("a2"), Type.any_reg()),
-                AbiArgSlot(12, Register("a3"), Type.any_reg()),
-            ]
+            candidate_slots = self.default_function_abi_candidate_slots
 
         valid_extra_regs: Set[Register] = {
             slot.reg for slot in known_slots if slot.reg is not None
@@ -1836,3 +1873,196 @@ class MipsArch(Arch):
             ),
             Register("f1"): SecondF64Half(),
         }
+
+
+class MipseeArch(MipsArch):
+    arch = Target.ArchEnum.MIPSEE
+
+    stack_pointer_reg = Register("sp")
+
+    argument_regs = [
+        Register(r)
+        for r in [
+            "a0",
+            "a1",
+            "a2",
+            "a3",
+            "a4",
+            "a5",
+            "a6",
+            "a7",
+            "f12",
+            "f13",
+            "f14",
+            "f15",
+            "f16",
+            "f17",
+            "f18",
+            "f19",
+        ]
+    ]
+    simple_temp_regs = [
+        Register(r)
+        for r in [
+            "v0",
+            "v1",
+            "t4",
+            "t5",
+            "t6",
+            "t7",
+            "t8",
+            "t9",
+            "f0",
+            "f1",
+            "f2",
+            "f3",
+            "f4",
+            "f5",
+            "f6",
+            "f7",
+            "f8",
+            "f9",
+            "f10",
+            "f11",
+            "f21",
+            "f23",
+            "f25",
+            "f27",
+            "f29",
+            "f31",
+        ]
+    ]
+    temp_regs = (
+        argument_regs
+        + simple_temp_regs
+        + [
+            Register(r)
+            for r in [
+                "at",
+                "hi",
+                "lo",
+                "condition_bit",
+            ]
+        ]
+    )
+    saved_regs = [
+        Register(r)
+        for r in [
+            "s0",
+            "s1",
+            "s2",
+            "s3",
+            "s4",
+            "s5",
+            "s6",
+            "s7",
+            "f20",
+            "f22",
+            "f24",
+            "f26",
+            "f28",
+            "f30",
+            "ra",
+            "31",
+            "fp",
+            "gp",
+        ]
+    ]
+
+    all_regs = saved_regs + temp_regs + [stack_pointer_reg, Register("zero")]
+
+    aliased_gp_regs = {
+        "s8": Register("fp"),
+        "r0": Register("zero"),
+    }
+
+    o32abi_float_regs = {
+        "fv0": Register("f0"),
+        "ft14": Register("f1"),
+        "fv1": Register("f2"),
+        "ft15": Register("f3"),
+        "ft0": Register("f4"),
+        "ft1": Register("f5"),
+        "ft2": Register("f6"),
+        "ft3": Register("f7"),
+        "ft4": Register("f8"),
+        "ft5": Register("f9"),
+        "ft6": Register("f10"),
+        "ft7": Register("f11"),
+        "fa0": Register("f12"),
+        "fa1": Register("f13"),
+        "fa2": Register("f14"),
+        "fa3": Register("f15"),
+        "fa4": Register("f16"),
+        "fa5": Register("f17"),
+        "fa6": Register("f18"),
+        "fa7": Register("f19"),
+        "fs0": Register("f20"),
+        "ft8": Register("f21"),
+        "fs1": Register("f22"),
+        "ft9": Register("f23"),
+        "fs2": Register("f24"),
+        "ft10": Register("f25"),
+        "fs3": Register("f26"),
+        "ft11": Register("f27"),
+        "fs4": Register("f28"),
+        "ft12": Register("f29"),
+        "fs5": Register("f30"),
+        "ft13": Register("f31"),
+    }
+
+    numeric_regs = {
+        "0": Register("zero"),
+        "1": Register("at"),
+        "2": Register("v0"),
+        "3": Register("v1"),
+        "4": Register("a0"),
+        "5": Register("a1"),
+        "6": Register("a2"),
+        "7": Register("a3"),
+        "8": Register("a4"),
+        "9": Register("a5"),
+        "10": Register("a6"),
+        "11": Register("a7"),
+        "12": Register("t4"),
+        "13": Register("t5"),
+        "14": Register("t6"),
+        "15": Register("t7"),
+        "16": Register("s0"),
+        "17": Register("s1"),
+        "18": Register("s2"),
+        "19": Register("s3"),
+        "20": Register("s4"),
+        "21": Register("s5"),
+        "22": Register("s6"),
+        "23": Register("s7"),
+        "24": Register("t8"),
+        "25": Register("t9"),
+        "26": Register("k0"),
+        "27": Register("k1"),
+        "28": Register("gp"),
+        "29": Register("sp"),
+        "30": Register("fp"),
+        "31": Register("ra"),
+    }
+
+    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs, **numeric_regs}
+
+    default_function_abi_candidate_slots = [
+        AbiArgSlot(0, Register("f12"), Type.floatish()),
+        AbiArgSlot(4, Register("f13"), Type.floatish()),
+        AbiArgSlot(8, Register("f14"), Type.floatish()),
+        AbiArgSlot(12, Register("f15"), Type.floatish()),
+        AbiArgSlot(16, Register("f16"), Type.floatish()),
+        AbiArgSlot(20, Register("f17"), Type.floatish()),
+        AbiArgSlot(24, Register("f18"), Type.floatish()),
+        AbiArgSlot(28, Register("f19"), Type.floatish()),
+        AbiArgSlot(0, Register("a0"), Type.intptr()),
+        AbiArgSlot(4, Register("a1"), Type.any_reg()),
+        AbiArgSlot(8, Register("a2"), Type.any_reg()),
+        AbiArgSlot(12, Register("a3"), Type.any_reg()),
+        AbiArgSlot(16, Register("a4"), Type.any_reg()),
+        AbiArgSlot(20, Register("a5"), Type.any_reg()),
+        AbiArgSlot(24, Register("a6"), Type.any_reg()),
+        AbiArgSlot(28, Register("a7"), Type.any_reg()),
+    ]
