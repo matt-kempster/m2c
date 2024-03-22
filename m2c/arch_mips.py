@@ -881,6 +881,8 @@ class MipsArch(Arch):
                 return AsmInstruction("not", [args[0], args[1]])
             if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
                 return AsmInstruction("move", args[:2])
+            if instr.mnemonic == "paddub" and args[2] == Register("zero"):
+                return AsmInstruction("move", args[:2])
             if (
                 instr.mnemonic == "ori"
                 and args[1] == Register("zero")
@@ -948,6 +950,7 @@ class MipsArch(Arch):
             "h": 2,
             "w": 4,
             "d": 8,
+            "q": 16,
         }
         size = memory_sizes.get(mnemonic[1:2])
 
@@ -957,6 +960,13 @@ class MipsArch(Arch):
                 loc = StackLocation.from_offset(arg.lhs)
                 if loc is None:
                     return []
+                elif size == 16:
+                    return [
+                        loc,
+                        replace(loc, offset=loc.offset + 4),
+                        replace(loc, offset=loc.offset + 8),
+                        replace(loc, offset=loc.offset + 12),
+                    ]
                 elif size == 8:
                     return [loc, replace(loc, offset=loc.offset + 4)]
                 else:
@@ -1309,6 +1319,7 @@ class MipsArch(Arch):
         "sh": lambda a: make_store(a, type=Type.int_of_size(16)),
         "sw": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
         "sd": lambda a: make_store(a, type=Type.reg64(likely_float=False)),
+        "sq": lambda a: make_store(a, type=Type.reg128()),
         # Unaligned stores
         "swl": lambda a: handle_swl(a),
         "swr": lambda a: handle_swr(a),
@@ -1644,6 +1655,7 @@ class MipsArch(Arch):
         "lhu": lambda a: handle_load(a, type=Type.u16()),
         "lw": lambda a: handle_lw(a),
         "ld": lambda a: handle_load(a, type=Type.reg64(likely_float=False)),
+        "lq": lambda a: handle_load(a, type=Type.reg128()),
         "lwu": lambda a: handle_load(a, type=Type.u32()),
         "lwc1": lambda a: handle_load(a, type=Type.reg32(likely_float=True)),
         "ldc1": lambda a: handle_load(a, type=Type.reg64(likely_float=True)),
