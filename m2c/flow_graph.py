@@ -401,7 +401,7 @@ def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Funct
 def build_blocks(
     function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
 ) -> List[Block]:
-    if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.MIPSEE):
+    if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
         function = minimize_labels(function, asm_data)
         function = normalize_gcc_likely_branches(function, arch)
@@ -583,7 +583,7 @@ def build_blocks(
             block_builder.new_block()
 
     for item in body_iter:
-        if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.MIPSEE):
+        if arch.arch == Target.ArchEnum.MIPS:
             process_mips(item)
         else:
             process_no_delay_slots(item)

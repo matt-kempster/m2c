@@ -1854,7 +1854,7 @@ class MipsArch(Arch):
 
 
 class MipseeArch(MipsArch):
-    arch = Target.ArchEnum.MIPSEE
+    arch = Target.ArchEnum.MIPS
 
     stack_pointer_reg = Register("sp")
 

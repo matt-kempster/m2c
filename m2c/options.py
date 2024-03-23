@@ -33,9 +33,27 @@ class CodingStyle:
 
 @dataclass
 class Target:
+    class PlatformEnum(ChoicesEnum):
+        MIPS = "mips"
+        MIPSEL = "mipsel"
+        MIPSEE = "mipsee"
+        PPC = "ppc"
+
+        @property
+        def arch(self) -> Target.ArchEnum:
+            if self == Target.PlatformEnum.MIPS:
+                return Target.ArchEnum.MIPS
+            elif self == Target.PlatformEnum.MIPSEL:
+                return Target.ArchEnum.MIPS
+            elif self == Target.PlatformEnum.MIPSEE:
+                return Target.ArchEnum.MIPS
+            elif self == Target.PlatformEnum.PPC:
+                return Target.ArchEnum.PPC
+            else:
+                raise ValueError(f"Unknown platform {self}")
+
     class ArchEnum(ChoicesEnum):
         MIPS = "mips"
-        MIPSEE = "mipsee"
         PPC = "ppc"
 
     class EndianEnum(ChoicesEnum):
@@ -51,6 +69,7 @@ class Target:
         C = "c"
         CXX = "c++"
 
+    platform: PlatformEnum
     arch: ArchEnum
     endian: EndianEnum
     compiler: CompilerEnum
@@ -62,19 +81,19 @@ class Target:
     @staticmethod
     def parse(name: str) -> Target:
         """
-        Parse an `arch-compiler-language` triple.
+        Parse an `platform-compiler-language` triple.
         If `-language` is missing, use the default for the compiler.
-        If `-compiler` is missing, use the default for the arch.
+        If `-compiler` is missing, use the default for the platform.
         (This makes `mips` an alias for `mips-ido-c`, etc.)
         """
         endian = Target.EndianEnum.BIG
         terms = name.split("-")
         try:
-            arch_name = terms[0]
-            if arch_name.endswith("el"):
-                arch_name = arch_name[:-2]
+            platform = Target.PlatformEnum(terms[0])
+            if platform in (Target.PlatformEnum.MIPSEL, Target.PlatformEnum.MIPSEE):
                 endian = Target.EndianEnum.LITTLE
-            arch = Target.ArchEnum(arch_name)
+            arch = platform.arch
+
             if len(terms) >= 2:
                 compiler = Target.CompilerEnum(terms[1])
             elif arch == Target.ArchEnum.PPC:
@@ -92,6 +111,7 @@ class Target:
             raise ValueError(f"Unable to parse Target '{name}' ({e})")
 
         return Target(
+            platform=platform,
             arch=arch,
             endian=endian,
             compiler=compiler,

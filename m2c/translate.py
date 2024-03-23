@@ -114,6 +114,12 @@ class Arch(ArchFlowGraph):
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
 
+class Platform(Arch):
+    """Platform-specific information that relates to the translation level.
+    Extends Arch."""
+
+    pass
+
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
 PSEUDO_FUNCTION_OPS: Set[str] = {

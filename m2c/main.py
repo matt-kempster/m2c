@@ -67,8 +67,6 @@ def run(options: Options) -> int:
     arch: Arch
     if options.target.arch == Target.ArchEnum.MIPS:
         arch = MipsArch()
-    elif options.target.arch == Target.ArchEnum.MIPSEE:
-        arch = MipseeArch()
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     else:
