@@ -943,6 +943,10 @@ class Type:
         return Type(TypeData(kind=kind, likely_kind=likely, size_bits=64))
 
     @staticmethod
+    def reg128() -> Type:
+        return Type(TypeData(kind=TypeData.K_INT, size_bits=128))
+
+    @staticmethod
     def bool() -> Type:
         return Type.intish()
 
