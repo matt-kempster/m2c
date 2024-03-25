@@ -21,7 +21,7 @@ from .translate import (
     narrow_func_call_outputs,
 )
 from .types import TypePool
-from .arch_mips import MipsArch
+from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
 
@@ -66,7 +66,10 @@ def print_exception_as_comment(
 def run(options: Options) -> int:
     arch: Arch
     if options.target.arch == Target.ArchEnum.MIPS:
-        arch = MipsArch()
+        if options.target.platform == Target.PlatformEnum.MIPSEE:
+            arch = MipseeArch()
+        else:
+            arch = MipsArch()
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     else:
