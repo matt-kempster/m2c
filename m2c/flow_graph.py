@@ -39,7 +39,8 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
-    def simplify_ir(self, flow_graph: FlowGraph) -> None: ...
+    def simplify_ir(self, flow_graph: FlowGraph) -> None:
+        ...
 
 
 class Reference(abc.ABC):
@@ -650,7 +651,8 @@ class BaseNode(_BaseNode, abc.ABC):
         return str(self.block.index)
 
     @abc.abstractmethod
-    def children(self) -> List[Node]: ...
+    def children(self) -> List[Node]:
+        ...
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name()}>"
