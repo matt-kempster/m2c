@@ -727,6 +727,8 @@ class TailCallPattern(AsmPattern):
 class MipsArch(Arch):
     arch = Target.ArchEnum.MIPS
 
+    num_function_arg_registers = 4
+
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")
     return_address_reg = Register("ra")
@@ -1718,6 +1720,7 @@ class MipsArch(Arch):
                 offset = (offset + align - 1) & -align
                 name = param.name
                 reg2: Optional[Register]
+                # TODO EABI: support eabi float args
                 if ind < 2 and only_floats:
                     reg = Register("f12" if ind == 0 else "f14")
                     is_double = (
@@ -1740,7 +1743,11 @@ class MipsArch(Arch):
                 else:
                     for i in range(offset // 4, (offset + size) // 4):
                         unk_offset = 4 * i - offset
-                        reg2 = Register(f"a{i}") if i < 4 else None
+                        reg2 = (
+                            Register(f"a{i}")
+                            if i < self.num_function_arg_registers
+                            else None
+                        )
                         if size > 4:
                             name2 = f"{name}_unk{unk_offset:X}" if name else None
                             sub_type = Type.any()
@@ -1762,7 +1769,7 @@ class MipsArch(Arch):
                 offset += size
 
             if fn_sig.is_variadic:
-                for i in range(offset // 4, 4):
+                for i in range(offset // 4, self.num_function_arg_registers):
                     candidate_slots.append(
                         AbiArgSlot(i * 4, Register(f"a{i}"), Type.any_reg())
                     )
@@ -1854,7 +1861,7 @@ class MipsArch(Arch):
 
 
 class MipseeArch(MipsArch):
-    arch = Target.ArchEnum.MIPS
+    num_function_arg_registers = 8
 
     stack_pointer_reg = Register("sp")
 
