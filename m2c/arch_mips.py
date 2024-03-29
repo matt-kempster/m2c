@@ -1678,6 +1678,68 @@ class MipsArch(Arch):
             AbiArgSlot(12, Register("a3"), Type.any_reg()),
         ]
 
+    def get_possible_slots_for_function_abi(self, candidate_slots: List[AbiArgSlot], known_slots: List[AbiArgSlot], likely_regs: Dict[Register, bool], for_call: bool) -> List[AbiArgSlot]:
+        possible_slots: List[AbiArgSlot] = []
+        valid_extra_regs: Set[Register] = {
+            slot.reg for slot in known_slots if slot.reg is not None
+        }
+
+        for slot in candidate_slots:
+            if slot.reg is None or slot.reg not in likely_regs:
+                continue
+
+            # Don't pass this register if lower numbered ones are undefined.
+            # Following the o32 ABI, register order can be a prefix of either:
+            # a0, a1, a2, a3
+            # f12, a1, a2, a3
+            # f12, f14, a2, a3
+            # f12, f13, a2, a3
+            # f12, f13, f14, f15
+            require: Optional[List[str]] = None
+            if slot == candidate_slots[0]:
+                # For varargs, a subset of a0 .. a3 may be used. Don't check
+                # earlier registers for the first member of that subset.
+                pass
+            elif slot.reg == Register("f13") or slot.reg == Register("f14"):
+                require = ["f12"]
+            elif slot.reg == Register("f15"):
+                require = ["f14"]
+            elif slot.reg == Register("a1"):
+                require = ["a0", "f12"]
+            elif slot.reg == Register("a2"):
+                require = ["a1", "f13", "f14"]
+            elif slot.reg == Register("a3"):
+                require = ["a2"]
+            if require and not any(Register(r) in valid_extra_regs for r in require):
+                continue
+
+            valid_extra_regs.add(slot.reg)
+
+            if (
+                slot.reg == Register("f13") or slot.reg == Register("f15")
+            ) and for_call:
+                # We don't pass in f13 or f15 because they will often only
+                # contain SecondF64Half(), and otherwise would need to be
+                # merged with f12/f14 which we don't have logic for right
+                # now. However, f13 can still matter for whether a2 should
+                # be passed, and so is kept in valid_extra_regs
+                continue
+
+            # Skip registers that are untouched from the initial parameter
+            # list. This is sometimes wrong (can give both false positives
+            # and negatives), but having a heuristic here is unavoidable
+            # without access to function signatures, or when dealing with
+            # varargs functions. Decompiling multiple functions at once
+            # would help.
+            # TODO: don't do this in the middle of the argument list,
+            # except for f12 if a0 is passed and such.
+            if not likely_regs[slot.reg]:
+                continue
+
+            possible_slots.append(slot)
+
+        return possible_slots
+
     def function_abi(
         self,
         fn_sig: FunctionSignature,
@@ -1777,63 +1839,7 @@ class MipsArch(Arch):
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
-        valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
-        }
-        possible_slots: List[AbiArgSlot] = []
-        for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
-                continue
-
-            # Don't pass this register if lower numbered ones are undefined.
-            # Following the o32 ABI, register order can be a prefix of either:
-            # a0, a1, a2, a3
-            # f12, a1, a2, a3
-            # f12, f14, a2, a3
-            # f12, f13, a2, a3
-            # f12, f13, f14, f15
-            require: Optional[List[str]] = None
-            if slot == candidate_slots[0]:
-                # For varargs, a subset of a0 .. a3 may be used. Don't check
-                # earlier registers for the first member of that subset.
-                pass
-            elif slot.reg == Register("f13") or slot.reg == Register("f14"):
-                require = ["f12"]
-            elif slot.reg == Register("f15"):
-                require = ["f14"]
-            elif slot.reg == Register("a1"):
-                require = ["a0", "f12"]
-            elif slot.reg == Register("a2"):
-                require = ["a1", "f13", "f14"]
-            elif slot.reg == Register("a3"):
-                require = ["a2"]
-            if require and not any(Register(r) in valid_extra_regs for r in require):
-                continue
-
-            valid_extra_regs.add(slot.reg)
-
-            if (
-                slot.reg == Register("f13") or slot.reg == Register("f15")
-            ) and for_call:
-                # We don't pass in f13 or f15 because they will often only
-                # contain SecondF64Half(), and otherwise would need to be
-                # merged with f12/f14 which we don't have logic for right
-                # now. However, f13 can still matter for whether a2 should
-                # be passed, and so is kept in valid_extra_regs
-                continue
-
-            # Skip registers that are untouched from the initial parameter
-            # list. This is sometimes wrong (can give both false positives
-            # and negatives), but having a heuristic here is unavoidable
-            # without access to function signatures, or when dealing with
-            # varargs functions. Decompiling multiple functions at once
-            # would help.
-            # TODO: don't do this in the middle of the argument list,
-            # except for f12 if a0 is passed and such.
-            if not likely_regs[slot.reg]:
-                continue
-
-            possible_slots.append(slot)
+        possible_slots: List[AbiArgSlot] = self.get_possible_slots_for_function_abi(candidate_slots, known_slots, likely_regs, for_call)
 
         return Abi(
             arg_slots=known_slots,
@@ -2052,3 +2058,44 @@ class MipseeArch(MipsArch):
             AbiArgSlot(24, Register("a6"), Type.any_reg()),
             AbiArgSlot(28, Register("a7"), Type.any_reg()),
         ]
+
+    def get_possible_slots_for_function_abi(self, candidate_slots: List[AbiArgSlot], known_slots: List[AbiArgSlot], likely_regs: Dict[Register, bool], for_call: bool) -> List[AbiArgSlot]:
+        possible_slots: List[AbiArgSlot] = []
+        valid_extra_regs: Set[Register] = {
+            slot.reg for slot in known_slots if slot.reg is not None
+        }
+
+        for slot in candidate_slots:
+            if slot.reg is None or slot.reg not in likely_regs:
+                continue
+
+            # Don't pass this register if lower numbered ones are undefined.
+            if slot == candidate_slots[0]:
+                # For varargs, a subset of regs may be used. Don't check
+                # earlier registers for the first member of that subset.
+                pass
+            else:
+                # Only r3-r10/f1-f13 can be used for arguments
+                regname = slot.reg.register_name
+                prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
+                if (
+                    prev_reg in self.argument_regs
+                    and prev_reg not in valid_extra_regs
+                ):
+                    continue
+
+            valid_extra_regs.add(slot.reg)
+
+            # Skip registers that are untouched from the initial parameter
+            # list. This is sometimes wrong (can give both false positives
+            # and negatives), but having a heuristic here is unavoidable
+            # without access to function signatures, or when dealing with
+            # varargs functions. Decompiling multiple functions at once
+            # would help.
+            # TODO: don't do this in the middle of the argument list
+            if not likely_regs[slot.reg]:
+                continue
+
+            possible_slots.append(slot)
+
+        return possible_slots
