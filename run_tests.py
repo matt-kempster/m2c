@@ -36,7 +36,6 @@ class TestCase:
     name: str
     asm_file: Path
     output_file: Path
-    brief_crashes: bool = True
     flags_path: Optional[Path] = None
     flags: List[str] = field(default_factory=list)
 
@@ -90,7 +89,7 @@ def decompile_and_compare(
     test_flags.extend(test_options.extra_flags)
     options = parse_flags(test_flags)
 
-    final_contents = decompile_and_capture_output(options, test_case.brief_crashes)
+    final_contents = decompile_and_capture_output(options)
 
     if test_options.should_overwrite:
         test_case.output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +110,7 @@ def decompile_and_compare(
     return True, ""
 
 
-def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
+def decompile_and_capture_output(options: Options) -> str:
     # This import is deferred so it can be profiled by the coverage tool
     from m2c.main import run as decompile
 
@@ -124,10 +123,7 @@ def decompile_and_capture_output(options: Options, brief_crashes: bool) -> str:
     if returncode == 0:
         return out_text
     else:
-        if brief_crashes:
-            return CRASH_STRING
-        else:
-            return f"{CRASH_STRING}\n{out_text}"
+        return f"{CRASH_STRING}\n{out_text}"
 
 
 def create_e2e_tests(
@@ -145,7 +141,6 @@ def create_e2e_tests(
                 name=name,
                 asm_file=asm_file,
                 output_file=output_file,
-                brief_crashes=True,
                 flags_path=flags_path,
                 flags=["--function", "test"],
             )
@@ -255,7 +250,6 @@ def create_project_tests(
                 name=name,
                 asm_file=file_list[0],
                 output_file=output_file,
-                brief_crashes=False,
                 flags=flags + [str(p) for p in file_list[1:]],
             )
         )
