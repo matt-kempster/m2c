@@ -2061,12 +2061,6 @@ class MipseeArch(MipsArch):
         *,
         for_call: bool,
     ) -> Abi:
-        """Compute stack positions/registers used by a function according to the o32 ABI,
-        based on C type information. Additionally computes a list of registers that might
-        contain arguments, if the function is a varargs function. (Additional varargs
-        arguments may be passed on the stack; we could compute the offset at which that
-        would start but right now don't care -- we just slurp up everything.)"""
-
         # $rX & $fX regs can be interspersed in function args, unlike in the MIPS O32 ABI
         intptr_regs = [r for r in self.argument_regs if r.register_name[0] != "f"]
         float_regs = [r for r in self.argument_regs if r.register_name[0] == "f"]
