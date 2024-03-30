@@ -1,4 +1,4 @@
-glabel eabi_int_float_args_test
+glabel test
   addiu       $sp, $sp, -0x10
   sq          $ra, 0x0($sp)
   jal         no_args_func
