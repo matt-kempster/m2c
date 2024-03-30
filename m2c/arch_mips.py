@@ -1777,10 +1777,10 @@ class MipsArch(Arch):
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
-        possible_slots: List[AbiArgSlot] = []
         valid_extra_regs: Set[Register] = {
             slot.reg for slot in known_slots if slot.reg is not None
         }
+        possible_slots: List[AbiArgSlot] = []
 
         for slot in candidate_slots:
             if slot.reg is None or slot.reg not in likely_regs:
@@ -2127,10 +2127,7 @@ class MipseeArch(MipsArch):
                 # Only r3-r10/f1-f13 can be used for arguments
                 regname = slot.reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
-                if (
-                    prev_reg in self.argument_regs
-                    and prev_reg not in valid_extra_regs
-                ):
+                if prev_reg in self.argument_regs and prev_reg not in valid_extra_regs:
                     continue
 
             valid_extra_regs.add(slot.reg)
