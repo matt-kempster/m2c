@@ -1781,6 +1781,7 @@ class MipsArch(Arch):
             slot.reg for slot in known_slots if slot.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
+
         for slot in candidate_slots:
             if slot.reg is None or slot.reg not in likely_regs:
                 continue
@@ -2052,3 +2053,92 @@ class MipseeArch(MipsArch):
             AbiArgSlot(24, Register("a6"), Type.any_reg()),
             AbiArgSlot(28, Register("a7"), Type.any_reg()),
         ]
+
+    def function_abi(
+        self,
+        fn_sig: FunctionSignature,
+        likely_regs: Dict[Register, bool],
+        *,
+        for_call: bool,
+    ) -> Abi:
+        # $rX & $fX regs can be interspersed in function args, unlike in the MIPS O32 ABI
+        intptr_regs = [r for r in self.argument_regs if r.register_name[0] != "f"]
+        float_regs = [r for r in self.argument_regs if r.register_name[0] == "f"]
+
+        known_slots: List[AbiArgSlot] = []
+        candidate_slots: List[AbiArgSlot] = []
+        if fn_sig.params_known:
+            for ind, param in enumerate(fn_sig.params):
+                # TODO: Support passing parameters on the stack
+                param_type = param.type.decay()
+                reg: Optional[Register]
+                try:
+                    if param_type.is_float():
+                        reg = float_regs.pop(0)
+                    else:
+                        reg = intptr_regs.pop(0)
+                except IndexError:
+                    # Stack variable
+                    reg = None
+                known_slots.append(
+                    AbiArgSlot(
+                        offset=4 * ind, reg=reg, name=param.name, type=param_type
+                    )
+                )
+            if fn_sig.is_variadic:
+                # TODO: Find a better value to use for `offset`?
+                for reg in intptr_regs:
+                    candidate_slots.append(
+                        AbiArgSlot(
+                            offset=4 * len(known_slots), reg=reg, type=Type.intptr()
+                        )
+                    )
+                for reg in float_regs:
+                    candidate_slots.append(
+                        AbiArgSlot(
+                            offset=4 * len(known_slots), reg=reg, type=Type.floatish()
+                        )
+                    )
+
+        else:
+            candidate_slots = self.default_function_abi_candidate_slots()
+
+        possible_slots: List[AbiArgSlot] = []
+        valid_extra_regs: Set[Register] = {
+            slot.reg for slot in known_slots if slot.reg is not None
+        }
+
+        for slot in candidate_slots:
+            if slot.reg is None or slot.reg not in likely_regs:
+                continue
+
+            # Don't pass this register if lower numbered ones are undefined.
+            if slot == candidate_slots[0]:
+                # For varargs, a subset of regs may be used. Don't check
+                # earlier registers for the first member of that subset.
+                pass
+            else:
+                # Only r3-r10/f1-f13 can be used for arguments
+                regname = slot.reg.register_name
+                prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
+                if prev_reg in self.argument_regs and prev_reg not in valid_extra_regs:
+                    continue
+
+            valid_extra_regs.add(slot.reg)
+
+            # Skip registers that are untouched from the initial parameter
+            # list. This is sometimes wrong (can give both false positives
+            # and negatives), but having a heuristic here is unavoidable
+            # without access to function signatures, or when dealing with
+            # varargs functions. Decompiling multiple functions at once
+            # would help.
+            # TODO: don't do this in the middle of the argument list
+            if not likely_regs[slot.reg]:
+                continue
+
+            possible_slots.append(slot)
+
+        return Abi(
+            arg_slots=known_slots,
+            possible_slots=possible_slots,
+        )
