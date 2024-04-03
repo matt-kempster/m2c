@@ -114,13 +114,6 @@ class Arch(ArchFlowGraph):
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
 
-class Platform(Arch):
-    """Platform-specific information that relates to the translation level.
-    Extends Arch."""
-
-    pass
-
-
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
 COMPOUND_ASSIGNMENT_OPS: Set[str] = {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
 PSEUDO_FUNCTION_OPS: Set[str] = {
@@ -4359,9 +4352,11 @@ def setup_planned_vars(
         prefix = f"var_{reg_name}"
         if stack_info.global_info.deterministic_vars:
             lineno = min(
-                0
-                if not isinstance(source, InstrRef)
-                else source.instruction.meta.lineno
+                (
+                    0
+                    if not isinstance(source, InstrRef)
+                    else source.instruction.meta.lineno
+                )
                 for _, source in keys
             )
             prefix = f"{prefix}_{lineno}"

@@ -1718,7 +1718,6 @@ class MipsArch(Arch):
                 offset = (offset + align - 1) & -align
                 name = param.name
                 reg2: Optional[Register]
-                # TODO EABI: support eabi float args
                 if ind < 2 and only_floats:
                     reg = Register("f12" if ind == 0 else "f14")
                     is_double = (
@@ -1775,7 +1774,6 @@ class MipsArch(Arch):
             slot.reg for slot in known_slots if slot.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
-
         for slot in candidate_slots:
             if slot.reg is None or slot.reg not in likely_regs:
                 continue
