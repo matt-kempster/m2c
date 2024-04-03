@@ -1741,11 +1741,7 @@ class MipsArch(Arch):
                 else:
                     for i in range(offset // 4, (offset + size) // 4):
                         unk_offset = 4 * i - offset
-                        reg2 = (
-                            Register(f"a{i}")
-                            if i < 4
-                            else None
-                        )
+                        reg2 = Register(f"a{i}") if i < 4 else None
                         if size > 4:
                             name2 = f"{name}_unk{unk_offset:X}" if name else None
                             sub_type = Type.any()
