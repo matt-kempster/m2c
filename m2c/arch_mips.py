@@ -86,6 +86,8 @@ from .evaluate import (
     handle_lwl,
     handle_lwr,
     handle_or,
+    handle_seb,
+    handle_seh,
     handle_sltiu,
     handle_sltu,
     handle_sra,
@@ -1662,6 +1664,9 @@ class MipsArch(Arch):
         # Unaligned loads
         "lwl": lambda a: handle_lwl(a),
         "lwr": lambda a: handle_lwr(a),
+        # Sign extend
+        "seb": lambda a: handle_seb(a),
+        "seh": lambda a: handle_seh(a),
     }
 
     @staticmethod
