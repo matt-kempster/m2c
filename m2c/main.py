@@ -238,7 +238,9 @@ def run(options: Options) -> int:
             return_code = 1
 
     for warning in typepool.warnings:
-        print(fmt.with_comments("", comments=[warning]))
+        line = fmt.with_comments("", comments=[warning])
+        if line:
+            print(line)
 
     return return_code
 
