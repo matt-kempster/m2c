@@ -12,19 +12,19 @@ void test_s8(s8 c) {
 
     sp8 = c;
     foo((u32) ((s8) (u8) sp8 / 2));
-    foo((s8) (u8) sp8 / 3);
-    foo((s8) (u8) sp8 / 5);
-    foo((s8) (u8) sp8 / 7);
-    foo((s8) (u8) sp8 / 10);
-    foo((s8) (u8) sp8 / 100);
-    foo((s8) (u8) sp8 / 255);
-    foo((s8) (u8) sp8 % 2);
-    foo((s8) (u8) sp8 % 3);
-    foo((s8) (u8) sp8 % 5);
-    foo((s8) (u8) sp8 % 7);
-    foo((s8) (u8) sp8 % 10);
-    foo((s8) (u8) sp8 % 100);
-    foo((s8) (u8) sp8 % 255);
+    foo(sp8 / 3);
+    foo(sp8 / 5);
+    foo(sp8 / 7);
+    foo(sp8 / 10);
+    foo(sp8 / 100);
+    foo(sp8 / 255);
+    foo(sp8 % 2);
+    foo(sp8 % 3);
+    foo(sp8 % 5);
+    foo(sp8 % 7);
+    foo(sp8 % 10);
+    foo(sp8 % 100);
+    foo(sp8 % 255);
 }
 
 void test_s16(s16 h) {

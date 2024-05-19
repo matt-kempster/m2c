@@ -61,6 +61,7 @@ from .translate import (
     as_sintish,
     as_u32,
     as_uintish,
+    as_type,
 )
 from .evaluate import (
     add_imm,
@@ -1238,8 +1239,8 @@ class PpcArch(Arch):
             )
         ),
         "srawi": lambda a: handle_sra(a),
-        "extsb": lambda a: handle_convert(a.reg(1), Type.s8(), Type.intish()),
-        "extsh": lambda a: handle_convert(a.reg(1), Type.s16(), Type.intish()),
+        "extsb": lambda a: as_type(a.reg(1), Type.s8(), silent=False),
+        "extsh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
         "cntlzw": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
         # Load Immediate
         "li": lambda a: a.full_imm(1),
