@@ -452,12 +452,12 @@ def handle_lwr(args: InstrArgs) -> Expression:
 
 
 def handle_seb(args: InstrArgs) -> Expression:
-    # Sign extend byte, it is a cast to s16
+    # Sign extend byte
     return as_type(args.reg(1), Type.s8(), silent=False)
 
 
 def handle_seh(args: InstrArgs) -> Expression:
-    # Sign extend half-word, it is a cast to s16
+    # Sign extend half-word
     return as_type(args.reg(1), Type.s16(), silent=False)
 
 
