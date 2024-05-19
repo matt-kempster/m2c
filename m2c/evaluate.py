@@ -451,16 +451,6 @@ def handle_lwr(args: InstrArgs) -> Expression:
     return ErrorExpr("Unable to handle lwr; missing a corresponding lwl")
 
 
-def handle_seb(args: InstrArgs) -> Expression:
-    # Sign extend byte
-    return as_type(args.reg(1), Type.s8(), silent=False)
-
-
-def handle_seh(args: InstrArgs) -> Expression:
-    # Sign extend half-word
-    return as_type(args.reg(1), Type.s16(), silent=False)
-
-
 def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     size = type.get_size_bytes()
     assert size is not None
