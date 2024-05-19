@@ -13,6 +13,9 @@ readme = "README.md"
 repository = "https://github.com/matt-kempster/m2c"
 packages = [{include = "m2c"}]
 
+[tool.poetry.scripts]
+m2c = "m2c.main:main"
+
 [tool.poetry.dependencies]
 python = "^3.8"
 pycparser = "^2.21"
