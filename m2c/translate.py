@@ -4352,9 +4352,11 @@ def setup_planned_vars(
         prefix = f"var_{reg_name}"
         if stack_info.global_info.deterministic_vars:
             lineno = min(
-                0
-                if not isinstance(source, InstrRef)
-                else source.instruction.meta.lineno
+                (
+                    0
+                    if not isinstance(source, InstrRef)
+                    else source.instruction.meta.lineno
+                )
                 for _, source in keys
             )
             prefix = f"{prefix}_{lineno}"
