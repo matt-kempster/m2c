@@ -528,8 +528,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         for w in args:
                             fval = try_parse(lambda: float(w))
                             asm_file.new_data_bytes(struct.pack(">d", fval))
-                    elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
-                        z = directive.endswith("z")
+                    elif directive in (
+                        ".asci",
+                        ".asciz",
+                        ".ascii",
+                        ".asciiz",
+                        ".string",
+                    ):
+                        z = directive.endswith("z") or directive == ".string"
                         asm_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
@@ -548,6 +554,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         data = parse_incbin(args, options, warnings)
                         if data is not None:
                             asm_file.new_data_bytes(data)
+                    elif directive == ".obj":  # decomp-toolkit label format
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            try:
+                                kind = LabelKind[parts[2].upper()]
+                                process_label(parts[1].removesuffix(","), kind=kind)
+                            except KeyError:
+                                pass
 
         elif ifdef_level == 0:
             if directive == "jlabel":
