@@ -860,7 +860,7 @@ def build_graph_from_block(
                             and isinstance(arg.argument, AsmGlobalSymbol)
                             and any(
                                 arg.argument.symbol_name.startswith(prefix)
-                                for prefix in ("jtbl", "jpt_", "lbl_")
+                                for prefix in ("jtbl", "jpt_", "lbl_", "jumptable_")
                             )
                         ):
                             jtbl_names.add(arg.argument.symbol_name)
@@ -877,7 +877,7 @@ def build_graph_from_block(
                 raise DecompFailure(
                     f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable before the instruction\n"
-                    'which has a name starting with with "jtbl"/"jpt_"/"lbl_".'
+                    'which has a name starting with with "jtbl"/"jpt_"/"lbl_"/"jumptable_".'
                 )
 
             jtbl_name = list(jtbl_names)[0]

@@ -512,6 +512,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".rel name, label" expands to ".4byte name + (label - name)"
                         assert len(args) == 2
                         emit_word(args[1])
+                    elif directive == ".obj":
+                        # dtk disassembler label format
+                        assert len(args) == 2
+                        kind = (
+                            LabelKind.LOCAL if args[1] == "local" else LabelKind.GLOBAL
+                        )
+                        process_label(args[0], kind=kind)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
                             ival = try_parse(lambda: parse_int(w)) & 0xFFFF
@@ -554,14 +561,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         data = parse_incbin(args, options, warnings)
                         if data is not None:
                             asm_file.new_data_bytes(data)
-                    elif directive == ".obj":  # decomp-toolkit label format
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            try:
-                                kind = LabelKind[parts[2].upper()]
-                                process_label(parts[1].removesuffix(","), kind=kind)
-                            except KeyError:
-                                pass
 
         elif ifdef_level == 0:
             if directive == "jlabel":
