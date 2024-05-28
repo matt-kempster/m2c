@@ -1,4 +1,5 @@
 """Functions and classes useful for parsing an arbitrary assembly instruction."""
+
 from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
@@ -125,8 +126,7 @@ class ArchAsmParsing(abc.ABC):
     aliased_regs: Dict[str, Register]
 
     @abc.abstractmethod
-    def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
-        ...
+    def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction: ...
 
 
 class NaiveParsingArch(ArchAsmParsing):

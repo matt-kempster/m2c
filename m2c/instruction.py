@@ -172,14 +172,12 @@ class ArchAsm(ArchAsmParsing):
     all_regs: List[Register]
 
     @abc.abstractmethod
-    def missing_return(self) -> List[Instruction]:
-        ...
+    def missing_return(self) -> List[Instruction]: ...
 
     @abc.abstractmethod
     def parse(
         self, mnemonic: str, args: List[Argument], meta: InstructionMeta
-    ) -> Instruction:
-        ...
+    ) -> Instruction: ...
 
 
 def parse_instruction(

@@ -25,7 +25,7 @@ graphviz = "^0.20.1"
 pre-commit = "^2.20.0"
 mypy = "^1.8.0"
 coverage = "^7.2.7"
-black = "23.12.1"
+black = "24.4.2"
 
 [build-system]
 requires = ["poetry-core"]
