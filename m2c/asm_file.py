@@ -512,6 +512,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".rel name, label" expands to ".4byte name + (label - name)"
                         assert len(args) == 2
                         emit_word(args[1])
+                    elif directive == ".obj":
+                        # dtk disassembler label format
+                        assert len(args) == 2
+                        kind = (
+                            LabelKind.LOCAL if args[1] == "local" else LabelKind.GLOBAL
+                        )
+                        process_label(args[0], kind=kind)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
                             ival = try_parse(lambda: parse_int(w)) & 0xFFFF
@@ -528,8 +535,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         for w in args:
                             fval = try_parse(lambda: float(w))
                             asm_file.new_data_bytes(struct.pack(">d", fval))
-                    elif directive in (".asci", ".asciz", ".ascii", ".asciiz"):
-                        z = directive.endswith("z")
+                    elif directive in (
+                        ".asci",
+                        ".asciz",
+                        ".ascii",
+                        ".asciiz",
+                        ".string",
+                    ):
+                        z = directive.endswith("z") or directive == ".string"
                         asm_file.new_data_bytes(
                             parse_ascii_directive(line, z), is_string=True
                         )
