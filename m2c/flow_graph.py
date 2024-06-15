@@ -1624,11 +1624,11 @@ def visualize_flowgraph(
         # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
         if block_info:
             asm_label = "".join(
-                f"{'*' if i.meta.synthetic else '&nbsp;'} {i}\l"
+                f"{'*' if i.meta.synthetic else '&nbsp;'} {i}\\l"
                 for i in node.block.instructions
             )
             c_label = "".join(
-                w.format(fmt) + "\l" for w in block_info.to_write if w.should_write()
+                w.format(fmt) + "\\l" for w in block_info.to_write if w.should_write()
             )
 
         dot.node(node.name())
@@ -1636,19 +1636,19 @@ def visualize_flowgraph(
             dot.edge(node.name(), node.successor.name(), color="black")
         elif isinstance(node, ConditionalNode):
             if block_info:
-                c_label += f"if ({block_info.branch_condition.format(fmt)})\l"
+                c_label += f"if ({block_info.branch_condition.format(fmt)})\\l"
             dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
             dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
         elif isinstance(node, ReturnNode):
             if block_info and block_info.return_value:
-                c_label += f"return ({block_info.return_value.format(fmt)});\l"
+                c_label += f"return ({block_info.return_value.format(fmt)});\\l"
             else:
-                c_label += "return;\l"
+                c_label += "return;\\l"
             dot.edge(node.name(), node.terminal.name())
         elif isinstance(node, SwitchNode):
             assert block_info is not None
             switch_control = block_info.switch_control
-            c_label += f"switch ({switch_control.control_expr.format(fmt)})\l"
+            c_label += f"switch ({switch_control.control_expr.format(fmt)})\\l"
             for i, case in enumerate(node.cases):
                 dot.edge(
                     node.name(),
@@ -1658,15 +1658,15 @@ def visualize_flowgraph(
                 )
         else:
             assert isinstance(node, TerminalNode)
-            asm_label += "// exit\l"
-            c_label += "// exit\l"
+            asm_label += "// exit\\l"
+            c_label += "// exit\\l"
 
         line_label = ""
         first_instr = next(node.block.instructions, None)
         if first_instr is not None and first_instr.meta.lineno > 0:
             line_label = f" (line {first_instr.meta.lineno})"
 
-        label = f"// Node {node.name()}{line_label}\l"
+        label = f"// Node {node.name()}{line_label}\\l"
         if viz_type == Options.VisualizeTypeEnum.ASM:
             label += asm_label
         elif viz_type == Options.VisualizeTypeEnum.C:
