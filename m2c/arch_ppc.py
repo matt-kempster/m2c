@@ -166,20 +166,18 @@ class TailCallPattern(AsmPattern):
         return None
 
 
-class SaveRestoreRegsFnPattern(SimpleAsmPattern):
+class SaveRestoreRegsFnPattern(AsmPattern):
     """Expand calls to MWCC's built-in `_{save,rest}{gpr,fpr}_` functions into
     register saves/restores."""
 
-    pattern = make_pattern(
-        "addi $r11, $r1, N",
-        "bl",
-    )
-
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        addend = m.literals["N"]
-        bl = m.body[1]
-        assert isinstance(bl, Instruction)
-        assert isinstance(bl.args[0], AsmGlobalSymbol)
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        bl = matcher.input[matcher.index]
+        if (
+            not isinstance(bl, Instruction)
+            or bl.mnemonic != "bl"
+            or not isinstance(bl.args[0], AsmGlobalSymbol)
+        ):
+            return None
         parts = bl.args[0].symbol_name.split("_")
         if len(parts) != 3 or parts[0]:
             return None
@@ -193,6 +191,22 @@ class SaveRestoreRegsFnPattern(SimpleAsmPattern):
             reg_prefix = "f"
         else:
             return None
+
+        # Find "addi $r11, $r1, N" above, with perhaps some instructions in between.
+        for i in range(matcher.index - 1, -1, -1):
+            instr = matcher.input[i]
+            if (
+                isinstance(instr, Instruction)
+                and instr.mnemonic == "addi"
+                and instr.args[0] == Register("r11")
+                and instr.args[1] == Register("r1")
+                and isinstance(instr.args[2], AsmLiteral)
+            ):
+                addend = instr.args[2].value
+                break
+        else:
+            return None
+
         regnum = int(parts[2])
         new_instrs = []
         for i in range(regnum, 32):
@@ -201,7 +215,7 @@ class SaveRestoreRegsFnPattern(SimpleAsmPattern):
                 AsmLiteral(size * (i - 32) + addend), Register("r1")
             )
             new_instrs.append(AsmInstruction(mnemonic, [reg, stack_pos]))
-        return Replacement(new_instrs, len(m.body))
+        return Replacement(new_instrs, 1)
 
 
 class BoolCastPattern(SimpleAsmPattern):
