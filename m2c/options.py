@@ -29,6 +29,7 @@ class CodingStyle:
     hex_case: bool
     comment_style: CommentStyle
     comment_column: int
+    no_qualifiers_hints: bool
 
 
 @dataclass
@@ -162,6 +163,7 @@ DEFAULT_CODING_STYLE: CodingStyle = CodingStyle(
     hex_case=False,
     comment_style=CodingStyle.CommentStyle.MULTILINE,
     comment_column=52,
+    no_qualifiers_hints=False,
 )
 
 
