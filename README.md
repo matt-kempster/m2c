@@ -276,9 +276,9 @@ When migrating to `m2c`, note the following changes to the CLI:
 
 There is much low-hanging fruit still. Take a look at the issues if you want to help out.
 
-We use `black` to auto-format our code and `mypy` for type checking. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
+We use `black` to auto-format our code, `mypy` for type checking and `coverage` for unit tests. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
 ```bash
-pip install pre-commit black mypy
+pip install pre-commit black mypy coverage
 pre-commit install
 ```
 
