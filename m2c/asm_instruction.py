@@ -324,13 +324,18 @@ def parse_arg_elems(
                 value = constant_fold(rhs, defines)
             else:
                 # Address mode.
-                assert top_level
                 rhs = replace_bare_reg(rhs, arch, reg_formatter)
                 if rhs == AsmLiteral(0):
                     rhs = Register("zero")
-                assert isinstance(rhs, Register)
-                value = constant_fold(value or AsmLiteral(0), defines)
-                value = AsmAddressMode(value, rhs)
+                if isinstance(rhs, AsmGlobalSymbol):
+                    # Global symbols may be parenthesized.
+                    assert value is None
+                    value = constant_fold(rhs, defines)
+                else:
+                    assert top_level
+                    assert isinstance(rhs, Register)
+                    value = constant_fold(value or AsmLiteral(0), defines)
+                    value = AsmAddressMode(value, rhs)
         elif tok == '"':
             # Quoted global symbol.
             expect('"')
