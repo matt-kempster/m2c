@@ -39,8 +39,7 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
-    def simplify_ir(self, flow_graph: FlowGraph) -> None:
-        ...
+    def simplify_ir(self, flow_graph: FlowGraph) -> None: ...
 
 
 class Reference(abc.ABC):
@@ -651,8 +650,7 @@ class BaseNode(_BaseNode, abc.ABC):
         return str(self.block.index)
 
     @abc.abstractmethod
-    def children(self) -> List[Node]:
-        ...
+    def children(self) -> List[Node]: ...
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name()}>"
@@ -862,7 +860,7 @@ def build_graph_from_block(
                             and isinstance(arg.argument, AsmGlobalSymbol)
                             and any(
                                 arg.argument.symbol_name.startswith(prefix)
-                                for prefix in ("jtbl", "jpt_", "lbl_")
+                                for prefix in ("jtbl", "jpt_", "lbl_", "jumptable_")
                             )
                         ):
                             jtbl_names.add(arg.argument.symbol_name)
@@ -879,7 +877,7 @@ def build_graph_from_block(
                 raise DecompFailure(
                     f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
                     "There must be a read of a variable before the instruction\n"
-                    'which has a name starting with with "jtbl"/"jpt_"/"lbl_".'
+                    'which has a name starting with with "jtbl"/"jpt_"/"lbl_"/"jumptable_".'
                 )
 
             jtbl_name = list(jtbl_names)[0]
@@ -1626,11 +1624,11 @@ def visualize_flowgraph(
         # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
         if block_info:
             asm_label = "".join(
-                f"{'*' if i.meta.synthetic else '&nbsp;'} {i}\l"
+                f"{'*' if i.meta.synthetic else '&nbsp;'} {i}\\l"
                 for i in node.block.instructions
             )
             c_label = "".join(
-                w.format(fmt) + "\l" for w in block_info.to_write if w.should_write()
+                w.format(fmt) + "\\l" for w in block_info.to_write if w.should_write()
             )
 
         dot.node(node.name())
@@ -1638,19 +1636,19 @@ def visualize_flowgraph(
             dot.edge(node.name(), node.successor.name(), color="black")
         elif isinstance(node, ConditionalNode):
             if block_info:
-                c_label += f"if ({block_info.branch_condition.format(fmt)})\l"
+                c_label += f"if ({block_info.branch_condition.format(fmt)})\\l"
             dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
             dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
         elif isinstance(node, ReturnNode):
             if block_info and block_info.return_value:
-                c_label += f"return ({block_info.return_value.format(fmt)});\l"
+                c_label += f"return ({block_info.return_value.format(fmt)});\\l"
             else:
-                c_label += "return;\l"
+                c_label += "return;\\l"
             dot.edge(node.name(), node.terminal.name())
         elif isinstance(node, SwitchNode):
             assert block_info is not None
             switch_control = block_info.switch_control
-            c_label += f"switch ({switch_control.control_expr.format(fmt)})\l"
+            c_label += f"switch ({switch_control.control_expr.format(fmt)})\\l"
             for i, case in enumerate(node.cases):
                 dot.edge(
                     node.name(),
@@ -1660,15 +1658,15 @@ def visualize_flowgraph(
                 )
         else:
             assert isinstance(node, TerminalNode)
-            asm_label += "// exit\l"
-            c_label += "// exit\l"
+            asm_label += "// exit\\l"
+            c_label += "// exit\\l"
 
         line_label = ""
         first_instr = next(node.block.instructions, None)
         if first_instr is not None and first_instr.meta.lineno > 0:
             line_label = f" (line {first_instr.meta.lineno})"
 
-        label = f"// Node {node.name()}{line_label}\l"
+        label = f"// Node {node.name()}{line_label}\\l"
         if viz_type == Options.VisualizeTypeEnum.ASM:
             label += asm_label
         elif viz_type == Options.VisualizeTypeEnum.C:

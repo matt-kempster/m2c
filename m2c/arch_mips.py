@@ -62,6 +62,7 @@ from .translate import (
     as_intish,
     as_s64,
     as_sintish,
+    as_type,
     as_u32,
     as_u64,
     as_uintish,
@@ -1662,6 +1663,9 @@ class MipsArch(Arch):
         # Unaligned loads
         "lwl": lambda a: handle_lwl(a),
         "lwr": lambda a: handle_lwr(a),
+        # Sign extend
+        "seb": lambda a: as_type(a.reg(1), Type.s8(), silent=False),
+        "seh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:

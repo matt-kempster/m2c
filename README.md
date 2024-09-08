@@ -276,9 +276,9 @@ When migrating to `m2c`, note the following changes to the CLI:
 
 There is much low-hanging fruit still. Take a look at the issues if you want to help out.
 
-We use `black` to auto-format our code and `mypy` for type checking. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
+We use `black` to auto-format our code, `mypy` for type checking and `coverage` for unit tests. We recommend using `pre-commit` to ensure only auto-formatted code is committed. To set these up, run:
 ```bash
-pip install pre-commit black mypy
+pip install pre-commit black mypy coverage
 pre-commit install
 ```
 
@@ -380,10 +380,29 @@ git add tests/end_to_end/my-new-test
 For PowerPC, the `MWCC_CC` environment variable should be set to point to a PPC cc binary (mwcceppc.exe),
 and on non-Windows, `WINE` set to point to wine or equivalent ([wibo](https://github.com/decompals/wibo) also works).
 
-### Installation with Poetry
+### Installation as Python Package
 
-You can include `m2c` as a dependency in your project with [Poetry](https://python-poetry.org/) by adding the following to your `pyproject.toml`:
+You can include `m2c` as a dependency in your project with [Poetry](https://python-poetry.org/)
+by adding the following to your `pyproject.toml`:
+
 ```toml
 [tool.poetry.dependencies]
 m2c = {git="https://github.com/matt-kempster/m2c.git"}
+```
+
+If your project does not use `pyproject.toml` for dependencies, you can add the following
+to your `requirements.txt` file instead:
+
+```
+m2c @ git+https://github.com/matt-kempster/m2c.git
+
+# To specify a specific Git ref, such as a commit, tag, or branch:
+m2c @ git+https://github.com/matt-kempster/m2c.git@[YOUR REF HERE]
+```
+
+When installed as a Python package, a standalone command entrypoint is provided
+which can run the CLI.
+
+```bash
+m2c [options] [-t <target>] [--context <context file>] [-f <function name>] <asmfile>...
 ```

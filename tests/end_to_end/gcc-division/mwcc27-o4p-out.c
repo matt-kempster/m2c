@@ -9,28 +9,24 @@ void test(u32 a) {
 
 void test_s8(s8 c) {
     s8 sp8;
-    s8 temp_r0;
-    s8 temp_r3;
-    u32 temp_r3_2;
+    u32 temp_r3;
 
     sp8 = c;
-    temp_r3 = (s8) (u8) sp8;
-    foo((u32) ((s32) (((u32) temp_r3 >> 0x1FU) + temp_r3) >> 1));
-    foo((s8) (u8) sp8 / 3);
-    foo((s8) (u8) sp8 / 5);
-    foo((s8) (u8) sp8 / 7);
-    foo((s8) (u8) sp8 / 10);
-    foo((s8) (u8) sp8 / 100);
-    foo((s8) (u8) sp8 / 255);
-    temp_r0 = (s8) (u8) sp8;
-    temp_r3_2 = (u32) temp_r0 >> 0x1FU;
-    foo(((temp_r0 & 1) ^ temp_r3_2) - temp_r3_2);
-    foo((s8) (u8) sp8 % 3);
-    foo((s8) (u8) sp8 % 5);
-    foo((s8) (u8) sp8 % 7);
-    foo((s8) (u8) sp8 % 10);
-    foo((s8) (u8) sp8 % 100);
-    foo((s8) (u8) sp8 % 255);
+    foo((u32) ((s32) (((u32) (s8) (u8) sp8 >> 0x1FU) + (s8) (u8) sp8) >> 1));
+    foo(sp8 / 3);
+    foo(sp8 / 5);
+    foo(sp8 / 7);
+    foo(sp8 / 10);
+    foo(sp8 / 100);
+    foo(sp8 / 255);
+    temp_r3 = (u32) (s8) (u8) sp8 >> 0x1FU;
+    foo((((s8) (u8) sp8 & 1) ^ temp_r3) - temp_r3);
+    foo(sp8 % 3);
+    foo(sp8 % 5);
+    foo(sp8 % 7);
+    foo(sp8 % 10);
+    foo(sp8 % 100);
+    foo(sp8 % 255);
 }
 
 void test_s16(s16 h) {

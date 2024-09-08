@@ -786,8 +786,7 @@ class Expression(abc.ABC):
     type: Type
 
     @abc.abstractmethod
-    def dependencies(self) -> List[Expression]:
-        ...
+    def dependencies(self) -> List[Expression]: ...
 
     def use(self) -> None:
         """Mark an expression as "will occur in the output". Various subclasses
@@ -805,8 +804,7 @@ class Expression(abc.ABC):
             expr.use()
 
     @abc.abstractmethod
-    def format(self, fmt: Formatter) -> str:
-        ...
+    def format(self, fmt: Formatter) -> str: ...
 
     def __str__(self) -> str:
         """Stringify an expression for debug purposes. The output can change
@@ -818,18 +816,15 @@ class Expression(abc.ABC):
 
 class Condition(Expression):
     @abc.abstractmethod
-    def negated(self) -> Condition:
-        ...
+    def negated(self) -> Condition: ...
 
 
 class Statement(abc.ABC):
     @abc.abstractmethod
-    def should_write(self) -> bool:
-        ...
+    def should_write(self) -> bool: ...
 
     @abc.abstractmethod
-    def format(self, fmt: Formatter) -> str:
-        ...
+    def format(self, fmt: Formatter) -> str: ...
 
     def __str__(self) -> str:
         """Stringify a statement for debug purposes. The output can change

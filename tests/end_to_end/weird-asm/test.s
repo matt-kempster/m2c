@@ -21,6 +21,7 @@ b jumptarget_label
  li $two, 2 # fictive register names are (currently) fine
 jlabel jumptarget_label
 multu $v0, $v0, $two # multiply by two, ps2-style
+la $v1, (some_symbol)
 addiu $sp, $sp, 0x34
 
 func_other:

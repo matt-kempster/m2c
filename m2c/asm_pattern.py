@@ -63,19 +63,16 @@ class AsmMatch:
 
 class AsmPattern(abc.ABC):
     @abc.abstractmethod
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        ...
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]: ...
 
 
 class SimpleAsmPattern(AsmPattern):
     @property
     @abc.abstractmethod
-    def pattern(self) -> Pattern:
-        ...
+    def pattern(self) -> Pattern: ...
 
     @abc.abstractmethod
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        ...
+    def replace(self, m: AsmMatch) -> Optional[Replacement]: ...
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         m = matcher.try_match(self.pattern)

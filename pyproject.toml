@@ -13,6 +13,9 @@ readme = "README.md"
 repository = "https://github.com/matt-kempster/m2c"
 packages = [{include = "m2c"}]
 
+[tool.poetry.scripts]
+m2c = "m2c.main:main"
+
 [tool.poetry.dependencies]
 python = "^3.8"
 pycparser = "^2.21"
@@ -22,7 +25,7 @@ graphviz = "^0.20.1"
 pre-commit = "^2.20.0"
 mypy = "^1.8.0"
 coverage = "^7.2.7"
-black = "23.12.1"
+black = "24.4.2"
 
 [build-system]
 requires = ["poetry-core"]
