@@ -44,10 +44,16 @@ class StructField:
 
 
 @dataclass
+class BitField:
+    width: int
+    name: str
+
+
+@dataclass
 class Struct:
     type: CType
     fields: Dict[int, List[StructField]]
-    # TODO: bitfields
+    bitfields: Dict[int, List[BitField]]
     has_bitfields: bool
     size: int
     align: int
@@ -87,7 +93,7 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 4
+    VERSION: ClassVar[int] = 5
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
@@ -479,6 +485,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     assert struct.decls, "Empty structs are not valid C"
 
     fields: Dict[int, List[StructField]] = defaultdict(list)
+    bitfields: Dict[int, List[BitField]] = defaultdict(list)
     union_size = 0
     align = 1
     offset = 0
@@ -492,6 +499,9 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             offset += 1
 
     for decl in struct.decls:
+        if is_union:
+            assert offset == 0
+
         if not isinstance(decl, ca.Decl):
             # Ignore pragmas
             continue
@@ -546,12 +556,14 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                 raise DecompFailure(f"Bitfield {field_name} is not of primitive type")
             if width > ssize * 8:
                 raise DecompFailure(f"Width of bitfield {field_name} exceeds its type")
+            if offset // ssize != (offset + (bit_offset + width - 1) // 8) // ssize:
+                bit_offset = 0
+                offset = (offset + ssize) & -ssize
+            if decl.name is not None:
+                bitfields[offset * 8 + bit_offset].append(BitField(width, decl.name))
             if is_union:
                 union_size = max(union_size, ssize)
             else:
-                if offset // ssize != (offset + (bit_offset + width - 1) // 8) // ssize:
-                    bit_offset = 0
-                    offset = (offset + ssize) & -ssize
                 bit_offset += width
                 offset += bit_offset // 8
                 bit_offset &= 7
@@ -591,7 +603,12 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     size = union_size if is_union else offset
     size = (size + align - 1) & -align
     return Struct(
-        type=ctype, fields=fields, has_bitfields=has_bitfields, size=size, align=align
+        type=ctype,
+        fields=dict(fields),
+        bitfields=dict(bitfields),
+        has_bitfields=has_bitfields,
+        size=size,
+        align=align,
     )
 
 

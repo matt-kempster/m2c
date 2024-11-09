@@ -1268,12 +1268,19 @@ class StructDeclaration:
         name: str
         known: bool
 
+    @dataclass(eq=False)
+    class BitField:
+        bit_offset: int
+        bit_width: int
+        name: str
+
     size: Optional[int]
     align: int
     new_field_prefix: str
     tag_name: Optional[str] = None
     typedef_name: Optional[str] = None
     fields: List[StructField] = field(default_factory=list)  # sorted by `.offset`
+    bitfields: List[BitField] = field(default_factory=list)  # sorted by `.bit_offset`
     has_bitfields: bool = False
     is_union: bool = False
     is_stack: bool = False
@@ -1568,11 +1575,13 @@ class StructDeclaration:
         try:
             struct = parse_struct(ctype, typemap)
             struct_fields = struct.fields
+            struct_bitfields = struct.bitfields
             struct_has_bitfields = struct.has_bitfields
             struct_size = struct.size
             struct_align = struct.align
         except UndefinedStructError:
             struct_fields = {}
+            struct_bitfields = {}
             struct_has_bitfields = False
             struct_size = 0
             struct_align = 1
@@ -1590,6 +1599,7 @@ class StructDeclaration:
             tag_name=ctype.name,
             typedef_name=typedef_name,
             fields=[],
+            bitfields=[],
             has_bitfields=struct_has_bitfields,
             is_union=isinstance(ctype, ca.Union),
             new_field_prefix=typepool.unknown_field_prefix,
@@ -1597,6 +1607,16 @@ class StructDeclaration:
         # Register the struct in the typepool now, before parsing the fields,
         # in case there are any self-referential fields in this struct.
         typepool.add_struct(decl, ctype)
+
+        for bit_offset, bit_fields in sorted(struct_bitfields.items()):
+            for bit_field in bit_fields:
+                decl.bitfields.append(
+                    StructDeclaration.BitField(
+                        bit_offset=bit_offset,
+                        bit_width=bit_field.width,
+                        name=bit_field.name,
+                    )
+                )
 
         for offset, fields in sorted(struct_fields.items()):
             for field in fields:
