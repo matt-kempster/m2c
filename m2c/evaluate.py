@@ -440,7 +440,11 @@ def handle_lwr(args: InstrArgs) -> Expression:
     else:
         lwl_key = (ref.offset + delta, ref.sym)
     if isinstance(uw_old_value, Lwl) and uw_old_value.key[0] == lwl_key[0]:
-        return UnalignedLoad(uw_old_value.load_expr)
+        if args.stack_info.global_info.target.is_big_endian():
+            load_expr = uw_old_value.load_expr
+        else:
+            load_expr = deref_unaligned(ref, args.regs, args.stack_info)
+        return UnalignedLoad(load_expr)
     # IDO may copy 3 bytes between 4-byte-aligned addresses using lwr+swr, e.g. for
     # the purpose of array initializers. Little endian can use lwl+swl instead,
     # but other compilers don't seem to emit this pattern so we don't handle that
@@ -497,6 +501,8 @@ def handle_swl(args: InstrArgs) -> Optional[StoreStmt]:
     target = args.memory_ref(1)
     if not isinstance(early_unwrap(source), UnalignedLoad):
         source = UnalignedLoad(source)
+    if not args.stack_info.global_info.target.is_big_endian():
+        target = replace(target, offset=target.offset - 3)
     dest = deref_unaligned(target, args.regs, args.stack_info, store=True)
     return StoreStmt(source=source, dest=dest)
 
