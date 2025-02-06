@@ -1956,7 +1956,7 @@ class MipseeArch(MipsArch):
         "r0": Register("zero"),
     }
 
-    o32abi_float_regs = {
+    n32abi_float_regs = {
         "fv0": Register("f0"),
         "ft14": Register("f1"),
         "fv1": Register("f2"),
@@ -2026,7 +2026,7 @@ class MipseeArch(MipsArch):
         "31": Register("ra"),
     }
 
-    aliased_regs = {**o32abi_float_regs, **aliased_gp_regs, **numeric_regs}
+    aliased_regs = {**n32abi_float_regs, **aliased_gp_regs, **numeric_regs}
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
         return [
@@ -2048,6 +2048,7 @@ class MipseeArch(MipsArch):
             AbiArgSlot(28, Register("a7"), Type.any_reg()),
         ]
 
+    # Duplicated by ArchPpc.function_abi
     def function_abi(
         self,
         fn_sig: FunctionSignature,
@@ -2112,7 +2113,7 @@ class MipseeArch(MipsArch):
                 # earlier registers for the first member of that subset.
                 pass
             else:
-                # Only r3-r10/f1-f13 can be used for arguments
+                # Only a1-a7/f13-f19 can be used for arguments
                 regname = slot.reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
                 if prev_reg in self.argument_regs and prev_reg not in valid_extra_regs:
