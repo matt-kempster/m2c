@@ -5,6 +5,8 @@ import enum
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
 
+from .error import static_assert_unreachable
+
 
 class ChoicesEnum(enum.Enum):
     """A helper class that is easier to use with argparse"""
@@ -50,7 +52,7 @@ class Target:
             elif self == Target.PlatformEnum.PPC:
                 return Target.ArchEnum.PPC
             else:
-                raise ValueError(f"Unknown platform {self}")
+                static_assert_unreachable(self)
 
     class ArchEnum(ChoicesEnum):
         MIPS = "mips"

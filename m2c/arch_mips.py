@@ -1904,12 +1904,6 @@ class MipseeArch(MipsArch):
             "f9",
             "f10",
             "f11",
-            "f21",
-            "f23",
-            "f25",
-            "f27",
-            "f29",
-            "f31",
         ]
     ]
     temp_regs = (
@@ -1962,19 +1956,19 @@ class MipseeArch(MipsArch):
         "r0": Register("zero"),
     }
 
-    n32abi_float_regs = {
+    eabi64_float_regs = {
         "fv0": Register("f0"),
-        "ft14": Register("f1"),
-        "fv1": Register("f2"),
-        "ft15": Register("f3"),
-        "ft0": Register("f4"),
-        "ft1": Register("f5"),
-        "ft2": Register("f6"),
-        "ft3": Register("f7"),
-        "ft4": Register("f8"),
-        "ft5": Register("f9"),
-        "ft6": Register("f10"),
-        "ft7": Register("f11"),
+        "fv1": Register("f1"),
+        "ft0": Register("f2"),
+        "ft1": Register("f3"),
+        "ft2": Register("f4"),
+        "ft3": Register("f5"),
+        "ft4": Register("f6"),
+        "ft5": Register("f7"),
+        "ft6": Register("f8"),
+        "ft7": Register("f9"),
+        "ft8": Register("f10"),
+        "ft9": Register("f11"),
         "fa0": Register("f12"),
         "fa1": Register("f13"),
         "fa2": Register("f14"),
@@ -1984,17 +1978,17 @@ class MipseeArch(MipsArch):
         "fa6": Register("f18"),
         "fa7": Register("f19"),
         "fs0": Register("f20"),
-        "ft8": Register("f21"),
-        "fs1": Register("f22"),
-        "ft9": Register("f23"),
-        "fs2": Register("f24"),
-        "ft10": Register("f25"),
-        "fs3": Register("f26"),
-        "ft11": Register("f27"),
-        "fs4": Register("f28"),
-        "ft12": Register("f29"),
-        "fs5": Register("f30"),
-        "ft13": Register("f31"),
+        "fs1": Register("f21"),
+        "fs2": Register("f22"),
+        "fs3": Register("f23"),
+        "fs4": Register("f24"),
+        "fs5": Register("f25"),
+        "fs6": Register("f26"),
+        "fs7": Register("f27"),
+        "fs8": Register("f28"),
+        "fs9": Register("f29"),
+        "fs10": Register("f30"),
+        "fs11": Register("f31"),
     }
 
     numeric_regs = {
@@ -2010,10 +2004,10 @@ class MipseeArch(MipsArch):
         "9": Register("a5"),
         "10": Register("a6"),
         "11": Register("a7"),
-        "12": Register("t4"),
-        "13": Register("t5"),
-        "14": Register("t6"),
-        "15": Register("t7"),
+        "12": Register("t0"),
+        "13": Register("t1"),
+        "14": Register("t2"),
+        "15": Register("t3"),
         "16": Register("s0"),
         "17": Register("s1"),
         "18": Register("s2"),
@@ -2032,7 +2026,7 @@ class MipseeArch(MipsArch):
         "31": Register("ra"),
     }
 
-    aliased_regs = {**n32abi_float_regs, **aliased_gp_regs, **numeric_regs}
+    aliased_regs = {**eabi64_float_regs, **aliased_gp_regs, **numeric_regs}
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
         return [
