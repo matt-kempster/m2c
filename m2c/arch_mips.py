@@ -396,6 +396,8 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
     swc_pattern = make_pattern("swc1", "swc1")
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        if isinstance(matcher.arch, MipseeArch):
+            return None
         # TODO: sometimes the instructions aren't consecutive.
         m = matcher.try_match(self.lwc_pattern) or matcher.try_match(self.swc_pattern)
         if not m:

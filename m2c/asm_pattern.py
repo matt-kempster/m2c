@@ -202,6 +202,7 @@ class TryMatchState:
 
 @dataclass
 class AsmMatcher:
+    arch: ArchAsm
     input: List[BodyPart]
     labels: Set[str]
     output: List[BodyPart] = field(default_factory=list)
@@ -272,7 +273,7 @@ def simplify_patterns(
     especially useful for patterns that involve branches, which are hard to deal with
     in the translate phase."""
     labels = {name for item in body if isinstance(item, Label) for name in item.names}
-    matcher = AsmMatcher(body, labels)
+    matcher = AsmMatcher(arch, body, labels)
     while matcher.index < len(matcher.input):
         for pattern in patterns:
             m = pattern.match(matcher)
