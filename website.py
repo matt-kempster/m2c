@@ -62,6 +62,8 @@ if "source" in form:
             "mips-ido-c",
             "mips-gcc-c",
             "mipsel-gcc-c",
+            "mipsee-gcc-c",
+            "mipsee-gcc-c++",
         ):
             cmd.extend(["--target", value])
     if "nounkinference" in form:
@@ -240,8 +242,10 @@ label {
     <option value="mips-ido-c">MIPS, IDO, C</option>
     <option value="mips-gcc-c">MIPS, GCC, C</option>
     <option value="mipsel-gcc-c">MIPSEL, GCC, C</option>
-    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
+    <option value="mipsee-gcc-c">MIPSEE, GCC, C</option>
+    <option value="mipsee-gcc-c++">MIPSEE, GCC, C++</option>
     <option value="ppc-mwcc-c">PPC, MWCC, C</option>
+    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
     </select>
     </label>
     <label>Comment style:
