@@ -1363,6 +1363,7 @@ class PpcArch(Arch):
         ),
     }
 
+    # Duplicated by MipseeArch.function_abi
     @staticmethod
     def function_abi(
         fn_sig: FunctionSignature,

@@ -21,7 +21,7 @@ from .translate import (
     narrow_func_call_outputs,
 )
 from .types import TypePool
-from .arch_mips import MipsArch
+from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
 
@@ -66,7 +66,10 @@ def print_exception_as_comment(
 def run(options: Options) -> int:
     arch: Arch
     if options.target.arch == Target.ArchEnum.MIPS:
-        arch = MipsArch()
+        if options.target.platform == Target.PlatformEnum.MIPSEE:
+            arch = MipseeArch()
+        else:
+            arch = MipsArch()
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     else:
@@ -471,7 +474,7 @@ def parse_flags(flags: List[str]) -> Options:
         type=Target.parse,
         default="mips-ido-c",
         help="Target architecture, compiler, and language triple. "
-        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, ppc-mwcc-c++, ppc-mwcc-c. "
+        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, mipsee-gcc-c, mipsee-gcc-c++, ppc-mwcc-c++, ppc-mwcc-c. "
         "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
     )
     group.add_argument(
