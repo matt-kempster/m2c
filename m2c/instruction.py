@@ -2,6 +2,7 @@ from __future__ import annotations
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+import re
 from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
@@ -160,6 +161,8 @@ class ArchAsm(ArchAsmParsing):
 
     arch: Target.ArchEnum
 
+    re_comment_or_string: re.Pattern[str]
+
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
     return_address_reg: Register
@@ -169,7 +172,6 @@ class ArchAsm(ArchAsmParsing):
     simple_temp_regs: List[Register]
     temp_regs: List[Register]
     saved_regs: List[Register]
-    all_regs: List[Register]
 
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]: ...

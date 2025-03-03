@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import replace
+import re
 from typing import (
     Callable,
     ClassVar,
@@ -338,6 +339,8 @@ class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
 
 class PpcArch(Arch):
     arch = Target.ArchEnum.PPC
+
+    re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
 
     stack_pointer_reg = Register("r1")
     frame_pointer_reg = Register("r30")

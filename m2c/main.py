@@ -21,6 +21,7 @@ from .translate import (
     narrow_func_call_outputs,
 )
 from .types import TypePool
+from .arch_arm import ArmArch
 from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
@@ -79,6 +80,8 @@ def run(options: Options) -> int:
             arch = MipsArch()
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
+    elif options.target.arch == Target.ArchEnum.ARM:
+        arch = ArmArch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")
 
@@ -479,8 +482,8 @@ def parse_flags(flags: List[str]) -> Options:
         type=Target.parse,
         default="mips-ido-c",
         help="Target architecture, compiler, and language triple. "
-        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, mipsee-gcc-c, mipsee-gcc-c++, ppc-mwcc-c, ppc-mwcc-c++. "
-        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
+        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, mipsee-gcc-c, mipsee-gcc-c++, ppc-mwcc-c, ppc-mwcc-c++, arm-agbcc-c. "
+        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, and `arm` for arm-agbcc-c. ",
     )
     group.add_argument(
         "--passes",

@@ -330,12 +330,12 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/#; \t":
+        if s[0] in "/#;@ \t":
             return " "
         else:
             return s
 
-    re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
+    re_comment_or_string = re.compile(r'^[ \t]*#.*|[@;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{8}")
     re_local_label = re.compile("loc_|locret_|def_|lbl_|LAB_|jump_")
@@ -374,7 +374,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
 
         # Strip comments and whitespace (but not within strings)
-        line = re.sub(re_comment_or_string, re_comment_replacer, line)
+        line = re.sub(arch.re_comment_or_string, re_comment_replacer, line)
         line = re.sub(re_whitespace_or_string, re_comment_replacer, line)
         line = line.strip()
 
@@ -568,7 +568,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 if len(parts) >= 2:
                     process_label(parts[1], kind=LabelKind.JUMP_TARGET)
 
-            elif directive in ("glabel", "dlabel"):
+            elif directive in (
+                "glabel",
+                "dlabel",
+                "arm_func_start",
+                "thumb_func_start",
+                "non_word_aligned_thumb_func_start",
+            ):
                 parts = line.split()
                 if len(parts) >= 2:
                     process_label(parts[1], kind=LabelKind.GLOBAL)

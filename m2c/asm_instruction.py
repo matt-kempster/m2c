@@ -29,6 +29,16 @@ class Register:
 
 
 @dataclass(frozen=True)
+class RegisterSet:
+    regs: List[Register]
+
+    def __str__(self) -> str:
+        if len(self.regs) == 1:
+            return str(self.regs[0])
+        return "{" + ",".join(str(r) for r in self.regs) + "}"
+
+
+@dataclass(frozen=True)
 class AsmGlobalSymbol:
     symbol_name: str
 
@@ -104,7 +114,9 @@ class JumpTarget:
         return self.target
 
 
-Argument = Union[Register, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp]
+Argument = Union[
+    Register, RegisterSet, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp
+]
 
 
 @dataclass(frozen=True)
@@ -249,18 +261,22 @@ def parse_arg_elems(
 ) -> Optional[Argument]:
     value: Optional[Argument] = None
 
+    def consume_ws() -> None:
+        while arg_elems and arg_elems[0].isspace():
+            arg_elems.pop(0)
+
     def expect(n: str) -> str:
         assert arg_elems, f"Expected one of {list(n)}, but reached end of string"
         g = arg_elems.pop(0)
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
 
-    while arg_elems:
+    while True:
+        consume_ws()
+        if not arg_elems:
+            break
         tok: str = arg_elems[0]
-        if tok.isspace():
-            # Ignore whitespace.
-            arg_elems.pop(0)
-        elif tok == ",":
+        if tok == ",":
             expect(",")
             break
         elif tok == "$":
@@ -273,6 +289,37 @@ def parse_arg_elems(
                 value = AsmGlobalSymbol(word)
             else:
                 value = reg_formatter.parse_and_store(reg, arch)
+        elif tok == "#":
+            # ARM immediate.
+            assert value is None
+            expect("#")
+        elif tok == "{":
+            # ARM register list.
+            assert value is None
+            arg_elems.pop(0)
+            li: List[Register] = []
+            while True:
+                consume_ws()
+                if li:
+                    if expect(",}") == "}":
+                        break
+                    consume_ws()
+                word = parse_word(arg_elems)
+                reg1 = reg_formatter.parse_and_store(word, arch)
+                consume_ws()
+                if arg_elems[0] == "-":
+                    arg_elems.pop(0)
+                    consume_ws()
+                    word = parse_word(arg_elems)
+                    reg2 = reg_formatter.parse_and_store(word, arch)
+                else:
+                    reg2 = reg1
+                to_numeric = {"sp": "r13", "lr": "r14", "pc": "r15"}
+                num1 = int(to_numeric.get(reg1.register_name, reg1.register_name)[1:])
+                num2 = int(to_numeric.get(reg2.register_name, reg2.register_name)[1:])
+                for i in range(num1, num2 + 1):
+                    li.append(reg_formatter.parse(f"r{i}", arch))
+            value = RegisterSet(li)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None
