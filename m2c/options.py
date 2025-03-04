@@ -135,6 +135,7 @@ class Options:
     filenames: List[str]
     function_indexes_or_names: List[Union[int, str]]
     debug: bool
+    stacktrace: bool
     void: bool
     ifs: bool
     switch_detection: bool

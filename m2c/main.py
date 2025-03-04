@@ -25,14 +25,14 @@ from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
 
-def print_current_exception(sanitize: bool) -> None:
+def print_exception(exc: Exception, sanitize: bool) -> None:
     """Print a traceback for the current exception to stdout.
 
     If `sanitize` is true, the filename's full path is stripped,
     and the line is set to 0. These changes make the test output
     less brittle."""
     if sanitize:
-        tb = traceback.TracebackException(*sys.exc_info())
+        tb = traceback.TracebackException(type(exc), exc, exc.__traceback__)
         if tb.exc_type == InstrProcessingFailure and tb.__cause__:
             tb = tb.__cause__
         for frame in tb.stack:
@@ -41,11 +41,11 @@ def print_current_exception(sanitize: bool) -> None:
         for line in tb.format(chain=False):
             print(line, end="")
     else:
-        traceback.print_exc(file=sys.stdout)
+        traceback.print_exception(exc, file=sys.stdout)
 
 
 def print_exception_as_comment(
-    exc: Exception, context: Optional[str], sanitize: bool
+    exc: Exception, options: Options, context: Optional[str]
 ) -> None:
     context_phrase = f" in {context}" if context is not None else ""
     if isinstance(exc, OSError):
@@ -55,11 +55,18 @@ def print_exception_as_comment(
         print("/*")
         print(f"Decompilation failure{context_phrase}:\n")
         print(exc)
+        if options.stacktrace:
+            tb = traceback.TracebackException(type(exc), exc, exc.__traceback__)
+            tb = tb.__cause__ or tb.__context__
+            if tb:
+                print()
+                for line in tb.format():
+                    print(line, end="")
         print("*/")
     else:
         print("/*")
         print(f"Internal error{context_phrase}:\n")
-        print_current_exception(sanitize=sanitize)
+        print_exception(exc, sanitize=options.sanitize_tracebacks)
         print("*/")
 
 
@@ -91,9 +98,7 @@ def run(options: Options) -> int:
             asm_data.detect_heuristic_strings()
         typemap = build_typemap(options.c_contexts, use_cache=options.use_cache)
     except Exception as e:
-        print_exception_as_comment(
-            e, context=None, sanitize=options.sanitize_tracebacks
-        )
+        print_exception_as_comment(e, options, context=None)
         return 1
 
     if options.dump_typemap:
@@ -213,9 +218,7 @@ def run(options: Options) -> int:
         if global_decls:
             print(global_decls)
     except Exception as e:
-        print_exception_as_comment(
-            e, context=None, sanitize=options.sanitize_tracebacks
-        )
+        print_exception_as_comment(e, options, context=None)
         return_code = 1
 
     for index, (function, function_info) in enumerate(zip(functions, function_infos)):
@@ -233,11 +236,7 @@ def run(options: Options) -> int:
             print(function_text)
 
         except Exception as e:
-            print_exception_as_comment(
-                e,
-                context=f"function {function.name}",
-                sanitize=options.sanitize_tracebacks,
-            )
+            print_exception_as_comment(e, options, context=f"function {function.name}")
             return_code = 1
 
     for warning in typepool.warnings:
@@ -340,6 +339,12 @@ def parse_flags(flags: List[str]) -> Options:
         dest="debug",
         action="store_true",
         help="Print debug info inline",
+    )
+    group.add_argument(
+        "--stacktrace",
+        dest="stacktrace",
+        action="store_true",
+        help="Print internal stack traces for errors",
     )
     group.add_argument(
         "--print-assembly",
@@ -606,6 +611,7 @@ def parse_flags(flags: List[str]) -> Options:
         filenames=args.filenames,
         function_indexes_or_names=functions,
         debug=args.debug,
+        stacktrace=args.stacktrace,
         void=args.void,
         ifs=args.ifs,
         switch_detection=args.switch_detection,
