@@ -2903,7 +2903,11 @@ def strip_macros(arg: Argument) -> Argument:
             raise DecompFailure(
                 f"Bad linker macro in instruction argument {arg}, expected %lo"
             )
-        return AsmAddressMode(base=arg.base, addend=AsmLiteral(0))
+        return AsmAddressMode(
+            base=arg.base,
+            addend=AsmLiteral(0),
+            writeback=arg.writeback,
+        )
     else:
         return arg
 

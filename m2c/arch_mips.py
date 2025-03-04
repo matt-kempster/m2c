@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import replace
-import re
 from typing import (
     Callable,
     Dict,
@@ -731,7 +730,8 @@ class TailCallPattern(AsmPattern):
 class MipsArch(Arch):
     arch = Target.ArchEnum.MIPS
 
-    re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
+    re_comment = r"[#;].*"
+    supports_dollar_regs = True
 
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")

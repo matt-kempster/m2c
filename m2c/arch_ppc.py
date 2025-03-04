@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import replace
-import re
 from typing import (
     Callable,
     ClassVar,
@@ -215,6 +214,7 @@ class SaveRestoreRegsFnPattern(AsmPattern):
             stack_pos = AsmAddressMode(
                 base=Register("r1"),
                 addend=AsmLiteral(size * (i - 32) + addend),
+                writeback=None,
             )
             new_instrs.append(AsmInstruction(mnemonic, [reg, stack_pos]))
         return Replacement(new_instrs, 1)
@@ -340,7 +340,8 @@ class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
 class PpcArch(Arch):
     arch = Target.ArchEnum.PPC
 
-    re_comment_or_string = re.compile(r'[#;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
+    re_comment = r"[#;].*"
+    supports_dollar_regs = True
 
     stack_pointer_reg = Register("r1")
     frame_pointer_reg = Register("r30")
@@ -914,7 +915,9 @@ class PpcArch(Arch):
             while index <= 31:
                 reg = Register(f"r{index}")
                 mem = make_memory_access(
-                    AsmAddressMode(base=args[1].base, addend=AsmLiteral(offset)),
+                    AsmAddressMode(
+                        base=args[1].base, addend=AsmLiteral(offset), writeback=None
+                    ),
                     4,
                 )
                 if mnemonic == "stmw":

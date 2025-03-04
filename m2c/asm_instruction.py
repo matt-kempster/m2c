@@ -3,6 +3,7 @@
 from __future__ import annotations
 import abc
 from dataclasses import dataclass, field
+from enum import Enum
 import string
 from typing import Dict, List, Optional, Union
 
@@ -80,10 +81,16 @@ class AsmLiteral:
         return hex(self.value)
 
 
+class Writeback(Enum):
+    PRE = "pre"
+    POST = "post"
+
+
 @dataclass(frozen=True)
 class AsmAddressMode:
     base: Register
     addend: Argument
+    writeback: Optional[Writeback]
 
     def lhs_as_literal(self) -> int:
         assert isinstance(self.addend, AsmLiteral)
@@ -136,6 +143,7 @@ class ArchAsmParsing(abc.ABC):
 
     all_regs: List[Register]
     aliased_regs: Dict[str, Register]
+    supports_dollar_regs: bool
 
     @abc.abstractmethod
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction: ...
@@ -147,6 +155,7 @@ class NaiveParsingArch(ArchAsmParsing):
 
     all_regs: List[Register] = []
     aliased_regs: Dict[str, Register] = {}
+    supports_dollar_regs = True
 
     def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
         return instr
@@ -279,7 +288,7 @@ def parse_arg_elems(
         if tok == ",":
             expect(",")
             break
-        elif tok == "$":
+        elif tok == "$" and arch.supports_dollar_regs:
             # Register.
             assert value is None
             word = parse_word(arg_elems)
@@ -345,7 +354,7 @@ def parse_arg_elems(
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
             value = Macro(macro_name, m)
-        elif tok == ")":
+        elif tok in (")", "]"):
             # Break out to the parent of this call, since we are in parens.
             break
         elif tok in string.digits or (tok == "-" and value is None):
@@ -382,7 +391,48 @@ def parse_arg_elems(
                     assert top_level
                     assert isinstance(rhs, Register)
                     value = constant_fold(value or AsmLiteral(0), defines)
-                    value = AsmAddressMode(rhs, value)
+                    value = AsmAddressMode(rhs, value, None)
+        elif tok == "[":
+            # ARM address mode
+            assert value is None
+            expect("[")
+            val = parse_arg_elems(
+                arg_elems, arch, reg_formatter, defines, top_level=False
+            )
+            assert val is not None
+            val = replace_bare_reg(val, arch, reg_formatter)
+            assert isinstance(val, Register)
+            addend: Optional[Argument] = None
+            if expect(",]") == ",":
+                addend = parse_arg_elems(
+                    arg_elems, arch, reg_formatter, defines, top_level=False
+                )
+                assert addend is not None
+                addend = constant_fold(addend, defines)
+                expect("]")
+            consume_ws()
+            writeback: Optional[Writeback] = None
+            if arg_elems and arg_elems[0] == "!":
+                expect("!")
+                writeback = Writeback.PRE
+            elif arg_elems and arg_elems[0] == ",":
+                expect(",")
+                assert addend is None
+                addend = parse_arg_elems(
+                    arg_elems, arch, reg_formatter, defines, top_level=False
+                )
+                assert addend is not None
+                addend = constant_fold(addend, defines)
+                writeback = Writeback.POST
+            if addend is None:
+                addend = AsmLiteral(0)
+            value = AsmAddressMode(val, addend, writeback)
+        elif tok == "!":
+            # ARM writeback indicator, e.g. "ldmia sp!, {r3, r4, r5, pc}".
+            # Let's abuse AsmAddressMode for this.
+            expect("!")
+            assert isinstance(value, Register)
+            value = AsmAddressMode(value, AsmLiteral(0), Writeback.PRE)
         elif tok == '"':
             # Quoted global symbol.
             expect('"')

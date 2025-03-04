@@ -335,7 +335,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         else:
             return s
 
-    re_comment_or_string = re.compile(r'^[ \t]*#.*|[@;].*|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{8}")
     re_local_label = re.compile("loc_|locret_|def_|lbl_|LAB_|jump_")
@@ -369,12 +368,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         else:
             asm_file.new_data_sym(w)
 
+    re_comment_or_string = re.compile(arch.re_comment + r'|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
 
         # Strip comments and whitespace (but not within strings)
-        line = re.sub(arch.re_comment_or_string, re_comment_replacer, line)
+        line = re.sub(re_comment_or_string, re_comment_replacer, line)
         line = re.sub(re_whitespace_or_string, re_comment_replacer, line)
         line = line.strip()
 

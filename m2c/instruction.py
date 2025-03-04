@@ -2,7 +2,6 @@ from __future__ import annotations
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-import re
 from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
@@ -161,7 +160,7 @@ class ArchAsm(ArchAsmParsing):
 
     arch: Target.ArchEnum
 
-    re_comment_or_string: re.Pattern[str]
+    re_comment: str
 
     stack_pointer_reg: Register
     frame_pointer_reg: Optional[Register]
