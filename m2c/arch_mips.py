@@ -1313,8 +1313,6 @@ class MipsArch(Arch):
         # FCSR gets are as well, but it's fine to read M2C_ERROR for those.
         "ctc1",
         "nop",
-        "b",
-        "j",
     }
     instrs_store: StoreInstrMap = {
         # Storage instructions

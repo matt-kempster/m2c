@@ -1079,7 +1079,6 @@ class PpcArch(Arch):
 
     instrs_ignore: Set[str] = {
         "nop",
-        "b",
         # Assume stmw/lmw are only used for saving/restoring saved regs
         "stmw",
         "lmw",
