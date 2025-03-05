@@ -151,6 +151,7 @@ class RegFormatter:
         return arch.aliased_regs.get(reg_name, Register(reg_name))
 
     def parse_and_store(self, reg_name: str, arch: ArchAsmParsing) -> Register:
+        reg_name = reg_name.lower()
         internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
         existing_reg_name = self.used_names.get(internal_reg)
         if existing_reg_name is None:
@@ -226,7 +227,7 @@ def replace_bare_reg(
     """If `arg` is an AsmGlobalSymbol whose name matches a known or aliased register,
     convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
-        reg_name = arg.symbol_name
+        reg_name = arg.symbol_name.lower()
         if Register(reg_name) in arch.all_regs or reg_name in arch.aliased_regs:
             return reg_formatter.parse_and_store(reg_name, arch)
     return arg
@@ -271,8 +272,7 @@ def parse_arg_elems(
                 # If there is a second $ in the word, it's a symbol
                 value = AsmGlobalSymbol(word)
             else:
-                value = Register(reg)
-                value = reg_formatter.parse_and_store(value.register_name, arch)
+                value = reg_formatter.parse_and_store(reg, arch)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None
@@ -435,5 +435,5 @@ def parse_asm_instruction(
     mnemonic, _, args_str = line.partition(" ")
     # Parse arguments.
     args = parse_args(args_str, arch, reg_formatter, defines)
-    instr = AsmInstruction(mnemonic, args)
+    instr = AsmInstruction(mnemonic.lower(), args)
     return arch.normalize_instruction(instr)
