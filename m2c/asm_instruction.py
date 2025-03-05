@@ -286,7 +286,6 @@ def parse_arg_elems(
             break
         tok: str = arg_elems[0]
         if tok == ",":
-            expect(",")
             break
         elif tok == "$" and arch.supports_dollar_regs:
             # Register.
@@ -518,6 +517,9 @@ def parse_args(
         output.append(
             replace_bare_reg(constant_fold(ret, defines), arch, reg_formatter)
         )
+        if arg_elems:
+            comma = arg_elems.pop(0)
+            assert comma == ","
     return output
 
 
