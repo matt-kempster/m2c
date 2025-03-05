@@ -1,0 +1,434 @@
+from __future__ import annotations
+from dataclasses import replace
+from enum import Enum
+from typing import (
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
+
+from .error import DecompFailure
+from .options import Target
+from .asm_file import Label
+from .asm_instruction import (
+    Argument,
+    AsmAddressMode,
+    AsmGlobalSymbol,
+    AsmInstruction,
+    AsmLiteral,
+    JumpTarget,
+    Register,
+    get_jump_target,
+)
+from .instruction import (
+    Instruction,
+    InstructionMeta,
+    Location,
+    StackLocation,
+)
+from .translate import (
+    Abi,
+    AbiArgSlot,
+    Arch,
+    BinaryOp,
+    Cast,
+    CmpInstrMap,
+    CommentStmt,
+    ErrorExpr,
+    ExprStmt,
+    Expression,
+    InstrArgs,
+    InstrMap,
+    Literal,
+    NodeState,
+    SecondF64Half,
+    StmtInstrMap,
+    StoreInstrMap,
+    UnaryOp,
+    as_f32,
+    as_f64,
+    as_intish,
+    as_s64,
+    as_sintish,
+    as_type,
+    as_u32,
+    as_u64,
+    as_uintish,
+)
+from .evaluate import (
+    condition_from_expr,
+    error_stmt,
+    fn_op,
+    fold_divmod,
+    fold_mul_chains,
+    handle_add,
+    handle_add_double,
+    handle_add_float,
+    handle_add_real,
+    handle_addi,
+    handle_bgez,
+    handle_conditional_move,
+    handle_convert,
+    handle_la,
+    handle_lw,
+    handle_load,
+    handle_lwl,
+    handle_lwr,
+    handle_or,
+    handle_sltiu,
+    handle_sltu,
+    handle_sra,
+    handle_swl,
+    handle_swr,
+    imm_add_32,
+    load_upper,
+    make_store,
+    void_fn_op,
+)
+from .types import FunctionSignature, Type
+
+
+LENGTH_THREE: Set[str] = {
+    "add",
+    "adc",
+    "sub",
+    "sbc",
+    "rsb",
+    "rsc",
+    "mul",
+    "eor",
+    "orr",
+    "and",
+    "lsl",
+    "asr",
+    "lsr",
+    "bic",
+}
+
+
+class Cc(Enum):
+    EQ = "eq"
+    NE = "ne"
+    CS = "cs"
+    CC = "cc"
+    MI = "mi"
+    PL = "pl"
+    VS = "vs"
+    VC = "vc"
+    HI = "hi"
+    LS = "ls"
+    GE = "ge"
+    LT = "lt"
+    GT = "gt"
+    LE = "le"
+
+
+def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
+    set_flags = False
+    if mnemonic.endswith("s"):
+        mnemonic = mnemonic[:-1]
+        set_flags = True
+    cc: Optional[Cc] = None
+    for suffix in [cond.value for cond in Cc] + ["al", "hs", "lo"]:
+        if mnemonic.endswith(suffix):
+            if suffix == "al":
+                cc = None
+            elif suffix == "hs":
+                cc = Cc.CS
+            elif suffix == "lo":
+                cc = Cc.CC
+            else:
+                cc = Cc(suffix)
+            mnemonic = mnemonic[: -len(suffix)]
+            break
+    if mnemonic.endswith("s") and not set_flags:
+        mnemonic = mnemonic[:-1]
+        set_flags = True
+    return mnemonic, cc, set_flags
+
+
+class ArmArch(Arch):
+    arch = Target.ArchEnum.ARM
+
+    re_comment = r"^[ \t]*#.*|[@;].*"
+    supports_dollar_regs = False
+
+    stack_pointer_reg = Register("sp")
+    frame_pointer_reg = Register("r11")
+    return_address_reg = Register("lr")
+
+    base_return_regs = [(Register("r0"), False)]
+    all_return_regs = [Register("r0"), Register("r1")]
+    argument_regs = [Register(r) for r in ["r0", "r1", "r2", "r3"]]
+    simple_temp_regs = [Register("r12")]
+    temp_regs = (
+        argument_regs
+        + simple_temp_regs
+        + [
+            Register(r)
+            for r in [
+                # TODO
+                "condition_bit",
+            ]
+        ]
+    )
+    saved_regs = [
+        Register(r)
+        for r in [
+            "r4",
+            "r5",
+            "r6",
+            "r7",
+            "r8",
+            "r9",
+            "r10",
+            "r11",
+            "lr",
+        ]
+    ]
+    all_regs = saved_regs + temp_regs + [stack_pointer_reg, Register("pc")]
+
+    aliased_regs = {
+        "fp": Register("r11"),
+        "ip": Register("r12"),
+        "sb": Register("r9"),
+        "tr": Register("r9"),
+        "r13": Register("sp"),
+        "r14": Register("lr"),
+        "r15": Register("pc"),
+    }
+
+    @classmethod
+    def missing_return(cls) -> List[Instruction]:
+        meta = InstructionMeta.missing()
+        return [
+            cls.parse("jr", [Register("ra")], meta),
+            cls.parse("nop", [], meta),
+        ]
+
+    @classmethod
+    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+        base, cc, set_flags = parse_suffix(instr.mnemonic)
+        args = instr.args
+        if len(args) == 3:
+            if instr.mnemonic == "lsl" and args[2] == AsmLiteral(0):
+                return AsmInstruction("mov", args[:2])
+            if instr.mnemonic == "lsls" and args[2] == AsmLiteral(0):
+                return AsmInstruction("movs", args[:2])
+        if len(args) == 2:
+            if instr.mnemonic == "mov" and args[0] == args[1] == Register("r0"):
+                return AsmInstruction("nop", [])
+            if base in LENGTH_THREE:
+                return cls.normalize_instruction(
+                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                )
+        if instr.mnemonic.startswith("it"):
+            # Conditions are encoded in the following instructions already
+            return AsmInstruction("nop", [])
+        return instr
+
+    @classmethod
+    def parse(
+        cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
+    ) -> Instruction:
+        inputs: List[Location] = []
+        clobbers: List[Location] = []
+        outputs: List[Location] = []
+        jump_target: Optional[Union[JumpTarget, Register]] = None
+        function_target: Optional[Argument] = None
+        has_delay_slot = False
+        is_branch_likely = False
+        is_conditional = False
+        is_return = False
+        is_store = False
+        eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
+
+        instr_str = str(AsmInstruction(mnemonic, args))
+
+        base, cc, set_flags = parse_suffix(mnemonic)
+
+        if mnemonic in cls.instrs_ignore:
+            pass
+        else:
+            # If the mnemonic is unsupported, guess if it is destination-first
+            if args and isinstance(args[0], Register):
+                inputs = [r for r in args[1:] if isinstance(r, Register)]
+                outputs = [args[0]]
+                maybe_dest_first = True
+            else:
+                maybe_dest_first = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                error = ErrorExpr(f"unknown instruction: {instr_str}")
+                if maybe_dest_first:
+                    s.set_reg_real(a.reg_ref(0), error, emit_exactly_once=True)
+                else:
+                    s.write_statement(ExprStmt(error))
+
+        return Instruction(
+            mnemonic=mnemonic,
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=clobbers,
+            outputs=outputs,
+            jump_target=jump_target,
+            function_target=function_target,
+            has_delay_slot=has_delay_slot,
+            is_branch_likely=is_branch_likely,
+            is_conditional=is_conditional,
+            is_return=is_return,
+            is_store=is_store,
+            eval_fn=eval_fn,
+        )
+
+    asm_patterns = []
+
+    instrs_ignore: Set[str] = {
+        "nop",
+        "b",
+        "j",
+    }
+
+    def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
+        # TODO: these stack locations are wrong, registers don't have pre-defined
+        # home space outside of MIPS.
+        return [
+            AbiArgSlot(0, Register("a0"), Type.any_reg()),
+            AbiArgSlot(4, Register("a1"), Type.any_reg()),
+            AbiArgSlot(8, Register("a2"), Type.any_reg()),
+            AbiArgSlot(12, Register("a3"), Type.any_reg()),
+        ]
+
+    def function_abi(
+        self,
+        fn_sig: FunctionSignature,
+        likely_regs: Dict[Register, bool],
+        *,
+        for_call: bool,
+    ) -> Abi:
+        """Compute stack positions/registers used by a function according to the agbcc ABI,
+        based on C type information. Additionally computes a list of registers that might
+        contain arguments, if the function is a varargs function. (Additional varargs
+        arguments may be passed on the stack; we could compute the offset at which that
+        would start but right now don't care -- we just slurp up everything.)"""
+
+        known_slots: List[AbiArgSlot] = []
+        candidate_slots: List[AbiArgSlot] = []
+        if fn_sig.params_known:
+            offset = 0
+            if fn_sig.return_type.is_struct():
+                # The ABI for struct returns is to pass a pointer to where it should be written
+                # as the first argument.
+                # TODO is this right?
+                known_slots.append(
+                    AbiArgSlot(
+                        offset=0,
+                        reg=Register("r0"),
+                        name="__return__",
+                        type=Type.ptr(fn_sig.return_type),
+                        comment="return",
+                    )
+                )
+                offset = 4
+
+            for ind, param in enumerate(fn_sig.params):
+                # Array parameters decay into pointers
+                param_type = param.type.decay()
+                size, align = param_type.get_parameter_size_align_bytes()
+                size = (size + 3) & ~3
+                offset = (offset + align - 1) & -align
+                name = param.name
+                reg2: Optional[Register]
+                for i in range(offset // 4, (offset + size) // 4):
+                    unk_offset = 4 * i - offset
+                    reg2 = Register(f"r{i}") if i < 4 else None
+                    if size > 4:
+                        name2 = f"{name}_unk{unk_offset:X}" if name else None
+                        sub_type = Type.any()
+                        comment: Optional[str] = f"{param_type}+{unk_offset:#x}"
+                    else:
+                        assert unk_offset == 0
+                        name2 = name
+                        sub_type = param_type
+                        comment = None
+                    known_slots.append(
+                        AbiArgSlot(
+                            offset=4 * i,
+                            reg=reg2,
+                            name=name2,
+                            type=sub_type,
+                            comment=comment,
+                        )
+                    )
+                offset += size
+
+            if fn_sig.is_variadic:
+                for i in range(offset // 4, 4):
+                    candidate_slots.append(
+                        AbiArgSlot(i * 4, Register(f"r{i}"), Type.any_reg())
+                    )
+
+        else:
+            candidate_slots = self.default_function_abi_candidate_slots()
+
+        valid_extra_regs: Set[Register] = {
+            slot.reg for slot in known_slots if slot.reg is not None
+        }
+        possible_slots: List[AbiArgSlot] = []
+        for slot in candidate_slots:
+            if slot.reg is None or slot.reg not in likely_regs:
+                continue
+
+            # Don't pass this register if lower numbered ones are undefined.
+            require: Optional[List[str]] = None
+            if slot == candidate_slots[0]:
+                # For varargs, a subset of a0 .. a3 may be used. Don't check
+                # earlier registers for the first member of that subset.
+                pass
+            elif slot.reg == Register("r1"):
+                require = ["r0"]
+            elif slot.reg == Register("r2"):
+                require = ["r1"]
+            elif slot.reg == Register("r3"):
+                require = ["r2"]
+            if require and not any(Register(r) in valid_extra_regs for r in require):
+                continue
+
+            valid_extra_regs.add(slot.reg)
+
+            # Skip registers that are untouched from the initial parameter
+            # list. This is sometimes wrong (can give both false positives
+            # and negatives), but having a heuristic here is unavoidable
+            # without access to function signatures, or when dealing with
+            # varargs functions. Decompiling multiple functions at once
+            # would help.
+            # TODO: don't do this in the middle of the argument list.
+            if not likely_regs[slot.reg]:
+                continue
+
+            possible_slots.append(slot)
+
+        return Abi(
+            arg_slots=known_slots,
+            possible_slots=possible_slots,
+        )
+
+    @staticmethod
+    def function_return(expr: Expression) -> Dict[Register, Expression]:
+        # We may not know what this function's return registers are --
+        # $v0 or ($v0,$v1) -- but we don't really care, it's fine to be
+        # liberal here and put the return value in all of them.
+        # (It's not perfect for u64's, but that's rare anyway.)
+        return {
+            Register("v0"): Cast(
+                expr, reinterpret=True, silent=True, type=Type.intptr()
+            ),
+            Register("v1"): as_u32(
+                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
+            ),
+        }
