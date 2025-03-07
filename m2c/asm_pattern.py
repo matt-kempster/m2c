@@ -161,6 +161,7 @@ class TryMatchState:
                 isinstance(a, AsmAddressMode)
                 and self.match_reg(a.base, e.base)
                 and self.match_arg(a.addend, e.addend)
+                and a.shift == e.shift
                 and a.writeback == e.writeback
             )
         if isinstance(e, BinOp):

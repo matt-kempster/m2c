@@ -214,6 +214,7 @@ class SaveRestoreRegsFnPattern(AsmPattern):
             stack_pos = AsmAddressMode(
                 base=Register("r1"),
                 addend=AsmLiteral(size * (i - 32) + addend),
+                shift=0,
                 writeback=None,
             )
             new_instrs.append(AsmInstruction(mnemonic, [reg, stack_pos]))
@@ -916,7 +917,10 @@ class PpcArch(Arch):
                 reg = Register(f"r{index}")
                 mem = make_memory_access(
                     AsmAddressMode(
-                        base=args[1].base, addend=AsmLiteral(offset), writeback=None
+                        base=args[1].base,
+                        addend=AsmLiteral(offset),
+                        shift=0,
+                        writeback=None,
                     ),
                     4,
                 )

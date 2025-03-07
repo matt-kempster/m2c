@@ -2906,6 +2906,7 @@ def strip_macros(arg: Argument) -> Argument:
         return AsmAddressMode(
             base=arg.base,
             addend=AsmLiteral(0),
+            shift=0,
             writeback=arg.writeback,
         )
     else:

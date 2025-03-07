@@ -180,6 +180,7 @@ class IrMatch:
             return AsmAddressMode(
                 base=self.map_reg(key.base),
                 addend=self.map_arg(key.addend),
+                shift=key.shift,
                 writeback=key.writeback,
             )
         if isinstance(key, BinOp):
@@ -248,6 +249,7 @@ class TryIrMatch(IrMatch):
                 isinstance(cand, AsmAddressMode)
                 and self.match_arg(pat.base, cand.base)
                 and self.match_arg(pat.addend, cand.addend)
+                and pat.shift == cand.shift
                 and pat.writeback == cand.writeback
             )
         if isinstance(pat, BinOp):

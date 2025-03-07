@@ -215,12 +215,12 @@ class ArmArch(Arch):
         base, cc, set_flags = parse_suffix(instr.mnemonic)
         args = instr.args
         if len(args) == 3:
-            if instr.mnemonic == "lsl" and args[2] == AsmLiteral(0):
+            if instr.mnemonic in ("add", "lsl") and args[2] == AsmLiteral(0):
                 return AsmInstruction("mov", args[:2])
-            if instr.mnemonic == "lsls" and args[2] == AsmLiteral(0):
+            if instr.mnemonic in ("adds", "lsls") and args[2] == AsmLiteral(0):
                 return AsmInstruction("movs", args[:2])
         if len(args) == 2:
-            if instr.mnemonic == "mov" and args[0] == args[1] == Register("r0"):
+            if instr.mnemonic == "mov" and args[0] == args[1] == Register("r8"):
                 return AsmInstruction("nop", [])
             if base in LENGTH_THREE:
                 return cls.normalize_instruction(
