@@ -75,9 +75,9 @@ def deref(
         var = arg
     elif isinstance(arg, AddressMode):
         offset = arg.offset
-        if stack_info.is_stack_reg(arg.rhs):
+        if stack_info.is_stack_reg(arg.base):
             return stack_info.get_stack_var(offset, store=store)
-        var = regs[arg.rhs]
+        var = regs[arg.base]
     else:
         offset = arg.offset
         var = stack_info.global_info.address_of_gsym(arg.sym.symbol_name)
@@ -189,7 +189,7 @@ def handle_la(args: InstrArgs) -> Expression:
         return handle_addi(
             replace(
                 args,
-                raw_args=[output_reg, target.rhs, AsmLiteral(target.offset)],
+                raw_args=[output_reg, target.base, AsmLiteral(target.offset)],
             )
         )
 
@@ -422,7 +422,7 @@ def handle_lwl(args: InstrArgs) -> Expression:
     expr = deref_unaligned(ref, args.regs, args.stack_info)
     key: Tuple[int, object]
     if isinstance(ref, AddressMode):
-        key = (ref.offset, args.regs[ref.rhs])
+        key = (ref.offset, args.regs[ref.base])
     else:
         key = (ref.offset, ref.sym)
     return Lwl(expr, key)
@@ -436,7 +436,7 @@ def handle_lwr(args: InstrArgs) -> Expression:
     lwl_key: Tuple[int, object]
     delta = -3 if args.stack_info.global_info.target.is_big_endian() else 3
     if isinstance(ref, AddressMode):
-        lwl_key = (ref.offset + delta, args.regs[ref.rhs])
+        lwl_key = (ref.offset + delta, args.regs[ref.base])
     else:
         lwl_key = (ref.offset + delta, ref.sym)
     if isinstance(uw_old_value, Lwl) and uw_old_value.key[0] == lwl_key[0]:
@@ -467,7 +467,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     else:
         source_val = args.reg(0)
     target = args.memory_ref(1)
-    is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.rhs)
+    is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.base)
     if (
         is_stack
         and source_raw is not None

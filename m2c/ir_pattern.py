@@ -177,7 +177,10 @@ class IrMatch:
                 return self.symbolic_args[key.symbol_name]
             return key
         if isinstance(key, AsmAddressMode):
-            return AsmAddressMode(lhs=self.map_arg(key.lhs), rhs=self.map_reg(key.rhs))
+            return AsmAddressMode(
+                base=self.map_reg(key.base),
+                addend=self.map_arg(key.addend),
+            )
         if isinstance(key, BinOp):
             return self.eval_math(key)
         assert False, f"bad pattern part: {key}"
@@ -242,8 +245,8 @@ class TryIrMatch(IrMatch):
         if isinstance(pat, AsmAddressMode):
             return (
                 isinstance(cand, AsmAddressMode)
-                and self.match_arg(pat.lhs, cand.lhs)
-                and self.match_arg(pat.rhs, cand.rhs)
+                and self.match_arg(pat.base, cand.base)
+                and self.match_arg(pat.addend, cand.addend)
             )
         if isinstance(pat, BinOp):
             return self.eval_math(pat) == cand

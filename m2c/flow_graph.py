@@ -853,7 +853,7 @@ def build_graph_from_block(
                 for ins in jtbl_block.instructions:
                     for arg in ins.args:
                         if isinstance(arg, AsmAddressMode):
-                            arg = arg.lhs
+                            arg = arg.addend
                         if (
                             isinstance(arg, Macro)
                             and arg.macro_name in ("lo", "l")

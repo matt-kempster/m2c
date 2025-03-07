@@ -212,7 +212,8 @@ class SaveRestoreRegsFnPattern(AsmPattern):
         for i in range(regnum, 32):
             reg = Register(reg_prefix + str(i))
             stack_pos = AsmAddressMode(
-                AsmLiteral(size * (i - 32) + addend), Register("r1")
+                base=Register("r1"),
+                addend=AsmLiteral(size * (i - 32) + addend),
             )
             new_instrs.append(AsmInstruction(mnemonic, [reg, stack_pos]))
         return Replacement(new_instrs, 1)
@@ -555,8 +556,8 @@ class PpcArch(Arch):
             r0_arg = args[r0_index]
             if r0_arg == Register("r0"):
                 r0_arg = Register("zero")
-            elif isinstance(r0_arg, AsmAddressMode) and r0_arg.rhs == Register("r0"):
-                r0_arg = AsmAddressMode(lhs=r0_arg.lhs, rhs=Register("zero"))
+            elif isinstance(r0_arg, AsmAddressMode) and r0_arg.base == Register("r0"):
+                r0_arg = replace(r0_arg, base=Register("zero"))
 
             if r0_arg is not args[r0_index]:
                 new_args = args[:]
@@ -675,8 +676,8 @@ class PpcArch(Arch):
 
         def make_memory_access(arg: Argument, size: int) -> List[Location]:
             assert size is not None
-            if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
-                loc = StackLocation.from_offset(arg.lhs)
+            if isinstance(arg, AsmAddressMode) and arg.base == cls.stack_pointer_reg:
+                loc = StackLocation.from_offset(arg.addend)
                 if loc is None:
                     return []
                 elif size == 8:
@@ -776,7 +777,7 @@ class PpcArch(Arch):
                 inputs = [args[0], args[1], args[2]]
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = [args[0], args[1].rhs]
+                inputs = [args[0], args[1].base]
                 outputs = make_memory_access(args[1], size)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
@@ -809,8 +810,8 @@ class PpcArch(Arch):
 
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = [args[0], args[1].rhs]
-                outputs = make_memory_access(args[1], size) + [args[1].rhs]
+                inputs = [args[0], args[1].base]
+                outputs = make_memory_access(args[1], size) + [args[1].base]
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
                     store = cls.instrs_store_update[mnemonic](a)
@@ -822,9 +823,9 @@ class PpcArch(Arch):
                             f"Unhandled store-and-update arg in {instr_str}: {update!r}"
                         )
                     s.set_reg(
-                        update.rhs,
+                        update.base,
                         add_imm(
-                            update.rhs, a.regs[update.rhs], Literal(update.offset), a
+                            update.base, a.regs[update.base], Literal(update.offset), a
                         ),
                     )
 
@@ -843,7 +844,7 @@ class PpcArch(Arch):
             else:
                 assert len(args) == 2 + psq_imms
                 if isinstance(args[1], AsmAddressMode):
-                    inputs = make_memory_access(args[1], size) + [args[1].rhs]
+                    inputs = make_memory_access(args[1], size) + [args[1].base]
             outputs = [args[0]]
             eval_fn = lambda s, a: s.set_reg(a.reg_ref(0), cls.instrs_load[mnemonic](a))
         elif mnemonic in cls.instrs_load_update:
@@ -874,8 +875,8 @@ class PpcArch(Arch):
 
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = make_memory_access(args[1], size) + [args[1].rhs]
-                outputs = [args[0], args[1].rhs]
+                inputs = make_memory_access(args[1], size) + [args[1].base]
+                outputs = [args[0], args[1].base]
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
                     target = a.reg_ref(0)
@@ -887,7 +888,7 @@ class PpcArch(Arch):
                         raise DecompFailure(
                             f"Unhandled load-and-update arg in {instr_str}: {update!r}"
                         )
-                    update_reg = update.rhs
+                    update_reg = update.base
                     offset = Literal(update.offset)
                     if update_reg == target:
                         raise DecompFailure(
@@ -910,7 +911,8 @@ class PpcArch(Arch):
             while index <= 31:
                 reg = Register(f"r{index}")
                 mem = make_memory_access(
-                    AsmAddressMode(rhs=args[1].rhs, lhs=AsmLiteral(offset)), 4
+                    AsmAddressMode(base=args[1].base, addend=AsmLiteral(offset)),
+                    4,
                 )
                 if mnemonic == "stmw":
                     inputs.append(reg)
@@ -920,7 +922,7 @@ class PpcArch(Arch):
                     inputs.extend(mem)
                 index += 1
                 offset += 4
-            inputs.append(args[1].rhs)
+            inputs.append(args[1].base)
             # TODO: These are only supported in function prologues/epilogues
             eval_fn = None
         elif mnemonic in cls.instrs_no_dest:
@@ -951,7 +953,7 @@ class PpcArch(Arch):
                 else:
                     assert isinstance(args[2], AsmAddressMode)
                     size = 8
-                    inputs = make_memory_access(args[2], size) + [args[1], args[2].rhs]
+                    inputs = make_memory_access(args[2], size) + [args[1], args[2].base]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]

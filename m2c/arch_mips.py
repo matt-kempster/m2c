@@ -416,7 +416,7 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
             and ra.other_f64_reg() == rb
             and isinstance(ma, AsmAddressMode)
             and isinstance(mb, AsmAddressMode)
-            and ma.rhs == mb.rhs
+            and ma.base == mb.base
         ):
             return None
         num = int(ra.register_name[1:])
@@ -959,8 +959,8 @@ class MipsArch(Arch):
 
         def make_memory_access(arg: Argument) -> List[Location]:
             assert size is not None
-            if isinstance(arg, AsmAddressMode) and arg.rhs == cls.stack_pointer_reg:
-                loc = StackLocation.from_offset(arg.lhs)
+            if isinstance(arg, AsmAddressMode) and arg.base == cls.stack_pointer_reg:
+                loc = StackLocation.from_offset(arg.addend)
                 if loc is None:
                     return []
                 elif size == 16:
@@ -1117,7 +1117,7 @@ class MipsArch(Arch):
             outputs = make_memory_access(args[1])
             is_store = True
             if isinstance(args[1], AsmAddressMode):
-                inputs.append(args[1].rhs)
+                inputs.append(args[1].base)
             if mnemonic == "sdc1":
                 inputs.append(args[0].other_f64_reg())
 
@@ -1170,7 +1170,7 @@ class MipsArch(Arch):
                 assert len(args) == 2
                 inputs = make_memory_access(args[1])
                 if isinstance(args[1], AsmAddressMode):
-                    inputs.append(args[1].rhs)
+                    inputs.append(args[1].base)
                 if mnemonic == "lwr":
                     # lwl, lwr sometimes read from their destination registers,
                     # though we treat lwl as not doing so -- see handle_lwl.
@@ -1178,7 +1178,7 @@ class MipsArch(Arch):
                 elif mnemonic == "ldc1":
                     outputs.append(args[0].other_f64_reg())
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
-                inputs = [args[1].rhs]
+                inputs = [args[1].base]
             elif mnemonic == "mfhi":
                 assert len(args) == 1
                 inputs = [Register("hi")]

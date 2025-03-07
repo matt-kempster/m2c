@@ -591,8 +591,8 @@ def get_stack_info(
         elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)
-            assert isinstance(inst.args[1].lhs, AsmLiteral)
-            info.allocated_stack_size = abs(inst.args[1].lhs.signed_value())
+            assert isinstance(inst.args[1].addend, AsmLiteral)
+            info.allocated_stack_size = abs(inst.args[1].addend.signed_value())
         elif (
             arch_mnemonic in ("mips:move", "ppc:mr")
             and inst.args[0] == arch.frame_pointer_reg
@@ -615,7 +615,7 @@ def get_stack_info(
             and isinstance(inst.args[0], Register)
             and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)
-            and inst.args[1].rhs == arch.stack_pointer_reg
+            and inst.args[1].base == arch.stack_pointer_reg
             and (
                 inst.args[0] not in info.callee_save_regs
                 or arch_mnemonic == "ppc:psq_st"
@@ -660,7 +660,7 @@ def get_stack_info(
                 if (
                     arch_mnemonic in ["mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
-                    and info.is_stack_reg(inst.args[1].rhs)
+                    and info.is_stack_reg(inst.args[1].base)
                     and inst.args[1].lhs_as_literal() >= 16
                 ):
                     info.subroutine_arg_top = min(
@@ -2091,13 +2091,13 @@ class CommentStmt(Statement):
 @dataclass(frozen=True)
 class AddressMode:
     offset: int
-    rhs: Register
+    base: Register
 
     def __str__(self) -> str:
         if self.offset:
-            return f"{self.offset}({self.rhs})"
+            return f"{self.offset}({self.base})"
         else:
-            return f"({self.rhs})"
+            return f"({self.base})"
 
 
 @dataclass(frozen=True)
@@ -2411,9 +2411,9 @@ class InstrArgs:
 
     def maybe_got_imm(self, index: int) -> Optional[RawSymbolRef]:
         arg = self.raw_arg(index)
-        if not isinstance(arg, AsmAddressMode) or arg.rhs != Register("gp"):
+        if not isinstance(arg, AsmAddressMode) or arg.base != Register("gp"):
             return None
-        val = arg.lhs
+        val = arg.addend
         if not isinstance(val, Macro) or val.macro_name not in (
             "got",
             "call16",
@@ -2456,12 +2456,12 @@ class InstrArgs:
                 "Expected instruction argument to be of the form offset($register), "
                 f"but found {ret}"
             )
-        if not isinstance(ret.lhs, AsmLiteral):
+        if not isinstance(ret.addend, AsmLiteral):
             raise DecompFailure(
                 f"Unable to parse offset for instruction argument {ret}. "
                 "Expected a constant or a %lo macro."
             )
-        return AddressMode(offset=ret.lhs.signed_value(), rhs=ret.rhs)
+        return AddressMode(offset=ret.addend.signed_value(), base=ret.base)
 
     def count(self) -> int:
         return len(self.raw_args)
@@ -2896,14 +2896,14 @@ def strip_macros(arg: Argument) -> Argument:
         if isinstance(arg.argument, AsmLiteral):
             return AsmLiteral(arg.argument.value)
         return AsmLiteral(0)
-    elif isinstance(arg, AsmAddressMode) and isinstance(arg.lhs, Macro):
-        if arg.lhs.macro_name in ["sda2", "sda21", "gp_rel"]:
-            return arg.lhs.argument
-        if arg.lhs.macro_name not in ["lo", "l"]:
+    elif isinstance(arg, AsmAddressMode) and isinstance(arg.addend, Macro):
+        if arg.addend.macro_name in ["sda2", "sda21", "gp_rel"]:
+            return arg.addend.argument
+        if arg.addend.macro_name not in ["lo", "l"]:
             raise DecompFailure(
                 f"Bad linker macro in instruction argument {arg}, expected %lo"
             )
-        return AsmAddressMode(lhs=AsmLiteral(0), rhs=arg.rhs)
+        return AsmAddressMode(base=arg.base, addend=AsmLiteral(0))
     else:
         return arg
 

@@ -72,18 +72,18 @@ class AsmLiteral:
 
 @dataclass(frozen=True)
 class AsmAddressMode:
-    lhs: Argument
-    rhs: Register
+    base: Register
+    addend: Argument
 
     def lhs_as_literal(self) -> int:
-        assert isinstance(self.lhs, AsmLiteral)
-        return self.lhs.signed_value()
+        assert isinstance(self.addend, AsmLiteral)
+        return self.addend.signed_value()
 
     def __str__(self) -> str:
-        if self.lhs == AsmLiteral(0):
-            return f"({self.rhs})"
+        if self.addend == AsmLiteral(0):
+            return f"({self.base})"
         else:
-            return f"{self.lhs}({self.rhs})"
+            return f"{self.addend}({self.base})"
 
 
 @dataclass(frozen=True)
@@ -335,7 +335,7 @@ def parse_arg_elems(
                     assert top_level
                     assert isinstance(rhs, Register)
                     value = constant_fold(value or AsmLiteral(0), defines)
-                    value = AsmAddressMode(value, rhs)
+                    value = AsmAddressMode(rhs, value)
         elif tok == '"':
             # Quoted global symbol.
             expect('"')
