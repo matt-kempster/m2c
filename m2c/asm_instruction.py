@@ -430,7 +430,7 @@ def parse_arg_elems(
                     shift = constant_fold(shift, defines)
                     assert isinstance(shift, AsmLiteral)
                     shift_amt = shift.value
-                expect("]")
+                    expect("]")
             consume_ws()
             writeback: Optional[Writeback] = None
             if arg_elems and arg_elems[0] == "!":
