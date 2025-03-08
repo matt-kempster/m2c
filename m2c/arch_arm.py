@@ -24,6 +24,11 @@ from .asm_instruction import (
     Register,
     get_jump_target,
 )
+from .asm_pattern import (
+    AsmMatcher,
+    AsmPattern,
+    Replacement,
+)
 from .instruction import (
     Instruction,
     InstructionMeta,
@@ -127,6 +132,25 @@ class Cc(Enum):
     LE = "le"
 
 
+def negate_cond(cc: Cc) -> Cc:
+    return {
+        Cc.EQ: Cc.NE,
+        Cc.NE: Cc.EQ,
+        Cc.CS: Cc.CC,
+        Cc.CC: Cc.CS,
+        Cc.MI: Cc.PL,
+        Cc.PL: Cc.MI,
+        Cc.VS: Cc.VC,
+        Cc.VC: Cc.VS,
+        Cc.HI: Cc.LS,
+        Cc.LS: Cc.HI,
+        Cc.GE: Cc.LT,
+        Cc.LT: Cc.GE,
+        Cc.GT: Cc.LE,
+        Cc.LE: Cc.GT,
+    }[cc]
+
+
 def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
     set_flags = False
     if mnemonic.endswith("s"):
@@ -149,6 +173,72 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
         mnemonic = mnemonic[:-1]
         set_flags = True
     return mnemonic, cc, set_flags
+
+
+class ConditionalInstrPattern(AsmPattern):
+    """
+    Replace conditionally executed instructions by branches.
+    """
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        matched_cc: Optional[Cc] = None
+        i = 0
+        if_instrs: List[AsmInstruction] = []
+        else_instrs: List[AsmInstruction] = []
+        while matcher.index + i < len(matcher.input):
+            instr = matcher.input[matcher.index]
+            if not isinstance(instr, Instruction):
+                break
+            if i != 0 and instr.mnemonic == "nop":
+                i += 1
+                continue
+            base, cc, set_flags = parse_suffix(instr.mnemonic)
+            if cc is None or base == "b":
+                break
+            new_instr = AsmInstruction(base + ("s" if set_flags else ""), instr.args)
+            if matched_cc is None:
+                matched_cc = cc
+            elif matched_cc == cc:
+                if_instrs.append(new_instr)
+            elif matched_cc == negate_cond(cc):
+                else_instrs.append(new_instr)
+            else:
+                break
+            i += 1
+            # TODO: come up with a better check for flag clobbers
+            if (
+                set_flags
+                or base in ("cmp", "cmn", "tst", "teq")
+                or cc in (Cc.CC, Cc.CS, Cc.HI, Cc.LS)
+            ):
+                break
+        if matched_cc is None:
+            return None
+
+        b_mn = "b" + negate_cond(matched_cc).value
+        label1 = f"._m2c_cc_{matcher.index}"
+        label2 = f"._m2c_cc2_{matcher.index}"
+        if else_instrs:
+            return Replacement(
+                [
+                    AsmInstruction(b_mn, [AsmGlobalSymbol(label1)]),
+                    *if_instrs,
+                    AsmInstruction("b", [AsmGlobalSymbol(label2)]),
+                    Label([label1]),
+                    *else_instrs,
+                    Label([label2]),
+                ],
+                i,
+            )
+        else:
+            return Replacement(
+                [
+                    AsmInstruction(b_mn, [AsmGlobalSymbol(label1)]),
+                    *if_instrs,
+                    Label([label1]),
+                ],
+                i,
+            )
 
 
 class ArmArch(Arch):
@@ -286,7 +376,9 @@ class ArmArch(Arch):
             eval_fn=eval_fn,
         )
 
-    asm_patterns = []
+    asm_patterns = [
+        ConditionalInstrPattern(),
+    ]
 
     instrs_ignore: Set[str] = {
         "nop",

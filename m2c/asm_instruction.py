@@ -419,9 +419,9 @@ def parse_arg_elems(
                 addend = constant_fold(addend, defines)
                 if expect(",]") == ",":
                     consume_ws()
-                    expect("l")
-                    expect("s")
-                    expect("l")
+                    expect("lL")
+                    expect("sS")
+                    expect("lL")
                     expect(" \t")
                     shift = parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
