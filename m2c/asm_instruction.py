@@ -10,6 +10,9 @@ from typing import Dict, List, Optional, Union
 from .error import DecompFailure
 
 
+ARM_BARREL_SHIFTER_OPS = ("lsl", "lrs", "asr", "ror", "rrx")
+
+
 @dataclass(frozen=True)
 class Register:
     register_name: str
@@ -273,7 +276,7 @@ def parse_arg_elems(
     defines: Dict[str, int],
     *,
     top_level: bool,
-) -> Optional[Argument]:
+) -> Argument:
     value: Optional[Argument] = None
 
     def consume_ws() -> None:
@@ -354,7 +357,6 @@ def parse_arg_elems(
             m = parse_arg_elems(
                 arg_elems, arch, reg_formatter, defines, top_level=False
             )
-            assert m is not None
             m = constant_fold(m, defines)
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
@@ -377,7 +379,6 @@ def parse_arg_elems(
             rhs = parse_arg_elems(
                 arg_elems, arch, reg_formatter, defines, top_level=False
             )
-            assert rhs is not None
             expect(")")
             if isinstance(rhs, BinOp):
                 # Binary operation.
@@ -404,7 +405,6 @@ def parse_arg_elems(
             val = parse_arg_elems(
                 arg_elems, arch, reg_formatter, defines, top_level=False
             )
-            assert val is not None
             val = replace_bare_reg(val, arch, reg_formatter)
             assert isinstance(val, Register)
             addend: Optional[Argument] = None
@@ -412,7 +412,6 @@ def parse_arg_elems(
                 addend = parse_arg_elems(
                     arg_elems, arch, reg_formatter, defines, top_level=False
                 )
-                assert addend is not None
                 addend = constant_fold(addend, defines)
                 if expect(",]") == ",":
                     consume_ws()
@@ -423,7 +422,6 @@ def parse_arg_elems(
                     shift = parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
                     )
-                    assert shift is not None
                     addend = BinOp("lsl", addend, constant_fold(shift, defines))
                     expect("]")
             consume_ws()
@@ -437,7 +435,6 @@ def parse_arg_elems(
                 addend = parse_arg_elems(
                     arg_elems, arch, reg_formatter, defines, top_level=False
                 )
-                assert addend is not None
                 addend = constant_fold(addend, defines)
                 writeback = Writeback.POST
             if addend is None:
@@ -461,6 +458,18 @@ def parse_arg_elems(
             assert value is None
             word = parse_word(arg_elems)
             value = AsmGlobalSymbol(word)
+
+            if top_level and word.lower() in ARM_BARREL_SHIFTER_OPS:
+                consume_ws()
+                if arg_elems and arg_elems[0] not in ",)@":
+                    # ARM barrel shifter operation. This should be folded into
+                    # the previous comma-separated operation; the caller will
+                    # do that for us.
+                    shift = parse_arg_elems(
+                        arg_elems, arch, reg_formatter, defines, top_level=False
+                    )
+                    value = BinOp(word.lower(), value, shift)
+                    assert not arg_elems
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
@@ -485,7 +494,6 @@ def parse_arg_elems(
                 rhs = parse_arg_elems(
                     arg_elems, arch, reg_formatter, defines, top_level=False
                 )
-                assert rhs is not None
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs, defines)
                 if isinstance(rhs, BinOp) and isinstance(
@@ -517,6 +525,7 @@ def parse_arg_elems(
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
 
+    assert value is not None
     return value
 
 
@@ -527,10 +536,13 @@ def parse_args(
     defines: Dict[str, int],
 ) -> List[Argument]:
     arg_elems: List[str] = list(args.strip())
-    output = []
+    output: List[Argument] = []
     while arg_elems:
         ret = parse_arg_elems(arg_elems, arch, reg_formatter, defines, top_level=True)
-        assert ret is not None
+        if isinstance(ret, BinOp) and ret.op in ARM_BARREL_SHIFTER_OPS:
+            assert output
+            output[-1] = BinOp(ret.op, output[-1], ret.rhs)
+            continue
         output.append(
             replace_bare_reg(constant_fold(ret, defines), arch, reg_formatter)
         )
