@@ -294,10 +294,8 @@ class ArmArch(Arch):
 
     @classmethod
     def missing_return(cls) -> List[Instruction]:
-        meta = InstructionMeta.missing()
         return [
-            cls.parse("jr", [Register("ra")], meta),
-            cls.parse("nop", [], meta),
+            cls.parse("bx", [Register("lr")], InstructionMeta.missing()),
         ]
 
     @classmethod
