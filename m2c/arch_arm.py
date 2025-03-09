@@ -380,8 +380,6 @@ class ArmArch(Arch):
 
     instrs_ignore: Set[str] = {
         "nop",
-        "b",
-        "j",
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:

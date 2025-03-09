@@ -90,7 +90,6 @@ class Writeback(Enum):
 class AsmAddressMode:
     base: Register
     addend: Argument
-    shift: int
     writeback: Optional[Writeback]
 
     def lhs_as_literal(self) -> int:
@@ -99,12 +98,11 @@ class AsmAddressMode:
 
     def __str__(self) -> str:
         if self.writeback is not None:
-            shift_str = f" lsl {self.shift}" if self.shift else ""
             add_str = ", {self.addend}" if self.addend != AsmLiteral(0) else ""
             if self.writeback == Writeback.PRE:
-                return f"[{self.base}{add_str}{shift_str}]!"
+                return f"[{self.base}{add_str}]!"
             else:
-                return f"[{self.base}]{add_str}{shift_str}]"
+                return f"[{self.base}]{add_str}"
         if self.addend == AsmLiteral(0):
             return f"({self.base})"
         else:
@@ -398,7 +396,7 @@ def parse_arg_elems(
                     assert top_level
                     assert isinstance(rhs, Register)
                     value = constant_fold(value or AsmLiteral(0), defines)
-                    value = AsmAddressMode(rhs, value, 0, None)
+                    value = AsmAddressMode(rhs, value, None)
         elif tok == "[":
             # ARM address mode
             assert value is None
@@ -410,7 +408,6 @@ def parse_arg_elems(
             val = replace_bare_reg(val, arch, reg_formatter)
             assert isinstance(val, Register)
             addend: Optional[Argument] = None
-            shift_amt = 0
             if expect(",]") == ",":
                 addend = parse_arg_elems(
                     arg_elems, arch, reg_formatter, defines, top_level=False
@@ -427,9 +424,7 @@ def parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
                     )
                     assert shift is not None
-                    shift = constant_fold(shift, defines)
-                    assert isinstance(shift, AsmLiteral)
-                    shift_amt = shift.value
+                    addend = BinOp("lsl", addend, constant_fold(shift, defines))
                     expect("]")
             consume_ws()
             writeback: Optional[Writeback] = None
@@ -447,13 +442,13 @@ def parse_arg_elems(
                 writeback = Writeback.POST
             if addend is None:
                 addend = AsmLiteral(0)
-            value = AsmAddressMode(val, addend, shift_amt, writeback)
+            value = AsmAddressMode(val, addend, writeback)
         elif tok == "!":
             # ARM writeback indicator, e.g. "ldmia sp!, {r3, r4, r5, pc}".
             # Let's abuse AsmAddressMode for this.
             expect("!")
             assert isinstance(value, Register)
-            value = AsmAddressMode(value, AsmLiteral(0), 0, Writeback.PRE)
+            value = AsmAddressMode(value, AsmLiteral(0), Writeback.PRE)
         elif tok == '"':
             # Quoted global symbol.
             expect('"')
