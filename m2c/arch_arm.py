@@ -300,6 +300,8 @@ class ArmArch(Arch):
 
     @classmethod
     def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+        if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
+            instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         base, cc, set_flags = parse_suffix(instr.mnemonic)
         args = instr.args
         if len(args) == 3:
