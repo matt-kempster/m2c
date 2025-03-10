@@ -220,8 +220,7 @@ def parse_quoted(elems: List[str], quote_char: str) -> str:
     return ret
 
 
-def parse_number(elems: List[str]) -> int:
-    number_str = parse_word(elems, valid_number)
+def parse_number(number_str: str) -> int:
     if number_str[0] == "0":
         assert len(number_str) == 1 or number_str[1] in "xX"
     ret = int(number_str, 0)
@@ -364,10 +363,22 @@ def parse_arg_elems(
         elif tok in (")", "]"):
             # Break out to the parent of this call, since we are in parens.
             break
-        elif tok in string.digits or (tok == "-" and value is None):
+        elif tok in string.digits:
             # Try a number.
             assert value is None
-            value = AsmLiteral(parse_number(arg_elems))
+            word = parse_word(arg_elems, valid_word)
+            value = AsmLiteral(parse_number(word))
+        elif tok == "-" and value is None:
+            # Negated number, or ARM negated register.
+            expect("-")
+            consume_ws()
+            word = parse_word(arg_elems, valid_word)
+            assert word
+            if word[0] in valid_number:
+                value = AsmLiteral(-parse_number(word))
+            else:
+                val = replace_bare_reg(AsmGlobalSymbol(word), arch, reg_formatter)
+                value = BinOp("-", AsmLiteral(0), val)
         elif tok == "(":
             if value is not None and not top_level:
                 # Only allow parsing AsmAddressMode at top level. This makes us parse
