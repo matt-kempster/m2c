@@ -205,12 +205,8 @@ class ConditionalInstrPattern(AsmPattern):
             else:
                 break
             i += 1
-            # TODO: come up with a better check for flag clobbers
-            if (
-                set_flags
-                or base in ("cmp", "cmn", "tst", "teq")
-                or cc in (Cc.CC, Cc.CS, Cc.HI, Cc.LS)
-            ):
+            # TODO: come up with a better check for flag clobbers?
+            if set_flags or base in ("cmp", "cmn", "tst", "teq"):
                 break
         if matched_cc is None:
             return None
