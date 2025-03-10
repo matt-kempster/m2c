@@ -426,14 +426,12 @@ def parse_arg_elems(
                 addend = constant_fold(addend, defines)
                 if expect(",]") == ",":
                     consume_ws()
-                    expect("lL")
-                    expect("sS")
-                    expect("lL")
-                    expect(" \t")
+                    op = parse_word(arg_elems).lower()
+                    assert op in ARM_BARREL_SHIFTER_OPS
                     shift = parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
                     )
-                    addend = BinOp("lsl", addend, constant_fold(shift, defines))
+                    addend = BinOp(op, addend, constant_fold(shift, defines))
                     expect("]")
             consume_ws()
             writeback: Optional[Writeback] = None
@@ -470,7 +468,8 @@ def parse_arg_elems(
             word = parse_word(arg_elems)
             value = AsmGlobalSymbol(word)
 
-            if top_level and word.lower() in ARM_BARREL_SHIFTER_OPS:
+            op = word.lower()
+            if top_level and op in ARM_BARREL_SHIFTER_OPS:
                 consume_ws()
                 if arg_elems and arg_elems[0] not in ",)@":
                     # ARM barrel shifter operation. This should be folded into
@@ -479,7 +478,7 @@ def parse_arg_elems(
                     shift = parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
                     )
-                    value = BinOp(word.lower(), value, shift)
+                    value = BinOp(op, value, shift)
                     assert not arg_elems
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
