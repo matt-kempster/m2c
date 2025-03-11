@@ -130,6 +130,7 @@ class Cc(Enum):
     LT = "lt"
     GT = "gt"
     LE = "le"
+    AL = "al"
 
 
 def negate_cond(cc: Cc) -> Cc:
@@ -157,11 +158,9 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
         mnemonic = mnemonic[:-1]
         set_flags = True
     cc: Optional[Cc] = None
-    for suffix in [cond.value for cond in Cc] + ["al", "hs", "lo"]:
+    for suffix in [cond.value for cond in Cc] + ["hs", "lo"]:
         if mnemonic.endswith(suffix):
-            if suffix == "al":
-                cc = None
-            elif suffix == "hs":
+            if suffix == "hs":
                 cc = Cc.CS
             elif suffix == "lo":
                 cc = Cc.CC
@@ -198,7 +197,7 @@ class ConditionalInstrPattern(AsmPattern):
             new_instr = AsmInstruction(base + ("s" if set_flags else ""), instr.args)
             if matched_cc is None:
                 matched_cc = cc
-            elif matched_cc == cc:
+            if matched_cc == cc:
                 if_instrs.append(new_instr)
             elif matched_cc == negate_cond(cc):
                 else_instrs.append(new_instr)
@@ -300,6 +299,10 @@ class ArmArch(Arch):
             instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         base, cc, set_flags = parse_suffix(instr.mnemonic)
         args = instr.args
+        if cc == Cc.AL:
+            return cls.normalize_instruction(
+                AsmInstruction(base + ("s" if set_flags else ""), args)
+            )
         if len(args) == 3:
             if instr.mnemonic in ("add", "lsl") and args[2] == AsmLiteral(0):
                 return AsmInstruction("mov", args[:2])
