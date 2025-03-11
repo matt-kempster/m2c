@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
 
 from .error import DecompFailure
-from .options import Options
+from .options import CodingStyle, Options
 from .asm_instruction import RegFormatter
 from .instruction import (
     ArchAsm,
@@ -588,7 +588,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 instr = parse_instruction(line, meta, arch, reg_formatter, defined_vars)
                 asm_file.new_instruction(instr)
 
-    if warnings:
+    if warnings and options.coding_style.comment_style != CodingStyle.CommentStyle.NONE:
         print("/*")
         print("\n".join(warnings))
         print("*/")
