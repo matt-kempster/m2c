@@ -41,7 +41,6 @@ from .translate import (
     Arch,
     BinaryOp,
     Cast,
-    CmpInstrMap,
     CommentStmt,
     ErrorExpr,
     ExprStmt,
@@ -152,6 +151,25 @@ def negate_cond(cc: Cc) -> Cc:
     }[cc]
 
 
+def factor_cond(cc: Cc) -> Tuple[Cc, bool]:
+    return {
+        Cc.EQ: (Cc.EQ, False),
+        Cc.NE: (Cc.EQ, True),
+        Cc.CS: (Cc.CS, False),
+        Cc.CC: (Cc.CS, True),
+        Cc.MI: (Cc.MI, False),
+        Cc.PL: (Cc.MI, True),
+        Cc.VS: (Cc.VS, False),
+        Cc.VC: (Cc.VS, True),
+        Cc.HI: (Cc.HI, False),
+        Cc.LS: (Cc.HI, True),
+        Cc.GE: (Cc.GE, False),
+        Cc.LT: (Cc.GE, True),
+        Cc.GT: (Cc.GT, False),
+        Cc.LE: (Cc.GT, True),
+    }[cc]
+
+
 def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
     set_flags = False
     if mnemonic.endswith("s"):
@@ -250,17 +268,8 @@ class ArmArch(Arch):
     all_return_regs = [Register("r0"), Register("r1")]
     argument_regs = [Register(r) for r in ["r0", "r1", "r2", "r3"]]
     simple_temp_regs = [Register("r12")]
-    temp_regs = (
-        argument_regs
-        + simple_temp_regs
-        + [
-            Register(r)
-            for r in [
-                # TODO
-                "condition_bit",
-            ]
-        ]
-    )
+    flag_regs = [Register(r) for r in ["n", "z", "c", "v", "hi", "ge", "gt"]]
+    temp_regs = argument_regs + simple_temp_regs + flag_regs
     saved_regs = [
         Register(r)
         for r in [
@@ -329,8 +338,6 @@ class ArmArch(Arch):
         outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register]] = None
         function_target: Optional[Argument] = None
-        has_delay_slot = False
-        is_branch_likely = False
         is_conditional = False
         is_return = False
         is_store = False
@@ -340,7 +347,62 @@ class ArmArch(Arch):
 
         base, cc, set_flags = parse_suffix(mnemonic)
 
-        if mnemonic in cls.instrs_ignore:
+        if base == "b":
+            # Conditional or unconditional branch
+            assert len(args) == 1
+            jump_target = get_jump_target(args[0])
+
+            if cc is not None:
+                cc, negated = factor_cond(cc)
+                is_conditional = True
+                inputs = [
+                    {
+                        Cc.EQ: Register("z"),
+                        Cc.CS: Register("c"),
+                        Cc.MI: Register("n"),
+                        Cc.VS: Register("v"),
+                        Cc.HI: Register("hi"),
+                        Cc.GE: Register("ge"),
+                        Cc.GT: Register("gt"),
+                    }[cc]
+                ]
+
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    cond: Expression
+                    if cc == Cc.EQ:
+                        cond = a.regs[Register("z")]
+                    elif cc == Cc.CS:
+                        cond = a.regs[Register("c")]
+                    elif cc == Cc.MI:
+                        cond = a.regs[Register("n")]
+                    elif cc == Cc.VS:
+                        cond = a.regs[Register("v")]
+                    elif cc == Cc.HI:
+                        cond = a.regs[Register("hi")]
+                    elif cc == Cc.GE:
+                        cond = a.regs[Register("ge")]
+                    elif cc == Cc.GT:
+                        cond = a.regs[Register("gt")]
+                    else:
+                        assert False
+                    cond = condition_from_expr(cond)
+                    if negated:
+                        cond = cond.negated()
+                    s.set_branch_condition(cond)
+
+        elif mnemonic in ("cbz", "cbnz"):
+            # Thumb conditional branch
+            assert len(args) == 2
+            assert isinstance(args[0], Register)
+            inputs = [args[0]]
+            jump_target = get_jump_target(args[1])
+            is_conditional = True
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                op = "==" if mnemonic == "cbz" else "!="
+                s.set_branch_condition(BinaryOp.icmp(a.reg(0), op, Literal(0)))
+
+        elif mnemonic in cls.instrs_ignore:
             pass
         else:
             # If the mnemonic is unsupported, guess if it is destination-first
@@ -367,8 +429,6 @@ class ArmArch(Arch):
             outputs=outputs,
             jump_target=jump_target,
             function_target=function_target,
-            has_delay_slot=has_delay_slot,
-            is_branch_likely=is_branch_likely,
             is_conditional=is_conditional,
             is_return=is_return,
             is_store=is_store,
