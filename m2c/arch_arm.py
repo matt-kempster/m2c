@@ -402,6 +402,11 @@ class ArmArch(Arch):
                 op = "==" if mnemonic == "cbz" else "!="
                 s.set_branch_condition(BinaryOp.icmp(a.reg(0), op, Literal(0)))
 
+        elif mnemonic == "bx" and args[0] == Register("lr"):
+            # Return
+            assert len(args) == 1
+            inputs = [Register("lr")]
+            is_return = True
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
