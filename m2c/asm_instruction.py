@@ -37,8 +37,6 @@ class RegisterSet:
     regs: List[Register]
 
     def __str__(self) -> str:
-        if len(self.regs) == 1:
-            return str(self.regs[0])
         return "{" + ",".join(str(r) for r in self.regs) + "}"
 
 
@@ -323,13 +321,13 @@ def parse_arg_elems(
                 word = parse_word(arg_elems)
                 reg1 = reg_formatter.parse_and_store(word, arch)
                 consume_ws()
-                if arg_elems[0] == "-":
-                    arg_elems.pop(0)
-                    consume_ws()
-                    word = parse_word(arg_elems)
-                    reg2 = reg_formatter.parse_and_store(word, arch)
-                else:
-                    reg2 = reg1
+                if arg_elems[0] != "-":
+                    li.append(reg1)
+                    continue
+                arg_elems.pop(0)
+                consume_ws()
+                word = parse_word(arg_elems)
+                reg2 = reg_formatter.parse_and_store(word, arch)
                 to_numeric = {"sp": "r13", "lr": "r14", "pc": "r15"}
                 num1 = int(to_numeric.get(reg1.register_name, reg1.register_name)[1:])
                 num2 = int(to_numeric.get(reg2.register_name, reg2.register_name)[1:])

@@ -16,6 +16,7 @@ from .asm_instruction import (
     Macro,
     NaiveParsingArch,
     Register,
+    RegisterSet,
     RegFormatter,
     parse_asm_instruction,
 )
@@ -170,6 +171,12 @@ class TryMatchState:
                 isinstance(a, Macro)
                 and a.macro_name == e.macro_name
                 and self.match_arg(a.argument, e.argument)
+            )
+        if isinstance(e, RegisterSet):
+            return (
+                isinstance(a, RegisterSet)
+                and len(a.regs) == len(e.regs)
+                and all(self.match_reg(ar, er) for ar, er in zip(a.regs, e.regs))
             )
         assert False, f"bad pattern part: {e}"
 

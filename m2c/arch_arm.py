@@ -25,9 +25,12 @@ from .asm_instruction import (
     get_jump_target,
 )
 from .asm_pattern import (
+    AsmMatch,
     AsmMatcher,
     AsmPattern,
     Replacement,
+    SimpleAsmPattern,
+    make_pattern,
 )
 from .instruction import (
     Instruction,
@@ -254,6 +257,16 @@ class ConditionalInstrPattern(AsmPattern):
             )
 
 
+class PopAndReturnPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "pop {x}",
+        "bx $x",
+    )
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        return Replacement([AsmInstruction("bx", [Register("lr")])], len(m.body))
+
+
 class ArmArch(Arch):
     arch = Target.ArchEnum.ARM
 
@@ -442,6 +455,7 @@ class ArmArch(Arch):
 
     asm_patterns = [
         ConditionalInstrPattern(),
+        PopAndReturnPattern(),
     ]
 
     instrs_ignore: Set[str] = {

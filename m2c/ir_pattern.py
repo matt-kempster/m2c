@@ -27,6 +27,7 @@ from .asm_instruction import (
     JumpTarget,
     RegFormatter,
     Register,
+    RegisterSet,
 )
 from .instruction import (
     Instruction,
@@ -252,6 +253,12 @@ class TryIrMatch(IrMatch):
             )
         if isinstance(pat, BinOp):
             return self.eval_math(pat) == cand
+        if isinstance(pat, RegisterSet):
+            return (
+                isinstance(cand, RegisterSet)
+                and len(cand.regs) == len(pat.regs)
+                and all(self.match_arg(cr, pr) for cr, pr in zip(cand.regs, pat.regs))
+            )
 
         assert False, f"bad pattern arg: {pat}"
 
