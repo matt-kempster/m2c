@@ -110,6 +110,7 @@ LENGTH_THREE: Set[str] = {
     "mul",
     "eor",
     "orr",
+    "orn",
     "and",
     "bic",
     "lsl",
@@ -369,6 +370,26 @@ class ArmArch(Arch):
 
         base, cc, set_flags = parse_suffix(mnemonic)
 
+        def get_inputs(starti: int) -> List[Location]:
+            ret: List[Location] = []
+            for arg in args[starti:]:
+                if isinstance(arg, AsmAddressMode):
+                    ret.append(arg.base)
+                    arg = arg.addend
+                if isinstance(arg, BinOp):
+                    if isinstance(arg.rhs, Register):
+                        ret.append(arg.rhs)
+                    arg = arg.lhs
+                if (
+                    isinstance(arg, BinOp)
+                    and arg.op == "-"
+                    and arg.lhs == AsmLiteral(0)
+                ):
+                    arg = arg.rhs
+                if isinstance(arg, Register):
+                    ret.append(arg)
+            return ret
+
         if base == "b":
             # Conditional or unconditional branch
             assert len(args) == 1
@@ -429,6 +450,14 @@ class ArmArch(Arch):
             assert len(args) == 1
             inputs = [Register("lr")]
             is_return = True
+        elif mnemonic in cls.instrs_no_flags:
+            assert isinstance(args[0], Register)
+            outputs = [args[0]]
+            inputs = get_inputs(1)
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(a.reg_ref(0), cls.instrs_no_flags[mnemonic](a))
+
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
@@ -469,6 +498,14 @@ class ArmArch(Arch):
 
     instrs_ignore: Set[str] = {
         "nop",
+    }
+
+    instrs_no_flags: InstrMap = {
+        "clz": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
+        "rbit": lambda a: UnaryOp(op="RBIT", expr=a.reg(1), type=Type.intish()),
+        "rev": lambda a: UnaryOp(op="BSWAP32", expr=a.reg(1), type=Type.intish()),
+        "rev16": lambda a: UnaryOp(op="BSWAP16X2", expr=a.reg(1), type=Type.intish()),
+        "revsh": lambda a: UnaryOp(op="BSWAP16", expr=a.reg(1), type=Type.s16()),
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
