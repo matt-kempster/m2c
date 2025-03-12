@@ -428,9 +428,13 @@ def parse_arg_elems(
                     consume_ws()
                     op = parse_word(arg_elems).lower()
                     assert op in ARM_BARREL_SHIFTER_OPS
-                    shift = parse_arg_elems(
-                        arg_elems, arch, reg_formatter, defines, top_level=False
-                    )
+                    shift: Argument
+                    if op == "rrx":
+                        shift = AsmLiteral(1)
+                    else:
+                        shift = parse_arg_elems(
+                            arg_elems, arch, reg_formatter, defines, top_level=False
+                        )
                     addend = BinOp(op, addend, constant_fold(shift, defines))
                     expect("]")
             consume_ws()
@@ -479,6 +483,9 @@ def parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
                     )
                     value = BinOp(op, value, shift)
+                    assert not arg_elems
+                elif op == "rrx":
+                    value = BinOp(op, value, AsmLiteral(1))
                     assert not arg_elems
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
