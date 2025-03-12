@@ -335,6 +335,9 @@ def parse_arg_elems(
                 num2 = int(to_numeric.get(reg2.register_name, reg2.register_name)[1:])
                 for i in range(num1, num2 + 1):
                     li.append(reg_formatter.parse(f"r{i}", arch))
+            consume_ws()
+            if arg_elems and arg_elems[0] == "^":
+                expect("^")
             value = RegisterSet(li)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
