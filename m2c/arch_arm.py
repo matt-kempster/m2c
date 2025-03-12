@@ -20,6 +20,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    BinOp,
     JumpTarget,
     Register,
     get_jump_target,
@@ -110,10 +111,11 @@ LENGTH_THREE: Set[str] = {
     "eor",
     "orr",
     "and",
+    "bic",
     "lsl",
     "asr",
     "lsr",
-    "bic",
+    "ror",
 }
 
 
@@ -320,19 +322,26 @@ class ArmArch(Arch):
         if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
             instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         base, cc, set_flags = parse_suffix(instr.mnemonic)
+        suffix = (cc.value if cc else "") + ("s" if set_flags else "")
         args = instr.args
         if cc == Cc.AL:
             return cls.normalize_instruction(
                 AsmInstruction(base + ("s" if set_flags else ""), args)
             )
         if len(args) == 3:
-            if instr.mnemonic in ("add", "lsl") and args[2] == AsmLiteral(0):
-                return AsmInstruction("mov", args[:2])
-            if instr.mnemonic in ("adds", "lsls") and args[2] == AsmLiteral(0):
-                return AsmInstruction("movs", args[:2])
+            if base in ("add", "lsl") and args[2] == AsmLiteral(0):
+                return AsmInstruction("mov" + suffix, args[:2])
+            if base in ("asr", "lsl", "lsr", "ror"):
+                return AsmInstruction(
+                    "mov" + suffix, [args[0], BinOp(base, args[1], args[2])]
+                )
         if len(args) == 2:
             if instr.mnemonic == "mov" and args[0] == args[1] == Register("r8"):
                 return AsmInstruction("nop", [])
+            if base == "rrx":
+                return AsmInstruction(
+                    "mov" + suffix, [args[0], BinOp(base, args[1], AsmLiteral(1))]
+                )
             if base in LENGTH_THREE:
                 return cls.normalize_instruction(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
