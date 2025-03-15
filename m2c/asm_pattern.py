@@ -281,14 +281,15 @@ def simplify_patterns(
     especially useful for patterns that involve branches, which are hard to deal with
     in the translate phase."""
     labels = {name for item in body if isinstance(item, Label) for name in item.names}
-    matcher = AsmMatcher(arch, body, labels)
-    while matcher.index < len(matcher.input):
-        for pattern in patterns:
+    for pattern in patterns:
+        matcher = AsmMatcher(arch, body, labels)
+        while matcher.index < len(matcher.input):
             m = pattern.match(matcher)
             if m:
                 matcher.apply(m, arch)
-                break
-        else:
-            matcher.apply(Replacement([matcher.input[matcher.index]], 1), arch)
+            else:
+                matcher.output.append(matcher.input[matcher.index])
+                matcher.index += 1
+        body = matcher.output
 
-    return matcher.output
+    return body
