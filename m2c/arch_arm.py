@@ -208,7 +208,7 @@ class ConditionalInstrPattern(AsmPattern):
                 i += 1
                 continue
             base, cc, set_flags = parse_suffix(instr.mnemonic)
-            if cc is None or base == "b":
+            if cc is None or (i == 0 and base == "b"):
                 break
             new_instr = AsmInstruction(base + ("s" if set_flags else ""), instr.args)
             if matched_cc is None:
