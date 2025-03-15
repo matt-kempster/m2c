@@ -53,12 +53,9 @@ from .translate import (
     InstrMap,
     Literal,
     NodeState,
-    SecondF64Half,
     StmtInstrMap,
     StoreInstrMap,
     UnaryOp,
-    as_f32,
-    as_f64,
     as_intish,
     as_s64,
     as_sintish,
@@ -74,12 +71,9 @@ from .evaluate import (
     fold_divmod,
     fold_mul_chains,
     handle_add,
-    handle_add_double,
-    handle_add_float,
     handle_add_real,
     handle_addi,
     handle_bgez,
-    handle_conditional_move,
     handle_convert,
     handle_la,
     handle_lw,
@@ -90,8 +84,6 @@ from .evaluate import (
     handle_sltiu,
     handle_sltu,
     handle_sra,
-    handle_swl,
-    handle_swr,
     imm_add_32,
     load_upper,
     make_store,
@@ -260,6 +252,41 @@ class ConditionalInstrPattern(AsmPattern):
             )
 
 
+class NegatedRegAddrModePattern(AsmPattern):
+    """
+    Replace negated registers in address modes by neg instructions.
+    """
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction):
+            return None
+        if not instr.args or not isinstance(instr.args[-1], AsmAddressMode):
+            return None
+        addend = instr.args[-1].addend
+        if isinstance(addend, BinOp) and addend.op != "-":
+            inner = addend.lhs
+        else:
+            inner = addend
+        if not isinstance(inner, BinOp) or inner.op != "-":
+            return None
+        temp = Register("neg")
+        new_addend: Argument
+        if isinstance(addend, BinOp) and addend.op != "-":
+            new_addend = replace(addend, lhs=temp)
+        else:
+            new_addend = temp
+        new_args = list(instr.args)
+        new_args[-1] = replace(instr.args[-1], addend=new_addend)
+        return Replacement(
+            [
+                AsmInstruction("rsb", [temp, inner.rhs, AsmLiteral(0)]),
+                AsmInstruction(instr.mnemonic, new_args),
+            ],
+            1,
+        )
+
+
 class PopAndReturnPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "pop {x}",
@@ -339,6 +366,8 @@ class ArmArch(Arch):
         if len(args) == 2:
             if instr.mnemonic == "mov" and args[0] == args[1] == Register("r8"):
                 return AsmInstruction("nop", [])
+            if base == "neg":
+                return AsmInstruction("rsb" + suffix, args + [AsmLiteral(0)])
             if base == "rrx":
                 return AsmInstruction(
                     "mov" + suffix, [args[0], BinOp(base, args[1], AsmLiteral(1))]
@@ -493,6 +522,7 @@ class ArmArch(Arch):
 
     asm_patterns = [
         ConditionalInstrPattern(),
+        NegatedRegAddrModePattern(),
         PopAndReturnPattern(),
     ]
 
