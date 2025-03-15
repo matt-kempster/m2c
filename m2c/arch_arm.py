@@ -31,6 +31,7 @@ from .asm_pattern import (
     AsmMatcher,
     AsmPattern,
     Replacement,
+    ReplacementPart,
     SimpleAsmPattern,
     make_pattern,
 )
@@ -192,9 +193,7 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
 
 
 class ConditionalInstrPattern(AsmPattern):
-    """
-    Replace conditionally executed instructions by branches.
-    """
+    """Replace conditionally executed instructions by branches."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         matched_cc: Optional[Cc] = None
@@ -254,9 +253,7 @@ class ConditionalInstrPattern(AsmPattern):
 
 
 class NegatedRegAddrModePattern(AsmPattern):
-    """
-    Replace negated registers in address modes by neg instructions.
-    """
+    """Replace negated registers in address modes by neg instructions."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         instr = matcher.input[matcher.index]
@@ -289,9 +286,7 @@ class NegatedRegAddrModePattern(AsmPattern):
 
 
 class ShiftedRegAddrModePattern(AsmPattern):
-    """
-    Replace barrel shifted registers in address modes by additional instructions.
-    """
+    """Replace barrel shifted registers in address modes by additional instructions."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         instr = matcher.input[matcher.index]
@@ -312,6 +307,55 @@ class ShiftedRegAddrModePattern(AsmPattern):
             ],
             1,
         )
+
+
+class ShiftedRegPattern(AsmPattern):
+    """Replace barrel shifted registers by additional instructions."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction) or not instr.args:
+            return None
+        base, cc, set_flags = parse_suffix(instr.mnemonic)
+
+        arg = instr.args[-1]
+        literal_carry: Optional[int] = None
+        new_instrs: List[ReplacementPart]
+        if isinstance(arg, AsmLiteral):
+            # Carry = bit 31 if the constant is greater than 255 and can be
+            # produced by shifting an 8-bit value
+            value = arg.value & 0xFFFFFFFF
+            if value < 0x100 or value >= (value & -value) * 0x100:
+                if base in ("mov", "mvn"):
+                    value ^= 0xFFFFFFFF
+                if value < 0x100 or value >= (value & -value) * 0x100:
+                    return None
+            new_instrs = [instr]
+            literal_carry = value >> 31
+        elif isinstance(arg, BinOp) and arg.op in ARM_BARREL_SHIFTER_OPS:
+            temp = Register(arg.op)
+            shift_ins = AsmInstruction(arg.op, [temp, arg.lhs, arg.rhs])
+            if arg.op == "rrx":
+                shift_ins.args.pop()
+            new_instrs = [
+                shift_ins,
+                AsmInstruction(instr.mnemonic, instr.args[:-1] + [temp]),
+            ]
+        else:
+            return None
+
+        if base in ("tst", "teq") or (
+            base in ("mov", "mvn", "and", "eor", "orr", "orn", "bic") and set_flags
+        ):
+            # The instruction sets carry based on the barrel shifter
+            if literal_carry is not None:
+                new_instrs.append(
+                    AsmInstruction("setcarryi.fictive", [AsmLiteral(literal_carry)])
+                )
+            else:
+                new_instrs.append(AsmInstruction("setcarry.fictive", [temp]))
+
+        return Replacement(new_instrs, 1)
 
 
 class PopAndReturnPattern(SimpleAsmPattern):
@@ -514,6 +558,34 @@ class ArmArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[mnemonic](a))
 
+        elif mnemonic == "setcarryi.fictive":
+            assert isinstance(args[0], AsmLiteral)
+            imm = args[0].value
+            outputs = [Register("c"), Register("hi")]
+            inputs = [Register("z")] if imm else []
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(Register("c"), Literal(imm))
+                if imm == 0:
+                    s.set_reg(Register("hi"), Literal(0))
+                else:
+                    z = condition_from_expr(a.regs[Register("z")])
+                    s.set_reg(Register("hi"), z.negated())
+
+        elif mnemonic == "setcarry.fictive":
+            assert isinstance(args[0], Register)
+            outputs = [Register("c"), Register("hi")]
+            inputs = [Register("z")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                cval = UnaryOp("M2C_CARRY", a.reg(0), type=Type.bool())
+                c = s.set_reg(Register("c"), cval)
+                if c is None:
+                    c = cval
+                z = condition_from_expr(a.regs[Register("z")])
+                hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
+                s.set_reg(Register("hi"), hi)
+
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
@@ -551,6 +623,7 @@ class ArmArch(Arch):
         ConditionalInstrPattern(),
         NegatedRegAddrModePattern(),
         ShiftedRegAddrModePattern(),
+        ShiftedRegPattern(),
         PopAndReturnPattern(),
     ]
 
