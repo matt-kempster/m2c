@@ -15,6 +15,7 @@ from .error import DecompFailure
 from .options import Target
 from .asm_file import Label
 from .asm_instruction import (
+    ARM_BARREL_SHIFTER_OPS,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -287,6 +288,32 @@ class NegatedRegAddrModePattern(AsmPattern):
         )
 
 
+class ShiftedRegAddrModePattern(AsmPattern):
+    """
+    Replace barrel shifted registers in address modes by additional instructions.
+    """
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction):
+            return None
+        if not instr.args or not isinstance(instr.args[-1], AsmAddressMode):
+            return None
+        addend = instr.args[-1].addend
+        if not isinstance(addend, BinOp) or addend.op not in ARM_BARREL_SHIFTER_OPS:
+            return None
+        temp = Register(addend.op)
+        new_args = list(instr.args)
+        new_args[-1] = replace(instr.args[-1], addend=temp)
+        return Replacement(
+            [
+                AsmInstruction("mov", [temp, addend]),
+                AsmInstruction(instr.mnemonic, new_args),
+            ],
+            1,
+        )
+
+
 class PopAndReturnPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "pop {x}",
@@ -523,6 +550,7 @@ class ArmArch(Arch):
     asm_patterns = [
         ConditionalInstrPattern(),
         NegatedRegAddrModePattern(),
+        ShiftedRegAddrModePattern(),
         PopAndReturnPattern(),
     ]
 
