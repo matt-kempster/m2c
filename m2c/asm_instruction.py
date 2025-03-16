@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Union
 from .error import DecompFailure
 
 
-ARM_BARREL_SHIFTER_OPS = ("lsl", "lrs", "asr", "ror", "rrx")
+ARM_BARREL_SHIFTER_OPS = ("lsl", "lsr", "asr", "ror", "rrx")
 
 
 @dataclass(frozen=True)
