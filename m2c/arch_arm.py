@@ -171,24 +171,33 @@ def factor_cond(cc: Cc) -> Tuple[Cc, bool]:
 
 
 def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
+    # Deal with false positives from naively stripping cc/s
+    if mnemonic in ("teq", "mls", "smmls"):
+        return mnemonic, None, False
+    if mnemonic.endswith("s"):
+        base = mnemonic[:-1]
+        if base in ("mul", "lsl", "umull", "umlal", "smull", "smlal", "mov", "bic"):
+            return base, None, True
+
+    def strip_cc(mnemonic: str) -> Tuple[str, Optional[Cc]]:
+        for suffix in [cond.value for cond in Cc] + ["hs", "lo"]:
+            if mnemonic.endswith(suffix):
+                if suffix == "hs":
+                    cc = Cc.CS
+                elif suffix == "lo":
+                    cc = Cc.CC
+                else:
+                    cc = Cc(suffix)
+                return mnemonic[: -len(suffix)], cc
+        return mnemonic, None
+
+    mnemonic, cc = strip_cc(mnemonic)
     set_flags = False
     if mnemonic.endswith("s"):
         mnemonic = mnemonic[:-1]
         set_flags = True
-    cc: Optional[Cc] = None
-    for suffix in [cond.value for cond in Cc] + ["hs", "lo"]:
-        if mnemonic.endswith(suffix):
-            if suffix == "hs":
-                cc = Cc.CS
-            elif suffix == "lo":
-                cc = Cc.CC
-            else:
-                cc = Cc(suffix)
-            mnemonic = mnemonic[: -len(suffix)]
-            break
-    if mnemonic.endswith("s") and not set_flags:
-        mnemonic = mnemonic[:-1]
-        set_flags = True
+    if cc is None:
+        mnemonic, cc = strip_cc(mnemonic)
     return mnemonic, cc, set_flags
 
 
