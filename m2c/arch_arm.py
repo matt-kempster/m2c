@@ -732,14 +732,14 @@ class ArmArch(Arch):
             clobbers = [Register("hi"), Register("ge"), Register("gt")]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.reg(0)
+                rhs = a.reg_or_imm(1)
                 if base == "tst":
-                    val = BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2))
+                    val = BinaryOp.int(lhs, "&", rhs)
                     s.set_reg(Register("z"), BinaryOp.icmp(val, "==", Literal(0)))
                 else:
-                    val = BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2))
-                    s.set_reg(
-                        Register("z"), BinaryOp.icmp(a.reg(1), "==", a.reg_or_imm(2))
-                    )
+                    val = BinaryOp.int(lhs, "^", rhs)
+                    s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
                 top_bit = BinaryOp.int(val, "&", Literal(1 << 31))
                 s.set_reg(Register("n"), BinaryOp.icmp(top_bit, "!=", Literal(0)))
 
