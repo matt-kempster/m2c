@@ -1002,14 +1002,12 @@ class ArmArch(Arch):
     @staticmethod
     def function_return(expr: Expression) -> Dict[Register, Expression]:
         # We may not know what this function's return registers are --
-        # $v0 or ($v0,$v1) -- but we don't really care, it's fine to be
+        # $r0 or ($r0,$r1) -- but we don't really care, it's fine to be
         # liberal here and put the return value in all of them.
         # (It's not perfect for u64's, but that's rare anyway.)
         return {
-            Register("v0"): Cast(
+            Register("r0"): Cast(
                 expr, reinterpret=True, silent=True, type=Type.intptr()
             ),
-            Register("v1"): as_u32(
-                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
-            ),
+            Register("r1"): fn_op("SECOND_REG", [expr], Type.reg32(likely_float=False)),
         }
