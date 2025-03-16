@@ -369,6 +369,29 @@ class AddrModeWritebackPattern(AsmPattern):
             )
 
 
+class RegRegAddrModePattern(AsmPattern):
+    """Replace register addends in address modes by a separate add instruction."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction) or not instr.args:
+            return None
+        arg = instr.args[-1]
+        if not isinstance(arg, AsmAddressMode) or not isinstance(arg.addend, Register):
+            return None
+        assert arg.writeback is None
+        temp = Register("_fictive_mem_loc")
+        new_args = list(instr.args)
+        new_args[-1] = AsmAddressMode(temp, AsmLiteral(0), None)
+        return Replacement(
+            [
+                AsmInstruction("add", [temp, arg.base, arg.addend]),
+                AsmInstruction(instr.mnemonic, new_args),
+            ],
+            1,
+        )
+
+
 class ShiftedRegPattern(AsmPattern):
     """Replace barrel shifted registers by additional instructions."""
 
@@ -734,6 +757,7 @@ class ArmArch(Arch):
         ShiftedRegAddrModePattern(),
         ShiftedRegPattern(),
         AddrModeWritebackPattern(),
+        RegRegAddrModePattern(),
         PopAndReturnPattern(),
     ]
 
