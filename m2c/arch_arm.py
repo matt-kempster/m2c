@@ -605,6 +605,24 @@ class ArmArch(Arch):
                         )
                     s.set_reg(Register("z"), BinaryOp.icmp(val, "==", Literal(0)))
 
+        elif base in ("tst", "teq"):
+            assert len(args) == 2
+            inputs = get_inputs(0)
+            outputs = [Register("n"), Register("z")]
+            clobbers = [Register("hi"), Register("ge"), Register("gt")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                if base == "tst":
+                    val = BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2))
+                    s.set_reg(Register("z"), BinaryOp.icmp(val, "==", Literal(0)))
+                else:
+                    val = BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2))
+                    s.set_reg(
+                        Register("z"), BinaryOp.icmp(a.reg(1), "==", a.reg_or_imm(2))
+                    )
+                top_bit = BinaryOp.int(val, "&", Literal(1 << 31))
+                s.set_reg(Register("n"), BinaryOp.icmp(top_bit, "!=", Literal(0)))
+
         elif mnemonic == "setcarryi.fictive":
             assert isinstance(args[0], AsmLiteral)
             imm = args[0].value
