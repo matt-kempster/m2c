@@ -635,6 +635,19 @@ class ArmArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[mnemonic](a))
 
+        elif mnemonic in cls.instrs_store:
+            assert isinstance(args[0], Register)
+            inputs = [args[0]]
+            is_store = True
+
+            if isinstance(args[1], AsmAddressMode):
+                inputs.append(args[1].base)
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                store = cls.instrs_store[mnemonic](a)
+                if store is not None:
+                    s.store_memory(store, a.reg_ref(0))
+
         elif base in cls.instrs_nz_flags:
             if base in ("mov", "mvn"):
                 assert len(args) == 2
@@ -811,6 +824,12 @@ class ArmArch(Arch):
         "eor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2)),
         "bic": lambda a: BinaryOp.int(a.reg(1), "&", UnaryOp.int("~", a.reg_or_imm(2))),
         "orn": lambda a: BinaryOp.int(a.reg(1), "|", UnaryOp.int("~", a.reg_or_imm(2))),
+    }
+
+    instrs_store: StoreInstrMap = {
+        "str": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
+        "strb": lambda a: make_store(a, type=Type.int_of_size(8)),
+        "strh": lambda a: make_store(a, type=Type.int_of_size(16)),
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
