@@ -988,7 +988,7 @@ class PpcArch(Arch):
                     )
                     s.set_reg(
                         Register("cr0_so"),
-                        fn_op("MIPS2C_OVERFLOW", [target_val], type=Type.s32()),
+                        fn_op("M2C_OVERFLOW", [target_val], type=Type.s32()),
                     )
 
             else:

@@ -81,7 +81,7 @@ This behavior can be disabled with `--no-unk-inference` ("Disable unknown struct
 For structs in the context, the following fields treated as "unknown" space that can be inferred:
 
 - `char` arrays with a name starting with `unk_`, e.g. `char unk_10[4];`
-- any field with a type that starts with `UNK_` or `MIPS2C_UNK`, e.g. `UNK_TYPE4 foo;`
+- any field with a type that starts with `UNK_` or `M2C_UNK`, e.g. `UNK_TYPE4 foo;`
 
 Currently, struct field inference only works on structs without bitfields or [unnamed union fields](https://gcc.gnu.org/onlinedocs/gcc/Unnamed-Fields.html).
 
