@@ -240,8 +240,8 @@ class ConditionalInstrPattern(AsmPattern):
             else:
                 break
             i += 1
-            # TODO: come up with a better check for flag clobbers?
-            if set_flags or base in ("cmp", "cmn", "tst", "teq"):
+            checked_reg = CC_REGS[factor_cond(matched_cc)[0]]
+            if checked_reg in instr.outputs or checked_reg in instr.clobbers:
                 break
         if matched_cc is None:
             return None
