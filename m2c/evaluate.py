@@ -519,9 +519,9 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
     return StoreStmt(source=expr, dest=dest)
 
 
-def handle_sra(args: InstrArgs) -> Expression:
+def handle_sra(args: InstrArgs, *, arm: bool = False) -> Expression:
     lhs = args.reg(1)
-    shift = args.imm(2)
+    shift = args.reg_or_imm(2) if arm else args.imm(2)
     if isinstance(shift, Literal) and shift.value in [16, 24]:
         expr = early_unwrap(lhs)
         pow2 = 1 << shift.value

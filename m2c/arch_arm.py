@@ -564,14 +564,13 @@ class ArmArch(Arch):
             assert len(args) == 1
             inputs = [Register("lr")]
             is_return = True
-        elif mnemonic in cls.instrs_unary_no_flags:
-            assert len(args) == 1
+        elif mnemonic in cls.instrs_no_flags:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             inputs = get_inputs(1)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(a.reg_ref(0), cls.instrs_unary_no_flags[mnemonic](a))
+                s.set_reg(a.reg_ref(0), cls.instrs_no_flags[mnemonic](a))
 
         elif base in cls.instrs_nz_flags:
             if base in ("mov", "mvn"):
@@ -580,9 +579,8 @@ class ArmArch(Arch):
                 assert len(args) == 4
             else:
                 assert len(args) == 3
-            output = args[0]
-            assert isinstance(output, Register)
-            outputs = [output]
+            assert isinstance(args[0], Register)
+            outputs = [args[0]]
             inputs = get_inputs(1)
             if set_flags:
                 outputs.extend([Register("n"), Register("z")])
@@ -590,7 +588,7 @@ class ArmArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_nz_flags[base](a)
-                set_val = s.set_reg(output, val)
+                set_val = s.set_reg(a.reg_ref(0), val)
                 if set_val is not None:
                     val = set_val
                 if set_flags:
@@ -702,12 +700,32 @@ class ArmArch(Arch):
         "nop",
     }
 
-    instrs_unary_no_flags: InstrMap = {
+    instrs_no_flags: InstrMap = {
+        # Bit-fiddling
         "clz": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
         "rbit": lambda a: UnaryOp(op="REVERSE_BITS", expr=a.reg(1), type=Type.intish()),
         "rev": lambda a: UnaryOp(op="BSWAP32", expr=a.reg(1), type=Type.intish()),
         "rev16": lambda a: UnaryOp(op="BSWAP16X2", expr=a.reg(1), type=Type.intish()),
         "revsh": lambda a: UnaryOp(op="BSWAP16", expr=a.reg(1), type=Type.s16()),
+        # Shifts (flag-setting forms have been normalized into shift + movs)
+        "lsl": lambda a: fold_mul_chains(
+            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg_or_imm(2)))
+        ),
+        "asr": lambda a: handle_sra(a, arm=True),
+        "lsr": lambda a: fold_divmod(
+            BinaryOp(
+                left=as_uintish(a.reg(1)),
+                op=">>",
+                right=as_intish(a.reg_or_imm(2)),
+                type=Type.u32(),
+            )
+        ),
+        "ror": lambda a: fn_op(
+            "ROTATE_RIGHT", [a.reg(1), a.reg_or_imm(2)], Type.intish()
+        ),
+        "rrx": lambda a: fn_op(
+            "ARM_RRX", [a.reg(1), a.regs[Register("c")]], Type.intish()
+        ),
     }
 
     instrs_nz_flags: InstrMap = {
