@@ -182,14 +182,14 @@ def factor_cond(cc: Cc) -> Tuple[Cc, bool]:
     }[cc]
 
 
-def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
+def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
     # Deal with false positives from naively stripping cc/s
     if mnemonic in ("teq", "mls", "smmls"):
-        return mnemonic, None, False
+        return mnemonic, None, "", ""
     if mnemonic.endswith("s"):
         base = mnemonic[:-1]
         if base in ("mul", "lsl", "umull", "umlal", "smull", "smlal", "mov", "bic"):
-            return base, None, True
+            return base, None, "s", ""
 
     def strip_cc(mnemonic: str) -> Tuple[str, Optional[Cc]]:
         for suffix in [cond.value for cond in Cc] + ["hs", "lo"]:
@@ -203,14 +203,19 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], bool]:
                 return mnemonic[: -len(suffix)], cc
         return mnemonic, None
 
+    direction = ""
+    if any(mnemonic.endswith(suffix) for suffix in ("ia", "ib", "da", "db")):
+        direction = mnemonic[-2:]
+        mnemonic = mnemonic[:-2]
+
     mnemonic, cc = strip_cc(mnemonic)
-    set_flags = False
+    set_flags = ""
     if mnemonic.endswith("s"):
+        set_flags = "s"
         mnemonic = mnemonic[:-1]
-        set_flags = True
     if cc is None:
         mnemonic, cc = strip_cc(mnemonic)
-    return mnemonic, cc, set_flags
+    return mnemonic, cc, set_flags, direction
 
 
 class ConditionalInstrPattern(AsmPattern):
@@ -228,10 +233,10 @@ class ConditionalInstrPattern(AsmPattern):
             if i != 0 and instr.mnemonic == "nop":
                 i += 1
                 continue
-            base, cc, set_flags = parse_suffix(instr.mnemonic)
+            base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
             if cc is None or (i == 0 and base == "b"):
                 break
-            new_instr = AsmInstruction(base + ("s" if set_flags else ""), instr.args)
+            new_instr = AsmInstruction(base + set_flags + direction, instr.args)
             if matched_cc is None:
                 matched_cc = cc
             if matched_cc == cc:
@@ -399,7 +404,7 @@ class ShiftedRegPattern(AsmPattern):
         instr = matcher.input[matcher.index]
         if not isinstance(instr, Instruction) or not instr.args:
             return None
-        base, cc, set_flags = parse_suffix(instr.mnemonic)
+        base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
 
         arg = instr.args[-1]
         literal_carry: Optional[int] = None
@@ -503,8 +508,8 @@ class ArmArch(Arch):
     def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
         if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
             instr = replace(instr, mnemonic=instr.mnemonic[:-2])
-        base, cc, set_flags = parse_suffix(instr.mnemonic)
-        suffix = (cc.value if cc else "") + ("s" if set_flags else "")
+        base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
+        suffix = (cc.value if cc else "") + set_flags + direction
         args = instr.args
         if cc == Cc.AL:
             return cls.normalize_instruction(
@@ -553,7 +558,7 @@ class ArmArch(Arch):
 
         instr_str = str(AsmInstruction(mnemonic, args))
 
-        base, cc, set_flags = parse_suffix(mnemonic)
+        base, cc, set_flags, direction = parse_suffix(mnemonic)
         if cc is not None:
             cc, cc_negated = factor_cond(cc)
         else:
