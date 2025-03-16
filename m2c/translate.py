@@ -1157,13 +1157,13 @@ class UnaryOp(Condition):
         return [self.expr]
 
     @staticmethod
+    def int(op: str, expr: Expression) -> UnaryOp:
+        return UnaryOp(op=op, expr=as_intish(expr), type=expr.type)
+
+    @staticmethod
     def sint(op: str, expr: Expression) -> UnaryOp:
         expr = as_sintish(expr, silent=True)
-        return UnaryOp(
-            op=op,
-            expr=expr,
-            type=expr.type,
-        )
+        return UnaryOp(op=op, expr=expr, type=expr.type)
 
     def negated(self) -> Condition:
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
@@ -2388,6 +2388,12 @@ class InstrArgs:
         if isinstance(ret, Literal):
             return Literal(ret.value & 0xFFFF)
         return ret
+
+    def reg_or_imm(self, index: int) -> Expression:
+        arg = self.raw_arg(index)
+        if isinstance(arg, Register):
+            return self.regs[arg]
+        return self.full_imm(index)
 
     def hi_imm(self, index: int) -> RawSymbolRef:
         arg = self.raw_arg(index)

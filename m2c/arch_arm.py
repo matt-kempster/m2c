@@ -561,13 +561,49 @@ class ArmArch(Arch):
             assert len(args) == 1
             inputs = [Register("lr")]
             is_return = True
-        elif mnemonic in cls.instrs_no_flags:
+        elif mnemonic in cls.instrs_unary_no_flags:
+            assert len(args) == 1
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             inputs = get_inputs(1)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(a.reg_ref(0), cls.instrs_no_flags[mnemonic](a))
+                s.set_reg(a.reg_ref(0), cls.instrs_unary_no_flags[mnemonic](a))
+
+        elif base in cls.instrs_nz_flags:
+            if base in ("mov", "mvn"):
+                assert len(args) == 2
+            elif base in ("mul", "mla"):
+                assert len(args) == 4
+            else:
+                assert len(args) == 3
+            output = args[0]
+            assert isinstance(output, Register)
+            outputs = [output]
+            inputs = get_inputs(1)
+            if set_flags:
+                outputs.extend([Register("n"), Register("z")])
+                clobbers = [Register("hi"), Register("ge"), Register("gt")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                val = cls.instrs_nz_flags[base](a)
+                set_val = s.set_reg(output, val)
+                if set_val is not None:
+                    val = set_val
+                if set_flags:
+                    if base in ("mov", "mul", "mla"):
+                        # Guess that bit 31 represents the sign of a 32-bit integer.
+                        # Use a manual cast so that the type of val is not modified
+                        # until the resulting bit is .use()'d.
+                        sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+                        s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+                    else:
+                        # Guess that it's a bit check.
+                        top_bit = BinaryOp.int(val, "&", Literal(1 << 31))
+                        s.set_reg(
+                            Register("n"), BinaryOp.icmp(top_bit, "!=", Literal(0))
+                        )
+                    s.set_reg(Register("z"), BinaryOp.icmp(val, "==", Literal(0)))
 
         elif mnemonic == "setcarryi.fictive":
             assert isinstance(args[0], AsmLiteral)
@@ -642,12 +678,26 @@ class ArmArch(Arch):
         "nop",
     }
 
-    instrs_no_flags: InstrMap = {
+    instrs_unary_no_flags: InstrMap = {
         "clz": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
         "rbit": lambda a: UnaryOp(op="RBIT", expr=a.reg(1), type=Type.intish()),
         "rev": lambda a: UnaryOp(op="BSWAP32", expr=a.reg(1), type=Type.intish()),
         "rev16": lambda a: UnaryOp(op="BSWAP16X2", expr=a.reg(1), type=Type.intish()),
         "revsh": lambda a: UnaryOp(op="BSWAP16", expr=a.reg(1), type=Type.s16()),
+    }
+
+    instrs_nz_flags: InstrMap = {
+        "mov": lambda a: a.reg_or_imm(1),
+        "mul": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
+        "mla": lambda a: BinaryOp.int(
+            BinaryOp.int(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
+        ),
+        "mvn": lambda a: UnaryOp.int("~", a.reg_or_imm(1)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2)),
+        "orr": lambda a: BinaryOp.int(a.reg(1), "|", a.reg_or_imm(2)),
+        "eor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2)),
+        "bic": lambda a: BinaryOp.int(a.reg(1), "&", UnaryOp.int("~", a.reg_or_imm(2))),
+        "orn": lambda a: BinaryOp.int(a.reg(1), "|", UnaryOp.int("~", a.reg_or_imm(2))),
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
