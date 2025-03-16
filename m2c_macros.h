@@ -39,6 +39,10 @@ typedef s64 M2C_UNK64;
 #define DMULT_HI(a, b) (0)
 #define DMULTU_HI(a, b) (0)
 #define CLZ(x) (0)
+#define REVERSE_BITS(x) (0)
+#define BSWAP32(x) (0)
+#define BSWAP16(x) (0)
+#define BSWAP16X2(x) (0)
 
 /* Carry/overflow bits from partially-implemented instructions */
 #define M2C_CARRY 0

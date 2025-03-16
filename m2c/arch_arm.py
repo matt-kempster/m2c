@@ -704,7 +704,7 @@ class ArmArch(Arch):
 
     instrs_unary_no_flags: InstrMap = {
         "clz": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
-        "rbit": lambda a: UnaryOp(op="RBIT", expr=a.reg(1), type=Type.intish()),
+        "rbit": lambda a: UnaryOp(op="REVERSE_BITS", expr=a.reg(1), type=Type.intish()),
         "rev": lambda a: UnaryOp(op="BSWAP32", expr=a.reg(1), type=Type.intish()),
         "rev16": lambda a: UnaryOp(op="BSWAP16X2", expr=a.reg(1), type=Type.intish()),
         "revsh": lambda a: UnaryOp(op="BSWAP16", expr=a.reg(1), type=Type.s16()),
