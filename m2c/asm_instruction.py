@@ -33,7 +33,7 @@ class Register:
 
 
 @dataclass(frozen=True)
-class RegisterSet:
+class RegisterList:
     regs: List[Register]
 
     def __str__(self) -> str:
@@ -129,7 +129,7 @@ class JumpTarget:
 
 
 Argument = Union[
-    Register, RegisterSet, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp
+    Register, RegisterList, AsmGlobalSymbol, AsmAddressMode, Macro, AsmLiteral, BinOp
 ]
 
 
@@ -336,7 +336,7 @@ def parse_arg_elems(
             consume_ws()
             if arg_elems and arg_elems[0] == "^":
                 expect("^")
-            value = RegisterSet(li)
+            value = RegisterList(li)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
             assert value is None

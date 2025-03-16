@@ -24,6 +24,7 @@ from .asm_instruction import (
     BinOp,
     JumpTarget,
     Register,
+    RegisterList,
     Writeback,
     get_jump_target,
 )
@@ -646,6 +647,15 @@ class ArmArch(Arch):
             assert len(args) == 1
             inputs = [Register("lr")]
             is_return = True
+        elif mnemonic == "pop":
+            assert len(args) == 1
+            assert isinstance(args[0], RegisterList)
+            outputs = list(args[0].regs)
+            if Register("pc") in args[0].regs:
+                is_return = True
+            else:
+                # TODO
+                pass
         elif mnemonic in cls.instrs_no_flags:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
