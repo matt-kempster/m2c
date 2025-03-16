@@ -40,8 +40,9 @@ typedef s64 M2C_UNK64;
 #define DMULTU_HI(a, b) (0)
 #define CLZ(x) (0)
 
-/* Carry bit from partially-implemented instructions */
+/* Carry/overflow bits from partially-implemented instructions */
 #define M2C_CARRY 0
+#define M2C_OVERFLOW(a) (0)
 
 /* Memcpy patterns */
 #define M2C_MEMCPY_ALIGNED memcpy
