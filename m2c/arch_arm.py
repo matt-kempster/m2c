@@ -791,6 +791,12 @@ class ArmArch(Arch):
         "rrx": lambda a: fn_op(
             "ARM_RRX", [a.reg(1), a.regs[Register("c")]], Type.intish()
         ),
+        # Loading instructions
+        "ldr": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
+        "ldrb": lambda a: handle_load(a, type=Type.u8()),
+        "ldrsb": lambda a: handle_load(a, type=Type.s8()),
+        "ldrh": lambda a: handle_load(a, type=Type.u16()),
+        "ldrsh": lambda a: handle_load(a, type=Type.s16()),
     }
 
     instrs_nz_flags: InstrMap = {
