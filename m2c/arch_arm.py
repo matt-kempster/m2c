@@ -228,7 +228,7 @@ class ConditionalInstrPattern(AsmPattern):
         if_instrs: List[AsmInstruction] = []
         else_instrs: List[AsmInstruction] = []
         while matcher.index + i < len(matcher.input):
-            instr = matcher.input[matcher.index]
+            instr = matcher.input[matcher.index + i]
             if not isinstance(instr, Instruction):
                 break
             if i != 0 and instr.mnemonic == "nop":
