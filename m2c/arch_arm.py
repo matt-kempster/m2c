@@ -24,6 +24,7 @@ from .asm_instruction import (
     BinOp,
     JumpTarget,
     Register,
+    Writeback,
     get_jump_target,
 )
 from .asm_pattern import (
@@ -327,6 +328,45 @@ class ShiftedRegAddrModePattern(AsmPattern):
             ],
             1,
         )
+
+
+class AddrModeWritebackPattern(AsmPattern):
+    """Replace writebacks in address modes by additional instructions."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction) or not instr.args:
+            return None
+        addr = instr.args[-1]
+        if not isinstance(addr, AsmAddressMode) or addr.writeback is None:
+            return None
+        new_args = list(instr.args)
+        new_args[-1] = AsmAddressMode(addr.base, AsmLiteral(0), None)
+        # Load/store instructions which specify writeback of the base register
+        # are UNPREDICTABLE if the base register to be written back matches
+        # the register to be loaded/stored (Rn == Rt).
+        # In the remaining cases, this rewrite is correct.
+        if instr.args[0] == addr.base:
+            raise DecompFailure(
+                "Writeback of same register as is being loaded/stored, "
+                f"for instruction: {instr}"
+            )
+        if addr.writeback == Writeback.PRE:
+            return Replacement(
+                [
+                    AsmInstruction("add", [addr.base, addr.base, addr.addend]),
+                    AsmInstruction(instr.mnemonic, new_args),
+                ],
+                1,
+            )
+        else:
+            return Replacement(
+                [
+                    AsmInstruction(instr.mnemonic, new_args),
+                    AsmInstruction("add", [addr.base, addr.base, addr.addend]),
+                ],
+                1,
+            )
 
 
 class ShiftedRegPattern(AsmPattern):
@@ -693,6 +733,7 @@ class ArmArch(Arch):
         NegatedRegAddrModePattern(),
         ShiftedRegAddrModePattern(),
         ShiftedRegPattern(),
+        AddrModeWritebackPattern(),
         PopAndReturnPattern(),
     ]
 
