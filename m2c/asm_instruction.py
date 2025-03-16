@@ -458,6 +458,8 @@ def parse_arg_elems(
             # ARM writeback indicator, e.g. "ldmia sp!, {r3, r4, r5, pc}".
             # Let's abuse AsmAddressMode for this.
             expect("!")
+            if value is not None:
+                value = replace_bare_reg(value, arch, reg_formatter)
             assert isinstance(value, Register)
             value = AsmAddressMode(value, AsmLiteral(0), Writeback.PRE)
         elif tok == '"':
