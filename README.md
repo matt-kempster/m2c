@@ -1,5 +1,5 @@
 # `m2c` Decompiler
-`m2c` ("*Machine code to C*") is a decompiler for MIPS and PowerPC assembly that produces C code, with partial support for C++.
+`m2c` ("*Machine code to C*") is a decompiler for 32-bit MIPS, PowerPC and ARM assembly that produces C code, with partial support for C++.
 
 This project, initially named `mips_to_c`, has the goal to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
 It originally targeted popular compilers of the late 1990's, but it also works well with newer compilers or hand-written assembly.
