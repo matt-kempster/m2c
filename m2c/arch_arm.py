@@ -670,7 +670,7 @@ class ArmArch(Arch):
         elif base in cls.instrs_nz_flags:
             if base in ("mov", "mvn"):
                 assert len(args) == 2
-            elif base in ("mul", "mla"):
+            elif base == "mla":
                 assert len(args) == 4
             else:
                 assert len(args) == 3
