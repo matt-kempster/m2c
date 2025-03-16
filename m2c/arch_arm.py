@@ -437,6 +437,8 @@ class ArmArch(Arch):
         if len(args) == 2:
             if instr.mnemonic == "mov" and args[0] == args[1] == Register("r8"):
                 return AsmInstruction("nop", [])
+            if base == "cpy":
+                return AsmInstruction("mov" + suffix, args)
             if base == "neg":
                 return AsmInstruction("rsb" + suffix, args + [AsmLiteral(0)])
             if base == "rrx":
