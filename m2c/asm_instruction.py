@@ -273,6 +273,8 @@ def parse_arg_elems(
     defines: Dict[str, int],
     *,
     top_level: bool,
+    do_constant_fold: bool = True,
+    do_replace_bare_reg: bool = True,
 ) -> Argument:
     value: Optional[Argument] = None
 
@@ -355,9 +357,14 @@ def parse_arg_elems(
             expect("(")
             # Get the argument of the macro (which must exist).
             m = parse_arg_elems(
-                arg_elems, arch, reg_formatter, defines, top_level=False
+                arg_elems,
+                arch,
+                reg_formatter,
+                defines,
+                top_level=False,
+                do_constant_fold=False,
+                do_replace_bare_reg=False,
             )
-            m = constant_fold(m, defines)
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
             value = Macro(macro_name, m)
@@ -389,7 +396,12 @@ def parse_arg_elems(
             expect("(")
             # Get what is being dereferenced.
             rhs = parse_arg_elems(
-                arg_elems, arch, reg_formatter, defines, top_level=False
+                arg_elems,
+                arch,
+                reg_formatter,
+                defines,
+                top_level=False,
+                do_constant_fold=False,
             )
             expect(")")
             if isinstance(rhs, BinOp):
@@ -398,7 +410,6 @@ def parse_arg_elems(
                 value = constant_fold(rhs, defines)
             else:
                 # Address mode.
-                rhs = replace_bare_reg(rhs, arch, reg_formatter)
                 if rhs == AsmLiteral(0):
                     rhs = Register("zero")
                 if isinstance(rhs, AsmGlobalSymbol):
@@ -417,14 +428,12 @@ def parse_arg_elems(
             val = parse_arg_elems(
                 arg_elems, arch, reg_formatter, defines, top_level=False
             )
-            val = replace_bare_reg(val, arch, reg_formatter)
             assert isinstance(val, Register)
             addend: Optional[Argument] = None
             if expect(",]") == ",":
                 addend = parse_arg_elems(
                     arg_elems, arch, reg_formatter, defines, top_level=False
                 )
-                addend = constant_fold(addend, defines)
                 if expect(",]") == ",":
                     consume_ws()
                     op = parse_word(arg_elems).lower()
@@ -449,7 +458,6 @@ def parse_arg_elems(
                 addend = parse_arg_elems(
                     arg_elems, arch, reg_formatter, defines, top_level=False
                 )
-                addend = constant_fold(addend, defines)
                 writeback = Writeback.POST
             if addend is None:
                 addend = AsmLiteral(0)
@@ -485,10 +493,10 @@ def parse_arg_elems(
                     shift = parse_arg_elems(
                         arg_elems, arch, reg_formatter, defines, top_level=False
                     )
-                    value = BinOp(op, value, shift)
+                    value = BinOp(op, AsmLiteral(0), shift)
                     assert not arg_elems
                 elif op == "rrx":
-                    value = BinOp(op, value, AsmLiteral(1))
+                    value = BinOp(op, AsmLiteral(0), AsmLiteral(1))
                     assert not arg_elems
         elif tok in "<>+-&*":
             # Binary operators, used e.g. to modify global symbols or constants.
@@ -512,7 +520,13 @@ def parse_arg_elems(
                 value = Macro("sda21", value)
             else:
                 rhs = parse_arg_elems(
-                    arg_elems, arch, reg_formatter, defines, top_level=False
+                    arg_elems,
+                    arch,
+                    reg_formatter,
+                    defines,
+                    top_level=False,
+                    do_constant_fold=False,
+                    do_replace_bare_reg=False,
                 )
                 if isinstance(rhs, BinOp) and rhs.op == "*":
                     rhs = constant_fold(rhs, defines)
@@ -546,6 +560,10 @@ def parse_arg_elems(
             assert False, f"Unknown token {tok} in {arg_elems}"
 
     assert value is not None
+    if do_constant_fold:
+        value = constant_fold(value, defines)
+    if do_replace_bare_reg:
+        value = replace_bare_reg(value, arch, reg_formatter)
     return value
 
 
@@ -563,9 +581,7 @@ def parse_args(
             assert output
             output[-1] = BinOp(ret.op, output[-1], ret.rhs)
             continue
-        output.append(
-            replace_bare_reg(constant_fold(ret, defines), arch, reg_formatter)
-        )
+        output.append(ret)
         if arg_elems:
             comma = arg_elems.pop(0)
             assert comma == ","
