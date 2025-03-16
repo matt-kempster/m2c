@@ -579,6 +579,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 if len(parts) >= 2:
                     process_label(parts[1], kind=LabelKind.GLOBAL)
 
+            elif directive in ("arm_func_end", "thumb_func_end"):
+                pass
+
             elif curr_section == ".text":
                 meta = InstructionMeta(
                     emit_goto=emit_goto,
