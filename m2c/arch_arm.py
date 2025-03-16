@@ -289,7 +289,7 @@ class NegatedRegAddrModePattern(AsmPattern):
             inner = addend
         if not isinstance(inner, BinOp) or inner.op != "-":
             return None
-        temp = Register("neg")
+        temp = Register("_fictive_neg")
         new_addend: Argument
         if isinstance(addend, BinOp) and addend.op != "-":
             new_addend = replace(addend, lhs=temp)
@@ -318,7 +318,7 @@ class ShiftedRegAddrModePattern(AsmPattern):
         addend = instr.args[-1].addend
         if not isinstance(addend, BinOp) or addend.op not in ARM_BARREL_SHIFTER_OPS:
             return None
-        temp = Register(addend.op)
+        temp = Register("_fictive_" + addend.op)
         new_args = list(instr.args)
         new_args[-1] = replace(instr.args[-1], addend=temp)
         return Replacement(
