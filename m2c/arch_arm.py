@@ -132,6 +132,17 @@ class Cc(Enum):
     AL = "al"
 
 
+CC_REGS: Dict[Cc, Register] = {
+    Cc.EQ: Register("z"),
+    Cc.CS: Register("c"),
+    Cc.MI: Register("n"),
+    Cc.VS: Register("v"),
+    Cc.HI: Register("hi"),
+    Cc.GE: Register("ge"),
+    Cc.GT: Register("gt"),
+}
+
+
 def negate_cond(cc: Cc) -> Cc:
     return {
         Cc.EQ: Cc.NE,
@@ -480,6 +491,10 @@ class ArmArch(Arch):
         instr_str = str(AsmInstruction(mnemonic, args))
 
         base, cc, set_flags = parse_suffix(mnemonic)
+        if cc is not None:
+            cc, cc_negated = factor_cond(cc)
+        else:
+            cc_negated = False
 
         def get_inputs(starti: int) -> List[Location]:
             ret: List[Location] = []
@@ -507,19 +522,7 @@ class ArmArch(Arch):
             jump_target = get_jump_target(args[0])
 
             if cc is not None:
-                cc, negated = factor_cond(cc)
                 is_conditional = True
-                inputs = [
-                    {
-                        Cc.EQ: Register("z"),
-                        Cc.CS: Register("c"),
-                        Cc.MI: Register("n"),
-                        Cc.VS: Register("v"),
-                        Cc.HI: Register("hi"),
-                        Cc.GE: Register("ge"),
-                        Cc.GT: Register("gt"),
-                    }[cc]
-                ]
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
                     cond: Expression
@@ -540,7 +543,7 @@ class ArmArch(Arch):
                     else:
                         assert False
                     cond = condition_from_expr(cond)
-                    if negated:
+                    if cc_negated:
                         cond = cond.negated()
                     s.set_branch_condition(cond)
 
@@ -668,6 +671,9 @@ class ArmArch(Arch):
                     s.set_reg_real(a.reg_ref(0), error, emit_exactly_once=True)
                 else:
                     s.write_statement(ExprStmt(error))
+
+        if cc is not None:
+            inputs.append(CC_REGS[cc])
 
         return Instruction(
             mnemonic=mnemonic,
