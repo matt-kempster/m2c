@@ -524,7 +524,8 @@ class ArmArch(Arch):
         if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
             instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
-        suffix = (cc.value if cc else "") + set_flags + direction
+        cc_str = cc.value if cc else ""
+        suffix = cc_str + set_flags + direction
         args = instr.args
         if cc == Cc.AL:
             return cls.normalize_instruction(
@@ -548,6 +549,11 @@ class ArmArch(Arch):
                 return AsmInstruction(
                     "mov" + suffix, [args[0], BinOp(base, args[1], AsmLiteral(1))]
                 )
+            sp_excl = AsmAddressMode(Register("sp"), AsmLiteral(0), Writeback.PRE)
+            if base == "stm" and direction == "db" and args[0] == sp_excl:
+                return AsmInstruction("push" + cc_str, [args[1]])
+            if base == "ldm" and direction == "ia" and args[0] == sp_excl:
+                return AsmInstruction("pop" + cc_str, [args[1]])
             if base in LENGTH_THREE:
                 return cls.normalize_instruction(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
