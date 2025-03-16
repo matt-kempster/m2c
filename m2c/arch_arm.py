@@ -662,6 +662,14 @@ class ArmArch(Arch):
             else:
                 # TODO
                 pass
+        elif mnemonic == "bl":
+            # Function call to label
+            assert len(args) == 1
+            inputs = list(cls.argument_regs)
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            function_target = args[0]
+            eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
         elif mnemonic in cls.instrs_no_flags:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
