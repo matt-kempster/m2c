@@ -314,11 +314,83 @@ def parse_incbin(
     return None
 
 
+def check_ifdef(
+    macro_name: str,
+    defines: Dict[str, Optional[int]],
+    warnings: List[str],
+    directive: str,
+) -> bool:
+    if macro_name not in defines:
+        defines[macro_name] = None
+        add_warning(
+            warnings,
+            f"Note: assuming {macro_name} is unset for {directive}, "
+            f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.",
+        )
+    return defines[macro_name] is not None
+
+
+def eval_cpp_if(
+    expr: str, defines: Dict[str, Optional[int]], warnings: List[str], directive: str
+) -> bool:
+    token_re = re.compile(r"[a-zA-Z0-9_]+|&&|\|\||.")
+    tokens = [m.group() for m in token_re.finditer(expr) if not m.group().isspace()]
+
+    i = 0
+
+    def parse1() -> bool:
+        nonlocal i
+        tok = tokens[i]
+        i += 1
+        if tok == "!":
+            return not parse1()
+        if tok == "(":
+            r = parse3()
+            assert tokens[i] == ")"
+            i += 1
+            return r
+        if tok == "defined":
+            assert tokens[i] == "("
+            w = tokens[i + 1]
+            assert tokens[i + 2] == ")"
+            i += 3
+            return check_ifdef(w, defines, warnings, directive)
+        if tok[0].isnumeric():
+            return bool(int(tok, 0))
+        else:
+            value = defines.get(tok, None)
+            if value is None:
+                check_ifdef(tok, defines, warnings, directive)
+                return False
+            return bool(value)
+
+    def parse2() -> bool:
+        nonlocal i
+        r = parse1()
+        while i < len(tokens) and tokens[i] == "&&":
+            i += 1
+            r &= parse1()
+        return r
+
+    def parse3() -> bool:
+        nonlocal i
+        r = parse2()
+        while i < len(tokens) and tokens[i] == "||":
+            i += 1
+            r |= parse2()
+        return r
+
+    try:
+        ret = parse3()
+        assert i == len(tokens)
+    except (AssertionError, IndexError, ValueError):
+        raise DecompFailure(f"Failed to parse #if condition: {expr}")
+    return ret
+
+
 def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     filename = Path(f.name).name
     asm_file: AsmFile = AsmFile(filename)
-    ifdef_level: int = 0
-    ifdef_levels: List[int] = []
     curr_section = ".text"
     warnings: List[str] = []
     defines: Dict[str, Optional[int]] = {
@@ -326,6 +398,12 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         "NULL": 0,
         **options.preproc_defines,
     }
+
+    # Each nested ifdef has an associated level which is 0 (active), 1 (inactive)
+    # or 2 (inactive, but was active previously). Lines are only processed if the
+    # sum of levels (`ifdef_level`) is 0.
+    ifdef_level: int = 0
+    ifdef_levels: List[int] = []
 
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
@@ -372,6 +450,22 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     for lineno, line in enumerate(f, 1):
         # Check for goto markers before stripping comments
         emit_goto = any(pattern in line for pattern in options.goto_patterns)
+
+        # Convert C preprocessor directives into asm ones
+        is_c_preproc_command = False
+        if line.split() and line.split()[0] in (
+            "#ifdef",
+            "#ifndef",
+            "#else",
+            "#if",
+            "#elif",
+            "#elifdef",
+            "#elifndef",
+            "#endif",
+            "#define",
+        ):
+            is_c_preproc_command = True
+            line = "." + line[1:]
 
         # Strip comments and whitespace (but not within strings)
         line = re.sub(re_comment_or_string, re_comment_replacer, line)
@@ -420,7 +514,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         if not line:
             continue
 
-        if "=" in line:
+        if "=" in line and not is_c_preproc_command:
             key, value = line.split("=", 1)
             key = key.strip()
             if " " not in key:
@@ -429,45 +523,58 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         directive = line.split()[0]
         if directive.startswith("."):
             # Assembler directive.
-            if directive == ".ifdef" or directive == ".ifndef":
-                macro_name = line.split()[1]
-                if macro_name not in defines:
-                    defines[macro_name] = None
-                    add_warning(
-                        warnings,
-                        f"Note: assuming {macro_name} is unset for .ifdef, "
-                        f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.",
-                    )
-                level = 1 if defines[macro_name] is not None else 0
-                if directive == ".ifdef":
-                    level = 1 - level
+            _, _, args_str = line.partition(" ")
+            if is_c_preproc_command:
+                line = "#" + line[1:]
+                directive = line.split()[0]
+            if directive in (".ifdef", ".ifndef", "#ifdef", "#ifndef"):
+                active = check_ifdef(args_str, defines, warnings, directive)
+                if directive[1:] == "ifndef":
+                    active = not active
+                level = 1 - int(active)
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif directive.startswith(".if"):
+            elif directive == ".if":
                 macro_name = line.split()[1]
                 if macro_name == "0":
-                    level = 1
+                    active = False
                 elif macro_name == "1":
-                    level = 0
+                    active = True
                 else:
-                    level = 0
+                    active = True
                     add_warning(warnings, f"Note: ignoring .if {macro_name} directive")
+                level = 1 - int(active)
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif directive == ".else":
+            elif directive == "#if":
+                active = eval_cpp_if(args_str, defines, warnings, directive)
+                level = 1 - int(active)
+                ifdef_level += level
+                ifdef_levels.append(level)
+            elif directive in ("#elif", "#elifdef", "#elifndef", "#else", ".else"):
                 level = ifdef_levels.pop()
                 ifdef_level -= level
-                level = 1 - level
+                if level == 1:
+                    if directive == "#elifdef":
+                        active = check_ifdef(args_str, defines, warnings, directive)
+                    elif directive == "#elifndef":
+                        active = not check_ifdef(args_str, defines, warnings, directive)
+                    elif directive == "#elif":
+                        active = eval_cpp_if(args_str, defines, warnings, directive)
+                    else:
+                        active = True
+                    level = 1 - int(active)
+                else:
+                    level = 2
                 ifdef_level += level
                 ifdef_levels.append(level)
-            elif directive == ".endif":
+            elif directive in (".endif", "#endif"):
                 ifdef_level -= ifdef_levels.pop()
             elif directive == ".macro":
                 ifdef_level += 1
             elif directive == ".endm":
                 ifdef_level -= 1
             elif directive == ".fn":
-                _, _, args_str = line.partition(" ")
                 args = split_arg_list(args_str)
                 asm_file.new_function(args[0])
             elif ifdef_level == 0:
@@ -492,7 +599,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 elif directive == ".text":
                     curr_section = ".text"
                 elif directive == ".set":
-                    _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
                     if len(args) == 1:
                         # ".set noreorder" or similar, just ignore
@@ -501,8 +607,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         defines[args[0]] = try_parse(lambda: parse_int(args[1]))
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
+                elif directive == "#define":
+                    args = args_str.split(None, 1)
+                    if len(args) == 2:
+                        defines[args[0]] = try_parse(lambda: parse_int(args[1]))
+                    else:
+                        defines[args[0]] = None
                 elif curr_section in (".rodata", ".data", ".bss"):
-                    _, _, args_str = line.partition(" ")
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
