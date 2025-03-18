@@ -362,7 +362,6 @@ def parse_arg_elems(
                 reg_formatter,
                 defines,
                 top_level=False,
-                do_constant_fold=False,
                 do_replace_bare_reg=False,
             )
             expect(")")
