@@ -3337,13 +3337,8 @@ class NodeState:
     def set_reg(
         self,
         reg: Register,
-        expr: Optional[Expression],
-    ) -> Optional[Expression]:
-        if expr is None:
-            if reg in self.regs:
-                del self.regs[reg]
-            return None
-
+        expr: Expression,
+    ) -> Expression:
         if isinstance(expr, LocalVar):
             if (
                 isinstance(self.node, ReturnNode)
@@ -3353,7 +3348,7 @@ class NodeState:
             ):
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
-                return None
+                return expr
             if expr in self.local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).

@@ -973,8 +973,6 @@ class PpcArch(Arch):
                     target = a.reg_ref(0)
                     val = cls.instrs_destination_first[mnemonic.rstrip(".")](a)
                     target_val = s.set_reg(target, val)
-                    if target_val is None:
-                        target_val = val
                     s.set_reg(
                         Register("cr0_eq"),
                         BinaryOp.icmp(

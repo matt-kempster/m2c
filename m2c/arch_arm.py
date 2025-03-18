@@ -692,9 +692,7 @@ class ArmArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_nz_flags[base](a)
-                set_val = s.set_reg(a.reg_ref(0), val)
-                if set_val is not None:
-                    val = set_val
+                val = s.set_reg(a.reg_ref(0), val)
                 if set_flags:
                     if base in ("mov", "mul", "mla"):
                         # Guess that bit 31 represents the sign of a 32-bit integer.
@@ -748,10 +746,8 @@ class ArmArch(Arch):
             inputs = [Register("z")]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                cval = UnaryOp("M2C_CARRY", a.reg(0), type=Type.bool())
-                c = s.set_reg(Register("c"), cval)
-                if c is None:
-                    c = cval
+                c = UnaryOp("M2C_CARRY", a.reg(0), type=Type.bool())
+                c = s.set_reg(Register("c"), c)
                 z = condition_from_expr(a.regs[Register("z")])
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
                 s.set_reg(Register("hi"), hi)
