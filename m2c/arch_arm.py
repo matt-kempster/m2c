@@ -70,6 +70,7 @@ from .evaluate import (
     fold_divmod,
     fold_mul_chains,
     handle_add,
+    handle_add_arm,
     handle_add_real,
     handle_addi,
     handle_load,
@@ -764,6 +765,36 @@ class ArmArch(Arch):
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
                 s.set_reg(Register("hi"), hi)
 
+        elif base in cls.instrs_arithmetic:
+            assert isinstance(args[0], Register)
+            outputs = [args[0]]
+            if set_flags:
+                outputs += cls.flag_regs
+            inputs = get_inputs(1)
+            if base == "adc":
+                inputs.append(Register("c"))
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                val = cls.instrs_arithmetic[base](a)
+                val = s.set_reg(a.reg_ref(0), val)
+                if set_flags:
+                    s.set_reg(
+                        Register("z"),
+                        BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
+                    )
+                    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+                    s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
+                    c = UnaryOp("M2C_CARRY", val, type=Type.bool())
+                    s.set_reg(Register("c"), c)
+                    v = UnaryOp("M2C_OVERFLOW", val, type=Type.bool())
+                    s.set_reg(Register("v"), v)
+                    u64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
+                    p32 = Literal(2**32)
+                    s.set_reg(Register("hi"), BinaryOp.ucmp(u64val, ">", p32))
+                    s64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
+                    s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
+                    s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
+
         elif base in cls.instrs_ignore:
             pass
         else:
@@ -866,6 +897,11 @@ class ArmArch(Arch):
         "str": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
         "strb": lambda a: make_store(a, type=Type.int_of_size(8)),
         "strh": lambda a: make_store(a, type=Type.int_of_size(16)),
+    }
+
+    instrs_arithmetic: InstrMap = {
+        "add": lambda a: handle_add_arm(a),
+        "adc": lambda a: handle_add_real(handle_add_arm(a), a.regs[Register("c")], a),
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:

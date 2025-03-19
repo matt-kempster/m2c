@@ -265,13 +265,14 @@ def handle_addi(args: InstrArgs) -> Expression:
 
     # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
     # i.e. as an `addis` followed by an `addi`
+    # ARM is similar but with (x + 0x344) + 0x12000 or (x + 0x35) + 0x1200
     uw_source = early_unwrap(source)
     if (
         isinstance(uw_source, BinaryOp)
         and uw_source.op == "+"
         and isinstance(uw_source.right, Literal)
-        and uw_source.right.value % 0x10000 == 0
         and isinstance(imm, Literal)
+        and (uw_source.right.value % 0x10000 == 0 or imm.value % 0x100 == 0)
     ):
         return add_imm(
             output_reg, uw_source.left, Literal(imm.value + uw_source.right.value), args
@@ -1021,11 +1022,17 @@ def handle_add(args: InstrArgs) -> Expression:
             handle_addi_real(output_reg, args.reg_ref(2), rhs, lhs, args)
         )
 
-    return handle_add_real(output_reg, lhs, rhs, args)
+    return handle_add_real(lhs, rhs, args)
+
+
+def handle_add_arm(args: InstrArgs) -> Expression:
+    if isinstance(args.raw_arg(2), Register):
+        return handle_add(args)
+    else:
+        return handle_addi(args)
 
 
 def handle_add_real(
-    output_reg: Register,
     lhs: Expression,
     rhs: Expression,
     args: InstrArgs,

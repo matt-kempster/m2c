@@ -1482,7 +1482,6 @@ class MipsArch(Arch):
         "madd": lambda a: (
             ErrorExpr("madd top half"),
             handle_add_real(
-                Register("lo"),
                 a.regs[Register("lo")],
                 BinaryOp.int(a.reg(1), "*", a.reg(2)),
                 a,
@@ -1491,7 +1490,6 @@ class MipsArch(Arch):
         "maddu": lambda a: (
             ErrorExpr("maddu top half"),
             handle_add_real(
-                Register("lo"),
                 a.regs[Register("lo")],
                 BinaryOp.int(a.reg(1), "*", a.reg(2)),
                 a,
