@@ -632,7 +632,7 @@ class ArmArch(Arch):
                         cond = cond.negated()
                     s.set_branch_condition(cond)
 
-        elif mnemonic in ("cbz", "cbnz"):
+        elif base in ("cbz", "cbnz"):
             # Thumb conditional branch
             assert len(args) == 2
             assert isinstance(args[0], Register)
@@ -641,15 +641,15 @@ class ArmArch(Arch):
             is_conditional = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                op = "==" if mnemonic == "cbz" else "!="
+                op = "==" if base == "cbz" else "!="
                 s.set_branch_condition(BinaryOp.icmp(a.reg(0), op, Literal(0)))
 
-        elif mnemonic == "bx" and args[0] == Register("lr"):
+        elif base == "bx" and args[0] == Register("lr"):
             # Return
             assert len(args) == 1
             inputs = [Register("lr")]
             is_return = True
-        elif mnemonic == "pop":
+        elif base == "pop":
             assert len(args) == 1
             assert isinstance(args[0], RegisterList)
             outputs = list(args[0].regs)
@@ -658,7 +658,7 @@ class ArmArch(Arch):
             else:
                 # TODO
                 pass
-        elif mnemonic == "bl":
+        elif base == "bl":
             # Function call to label
             assert len(args) == 1
             inputs = list(cls.argument_regs)
@@ -666,15 +666,15 @@ class ArmArch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[0]
             eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
-        elif mnemonic in cls.instrs_no_flags:
+        elif base in cls.instrs_no_flags:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             inputs = get_inputs(1)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(a.reg_ref(0), cls.instrs_no_flags[mnemonic](a))
+                s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
 
-        elif mnemonic in cls.instrs_store:
+        elif base in cls.instrs_store:
             assert isinstance(args[0], Register)
             inputs = [args[0]]
             is_store = True
@@ -683,7 +683,7 @@ class ArmArch(Arch):
                 inputs.append(args[1].base)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                store = cls.instrs_store[mnemonic](a)
+                store = cls.instrs_store[base](a)
                 if store is not None:
                     s.store_memory(store, a.reg_ref(0))
 
@@ -763,7 +763,7 @@ class ArmArch(Arch):
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
                 s.set_reg(Register("hi"), hi)
 
-        elif mnemonic in cls.instrs_ignore:
+        elif base in cls.instrs_ignore:
             pass
         else:
             # If the mnemonic is unsupported, guess if it is destination-first
