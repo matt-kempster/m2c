@@ -194,6 +194,17 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
         direction = mnemonic[-2:]
         mnemonic = mnemonic[:-2]
 
+    memsize = ""
+    if mnemonic.startswith("str") or mnemonic.startswith("ldr"):
+        for suffix in ("b", "h", "d"):
+            if mnemonic.endswith(suffix):
+                mnemonic = mnemonic[:-1]
+                memsize = suffix
+                break
+    if memsize in ("b", "h") and mnemonic.endswith("s") and not strip_cc(mnemonic)[1]:
+        mnemonic = mnemonic[:-1]
+        memsize = "s" + memsize
+
     mnemonic, cc = strip_cc(mnemonic)
     set_flags = ""
     if mnemonic.endswith("s"):
@@ -201,7 +212,7 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
         mnemonic = mnemonic[:-1]
     if cc is None:
         mnemonic, cc = strip_cc(mnemonic)
-    return mnemonic, cc, set_flags, direction
+    return mnemonic + memsize, cc, set_flags, direction
 
 
 class ConditionalInstrPattern(AsmPattern):
