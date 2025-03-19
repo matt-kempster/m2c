@@ -659,7 +659,15 @@ class ArmArch(Arch):
             else:
                 # TODO
                 pass
-        elif base == "bl":
+        elif base == "blx" and isinstance(args[0], Register):
+            # Function call to pointer
+            inputs = list(cls.argument_regs)
+            inputs.append(args[0])
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            function_target = args[0]
+            eval_fn = lambda s, a: s.make_function_call(a.reg(0), outputs)
+        elif base in ("bl", "blx"):
             # Function call to label
             assert len(args) == 1
             inputs = list(cls.argument_regs)
