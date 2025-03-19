@@ -757,8 +757,9 @@ class ArmArch(Arch):
             inputs = [Register("z")]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                c = UnaryOp("M2C_CARRY", a.reg(0), type=Type.bool())
-                c = s.set_reg(Register("c"), c)
+                c = s.set_reg(
+                    Register("c"), UnaryOp("M2C_CARRY", a.reg(0), type=Type.bool())
+                )
                 z = condition_from_expr(a.regs[Register("z")])
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
                 s.set_reg(Register("hi"), hi)
