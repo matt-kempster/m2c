@@ -419,7 +419,7 @@ class ShiftedRegPattern(AsmPattern):
             new_instrs = [instr]
             literal_carry = value >> 31
         elif isinstance(arg, BinOp) and arg.op in ARM_BARREL_SHIFTER_OPS:
-            temp = Register(arg.op)
+            temp = Register("_fictive_" + arg.op)
             shift_ins = AsmInstruction(arg.op, [temp, arg.lhs, arg.rhs])
             if arg.op == "rrx":
                 shift_ins.args.pop()
