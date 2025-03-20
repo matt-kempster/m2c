@@ -3191,6 +3191,7 @@ class NodeState:
     node: Node
     stack_info: StackInfo = field(repr=False)
     regs: RegInfo = field(repr=False)
+    stack_spill_detection: bool = field(repr=False)
 
     local_var_writes: Dict[LocalVar, Tuple[Register, Expression, bool]] = field(
         default_factory=dict
@@ -3344,7 +3345,7 @@ class NodeState:
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
                 return None
-            if expr in self.local_var_writes:
+            if self.stack_spill_detection and expr in self.local_var_writes:
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
                 orig_reg, orig_expr, force = self.local_var_writes[expr]
@@ -3716,7 +3717,12 @@ def create_dominated_node_state(
     """
     stack_info = parent_state.stack_info
     new_regs = RegInfo(stack_info=stack_info)
-    child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
+    child_state = NodeState(
+        node=child,
+        regs=new_regs,
+        stack_info=stack_info,
+        stack_spill_detection=parent_state.stack_spill_detection,
+    )
     for reg, data in parent_state.regs.contents.items():
         new_regs.global_set_with_meta(
             reg,
@@ -4442,6 +4448,7 @@ def translate_to_ast(
         node=flow_graph.entry_node(),
         regs=RegInfo(stack_info=stack_info),
         stack_info=stack_info,
+        stack_spill_detection=options.stack_spill_detection,
     )
 
     setup_planned_vars(stack_info, persistent_state)
