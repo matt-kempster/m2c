@@ -4198,12 +4198,23 @@ class GlobalInfo:
                     # Skip externally-declared symbols that are defined in other files
                     continue
 
+                # Flip the bss order if the corresponding option is set
+                if data_entry:
+                    file, index = data_entry.sort_order
+                    data_entry_order = (
+                        (file, index * -1)
+                        if data_entry.is_bss and fmt.backwards_bss
+                        else (file, index)
+                    )
+                else:
+                    data_entry_order = ("", 0)
+
                 sort_order = (
                     not sym.type.is_function(),
                     is_in_file,
                     is_global if not is_in_file else False,
                     is_const,
-                    data_entry.sort_order if data_entry is not None else ("", 0),
+                    data_entry_order,
                     name,
                 )
                 qualifier = ""
