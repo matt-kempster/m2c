@@ -307,7 +307,8 @@ class StructCopyPattern(AsmPattern):
                 m_end = matcher.try_match(pattern_ext + pattern_end_4b)
                 if m_end:
                     m = m_end
-                    break
+                    i += 4
+                    pattern_ext.extend(pattern_end_4b)
 
                 pattern_end_2b = make_pattern(
                     f"lhz $b, (I+{i})($s)",
@@ -316,7 +317,8 @@ class StructCopyPattern(AsmPattern):
                 m_end = matcher.try_match(pattern_ext + pattern_end_2b)
                 if m_end:
                     m = m_end
-                    break
+                    i += 2
+                    pattern_ext.extend(pattern_end_2b)
 
                 pattern_end_1b = make_pattern(
                     f"lbz $b, (I+{i})($s)",
@@ -325,10 +327,15 @@ class StructCopyPattern(AsmPattern):
                 m_end = matcher.try_match(pattern_ext + pattern_end_1b)
                 if m_end:
                     m = m_end
+                    i += 1
                 break
 
         return Replacement(
-            [AsmInstruction("structcopy.fictive", [m.regs["d"], m.regs["s"]])],
+            [
+                AsmInstruction(
+                    "structcopy.fictive", [m.regs["d"], m.regs["s"], AsmLiteral(i)]
+                )
+            ],
             len(m.body),
         )
 
@@ -1242,7 +1249,7 @@ class PpcArch(Arch):
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "isync": lambda a: void_fn_op("M2C_SYNC", []),
         "structcopy.fictive": lambda a: void_fn_op(
-            "M2C_STRUCT_COPY", [a.reg(0), a.reg(1)]
+            "M2C_STRUCT_COPY", [a.reg(0), a.reg(1), a.imm(2)]
         ),
     }
 
