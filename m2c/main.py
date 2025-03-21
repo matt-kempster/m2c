@@ -139,6 +139,7 @@ def run(options: Options) -> int:
         typemap,
         typepool,
         deterministic_vars=options.deterministic_vars,
+        stack_spill_detection=options.stack_spill_detection,
     )
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
