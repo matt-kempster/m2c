@@ -52,6 +52,7 @@ from .asm_instruction import (
     BinOp,
     Macro,
     Register,
+    RegisterList,
 )
 from .instruction import (
     Instruction,
@@ -593,6 +594,16 @@ def get_stack_info(
             assert isinstance(inst.args[1], AsmAddressMode)
             assert isinstance(inst.args[1].addend, AsmLiteral)
             info.allocated_stack_size = abs(inst.args[1].addend.signed_value())
+        elif arch_mnemonic == "arm:push":
+            assert isinstance(inst.args[0], RegisterList)
+            info.allocated_stack_size += 4 * len(inst.args[0].regs)
+        elif (
+            arch_mnemonic == "arm:sub"
+            and inst.args[0] == arch.stack_pointer_reg
+            and inst.args[1] == arch.stack_pointer_reg
+            and isinstance(inst.args[2], AsmLiteral)
+        ):
+            info.allocated_stack_size += inst.args[2].value
         elif (
             arch_mnemonic in ("mips:move", "ppc:mr")
             and inst.args[0] == arch.frame_pointer_reg
