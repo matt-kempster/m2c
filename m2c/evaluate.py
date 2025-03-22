@@ -1197,7 +1197,6 @@ def handle_rlwinm(
 
         if simplify:
             lower_bits = replace_clz_shift(fold_divmod(lower_bits))
-            # This really only makes sense if the clz simplification didn't happen
             lower_bits = replace_or_shift(lower_bits)
 
         if right_mask != (all_ones >> right_shift) & all_ones:
