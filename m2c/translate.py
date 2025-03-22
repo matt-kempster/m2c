@@ -596,7 +596,13 @@ def get_stack_info(
             info.allocated_stack_size = abs(inst.args[1].addend.signed_value())
         elif arch_mnemonic == "arm:push":
             assert isinstance(inst.args[0], RegisterList)
-            info.allocated_stack_size += 4 * len(inst.args[0].regs)
+            for reg in inst.args[0].regs[::-1]:
+                info.allocated_stack_size += 4
+                if reg in arch.saved_regs:
+                    callee_saved_offsets.append(-info.allocated_stack_size)
+                    info.callee_save_regs.add(reg)
+                if reg == Register("lr"):
+                    info.is_leaf = False
         elif (
             arch_mnemonic == "arm:sub"
             and inst.args[0] == arch.stack_pointer_reg
@@ -637,14 +643,14 @@ def get_stack_info(
                 # Saving the return address on the stack.
                 info.is_leaf = False
             # The registers & their stack accesses must be matched up in ArchAsm.parse
-            for reg, mem in zip(inst.inputs, inst.outputs):
-                if isinstance(reg, Register) and isinstance(mem, StackLocation):
+            for inp, mem in zip(inst.inputs, inst.outputs):
+                if isinstance(inp, Register) and isinstance(mem, StackLocation):
                     assert mem.symbolic_offset is None
                     stack_offset = mem.offset
                     if arch_mnemonic != "ppc:psq_st":
                         # psq_st instructions store the same register as stfd, just
                         # as packed singles instead. Prioritize the stfd.
-                        info.callee_save_regs.add(reg)
+                        info.callee_save_regs.add(inp)
                     callee_saved_offsets.append(stack_offset)
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
@@ -661,6 +667,12 @@ def get_stack_info(
             assert isinstance(inst.args[2], AsmLiteral)
             temp_reg_values[inst.args[0]] |= inst.args[2].value
 
+    if arch.arch == Target.ArchEnum.ARM:
+        # On ARM we don't know the stack size up front, so callee_saved_offsets needs
+        # to be adjusted after scanning the full first block.
+        for i in range(len(callee_saved_offsets)):
+            callee_saved_offsets[i] += info.allocated_stack_size
+
     if not info.is_leaf:
         # Iterate over the whole function, not just the first basic block,
         # to estimate the boundary for the subroutine argument region
@@ -668,8 +680,14 @@ def get_stack_info(
         for node in flow_graph.nodes:
             for inst in node.block.instructions:
                 arch_mnemonic = inst.arch_mnemonic(arch)
+                # TODO: improve this check to cover all loads, not just of words
+                # Can we make use of StackLocation dependencies?
                 if (
-                    arch_mnemonic in ["mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz"]
+                    (
+                        arch_mnemonic
+                        in ("mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz")
+                        or arch_mnemonic.startswith("arm:ldr")
+                    )
                     and isinstance(inst.args[1], AsmAddressMode)
                     and info.is_stack_reg(inst.args[1].base)
                 ):
