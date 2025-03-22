@@ -343,6 +343,8 @@ class PpcArch(Arch):
     re_comment = r"[#;].*"
     supports_dollar_regs = True
 
+    home_space_size = 8
+
     stack_pointer_reg = Register("r1")
     frame_pointer_reg = Register("r30")
     return_address_reg = Register("lr")

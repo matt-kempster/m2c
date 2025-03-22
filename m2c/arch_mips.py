@@ -733,6 +733,8 @@ class MipsArch(Arch):
     re_comment = r"[#;].*"
     supports_dollar_regs = True
 
+    home_space_size = 0x10
+
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("fp")
     return_address_reg = Register("ra")

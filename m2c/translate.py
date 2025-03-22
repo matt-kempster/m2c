@@ -80,6 +80,7 @@ class Arch(ArchFlowGraph):
     """Arch-specific information that relates to the translation level.
     Extends ArchFlowGraph."""
 
+    home_space_size: int
     base_return_regs: List[Tuple[Register, bool]]
 
     @abc.abstractmethod
@@ -692,13 +693,8 @@ def get_stack_info(
                     and info.is_stack_reg(inst.args[1].base)
                 ):
                     offset = inst.args[1].lhs_as_literal()
-                    # The bottom 16 bytes are home space for subroutine args on MIPS.
-                    # On PPC, the bottom 8 bytes are.
-                    if arch.arch == Target.ArchEnum.MIPS and offset < 16:
-                        continue
-                    if arch.arch == Target.ArchEnum.PPC and offset < 8:
-                        continue
-                    info.subroutine_arg_top = min(info.subroutine_arg_top, offset)
+                    if offset >= arch.home_space_size:
+                        info.subroutine_arg_top = min(info.subroutine_arg_top, offset)
                 elif (
                     arch_mnemonic in ("mips:addiu", "ppc:addi", "arm:add")
                     and isinstance(inst.args[1], Register)
@@ -3469,7 +3465,7 @@ class NodeState:
         if isinstance(dest, SubroutineArg):
             # About to call a subroutine with this argument. Skip arguments for the
             # first four stack slots; they are also passed in registers.
-            if dest.value >= 0x10:
+            if dest.value >= self.stack_info.global_info.arch.home_space_size:
                 self.subroutine_args[dest.value] = source
             return
 

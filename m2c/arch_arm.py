@@ -464,6 +464,8 @@ class ArmArch(Arch):
     re_comment = r"^[ \t]*#.*|[@;].*"
     supports_dollar_regs = False
 
+    home_space_size = 0
+
     stack_pointer_reg = Register("sp")
     frame_pointer_reg = Register("r11")
     return_address_reg = Register("lr")
