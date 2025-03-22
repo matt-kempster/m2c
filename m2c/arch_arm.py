@@ -78,6 +78,7 @@ from .evaluate import (
     handle_load,
     handle_or,
     handle_sra,
+    handle_sub,
     make_store,
     void_fn_op,
 )
@@ -820,7 +821,10 @@ class ArmArch(Arch):
                 inputs.append(Register("c"))
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                val = fold_mul_chains(fold_divmod(cls.instrs_sub[base](a)))
+                val = cls.instrs_sub[base](a)
+                if isinstance(val, BinaryOp):
+                    val = fold_divmod(val)
+                val = fold_mul_chains(val)
                 val = s.set_reg(a.reg_ref(0), val)
                 if set_flags:
                     s.set_reg(
@@ -981,16 +985,16 @@ class ArmArch(Arch):
         "adc": lambda a: handle_add_real(handle_add_arm(a), a.regs[Register("c")], a),
     }
 
-    instrs_sub: Mapping[str, Callable[[InstrArgs], BinaryOp]] = {
-        "sub": lambda a: BinaryOp.intptr(a.reg(1), "-", a.reg_or_imm(2)),
-        "rsb": lambda a: BinaryOp.intptr(a.reg_or_imm(2), "-", a.reg(1)),
+    instrs_sub: InstrMap = {
+        "sub": lambda a: handle_sub(a.reg(1), a.reg_or_imm(2)),
+        "rsb": lambda a: handle_sub(a.reg_or_imm(2), a.reg(1)),
         "sbc": lambda a: BinaryOp.int(
-            BinaryOp.intptr(a.reg(1), "-", a.reg_or_imm(2)),
+            handle_sub(a.reg(1), a.reg_or_imm(2)),
             "+",
             BinaryOp.int(Literal(1), "-", a.regs[Register("c")]),
         ),
         "rsc": lambda a: BinaryOp.int(
-            BinaryOp.intptr(a.reg_or_imm(2), "-", a.reg(1)),
+            handle_sub(a.reg_or_imm(2), a.reg(1)),
             "+",
             BinaryOp.int(Literal(1), "-", a.regs[Register("c")]),
         ),

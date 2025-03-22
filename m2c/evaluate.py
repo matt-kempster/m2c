@@ -222,7 +222,7 @@ def handle_or(left: Expression, right: Expression) -> Expression:
 
 def handle_bitinv(expr: Expression) -> Expression:
     if isinstance(expr, Literal):
-        return Literal(((~expr.value + 0x80000000) & 0xFFFFFFFF) - 0x80000000)
+        return s32_literal(~expr.value)
     return UnaryOp.int("~", expr)
 
 
@@ -287,6 +287,12 @@ def handle_addi(args: InstrArgs) -> Expression:
             output_reg, uw_source.left, Literal(imm.value + uw_source.right.value), args
         )
     return handle_addi_real(output_reg, source_reg, source, imm, args)
+
+
+def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
+    if isinstance(lhs, Literal) and isinstance(rhs, Literal):
+        return s32_literal(lhs.value - rhs.value)
+    return BinaryOp.intptr(lhs, "-", rhs)
 
 
 def handle_addis(args: InstrArgs) -> Expression:
@@ -1230,3 +1236,10 @@ def carry_add_to(expr: Expression) -> BinaryOp:
 
 def carry_sub_from(expr: Expression) -> BinaryOp:
     return BinaryOp.intptr(expr, "-", UnaryOp("!", CarryBit(), type=Type.intish()))
+
+
+def s32_literal(value: int) -> Literal:
+    # TODO: this makes little sense, given that literals don't have fixed
+    # integer types... we should make sure that uses of literals do this
+    # conversion instead.
+    return Literal(((value + 0x80000000) & 0xFFFFFFFF) - 0x80000000)
