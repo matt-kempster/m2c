@@ -3719,11 +3719,7 @@ def create_dominated_node_state(
     """
     stack_info = parent_state.stack_info
     new_regs = RegInfo(stack_info=stack_info)
-    child_state = NodeState(
-        node=child,
-        regs=new_regs,
-        stack_info=stack_info,
-    )
+    child_state = NodeState(node=child, regs=new_regs, stack_info=stack_info)
     for reg, data in parent_state.regs.contents.items():
         new_regs.global_set_with_meta(
             reg,
