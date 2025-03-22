@@ -28,6 +28,13 @@ class Register:
         num = int(self.register_name[1:])
         return Register(f"f{num ^ 1}")
 
+    def arm_index(self) -> int:
+        index = {"sp": 13, "lr": 14, "pc": 15}.get(self.register_name)
+        if index is not None:
+            return index
+        assert self.register_name.startswith("r"), self.register_name
+        return int(self.register_name[1:])
+
     def __str__(self) -> str:
         return f"${self.register_name}"
 
@@ -330,14 +337,13 @@ def parse_arg_elems(
                 consume_ws()
                 word = parse_word(arg_elems)
                 reg2 = reg_formatter.parse_and_store(word, arch)
-                to_numeric = {"sp": "r13", "lr": "r14", "pc": "r15"}
-                num1 = int(to_numeric.get(reg1.register_name, reg1.register_name)[1:])
-                num2 = int(to_numeric.get(reg2.register_name, reg2.register_name)[1:])
-                for i in range(num1, num2 + 1):
+                for i in range(reg1.arm_index(), reg2.arm_index() + 1):
                     li.append(reg_formatter.parse(f"r{i}", arch))
             consume_ws()
             if arg_elems and arg_elems[0] == "^":
                 expect("^")
+            if len(li) > 1:
+                li.sort(key=lambda r: r.arm_index())
             value = RegisterList(li)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
