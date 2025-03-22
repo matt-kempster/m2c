@@ -471,6 +471,18 @@ def parse_flags(flags: List[str]) -> Options:
         help="Name temp and phi vars after their location in the source asm, "
         "rather than using an incrementing suffix. Can help reduce diff size in tests.",
     )
+    group.add_argument(
+        "--descending-regs",
+        dest="descending_regs",
+        action="store_true",
+        help="Sort variables in descending order by register number",
+    )
+    group.add_argument(
+        "--backwards-bss",
+        dest="backwards_bss",
+        action="store_true",
+        help="Sort bss variables backwards compared to what's in the asm",
+    )
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
@@ -651,6 +663,8 @@ def parse_flags(flags: List[str]) -> Options:
         passes=args.passes,
         incbin_dirs=args.incbin_dirs,
         deterministic_vars=args.deterministic_vars,
+        descending_regs=args.descending_regs,
+        backwards_bss=args.backwards_bss,
         disable_gc=args.disable_gc,
     )
 
