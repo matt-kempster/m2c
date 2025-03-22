@@ -916,10 +916,10 @@ class ArmArch(Arch):
         # TODO: these stack locations are wrong, registers don't have pre-defined
         # home space outside of MIPS.
         return [
-            AbiArgSlot(0, Register("a0"), Type.any_reg()),
-            AbiArgSlot(4, Register("a1"), Type.any_reg()),
-            AbiArgSlot(8, Register("a2"), Type.any_reg()),
-            AbiArgSlot(12, Register("a3"), Type.any_reg()),
+            AbiArgSlot(0, Register("r0"), Type.any_reg()),
+            AbiArgSlot(4, Register("r1"), Type.any_reg()),
+            AbiArgSlot(8, Register("r2"), Type.any_reg()),
+            AbiArgSlot(12, Register("r3"), Type.any_reg()),
         ]
 
     def function_abi(
@@ -1005,7 +1005,7 @@ class ArmArch(Arch):
             # Don't pass this register if lower numbered ones are undefined.
             require: Optional[List[str]] = None
             if slot == candidate_slots[0]:
-                # For varargs, a subset of a0 .. a3 may be used. Don't check
+                # For varargs, a subset of r0 .. r3 may be used. Don't check
                 # earlier registers for the first member of that subset.
                 pass
             elif slot.reg == Register("r1"):
