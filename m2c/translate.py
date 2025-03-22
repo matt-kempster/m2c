@@ -672,13 +672,17 @@ def get_stack_info(
                     arch_mnemonic in ["mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz"]
                     and isinstance(inst.args[1], AsmAddressMode)
                     and info.is_stack_reg(inst.args[1].base)
-                    and inst.args[1].lhs_as_literal() >= 16
                 ):
-                    info.subroutine_arg_top = min(
-                        info.subroutine_arg_top, inst.args[1].lhs_as_literal()
-                    )
+                    offset = inst.args[1].lhs_as_literal()
+                    # The bottom 16 bytes are home space for subroutine args on MIPS.
+                    # On PPC, the bottom 8 bytes are.
+                    if arch.arch == Target.ArchEnum.MIPS and offset < 16:
+                        continue
+                    if arch.arch == Target.ArchEnum.PPC and offset < 8:
+                        continue
+                    info.subroutine_arg_top = min(info.subroutine_arg_top, offset)
                 elif (
-                    arch_mnemonic == "mips:addiu"
+                    arch_mnemonic in ("mips:addiu", "ppc:addi", "arm:add")
                     and isinstance(inst.args[1], Register)
                     and info.is_stack_reg(inst.args[1])
                     and isinstance(inst.args[0], Register)

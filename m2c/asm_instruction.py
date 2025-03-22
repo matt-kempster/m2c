@@ -83,6 +83,7 @@ class AsmLiteral:
     value: int
 
     def signed_value(self) -> int:
+        # TODO: make this less MIPS-specific
         return ((self.value + 0x8000) & 0xFFFF) - 0x8000
 
     def __str__(self) -> str:
