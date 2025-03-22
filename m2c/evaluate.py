@@ -263,6 +263,9 @@ def handle_addi(args: InstrArgs) -> Expression:
     source = args.reg(1)
     imm = args.imm(2)
 
+    if imm == Literal(0):
+        return source
+
     # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
     # i.e. as an `addis` followed by an `addi`
     # ARM is similar but with (x + 0x344) + 0x12000 or (x + 0x35) + 0x1200
