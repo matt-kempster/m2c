@@ -1342,8 +1342,8 @@ class FlowGraph:
 
         # Kahn's Algorithm, with backedges excluded
         # https://en.wikipedia.org/wiki/Topological_sorting#Kahn's_algorithm
-        seen = set()
-        queue = {self.entry_node()}
+        seen: Set[Node] = set()
+        queue: Set[Node] = {self.entry_node()}
         incoming_edges: Dict[Node, Set[Node]] = {
             n: set(n.parents) - (n.loop.backedges if n.loop else set())
             for n in self.nodes
@@ -1369,8 +1369,8 @@ class FlowGraph:
         # Traverse the graph again, but starting at the terminal and following
         # all edges backwards, to ensure that it is possible to reach the exit
         # from every node. We don't need to look for loops this time.
-        seen = set()
-        queue = {self.terminal_node()}
+        seen: Set[Node] = set()
+        queue: Set[Node] = {self.terminal_node()}
         while queue:
             n = queue.pop()
             seen.add(n)
