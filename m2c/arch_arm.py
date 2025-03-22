@@ -917,6 +917,7 @@ class ArmArch(Arch):
     ]
 
     instrs_ignore: Set[str] = {
+        "push",
         "nop",
     }
 
