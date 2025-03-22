@@ -220,6 +220,12 @@ def handle_or(left: Expression, right: Expression) -> Expression:
     return BinaryOp.int(left=left, op="|", right=right)
 
 
+def handle_bitinv(expr: Expression) -> Expression:
+    if isinstance(expr, Literal):
+        return Literal(((~expr.value + 0x80000000) & 0xFFFFFFFF) - 0x80000000)
+    return UnaryOp.int("~", expr)
+
+
 def handle_sltu(args: InstrArgs) -> Expression:
     right = args.reg(2)
     if args.reg_ref(1) == Register("zero"):

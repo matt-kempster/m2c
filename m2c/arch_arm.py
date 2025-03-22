@@ -74,6 +74,7 @@ from .evaluate import (
     handle_add_arm,
     handle_add_real,
     handle_addi,
+    handle_bitinv,
     handle_load,
     handle_or,
     handle_sra,
@@ -961,7 +962,7 @@ class ArmArch(Arch):
         "mla": lambda a: BinaryOp.int(
             BinaryOp.int(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
         ),
-        "mvn": lambda a: UnaryOp.int("~", a.reg_or_imm(1)),
+        "mvn": lambda a: handle_bitinv(a.reg_or_imm(1)),
         "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2)),
         "orr": lambda a: handle_or(a.reg(1), a.reg_or_imm(2)),
         "eor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2)),
