@@ -476,8 +476,11 @@ class StackInfo:
     def maybe_get_register_var(self, reg: Register) -> Optional[Var]:
         return self.reg_vars.get(reg)
 
-    def add_register_var(self, reg: Register, name: str) -> None:
-        type = Type.floatish() if reg.is_float() else Type.intptr()
+    def add_register_var(self, reg: Register, name: str, given_type: Type) -> None:
+        if given_type is not None:
+            type = given_type
+        else:
+            type = Type.floatish() if reg.is_float() else Type.intptr()
         var = Var(self, prefix=f"var_{name}", type=type)
         self.reg_vars[reg] = var
         self.temp_vars.append(var)
@@ -4369,6 +4372,34 @@ def setup_planned_vars(
             stack_info.planned_vars[key] = var
 
 
+def get_declared_reg_types(
+    stack_info: StackInfo, regs: List[Register]
+) -> [Dict[Register, Type]]:
+    # Use a struct where the type of the member var_x represents the type of the register
+    reg_struct_name = f"_m2c_reg_{stack_info.function.name}"
+    reg_struct = stack_info.global_info.typepool.get_struct_by_tag_name(
+        reg_struct_name, stack_info.global_info.typemap
+    )
+    if reg_struct is None:
+        return {}
+    types = {}
+    for reg_field in reg_struct.fields:
+        corresponding_regs = [
+            r
+            for r in regs
+            if reg_field.name.endswith(str(r).removeprefix("$")) and not r.is_float()
+        ]
+        if len(corresponding_regs) > 2:
+            raise DecompFailure(
+                f"Function {stack_info.function.name} has a provided register type struct {stack_info.reg_struct_name} "
+                f"where a register was declared multiple times."
+            )
+        elif len(corresponding_regs) == 1:
+            types[corresponding_regs[0]] = reg_field.type
+
+    return types
+
+
 def setup_reg_vars(stack_info: StackInfo, options: Options) -> None:
     """Set up per-register planned vars based on command line flags."""
     arch = stack_info.global_info.arch
@@ -4383,9 +4414,10 @@ def setup_reg_vars(stack_info: StackInfo, options: Options) -> None:
         reg_vars = [
             stack_info.function.reg_formatter.parse(x, arch) for x in options.reg_vars
         ]
+    types = get_declared_reg_types(stack_info, reg_vars)
     for reg in reg_vars:
         reg_name = stack_info.function.reg_formatter.format(reg)
-        stack_info.add_register_var(reg, reg_name)
+        stack_info.add_register_var(reg, reg_name, types.get(reg))
 
 
 def setup_initial_registers(state: NodeState, fn_sig: FunctionSignature) -> None:
