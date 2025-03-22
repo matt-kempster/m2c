@@ -283,7 +283,6 @@ class StructCopyPattern(AsmPattern):
         if m is None:
             return None
         i = 8
-        # Extend it only if necessary, increasing performance
         pattern_ext = self.pattern.copy()
         while True:
             pattern2 = make_pattern(
