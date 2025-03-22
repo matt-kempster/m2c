@@ -5,6 +5,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
     Set,
     Tuple,
@@ -773,7 +774,7 @@ class ArmArch(Arch):
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
                 s.set_reg(Register("hi"), hi)
 
-        elif base in cls.instrs_arithmetic:
+        elif base in cls.instrs_add:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             if set_flags:
@@ -783,7 +784,7 @@ class ArmArch(Arch):
                 inputs.append(Register("c"))
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                val = cls.instrs_arithmetic[base](a)
+                val = cls.instrs_add[base](a)
                 val = s.set_reg(a.reg_ref(0), val)
                 if set_flags:
                     s.set_reg(
@@ -799,9 +800,47 @@ class ArmArch(Arch):
                     u64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
                     p32 = Literal(2**32)
                     s.set_reg(Register("hi"), BinaryOp.ucmp(u64val, ">", p32))
-                    s64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
+                    s64val = Cast(val, reinterpret=True, silent=False, type=Type.s64())
                     s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
                     s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
+
+        elif base in cls.instrs_sub:
+            assert isinstance(args[0], Register)
+            outputs = [args[0]]
+            if set_flags:
+                outputs += cls.flag_regs
+            inputs = get_inputs(1)
+            if base in ("sbc", "rsc"):
+                inputs.append(Register("c"))
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                val = fold_mul_chains(fold_divmod(cls.instrs_sub[base](a)))
+                val = s.set_reg(a.reg_ref(0), val)
+                if set_flags:
+                    s.set_reg(
+                        Register("z"),
+                        BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
+                    )
+                    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+                    s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
+                    v = UnaryOp("M2C_OVERFLOW", val, type=Type.bool())
+                    s.set_reg(Register("v"), v)
+                    # Remaining flag bits are based on the full mathematical result
+                    # of unsigned/signed subtractions. We don't have a good way to
+                    # write that; let's cheat and treat a cast of the result to s64
+                    # as the entire subtraction having been performed as s64, and
+                    # hope it gets the picture across.
+                    #
+                    # We could special-case subs/rsbs and implement them the same way
+                    # as cmp, but it might just make things less legible?
+                    uval = Cast(val, reinterpret=True, silent=True, type=Type.u32())
+                    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+                    s64u = Cast(uval, reinterpret=True, silent=False, type=Type.s64())
+                    s64s = Cast(sval, reinterpret=True, silent=False, type=Type.s64())
+                    s.set_reg(Register("c"), BinaryOp.scmp(s64u, ">=", Literal(0)))
+                    s.set_reg(Register("hi"), BinaryOp.scmp(s64u, ">", Literal(0)))
+                    s.set_reg(Register("ge"), BinaryOp.scmp(s64s, ">=", Literal(0)))
+                    s.set_reg(Register("gt"), BinaryOp.scmp(s64s, ">", Literal(0)))
 
         elif base in cls.instrs_ignore:
             pass
@@ -907,9 +946,24 @@ class ArmArch(Arch):
         "strh": lambda a: make_store(a, type=Type.int_of_size(16)),
     }
 
-    instrs_arithmetic: InstrMap = {
+    instrs_add: InstrMap = {
         "add": lambda a: handle_add_arm(a),
         "adc": lambda a: handle_add_real(handle_add_arm(a), a.regs[Register("c")], a),
+    }
+
+    instrs_sub: Mapping[str, Callable[[InstrArgs], BinaryOp]] = {
+        "sub": lambda a: BinaryOp.intptr(a.reg(1), "-", a.reg_or_imm(2)),
+        "rsb": lambda a: BinaryOp.intptr(a.reg_or_imm(2), "-", a.reg(1)),
+        "sbc": lambda a: BinaryOp.int(
+            BinaryOp.intptr(a.reg(1), "-", a.reg_or_imm(2)),
+            "+",
+            BinaryOp.int(Literal(1), "-", a.regs[Register("c")]),
+        ),
+        "rsc": lambda a: BinaryOp.int(
+            BinaryOp.intptr(a.reg_or_imm(2), "-", a.reg(1)),
+            "+",
+            BinaryOp.int(Literal(1), "-", a.regs[Register("c")]),
+        ),
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
