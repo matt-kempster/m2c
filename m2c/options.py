@@ -161,6 +161,7 @@ class Options:
     target: Target
     print_stack_structs: bool
     unk_inference: bool
+    stack_spill_detection: bool
     passes: int
     incbin_dirs: List[Path]
     deterministic_vars: bool

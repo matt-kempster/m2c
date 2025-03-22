@@ -3344,7 +3344,10 @@ class NodeState:
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
                 return None
-            if expr in self.local_var_writes:
+            if (
+                self.stack_info.global_info.stack_spill_detection
+                and expr in self.local_var_writes
+            ):
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
                 orig_reg, orig_expr, force = self.local_var_writes[expr]
@@ -3922,6 +3925,7 @@ class GlobalInfo:
     typemap: TypeMap
     typepool: TypePool
     deterministic_vars: bool
+    stack_spill_detection: bool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
     persistent_function_state: Dict[str, PersistentFunctionState] = field(
         default_factory=lambda: defaultdict(PersistentFunctionState)

@@ -139,6 +139,7 @@ def run(options: Options) -> int:
         typemap,
         typepool,
         deterministic_vars=options.deterministic_vars,
+        stack_spill_detection=options.stack_spill_detection,
     )
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
@@ -541,6 +542,15 @@ def parse_flags(flags: List[str]) -> Options:
         ),
     )
     group.add_argument(
+        "--no-stack-spill",
+        dest="stack_spill_detection",
+        action="store_false",
+        help=(
+            "Disable stack spilling detection, which introduces unnecessary "
+            "temporaries in unoptimized code instead of using the stack."
+        ),
+    )
+    group.add_argument(
         "--heuristic-strings",
         dest="heuristic_strings",
         action="store_true",
@@ -637,6 +647,7 @@ def parse_flags(flags: List[str]) -> Options:
         target=args.target,
         print_stack_structs=args.print_stack_structs,
         unk_inference=args.unk_inference,
+        stack_spill_detection=args.stack_spill_detection,
         passes=args.passes,
         incbin_dirs=args.incbin_dirs,
         deterministic_vars=args.deterministic_vars,
