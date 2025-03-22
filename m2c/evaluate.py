@@ -818,9 +818,9 @@ def replace_bitand(expr: BinaryOp) -> Expression:
     """Detect expressions using `&` for truncating integer casts"""
     if not expr.is_floating() and expr.op == "&":
         if expr.right == Literal(0xFF):
-            return as_type(expr.left, Type.int_of_size(8), silent=False)
+            return as_type(expr.left, Type.u8(), silent=False)
         if expr.right == Literal(0xFFFF):
-            return as_type(expr.left, Type.int_of_size(16), silent=False)
+            return as_type(expr.left, Type.u16(), silent=False)
     return expr
 
 

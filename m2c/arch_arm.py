@@ -80,6 +80,7 @@ from .evaluate import (
     handle_sra,
     handle_sub,
     make_store,
+    replace_bitand,
     void_fn_op,
 )
 from .types import FunctionSignature, Type
@@ -967,7 +968,7 @@ class ArmArch(Arch):
             BinaryOp.int(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
         ),
         "mvn": lambda a: handle_bitinv(a.reg_or_imm(1)),
-        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2)),
+        "and": lambda a: replace_bitand(BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2))),
         "orr": lambda a: handle_or(a.reg(1), a.reg_or_imm(2)),
         "eor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2)),
         "bic": lambda a: BinaryOp.int(a.reg(1), "&", UnaryOp.int("~", a.reg_or_imm(2))),
