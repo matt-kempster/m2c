@@ -860,6 +860,48 @@ def fold_mul_chains(expr: Expression) -> Expression:
     return BinaryOp.int(left=base, op="*", right=Literal(num))
 
 
+def replace_or_shift(expr: BinaryOp) -> BinaryOp:
+    """
+    Simplify an expression matching `(-x | x) >> 31` into `x != 0`,
+    and further simplify `(a - b) != 0` into `a != b`.
+    """
+    if expr.is_floating() or expr.op != ">>":
+        return expr
+
+    left_expr = early_unwrap_ints(expr.left)
+    if not (isinstance(left_expr, BinaryOp) and left_expr.op == "|"):
+        return expr
+
+    right_expr = early_unwrap(expr.right)
+    if not (isinstance(right_expr, Literal) and right_expr.value == 31):
+        return expr
+
+    or_left_expr = early_unwrap(left_expr.left)
+    or_right_expr = early_unwrap(left_expr.right)
+    if isinstance(or_left_expr, UnaryOp):
+        arg_expr_left = early_unwrap(or_left_expr.expr)
+        # -x | x
+        if arg_expr_left == or_right_expr:
+            return BinaryOp.icmp(left_expr.right, "!=", Literal(0))
+
+    elif (
+        isinstance(or_left_expr, BinaryOp)
+        and or_left_expr.op == "-"
+        and isinstance(or_right_expr, BinaryOp)
+        and or_right_expr.op == "-"
+    ):
+        # (b - a) | (a - b)
+        a_left = early_unwrap(or_left_expr.right)
+        b_left = early_unwrap(or_left_expr.left)
+        a_right = early_unwrap(or_right_expr.left)
+        b_right = early_unwrap(or_right_expr.right)
+        # TODO check that it's not a float?
+        if a_left == a_right and b_left == b_right:
+            return BinaryOp.icmp(or_right_expr.left, "!=", or_right_expr.right)
+
+    return expr
+
+
 def array_access_from_add(
     expr: Expression,
     offset: int,
@@ -1155,6 +1197,8 @@ def handle_rlwinm(
 
         if simplify:
             lower_bits = replace_clz_shift(fold_divmod(lower_bits))
+            # This really only makes sense if the clz simplification didn't happen
+            lower_bits = replace_or_shift(lower_bits)
 
         if right_mask != (all_ones >> right_shift) & all_ones:
             lower_bits = BinaryOp.int(
