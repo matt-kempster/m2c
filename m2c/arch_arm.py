@@ -788,7 +788,7 @@ class ArmArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 c = s.set_reg(
-                    Register("c"), UnaryOp("M2C_CARRY", a.reg(0), type=Type.bool())
+                    Register("c"), fn_op("M2C_CARRY", [a.reg(0)], Type.bool())
                 )
                 z = condition_from_expr(a.regs[Register("z")])
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
@@ -813,9 +813,9 @@ class ArmArch(Arch):
                     )
                     sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
                     s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
-                    c = UnaryOp("M2C_CARRY", val, type=Type.bool())
+                    c = fn_op("M2C_CARRY", [val], Type.bool())
                     s.set_reg(Register("c"), c)
-                    v = UnaryOp("M2C_OVERFLOW", val, type=Type.bool())
+                    v = fn_op("M2C_OVERFLOW", [val], Type.bool())
                     s.set_reg(Register("v"), v)
                     # Remaining flag bits are based on the full mathematical result
                     # of unsigned/signed additions. We don't have a good way to
@@ -851,7 +851,7 @@ class ArmArch(Arch):
                     )
                     sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
                     s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
-                    v = UnaryOp("M2C_OVERFLOW", val, type=Type.bool())
+                    v = fn_op("M2C_OVERFLOW", [val], Type.bool())
                     s.set_reg(Register("v"), v)
                     # Remaining flag bits are based on the full mathematical result
                     # of unsigned/signed subtractions. We don't have a good way to
@@ -882,7 +882,7 @@ class ArmArch(Arch):
                 sub = BinaryOp.intptr(lhs, "-", rhs)
                 sval = Cast(sub, reinterpret=True, silent=True, type=Type.s32())
                 s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
-                v = UnaryOp("M2C_OVERFLOW", sval, type=Type.bool())
+                v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
                 s.set_reg(Register("v"), v)
                 ulhs = Cast(lhs, reinterpret=True, silent=True, type=Type.u32())
                 slhs = Cast(lhs, reinterpret=True, silent=True, type=Type.s32())
@@ -947,11 +947,11 @@ class ArmArch(Arch):
 
     instrs_no_flags: InstrMap = {
         # Bit-fiddling
-        "clz": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
-        "rbit": lambda a: UnaryOp(op="REVERSE_BITS", expr=a.reg(1), type=Type.intish()),
-        "rev": lambda a: UnaryOp(op="BSWAP32", expr=a.reg(1), type=Type.intish()),
-        "rev16": lambda a: UnaryOp(op="BSWAP16X2", expr=a.reg(1), type=Type.intish()),
-        "revsh": lambda a: UnaryOp(op="BSWAP16", expr=a.reg(1), type=Type.s16()),
+        "clz": lambda a: fn_op("CLZ", [a.reg(1)], Type.intish()),
+        "rbit": lambda a: fn_op("REVERSE_BITS", [a.reg(1)], Type.intish()),
+        "rev": lambda a: fn_op("BSWAP32", [a.reg(1)], Type.intish()),
+        "rev16": lambda a: fn_op("BSWAP16X2", [a.reg(1)], Type.intish()),
+        "revsh": lambda a: fn_op("BSWAP16", [a.reg(1)], Type.s16()),
         # Shifts (flag-setting forms have been normalized into shift + movs)
         "lsl": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg_or_imm(2)))
