@@ -994,12 +994,16 @@ def build_nodes(
     return graph
 
 
-def warn_on_safeguard_use(nodes: List[Node], arch: ArchFlowGraph) -> None:
+def warn_on_safeguard_use(
+    function: Function, nodes: List[Node], arch: ArchFlowGraph
+) -> None:
     node = next((node for node in nodes if node.block.is_safeguard), None)
     if node:
         label = node.block.approx_label_name
         return_instrs = arch.missing_return()
-        print(f'Warning: missing "{return_instrs[0]}" in last block ({label}).\n')
+        print(
+            f'Warning: missing "{return_instrs[0]}" in last block of {function.name} ({label}).\n'
+        )
 
 
 def is_premature_return(
@@ -1583,7 +1587,7 @@ def build_flowgraph(
     verify_no_duplicate_instructions(blocks)
 
     nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
-    warn_on_safeguard_use(nodes, arch)
+    warn_on_safeguard_use(function, nodes, arch)
     if not fragment:
         nodes = duplicate_premature_returns(nodes, arch)
 
