@@ -398,7 +398,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 type.is_likely_float()
                 or args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
             )
-            and size in (1, 2, 4, 8)
+            and size in (4, 8)
         ):
             sym_name = target.expr.symbol_name
             ent = args.stack_info.global_info.asm_data_value(sym_name)
@@ -415,9 +415,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 endian = (
                     ">" if args.stack_info.global_info.target.is_big_endian() else "<"
                 )
-                fmt = {1: "b", 2: "h", 4: "i", 8: "q"}[size]
-                if not type.is_signed():
-                    fmt = fmt.upper()
+                fmt = "I" if size == 4 else "Q"
                 (val,) = struct.unpack(endian + fmt, data)
                 return Literal(value=val, type=type)
             if (
