@@ -891,12 +891,12 @@ def replace_or_shift(expr: BinaryOp) -> BinaryOp:
         and or_right_expr.op == "-"
     ):
         # (b - a) | (a - b)
-        a_left = early_unwrap(or_left_expr.right)
-        b_left = early_unwrap(or_left_expr.left)
-        a_right = early_unwrap(or_right_expr.left)
-        b_right = early_unwrap(or_right_expr.right)
-        # TODO check that it's not a float?
-        if a_left == a_right and b_left == b_right:
+        if (
+            early_unwrap(or_left_expr.right) == early_unwrap(or_right_expr.left)
+            and early_unwrap(or_left_expr.left) == early_unwrap(or_right_expr.right)
+            and not or_left_expr.is_floating()
+            and not or_right_expr.is_floating()
+        ):
             return BinaryOp.icmp(or_right_expr.left, "!=", or_right_expr.right)
 
     return expr
@@ -1196,7 +1196,8 @@ def handle_rlwinm(
         lower_bits = BinaryOp.uint(left=source, op=">>", right=Literal(right_shift))
 
         if simplify:
-            lower_bits = replace_clz_shift(fold_divmod(lower_bits))
+            lower_bits = fold_divmod(lower_bits)
+            lower_bits = replace_clz_shift(lower_bits)
             lower_bits = replace_or_shift(lower_bits)
 
         if right_mask != (all_ones >> right_shift) & all_ones:
