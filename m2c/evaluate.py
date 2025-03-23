@@ -11,6 +11,7 @@ from typing import (
     Union,
 )
 from .asm_instruction import (
+    AsmAddressMode,
     AsmLiteral,
     Register,
 )
@@ -382,54 +383,54 @@ def add_imm(
 
 
 def handle_load(args: InstrArgs, type: Type) -> Expression:
-    # For now, make the cast silent so that output doesn't become cluttered.
-    # Though really, it would be great to expose the load types somehow...
     size = type.get_size_bytes()
     assert size is not None
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
-    # Detect rodata constants
-    if isinstance(expr, StructAccess) and expr.offset == 0:
-        target = early_unwrap(expr.struct_var)
-        if (
-            isinstance(target, AddressOf)
-            and isinstance(target.expr, GlobalSymbol)
-            and (
-                type.is_likely_float()
-                or args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
-            )
-            and size in (4, 8)
-        ):
-            sym_name = target.expr.symbol_name
-            ent = args.stack_info.global_info.asm_data_value(sym_name)
-            if (
-                ent
-                and ent.data
-                and isinstance(ent.data[0], bytes)
-                and len(ent.data[0]) >= size
-                and ent.is_readonly
-            ):
-                ent.used_as_literal = True
-                data = ent.data[0][:size]
-                val: int
-                endian = (
-                    ">" if args.stack_info.global_info.target.is_big_endian() else "<"
-                )
-                fmt = "I" if size == 4 else "Q"
-                (val,) = struct.unpack(endian + fmt, data)
-                return Literal(value=val, type=type)
-            if (
-                args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
-                and ent
-                and ent.data
-                and ent.is_text
-                and isinstance(ent.data[0], str)
-                and size == 4
-            ):
-                ent.used_as_literal = True
-                addr = args.stack_info.global_info.address_of_gsym(ent.data[0])
-                return as_type(addr, type, silent=True)
+    def load_rodata_constant() -> Optional[Expression]:
+        if not isinstance(expr, StructAccess) or expr.offset != 0:
+            return None
 
+        is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
+        if is_arm and isinstance(args.raw_arg(1), AsmAddressMode):
+            # For ARM, only allow constants loaded through `ldr pool`
+            return None
+        if not is_arm and not type.is_likely_float():
+            # For non-ARM, only allow float constants
+            return None
+
+        target = early_unwrap(expr.struct_var)
+        if not isinstance(target, AddressOf) or not isinstance(
+            target.expr, GlobalSymbol
+        ):
+            return None
+
+        sym_name = target.expr.symbol_name
+        ent = args.stack_info.global_info.asm_data_value(sym_name)
+        if ent is None or not ent.data or not ent.is_readonly:
+            return None
+
+        data = ent.data[0]
+        if isinstance(data, bytes) and len(data) >= size and size in (4, 8):
+            ent.used_as_literal = True
+            endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
+            fmt = "I" if size == 4 else "Q"
+            val: int = struct.unpack(endian + fmt, data[:size])[0]
+            return Literal(value=val, type=type)
+
+        if is_arm and ent.is_text and isinstance(data, str) and size == 4:
+            ent.used_as_literal = True
+            addr = args.stack_info.global_info.address_of_gsym(data)
+            return as_type(addr, type, silent=True)
+
+        return None
+
+    const = load_rodata_constant()
+    if const is not None:
+        return const
+
+    # For now, make the cast silent so that output doesn't become cluttered.
+    # Though really, it would be great to expose the load types somehow...
     return as_type(expr, type, silent=True)
 
 
