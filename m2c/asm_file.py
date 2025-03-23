@@ -450,10 +450,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             return var_value
         return int(w, 0)
 
+    def pack(fmt: str, val: Union[int, float]) -> bytes:
+        endian = ">" if options.target.is_big_endian() else "<"
+        return struct.pack(endian + fmt, val)
+
     def emit_word(w: str) -> None:
         if not w or w[0].isdigit() or w[0] == "-" or w in defines:
             ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
-            asm_file.new_data_bytes(struct.pack(">I", ival))
+            asm_file.new_data_bytes(pack("I", ival))
         else:
             asm_file.new_data_sym(w)
 
@@ -644,7 +648,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
                             ival = try_parse(lambda: parse_int(w)) & 0xFFFF
-                            asm_file.new_data_bytes(struct.pack(">H", ival))
+                            asm_file.new_data_bytes(pack("H", ival))
                     elif directive == ".byte":
                         for w in args:
                             ival = try_parse(lambda: parse_int(w)) & 0xFF
@@ -652,11 +656,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif directive == ".float":
                         for w in args:
                             fval = try_parse(lambda: float(w))
-                            asm_file.new_data_bytes(struct.pack(">f", fval))
+                            asm_file.new_data_bytes(pack("f", fval))
                     elif directive == ".double":
                         for w in args:
                             fval = try_parse(lambda: float(w))
-                            asm_file.new_data_bytes(struct.pack(">d", fval))
+                            asm_file.new_data_bytes(pack("d", fval))
                     elif directive in (
                         ".asci",
                         ".asciz",

@@ -407,10 +407,11 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 ent.used_as_literal = True
                 data = ent.data[0][:size]
                 val: int
-                if size == 4:
-                    (val,) = struct.unpack(">I", data)
-                else:
-                    (val,) = struct.unpack(">Q", data)
+                endian = (
+                    ">" if args.stack_info.global_info.target.is_big_endian() else "<"
+                )
+                fmt = {4: "i", 8: "q"}[size]
+                (val,) = struct.unpack(endian + fmt, data)
                 return Literal(value=val, type=type)
 
     return as_type(expr, type, silent=True)
