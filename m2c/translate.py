@@ -4221,9 +4221,11 @@ class GlobalInfo:
         lines = []
         processed_names: Set[str] = set()
         while True:
-            names: AbstractSet[str] = self.global_symbol_map.keys()
+            names: Set[str] = set(self.global_symbol_map.keys())
             if decls == Options.GlobalDeclsEnum.ALL:
-                names |= self.asm_data.values.keys()
+                for name, ent in self.asm_data.values.items():
+                    if not ent.is_text:
+                        names.add(name)
             names -= processed_names
             if not names:
                 break
@@ -4232,6 +4234,9 @@ class GlobalInfo:
                 sym = self.address_of_gsym(name).expr
                 assert isinstance(sym, GlobalSymbol)
                 data_entry = sym.asm_data_entry
+
+                if data_entry is not None and data_entry.is_text:
+                    data_entry = None
 
                 # Is the label defined in this unit (in the active AsmData file(s))
                 is_in_file = data_entry is not None or name in self.local_functions
@@ -4315,7 +4320,7 @@ class GlobalInfo:
                             )
 
                 # Try to convert the data from .data/.rodata into an initializer
-                if data_entry and not data_entry.is_bss:
+                if data_entry and not data_entry.is_bss and not data_entry.is_text:
                     try:
                         value = self.initializer_for_symbol(sym, fmt)
                     except FailedToGenerateInitializer as e:

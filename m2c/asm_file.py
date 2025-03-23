@@ -68,6 +68,7 @@ class AsmDataEntry:
     is_string: bool = False
     is_readonly: bool = False
     is_bss: bool = False
+    is_text: bool = False
     is_jtbl: bool = False
 
     def size_range_bytes(self) -> Tuple[int, int]:
@@ -147,15 +148,22 @@ class AsmFile:
                     f"unsupported non-nop instruction outside of function ({instruction})"
                 )
         self.current_function.new_instruction(instruction)
+        self.current_data = None
 
     def new_label(self, label_name: str) -> None:
         assert self.current_function is not None
         self.current_function.new_label(label_name)
 
-    def new_data_label(self, symbol_name: str, is_readonly: bool, is_bss: bool) -> None:
+    def new_data_label(
+        self,
+        symbol_name: str,
+        is_readonly: bool = False,
+        is_bss: bool = False,
+        is_text: bool = False,
+    ) -> None:
         sort_order = (self.filename, len(self.asm_data.values))
         self.current_data = AsmDataEntry(
-            sort_order, is_readonly=is_readonly, is_bss=is_bss
+            sort_order, is_readonly=is_readonly, is_bss=is_bss, is_text=is_text
         )
         self.asm_data.values[symbol_name] = self.current_data
 
@@ -474,16 +482,16 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
         def process_label(label: str, *, kind: LabelKind) -> None:
             if curr_section == ".rodata":
-                asm_file.new_data_label(label, is_readonly=True, is_bss=False)
+                asm_file.new_data_label(label, is_readonly=True)
             elif curr_section == ".data":
-                asm_file.new_data_label(label, is_readonly=False, is_bss=False)
+                asm_file.new_data_label(label)
             elif curr_section == ".bss":
-                asm_file.new_data_label(label, is_readonly=False, is_bss=True)
+                asm_file.new_data_label(label, is_bss=True)
             elif curr_section == ".text":
+                asm_file.new_data_label(label, is_readonly=True, is_text=True)
                 if label.startswith(".") or kind == LabelKind.JUMP_TARGET:
-                    if asm_file.current_function is None:
-                        raise DecompFailure(f"Label {label} is not within a function!")
-                    asm_file.new_label(label)
+                    if asm_file.current_function is not None:
+                        asm_file.new_label(label)
                 elif (
                     re_local_glabel.match(label)
                     or (kind != LabelKind.GLOBAL and re_local_label.match(label))
@@ -613,7 +621,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         defines[args[0]] = try_parse(lambda: parse_int(args[1]))
                     else:
                         defines[args[0]] = None
-                elif curr_section in (".rodata", ".data", ".bss"):
+                elif curr_section in (".rodata", ".data", ".bss", ".text"):
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
