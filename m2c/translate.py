@@ -480,7 +480,7 @@ class StackInfo:
 
     def add_register_var(self, reg: Register, name: str) -> None:
         type = Type.floatish() if reg.is_float() else Type.intptr()
-        var = Var(self, prefix=f"var_{name}", type=type)
+        var = Var(self, prefix=f"var_{name}", is_planned=True, type=type)
         self.reg_vars[reg] = var
         self.temp_vars.append(var)
 
@@ -795,6 +795,7 @@ def escape_byte(b: int) -> bytes:
 class Var:
     stack_info: StackInfo = field(repr=False)
     prefix: str
+    is_planned: bool
     type: Type
     is_emitted: bool = False
     name: Optional[str] = None
@@ -3253,14 +3254,18 @@ class NodeState:
     ) -> EvalOnceExpr:
         planned_var = self.stack_info.get_planned_var(reg, source)
 
-        if "_fictive_" in reg.register_name and isinstance(expr, EvalOnceExpr):
-            # Avoid creating additional EvalOnceExprs for fictive Registers
-            # so they're less likely to appear in the output. These are only
-            # used as inputs to single instructions, so there's no risk of
-            # missing phi assignments.
-            assert not emit_exactly_once
-            assert not planned_var
-            return expr
+        if "_fictive_" in reg.register_name:
+            if isinstance(expr, EvalOnceExpr) and not expr.var.is_planned:
+                # In the common case where a fictive reg transparently wraps an
+                # EvalOnceExpr whose var does not overlap with anything else,
+                # we can avoid the risk of new temps entirely. (Fictive registers
+                # are only used as inputs to single instructions, so will never
+                # be planned vars.)
+                assert not emit_exactly_once
+                assert not planned_var
+                return expr
+            # In the less common case, at least give the temp reg a nicer name.
+            reg = Register(reg.register_name.split("_fictive_")[0])
 
         trivial = transparent and is_trivial_expression(expr)
 
@@ -3282,7 +3287,7 @@ class NodeState:
             temp_name = f"temp_{prefix}"
             if self.stack_info.global_info.deterministic_vars:
                 temp_name = f"{temp_name}_{self.regs.get_instruction_lineno()}"
-            var = Var(self.stack_info, temp_name, expr.type)
+            var = Var(self.stack_info, temp_name, is_planned=False, type=expr.type)
             self.stack_info.temp_vars.append(var)
 
         expr = EvalOnceExpr(
@@ -3378,7 +3383,10 @@ class NodeState:
                 # Elide saved register restores with --reg-vars (it doesn't
                 # matter in other cases).
                 return expr
-            if expr in self.local_var_writes:
+            if (
+                self.stack_info.global_info.stack_spill_detection
+                and expr in self.local_var_writes
+            ):
                 # Elide register restores (only for the same register for now,
                 # to be conversative).
                 orig_reg, orig_expr, force = self.local_var_writes[expr]
@@ -3800,7 +3808,12 @@ def create_dominated_node_state(
                 if found_par_value is not None:
                     new_val = EvalOnceExpr(
                         wrapped_expr=found_par_value.wrapped_expr,
-                        var=Var(stack_info, "_m2c_inherited_phi", found_par_value.type),
+                        var=Var(
+                            stack_info,
+                            "_m2c_inherited_phi",
+                            is_planned=False,
+                            type=found_par_value.type,
+                        ),
                         type=found_par_value.type,
                         sources=sources,
                         emit_exactly_once=False,
@@ -3956,6 +3969,7 @@ class GlobalInfo:
     typemap: TypeMap
     typepool: TypePool
     deterministic_vars: bool
+    stack_spill_detection: bool
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
     persistent_function_state: Dict[str, PersistentFunctionState] = field(
         default_factory=lambda: defaultdict(PersistentFunctionState)
@@ -4392,6 +4406,7 @@ def setup_planned_vars(
         var = Var(
             stack_info,
             prefix=prefix,
+            is_planned=True,
             type=Type.any_reg(),
         )
         stack_info.temp_vars.append(var)
