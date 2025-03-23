@@ -1,8 +1,8 @@
-s16 foo(?);                                         /* static */
+u16 foo(?);                                         /* static */
 extern s32 glob;
 
-s16 test(void) {
-    s16 temp_r3;
+u16 test(void) {
+    u16 temp_r3;
 
     temp_r3 = foo(1);
     if (temp_r3 != 0) {
