@@ -70,6 +70,8 @@ if "source" in form:
         cmd.append("--no-unk-inference")
     if "stackstructs" in form:
         cmd.append("--stack-structs")
+    if "nostackspill" in form:
+        cmd.append("--no-stack-spill")
 
     comment_style = form.getfirst("comment_style", "multiline")
     if "none" in comment_style:
@@ -279,6 +281,7 @@ label {
     <label><input type="checkbox" name="noswitches">Disable irregular switch detection</label>
     <label><input type="checkbox" name="nounkinference">Disable unknown struct/type inference</label>
     <label><input type="checkbox" name="stackstructs">Stack struct templates</label>
+    <label><input type="checkbox" name="nostackspill">Disable stack spilling detection</label>
     <label><input type="checkbox" name="usesidebar">Output sidebar</label>
     <label><input type="checkbox" name="dark">Dark mode</label>
   </div>
@@ -360,7 +363,7 @@ contextEl.addEventListener("change", function() {
     localStorage.mips_to_c_saved_context = contextEl.value;
 });
 document.getElementById("options").addEventListener("change", function(event) {
-    var shouldSave = ["usesidebar", "allman", "knr", "extraswitchindent", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "target", "nounkinference", "stackstructs"];
+    var shouldSave = ["usesidebar", "allman", "knr", "extraswitchindent", "leftptr", "zfillconstants", "globals", "nocasts", "noandor", "noifs", "noswitches", "dark", "regvarsselect", "regvars", "comment_style", "target", "nounkinference", "stackstructs", "nostackspill"];
     var options = {};
     for (var key of shouldSave) {
         var el = document.getElementsByName(key)[0];
