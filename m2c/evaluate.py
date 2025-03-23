@@ -925,7 +925,6 @@ def replace_xor_shift(expr: BinaryOp) -> BinaryOp:
     if not (
         isinstance(sub_left_expr, BinaryOp)
         and early_unwrap(sub_left_expr.right) == Literal(1)
-        and isinstance(sub_left_expr, BinaryOp)
         and isinstance(sub_right_expr, BinaryOp)
         and sub_right_expr.op == "&"
     ):
