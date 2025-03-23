@@ -268,7 +268,10 @@ class FloatishToUintPattern(SimpleAsmPattern):
 class StructCopyPattern(AsmPattern):
     """Recognizing struct copy when it starts with lwz lwz stw stw. Others
     would cause false positves. Maybe we can find another way for those using
-    context?"""
+    context?
+    This pattern appears on almost every GC and Wii MW compiler version when using C
+    and GC MW 1.0-1.2.5n when using C++.
+    """
 
     pattern = make_pattern(
         "lwz $a, I($s)",
