@@ -165,6 +165,8 @@ class Options:
     passes: int
     incbin_dirs: List[Path]
     deterministic_vars: bool
+    descending_regs: bool
+    backwards_bss: bool
     disable_gc: bool
 
     def formatter(self) -> Formatter:
@@ -174,6 +176,8 @@ class Options:
             zfill_constants=self.zfill_constants,
             force_decimal=self.force_decimal,
             valid_syntax=self.valid_syntax,
+            descending_regs=self.descending_regs,
+            backwards_bss=self.backwards_bss,
         )
 
 
@@ -201,6 +205,8 @@ class Formatter:
     line_length: int = 80
     zfill_constants: bool = False
     force_decimal: bool = False
+    descending_regs: bool = False
+    backwards_bss: bool = False
 
     def indent(self, line: str, indent: int = 0) -> str:
         return self.indent_step * max(indent + self.extra_indent, 0) + line
