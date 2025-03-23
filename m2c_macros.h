@@ -48,4 +48,6 @@ typedef s64 M2C_UNK64;
 #define M2C_MEMCPY_ALIGNED memcpy
 #define M2C_MEMCPY_UNALIGNED memcpy
 
+#define M2C_STRUCT_COPY(dst, src) (dst = src)
+
 #endif
