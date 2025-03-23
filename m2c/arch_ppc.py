@@ -265,6 +265,83 @@ class FloatishToUintPattern(SimpleAsmPattern):
         )
 
 
+class StructCopyPattern(AsmPattern):
+    """Recognizing struct copy when it starts with lwz lwz stw stw. Others
+    would cause false positves. Maybe we can find another way for those using
+    context?
+    This pattern appears on almost every GC and Wii MW compiler version when using C
+    and GC MW 1.0-1.2.5n when using C++.
+    """
+
+    pattern = make_pattern(
+        "lwz $a, I($s)",
+        "lwz $b, (I+4)($s)",
+        "stw $a, I($d)",
+        "stw $b, (I+4)($d)",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        # Use the initial patterns first
+        m = matcher.try_match(self.pattern)
+        if m is None:
+            return None
+        i = 8
+        pattern_ext = self.pattern.copy()
+        while True:
+            pattern2 = make_pattern(
+                f"lwz $a, (I+{i})($s)",
+                f"lwz $b, (I+{i+4})($s)",
+                f"stw $a, (I+{i})($d)",
+                f"stw $b, (I+{i+4})($d)",
+            )
+
+            m2 = matcher.try_match(pattern_ext + pattern2)
+            if m2:
+                m = m2
+                i += 8
+                pattern_ext.extend(pattern2)
+            else:
+                # Unaligned struct
+                pattern_end_4b = make_pattern(
+                    f"lwz $b, (I+{i})($s)",
+                    f"stw $b, (I+{i})($d)",
+                )
+                m_end = matcher.try_match(pattern_ext + pattern_end_4b)
+                if m_end:
+                    m = m_end
+                    i += 4
+                    pattern_ext.extend(pattern_end_4b)
+
+                pattern_end_2b = make_pattern(
+                    f"lhz $b, (I+{i})($s)",
+                    f"sth $b, (I+{i})($d)",
+                )
+                m_end = matcher.try_match(pattern_ext + pattern_end_2b)
+                if m_end:
+                    m = m_end
+                    i += 2
+                    pattern_ext.extend(pattern_end_2b)
+
+                pattern_end_1b = make_pattern(
+                    f"lbz $b, (I+{i})($s)",
+                    f"stb $b, (I+{i})($d)",
+                )
+                m_end = matcher.try_match(pattern_ext + pattern_end_1b)
+                if m_end:
+                    m = m_end
+                    i += 1
+                break
+
+        return Replacement(
+            [
+                AsmInstruction(
+                    "structcopy.fictive", [m.regs["d"], m.regs["s"], AsmLiteral(i)]
+                )
+            ],
+            len(m.body),
+        )
+
+
 class FloatishToSintIrPattern(IrPattern):
     # This pattern handles converting either f32 or f64 into a signed int
     # The `fctiwz` instruction does all the work; this pattern is just to
@@ -926,7 +1003,8 @@ class PpcArch(Arch):
             # TODO: These are only supported in function prologues/epilogues
             eval_fn = None
         elif mnemonic in cls.instrs_no_dest:
-            assert not any(isinstance(a, (Register, AsmAddressMode)) for a in args)
+            assert not any(isinstance(a, (AsmAddressMode)) for a in args)
+            inputs = [r for r in args if isinstance(r, Register)]
             eval_fn = lambda s, a: s.write_statement(cls.instrs_no_dest[mnemonic](a))
         elif mnemonic.rstrip(".") in cls.instrs_destination_first:
             assert isinstance(args[0], Register)
@@ -1075,6 +1153,7 @@ class PpcArch(Arch):
         BoolCastPattern(),
         BranchCtrPattern(),
         FloatishToUintPattern(),
+        StructCopyPattern(),
     ]
 
     instrs_ignore: Set[str] = {
@@ -1171,6 +1250,9 @@ class PpcArch(Arch):
     instrs_no_dest: StmtInstrMap = {
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "isync": lambda a: void_fn_op("M2C_SYNC", []),
+        "structcopy.fictive": lambda a: void_fn_op(
+            "M2C_STRUCT_COPY", [a.reg(0), a.reg(1), a.imm(2)]
+        ),
     }
 
     instrs_dest_first_non_load: InstrMap = {
