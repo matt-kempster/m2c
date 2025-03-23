@@ -35,6 +35,10 @@ class Register:
         assert self.register_name.startswith("r"), self.register_name
         return int(self.register_name[1:])
 
+    @staticmethod
+    def fictive(name: str, suffix: str = "") -> Register:
+        return Register(f"{name}_fictive_{suffix}")
+
     def __str__(self) -> str:
         return f"${self.register_name}"
 

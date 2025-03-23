@@ -1778,6 +1778,8 @@ class EvalOnceExpr(Expression):
     # if `trivial` is true.
     transparent: bool
 
+    is_fictive_temp: bool
+
     # Mutable state:
 
     # True if this EvalOnceExpr must use a variable (see RegMeta.force)
@@ -2521,7 +2523,6 @@ def should_wrap_transparently(expr: Expression) -> bool:
     if isinstance(
         expr,
         (
-            EvalOnceExpr,
             Literal,
             LocalVar,
             PassedInArg,
@@ -2532,6 +2533,8 @@ def should_wrap_transparently(expr: Expression) -> bool:
         ),
     ):
         return True
+    if isinstance(expr, EvalOnceExpr):
+        return not expr.is_fictive_temp
     if isinstance(expr, GlobalSymbol):
         return not expr.is_string_constant()
     if isinstance(expr, AddressOf):
@@ -3253,6 +3256,7 @@ class NodeState:
         source: Reference,
     ) -> EvalOnceExpr:
         planned_var = self.stack_info.get_planned_var(reg, source)
+        is_fictive_temp = False
 
         if "_fictive_" in reg.register_name:
             if isinstance(expr, EvalOnceExpr) and not expr.var.is_planned:
@@ -3266,6 +3270,7 @@ class NodeState:
                 return expr
             # In the less common case, at least give the temp reg a nicer name.
             reg = Register(reg.register_name.split("_fictive_")[0])
+            is_fictive_temp = True
 
         trivial = transparent and is_trivial_expression(expr)
 
@@ -3298,6 +3303,7 @@ class NodeState:
             emit_exactly_once=emit_exactly_once,
             trivial=trivial,
             transparent=transparent,
+            is_fictive_temp=is_fictive_temp,
         )
         stmt = EvalOnceStmt(expr)
         self.write_statement(stmt)
@@ -3819,6 +3825,7 @@ def create_dominated_node_state(
                         emit_exactly_once=False,
                         trivial=True,
                         transparent=True,
+                        is_fictive_temp=False,
                     )
                     new_regs.global_set_with_meta(reg, new_val, RegMeta(inherited=True))
                     continue

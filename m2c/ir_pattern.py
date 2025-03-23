@@ -382,8 +382,8 @@ def simplify_ir_patterns(
 
                 # Create a unique fictive register to act as a temporary
                 original_reg = state.map_reg(input_reg)
-                temp_reg = Register(
-                    f"{original_reg.register_name}_fictive_{fictive_reg_index}"
+                temp_reg = Register.fictive(
+                    original_reg.register_name, str(fictive_reg_index)
                 )
                 fictive_reg_index += 1
                 state.rename_reg(input_reg, temp_reg)
