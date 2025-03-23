@@ -798,6 +798,41 @@ def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
     return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
 
 
+def replace_clz_xor_shift(expr: BinaryOp) -> BinaryOp:
+    """
+    Simplify an expression matching `(b << CLZ(b ^ a)) >> 31` into `a < b`.
+    This pattern is used by for example GW MW 2.6 for u32.
+    """
+    if expr.is_floating() or expr.op != ">>":
+        return expr
+
+    left_expr = early_unwrap_ints(expr.left)
+    right_expr = early_unwrap_ints(expr.right)
+    if not (
+        isinstance(left_expr, BinaryOp)
+        and left_expr.op == "<<"
+        and isinstance(right_expr, Literal)
+        and right_expr.value == 31
+    ):
+        return expr
+
+    left_left_expr = early_unwrap(left_expr.left)
+    left_right_expr = early_unwrap(left_expr.right)
+    if not (isinstance(left_right_expr, UnaryOp) and left_right_expr.op == "CLZ"):
+        return expr
+
+    clz_expr = early_unwrap(left_right_expr.expr)
+    if not (isinstance(clz_expr, BinaryOp) and clz_expr.op == "^"):
+        return expr
+
+    xor_left_expr = early_unwrap(clz_expr.left)
+
+    if left_left_expr == xor_left_expr:
+        return BinaryOp.icmp(clz_expr.right, "<", clz_expr.left)
+
+    return expr
+
+
 def replace_bitand(expr: BinaryOp) -> Expression:
     """Detect expressions using `&` for truncating integer casts"""
     if not expr.is_floating() and expr.op == "&":
@@ -1275,6 +1310,7 @@ def handle_rlwinm(
         if simplify:
             lower_bits = fold_divmod(lower_bits)
             lower_bits = replace_clz_shift(lower_bits)
+            lower_bits = replace_clz_xor_shift(lower_bits)
             lower_bits = replace_or_shift(lower_bits)
             lower_bits = replace_xor_shift(lower_bits)
 

@@ -1,1 +1,1 @@
---target ppc-mwcc-c
+--target ppc-mwcc-c -f test_s32 -f test_u32 -f test_s16 -f test_u16 -f test_s8 -f test_u8
