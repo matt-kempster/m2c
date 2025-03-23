@@ -1289,6 +1289,9 @@ class PpcArch(Arch):
         "mulhwu": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
         # Bit arithmetic
         "or": lambda a: handle_or(a.reg(1), a.reg(2)),
+        "orc": lambda a: handle_or(
+            a.reg(1), UnaryOp("~", a.reg(2), type=Type.intish())
+        ),
         "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
         "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
         "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
