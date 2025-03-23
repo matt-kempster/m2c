@@ -403,8 +403,8 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 and isinstance(ent.data[0], bytes)
                 and len(ent.data[0]) >= size
                 and ent.is_readonly
-                and type.unify(target.expr.type)
             ):
+                ent.used_as_literal = True
                 data = ent.data[0][:size]
                 val: int
                 if size == 4:

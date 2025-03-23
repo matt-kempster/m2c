@@ -71,6 +71,9 @@ class AsmDataEntry:
     is_text: bool = False
     is_jtbl: bool = False
 
+    # Mutable state:
+    used_as_literal: bool = False
+
     def size_range_bytes(self) -> Tuple[int, int]:
         """Return the range of possible sizes, if padding were stripped."""
         # TODO: The data address could be used to only strip padding

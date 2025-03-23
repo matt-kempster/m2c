@@ -4334,7 +4334,11 @@ class GlobalInfo:
                     # Float & string constants are almost always inlined and can be omitted
                     if sym.is_string_constant():
                         continue
-                    if array_dim is None and sym.type.is_likely_float():
+                    if (
+                        array_dim is None
+                        and data_entry is not None
+                        and data_entry.used_as_literal
+                    ):
                         continue
 
                 # In "none" mode, do not emit any decls
