@@ -961,7 +961,7 @@ def replace_shift_add_carry(expr: BinaryOp) -> BinaryOp:
 
     if expr.is_floating():
         return expr
-    
+
     left_expr = early_unwrap_ints(expr.left)
     if not (isinstance(left_expr, BinaryOp) and left_expr.op == "+"):
         return expr
