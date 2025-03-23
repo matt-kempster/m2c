@@ -458,6 +458,21 @@ class PopAndReturnPattern(SimpleAsmPattern):
         return Replacement([AsmInstruction("bx", [Register("lr")])], len(m.body))
 
 
+class BxIpPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "bx $r12",
+    )
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        return Replacement(
+            [
+                AsmInstruction("blx", [Register("r12")]),
+                AsmInstruction("bx", [Register("lr")]),
+            ],
+            len(m.body),
+        )
+
+
 class ArmArch(Arch):
     arch = Target.ArchEnum.ARM
 
@@ -922,6 +937,7 @@ class ArmArch(Arch):
         AddrModeWritebackPattern(),
         RegRegAddrModePattern(),
         PopAndReturnPattern(),
+        BxIpPattern(),
     ]
 
     instrs_ignore: Set[str] = {
