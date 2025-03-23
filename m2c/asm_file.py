@@ -455,6 +455,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         return struct.pack(endian + fmt, val)
 
     def emit_word(w: str) -> None:
+        # TODO: parse w into an Argument
         if not w or w[0].isdigit() or w[0] == "-" or w in defines:
             ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
             asm_file.new_data_bytes(pack("I", ival))
@@ -632,6 +633,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
+                            # TODO: parse this into an Argument
                             emit_word(w)
                     elif directive == ".rel":
                         # .rel is a common dtk disassembler macro used with jump tables.

@@ -420,6 +420,17 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                     fmt = fmt.upper()
                 (val,) = struct.unpack(endian + fmt, data)
                 return Literal(value=val, type=type)
+            if (
+                args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
+                and ent
+                and ent.data
+                and ent.is_text
+                and isinstance(ent.data[0], str)
+                and size == 4
+            ):
+                ent.used_as_literal = True
+                addr = args.stack_info.global_info.address_of_gsym(ent.data[0])
+                return as_type(addr, type, silent=True)
 
     return as_type(expr, type, silent=True)
 
