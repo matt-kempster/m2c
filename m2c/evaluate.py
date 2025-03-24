@@ -1199,7 +1199,7 @@ def handle_rlwimi(
 
 
 def handle_rlwnm(
-    source: Expression, shift_expr: Expression, mask_begin: int, mask_end: int
+    source: Expression, shift_source: Expression, mask_begin: int, mask_end: int
 ) -> Expression:
     # This instruction is very similar to rlwinm, but instead of specifying the shift
     # as an immediate value, it comes from the low-order 5 bits of a register.
@@ -1208,7 +1208,7 @@ def handle_rlwnm(
     mask = rlwi_mask(mask_begin, mask_end)
 
     # Take the lower 5 bits
-    shift = BinaryOp.int(shift_expr, "&", Literal(0x1F))
+    shift = BinaryOp.int(shift_source, "&", Literal(0x1F))
 
     upper_bits = BinaryOp.int(BinaryOp.int(source, "<<", shift), "&", Literal(mask))
     lower_bits = BinaryOp.int(
