@@ -82,6 +82,7 @@ from .evaluate import (
     handle_or,
     handle_rlwimi,
     handle_rlwinm,
+    handle_rlwnm,
     handle_sra,
     load_upper,
     make_store,
@@ -1318,6 +1319,9 @@ class PpcArch(Arch):
         ),
         "rlwinm": lambda a: handle_rlwinm(
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
+        ),
+        "rlwnm": lambda a: handle_rlwnm(
+            a.reg(1), a.reg(2), a.imm_value(3), a.imm_value(4)
         ),
         "slw": lambda a: fold_mul_chains(
             BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
