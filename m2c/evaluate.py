@@ -218,6 +218,18 @@ def handle_or(left: Expression, right: Expression) -> Expression:
             (right.value & 0xFFFF) == 0 and (left.value & 0xFFFF0000) == 0
         ):
             return Literal(value=(left.value | right.value))
+
+    uw_left = early_unwrap(left)
+    if (
+        isinstance(uw_left, BinaryOp)
+        and uw_left.op == "|"
+        and isinstance(uw_left.right, Literal)
+        and isinstance(right, Literal)
+        and (uw_left.right.value % 0x100 == 0 or right.value % 0x100 == 0)
+    ):
+        imm = uw_left.right.value | right.value
+        return BinaryOp.int(left=uw_left.left, op="|", right=Literal(imm))
+
     # Regular bitwise OR.
     return BinaryOp.int(left=left, op="|", right=right)
 
