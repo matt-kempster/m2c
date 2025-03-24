@@ -1685,8 +1685,13 @@ class Literal(Expression):
 
         return prefix + value + suffix
 
-    def likely_partial_offset(self) -> bool:
-        return self.value % 2**15 in (0, 2**15 - 1) and self.value < 0x1000000
+    def likely_partial_offset(self, arch: Arch) -> bool:
+        if self.value >= 0x1000000:
+            return False
+        if arch.arch == Target.ArchEnum.ARM:
+            return self.value % 0x100 == 0
+        else:
+            return self.value % 2**15 in (0, 2**15 - 1)
 
 
 @dataclass(frozen=True, eq=True)

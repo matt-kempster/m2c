@@ -95,7 +95,8 @@ def deref(
     uw_var = early_unwrap(var)
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
-            if isinstance(addend, Literal) and addend.likely_partial_offset():
+            arch = stack_info.global_info.arch
+            if isinstance(addend, Literal) and addend.likely_partial_offset(arch):
                 offset += addend.value
                 var = base
                 uw_var = early_unwrap(var)
@@ -354,8 +355,13 @@ def add_imm(
         # happens with loops over subarrays and it's better to expose the raw
         # immediate.
         dest_var = stack_info.get_planned_var(output_reg, args.instruction_ref)
+        arch = stack_info.global_info.arch
         inplace = dest_var is not None and var_for_expr(source) == dest_var
-        if isinstance(imm, Literal) and not imm.likely_partial_offset() and not inplace:
+        if (
+            isinstance(imm, Literal)
+            and not imm.likely_partial_offset(arch)
+            and not inplace
+        ):
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
             )
