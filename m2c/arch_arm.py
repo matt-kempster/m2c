@@ -1029,6 +1029,9 @@ class ArmArch(Arch):
             AbiArgSlot(12, Register("r3"), Type.any_reg()),
         ]
 
+    def is_likely_partial_offset(self, addend: int) -> bool:
+        return addend < 0x1000000 and addend % 0x100 == 0
+
     def function_abi(
         self,
         fn_sig: FunctionSignature,

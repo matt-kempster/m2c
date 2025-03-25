@@ -96,11 +96,21 @@ def deref(
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             arch = stack_info.global_info.arch
-            if isinstance(addend, Literal) and addend.likely_partial_offset(arch):
+            if isinstance(addend, Literal) and arch.is_likely_partial_offset(
+                addend.value
+            ):
                 offset += addend.value
                 var = base
                 uw_var = early_unwrap(var)
                 break
+    elif isinstance(uw_var, AddressOf) and isinstance(uw_var.expr, StructAccess):
+        base = uw_var.expr.struct_var
+        iaddend = uw_var.expr.offset
+        arch = stack_info.global_info.arch
+        if arch.is_likely_partial_offset(iaddend):
+            offset += iaddend
+            var = base
+            uw_var = early_unwrap(var)
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
@@ -359,7 +369,7 @@ def add_imm(
         inplace = dest_var is not None and var_for_expr(source) == dest_var
         if (
             isinstance(imm, Literal)
-            and not imm.likely_partial_offset(arch)
+            and not arch.is_likely_partial_offset(imm.value)
             and not inplace
         ):
             array_access = array_access_from_add(

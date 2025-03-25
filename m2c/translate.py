@@ -109,6 +109,9 @@ class Arch(ArchFlowGraph):
         """
         ...
 
+    def is_likely_partial_offset(self, addend: int) -> bool:
+        return addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
+
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
 
@@ -1684,14 +1687,6 @@ class Literal(Expression):
             value = fmt.format_int(v, size_bits=size_bits)
 
         return prefix + value + suffix
-
-    def likely_partial_offset(self, arch: Arch) -> bool:
-        if self.value >= 0x1000000:
-            return False
-        if arch.arch == Target.ArchEnum.ARM:
-            return self.value % 0x100 == 0
-        else:
-            return self.value % 2**15 in (0, 2**15 - 1)
 
 
 @dataclass(frozen=True, eq=True)
