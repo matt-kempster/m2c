@@ -562,6 +562,13 @@ def build_blocks(
             block_builder.set_label(item)
             return
 
+        if item.is_conditional and isinstance(item.jump_target, list):
+            for i in range(len(item.jump_target)):
+                if item.jump_target[i] == JumpTarget("_m2c_ret"):
+                    if cond_return_target is None:
+                        cond_return_target = internal_label("conditionalreturn")
+                    item.jump_target[i] = JumpTarget(cond_return_target)
+
         if item.is_conditional and item.is_return:
             if cond_return_target is None:
                 cond_return_target = internal_label("conditionalreturn")
@@ -900,6 +907,19 @@ def build_graph_from_block(
                 case_block = find_block_by_label(entry)
                 if case_block is None:
                     raise DecompFailure(f"Cannot find jtbl target {entry}")
+                case_node = build_graph_from_block(
+                    case_block, blocks, parent_blocks + [block], nodes, asm_data, arch
+                )
+                new_node.cases.append(case_node)
+            return new_node
+
+        if isinstance(jump.jump_target, list):
+            new_node = SwitchNode(block, False, [])
+            nodes.append(new_node)
+            for jump_target in jump.jump_target:
+                case_block = find_block_by_label(jump_target.target)
+                if case_block is None:
+                    raise DecompFailure(f"Cannot find jtbl target {jump_target}")
                 case_node = build_graph_from_block(
                     case_block, blocks, parent_blocks + [block], nodes, asm_data, arch
                 )

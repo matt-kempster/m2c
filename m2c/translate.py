@@ -1922,7 +1922,8 @@ class NaivePhiExpr(Expression):
 @dataclass
 class SwitchControl:
     control_expr: Expression
-    jump_table: Optional[GlobalSymbol] = None
+    # An int indicates an anonymous table in .text of the given size
+    jump_table: Optional[Union[GlobalSymbol, int]] = None
     offset: int = 0
     is_irregular: bool = False
 
@@ -1957,6 +1958,7 @@ class SwitchControl:
         right_expr = late_unwrap(cmp_expr.right)
         if (
             self.jump_table is None
+            or isinstance(self.jump_table, int)
             or self.jump_table.asm_data_entry is None
             or not self.jump_table.asm_data_entry.is_jtbl
             or not isinstance(right_expr, Literal)
@@ -3465,10 +3467,13 @@ class NodeState:
         assert self.branch_condition is None
         self.branch_condition = cond
 
-    def set_switch_expr(self, expr: Expression) -> None:
+    def set_switch_expr(self, expr: Expression, just_index: bool = False) -> None:
         assert isinstance(self.node, SwitchNode)
         assert self.switch_control is None
-        self.switch_control = SwitchControl.from_expr(expr)
+        if just_index:
+            self.switch_control = SwitchControl(expr, jump_table=len(self.node.cases))
+        else:
+            self.switch_control = SwitchControl.from_expr(expr)
 
     def write_statement(self, stmt: Statement) -> None:
         self.to_write.append(stmt)

@@ -21,6 +21,7 @@ from .translate import (
     Expression,
     Formatter,
     FunctionInfo,
+    GlobalSymbol,
     Literal,
     Statement as TrStatement,
     SwitchControl,
@@ -114,7 +115,7 @@ class SwitchStatement:
             comments.append("irregular")
         elif not self.jump.jump_table:
             comments.append("unable to parse jump table")
-        elif body_is_empty:
+        elif isinstance(self.jump.jump_table, GlobalSymbol) and body_is_empty:
             comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
         head = f"switch ({format_expr(self.jump.control_expr, fmt)})"
         if body_is_empty:

@@ -220,6 +220,54 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
     return mnemonic + memsize, cc, set_flags, direction
 
 
+class AddPcPcPattern(AsmPattern):
+    """Detect switch jumps of the form "add pc, pc, reg, lsl 2" and replace
+    them by instructions that reference the jump table."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction) or not instr.mnemonic.startswith("add"):
+            return None
+        base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
+        if (
+            base != "add"
+            or set_flags
+            or instr.args[0] != Register("pc")
+            or instr.args[1] != Register("pc")
+            or not isinstance(instr.args[2], BinOp)
+            or instr.args[2].op != "lsl"
+            or instr.args[2].rhs != AsmLiteral(2)
+        ):
+            return None
+
+        i = matcher.index + 1
+        seen_first = False
+        new_args: List[Argument] = [instr.args[2].lhs]
+        while i < len(matcher.input):
+            ins2 = matcher.input[i]
+            i += 1
+            if isinstance(ins2, Label):
+                continue
+            if not seen_first:
+                # Fallback instruction if cc condition is false
+                seen_first = True
+                continue
+            if (
+                ins2.mnemonic == "pop"
+                and isinstance(ins2.args[0], RegisterList)
+                and Register("pc") in ins2.args[0].regs
+            ):
+                new_args.append(AsmGlobalSymbol("_m2c_ret"))
+            elif ins2.mnemonic == "b":
+                assert isinstance(ins2.args[0], AsmGlobalSymbol)
+                new_args.append(ins2.args[0])
+            else:
+                break
+        cc_str = cc.value if cc is not None else ""
+        jump_ins = AsmInstruction("tablejmp.fictive" + cc_str, new_args)
+        return Replacement([jump_ins], 1)
+
+
 class ConditionalInstrPattern(AsmPattern):
     """Replace conditionally executed instructions by branches."""
 
@@ -588,7 +636,7 @@ class ArmArch(Arch):
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
-        jump_target: Optional[Union[JumpTarget, Register]] = None
+        jump_target: Optional[Union[JumpTarget, Register, list[JumpTarget]]] = None
         function_target: Optional[Argument] = None
         is_conditional = False
         is_return = False
@@ -696,6 +744,17 @@ class ArmArch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[0]
             eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
+        elif base == "tablejmp.fictive":
+            # Switch tables of the form "add pc, pc, reg, lsl 2"
+            assert len(args) >= 1 and isinstance(args[0], Register)
+            targets = []
+            for arg in args[1:]:
+                assert isinstance(arg, AsmGlobalSymbol)
+                targets.append(JumpTarget(arg.symbol_name))
+            inputs = [args[0]]
+            jump_target = targets
+            is_conditional = True
+            eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
         elif base in cls.instrs_no_flags:
             assert isinstance(args[0], Register)
             outputs = [args[0]]
@@ -930,6 +989,7 @@ class ArmArch(Arch):
         )
 
     asm_patterns = [
+        AddPcPcPattern(),
         ConditionalInstrPattern(),
         NegatedRegAddrModePattern(),
         ShiftedRegAddrModePattern(),

@@ -123,7 +123,7 @@ class Instruction:
     # This member should only be accessed by `evaluate_instruction`.
     eval_fn: Optional[Callable[..., object]]
 
-    jump_target: Optional[Union[JumpTarget, Register]] = None
+    jump_target: Optional[Union[JumpTarget, Register, List[JumpTarget]]] = None
     function_target: Optional[Argument] = None
     is_conditional: bool = False
     is_return: bool = False

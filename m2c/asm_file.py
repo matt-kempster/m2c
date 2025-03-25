@@ -633,7 +633,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
-                            # TODO: parse this into an Argument
                             emit_word(w)
                     elif directive == ".rel":
                         # .rel is a common dtk disassembler macro used with jump tables.
