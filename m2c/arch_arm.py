@@ -595,7 +595,7 @@ class ArmArch(Arch):
         args = instr.args
         if cc == Cc.AL:
             return cls.normalize_instruction(
-                AsmInstruction(base + ("s" if set_flags else ""), args)
+                AsmInstruction(base + set_flags + direction, args)
             )
         if len(args) == 3:
             if base in ("add", "lsl") and args[2] == AsmLiteral(0):
