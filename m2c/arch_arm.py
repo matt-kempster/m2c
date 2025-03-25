@@ -616,6 +616,10 @@ class ArmArch(Arch):
                     "mov" + suffix, [args[0], BinOp(base, args[1], AsmLiteral(1))]
                 )
             sp_excl = AsmAddressMode(Register("sp"), AsmLiteral(0), Writeback.PRE)
+            if base in ("stm", "ldm") and not direction:
+                return cls.normalize_instruction(
+                    AsmInstruction(instr.mnemonic + "ia", args)
+                )
             if base == "stm" and direction == "db" and args[0] == sp_excl:
                 return AsmInstruction("push" + cc_str, [args[1]])
             if base == "ldm" and direction == "ia" and args[0] == sp_excl:
