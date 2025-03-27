@@ -16,6 +16,7 @@ void test(void) {
 }
 
 void test_s32(u32 arg0, s32 arg1, s32 arg2) {
+    u32 temp_r7;
     u32 temp_r9;
 
     temp_r9 = arg0 >> 0x1FU;
@@ -23,12 +24,13 @@ void test_s32(u32 arg0, s32 arg1, s32 arg2) {
     global = arg0 != arg2;
     global = arg0 < arg1;
     global = arg0 <= arg1;
+    temp_r7 = CLZ(arg0);
     global = arg1 < arg0;
     global = (u32) arg1 <= (s32) arg0;
     global = arg0 == 0;
     global = arg1 != 0;
     global = temp_r9;
-    global = M2C_ERROR(/* unknown instruction: rlwnm $r4, $r4, $r7, 0x1f, 0x1f */);
+    global = ((1 << (temp_r7 & 0x1F)) & 1) | ((1 >> (0x20 - (temp_r7 & 0x1F))) & 1);
     global = (u32) (-(s32) arg0 & ~arg0) >> 0x1FU;
     global = temp_r9 ^ 1;
 }
@@ -39,10 +41,10 @@ void test_u32(s32 arg0, s32 arg1, s32 arg2) {
     global = arg1 == arg0;
     global = arg0 != arg2;
     global = arg0 < arg1;
-    global = (u32) (M2C_ERROR(/* unknown instruction: orc $r8, $r4, $r3 */) - ((u32) (arg1 - arg0) >> 1U)) >> 0x1FU;
+    global = (u32) ((arg1 | ~arg0) - ((u32) (arg1 - arg0) >> 1U)) >> 0x1FU;
     global = (u32) (arg0 << CLZ(arg1 ^ arg0)) >> 0x1FU;
     temp_r6 = arg0 == 0;
-    global = (u32) (M2C_ERROR(/* unknown instruction: orc $r7, $r3, $r4 */) - ((u32) (arg0 - arg1) >> 1U)) >> 0x1FU;
+    global = (u32) ((arg0 | ~arg1) - ((u32) (arg0 - arg1) >> 1U)) >> 0x1FU;
     global = temp_r6;
     global = arg1 != 0;
     global = 0;
@@ -52,6 +54,7 @@ void test_u32(s32 arg0, s32 arg1, s32 arg2) {
 }
 
 void test_s16(s16 arg0, s16 arg1, s16 arg2) {
+    u32 temp_r7;
     u32 temp_r8;
 
     global = arg1 == arg0;
@@ -59,12 +62,13 @@ void test_s16(s16 arg0, s16 arg1, s16 arg2) {
     global = arg0 != arg2;
     global = arg0 < arg1;
     global = (u32) arg0 <= arg1;
+    temp_r7 = CLZ(arg0);
     global = arg1 < arg0;
     global = (u32) arg1 <= arg0;
     global = arg0 == 0;
     global = arg1 != 0;
     global = temp_r8;
-    global = M2C_ERROR(/* unknown instruction: rlwnm $r4, $r4, $r7, 0x1f, 0x1f */);
+    global = ((1 << (temp_r7 & 0x1F)) & 1) | ((1 >> (0x20 - (temp_r7 & 0x1F))) & 1);
     global = (u32) (-arg0 & ~arg0) >> 0x1FU;
     global = temp_r8 ^ 1;
 }
@@ -79,9 +83,9 @@ void test_u16(s16 arg0, s16 arg1, s16 arg2) {
     global = arg1 == arg0;
     global = arg0 != arg2;
     global = temp_r7 >> 0x1FU;
-    global = (u32) (M2C_ERROR(/* unknown instruction: orc $r5, $r9, $r10 */) - (temp_r8 >> 1U)) >> 0x1FU;
+    global = (u32) ((arg1 | ~arg0) - (temp_r8 >> 1U)) >> 0x1FU;
     global = temp_r8 >> 0x1FU;
-    global = (u32) (M2C_ERROR(/* unknown instruction: orc $r5, $r10, $r9 */) - (temp_r7 >> 1U)) >> 0x1FU;
+    global = (u32) ((arg0 | ~arg1) - (temp_r7 >> 1U)) >> 0x1FU;
     temp_r6 = arg0 == 0;
     global = temp_r6;
     global = arg1 != 0;
@@ -92,6 +96,7 @@ void test_u16(s16 arg0, s16 arg1, s16 arg2) {
 }
 
 void test_s8(s8 arg0, s8 arg1, s8 arg2) {
+    u32 temp_r7;
     u32 temp_r8;
 
     global = arg1 == arg0;
@@ -99,12 +104,13 @@ void test_s8(s8 arg0, s8 arg1, s8 arg2) {
     global = arg0 != arg2;
     global = arg0 < arg1;
     global = (u32) arg0 <= arg1;
+    temp_r7 = CLZ(arg0);
     global = arg1 < arg0;
     global = (u32) arg1 <= arg0;
     global = arg0 == 0;
     global = arg1 != 0;
     global = temp_r8;
-    global = M2C_ERROR(/* unknown instruction: rlwnm $r4, $r4, $r7, 0x1f, 0x1f */);
+    global = ((1 << (temp_r7 & 0x1F)) & 1) | ((1 >> (0x20 - (temp_r7 & 0x1F))) & 1);
     global = (u32) (-arg0 & ~arg0) >> 0x1FU;
     global = temp_r8 ^ 1;
 }
@@ -119,9 +125,9 @@ void test_u8(s8 arg0, s8 arg1, s8 arg2) {
     global = arg1 == arg0;
     global = arg0 != arg2;
     global = temp_r7 >> 0x1FU;
-    global = (u32) (M2C_ERROR(/* unknown instruction: orc $r5, $r9, $r10 */) - (temp_r8 >> 1U)) >> 0x1FU;
+    global = (u32) ((arg1 | ~arg0) - (temp_r8 >> 1U)) >> 0x1FU;
     global = temp_r8 >> 0x1FU;
-    global = (u32) (M2C_ERROR(/* unknown instruction: orc $r5, $r10, $r9 */) - (temp_r7 >> 1U)) >> 0x1FU;
+    global = (u32) ((arg0 | ~arg1) - (temp_r7 >> 1U)) >> 0x1FU;
     temp_r6 = arg0 == 0;
     global = temp_r6;
     global = arg1 != 0;
