@@ -11,6 +11,17 @@ from .error import DecompFailure
 
 
 ARM_BARREL_SHIFTER_OPS = ("lsl", "lsr", "asr", "ror", "rrx")
+OP_PRECEDENCE = {
+    "*": 0,
+    "+": 1,
+    "-": 1,
+    "<<": 2,
+    ">>": 2,
+    "&": 3,
+    "^": 4,
+    "|": 5,
+}
+MAX_PRECEDENCE = 6
 
 
 @dataclass(frozen=True)
@@ -257,6 +268,10 @@ def constant_fold(arg: Argument, defines: Dict[str, int]) -> Argument:
             return AsmLiteral(lhs.value << rhs.value)
         if arg.op == "&":
             return AsmLiteral(lhs.value & rhs.value)
+        if arg.op == "|":
+            return AsmLiteral(lhs.value | rhs.value)
+        if arg.op == "^":
+            return AsmLiteral(lhs.value ^ rhs.value)
     return BinOp(arg.op, lhs, rhs)
 
 
@@ -287,6 +302,7 @@ def parse_arg_elems(
     top_level: bool,
     do_constant_fold: bool = True,
     do_replace_bare_reg: bool = True,
+    precedence_cap: int = MAX_PRECEDENCE,
 ) -> Argument:
     value: Optional[Argument] = None
 
@@ -508,17 +524,22 @@ def parse_arg_elems(
                 elif op == "rrx":
                     value = BinOp(op, AsmLiteral(0), AsmLiteral(1))
                     assert not arg_elems
-        elif tok in "<>+-&*":
+        elif tok in "<>+-*&|^":
             # Binary operators, used e.g. to modify global symbols or constants.
             assert isinstance(value, (AsmLiteral, AsmGlobalSymbol, BinOp))
 
             if tok in "<>":
                 # bitshifts
-                expect(tok)
-                expect(tok)
                 op = tok + tok
             else:
-                op = expect("&+-*")
+                op = tok
+
+            precedence = OP_PRECEDENCE[op]
+            if precedence >= precedence_cap:
+                break
+
+            for c in op:
+                expect(c)
 
             if op == "-" and arg_elems[0] == "_":
                 # Parse `sym-_SDA_BASE_` as a Macro, equivalently to `sym@sda21`
@@ -535,17 +556,9 @@ def parse_arg_elems(
                     reg_formatter,
                     defines,
                     top_level=False,
-                    do_constant_fold=False,
                     do_replace_bare_reg=False,
+                    precedence_cap=precedence,
                 )
-                if isinstance(rhs, BinOp) and rhs.op == "*":
-                    rhs = constant_fold(rhs, defines)
-                if isinstance(rhs, BinOp) and isinstance(
-                    constant_fold(rhs, defines), AsmLiteral
-                ):
-                    raise DecompFailure(
-                        "Math is too complicated for m2c. Try adding parentheses."
-                    )
                 if (
                     op == "+"
                     and isinstance(rhs, AsmLiteral)
