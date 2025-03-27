@@ -6,11 +6,22 @@ import re
 import struct
 import typing
 from pathlib import Path
-from typing import Callable, Dict, List, Match, Optional, Set, Tuple, TypeVar, Union
+from typing import (
+    Callable,
+    Dict,
+    List,
+    Match,
+    NoReturn,
+    Optional,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 from .error import DecompFailure
 from .options import CodingStyle, Options
-from .asm_instruction import RegFormatter
+from .asm_instruction import AsmGlobalSymbol, AsmLiteral, RegFormatter, parse_arg
 from .instruction import (
     ArchAsm,
     Instruction,
@@ -436,31 +447,38 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         LOCAL = "local"
         JUMP_TARGET = "jump_target"
 
+    def fail_parse() -> NoReturn:
+        raise DecompFailure(
+            f"Could not parse asm_data {directive} in {curr_section}: {line}"
+        )
+
     def try_parse(parser: Callable[[], T]) -> T:
         try:
             return parser()
-        except ValueError:
-            raise DecompFailure(
-                f"Could not parse asm_data {directive} in {curr_section}: {line}"
-            )
+        except Exception:
+            fail_parse()
+
+    def defined_vars() -> Dict[str, int]:
+        return {k: v for k, v in defines.items() if v is not None}
 
     def parse_int(w: str) -> int:
-        var_value = defines.get(w)
-        if var_value is not None:
-            return var_value
-        return int(w, 0)
+        value = try_parse(lambda: parse_arg(w, arch, defined_vars()))
+        if not isinstance(value, AsmLiteral):
+            fail_parse()
+        return value.value
 
     def pack(fmt: str, val: Union[int, float]) -> bytes:
         endian = ">" if options.target.is_big_endian() else "<"
         return struct.pack(endian + fmt, val)
 
     def emit_word(w: str) -> None:
-        # TODO: parse w into an Argument
-        if not w or w[0].isdigit() or w[0] == "-" or w in defines:
-            ival = try_parse(lambda: parse_int(w)) & 0xFFFFFFFF
-            asm_file.new_data_bytes(pack("I", ival))
+        value = try_parse(lambda: parse_arg(w, arch, defined_vars()))
+        if isinstance(value, AsmLiteral):
+            asm_file.new_data_bytes(pack("I", value.value & 0xFFFFFFFF))
+        elif isinstance(value, AsmGlobalSymbol):
+            asm_file.new_data_sym(value.symbol_name)
         else:
-            asm_file.new_data_sym(w)
+            fail_parse()
 
     re_comment_or_string = re.compile(arch.re_comment + r'|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     for lineno, line in enumerate(f, 1):
@@ -620,13 +638,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        defines[args[0]] = try_parse(lambda: parse_int(args[1]))
+                        defines[args[0]] = parse_int(args[1])
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
                     args = args_str.split(None, 1)
                     if len(args) == 2:
-                        defines[args[0]] = try_parse(lambda: parse_int(args[1]))
+                        defines[args[0]] = parse_int(args[1])
                     else:
                         defines[args[0]] = None
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
@@ -648,11 +666,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         process_label(args[0], kind=kind)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
-                            ival = try_parse(lambda: parse_int(w)) & 0xFFFF
+                            ival = parse_int(w) & 0xFFFF
                             asm_file.new_data_bytes(pack("H", ival))
                     elif directive == ".byte":
                         for w in args:
-                            ival = try_parse(lambda: parse_int(w)) & 0xFF
+                            ival = parse_int(w) & 0xFF
                             asm_file.new_data_bytes(bytes([ival]))
                     elif directive == ".float":
                         for w in args:
@@ -675,14 +693,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         )
                     elif directive in (".space", ".skip"):
                         if len(args) == 2:
-                            fill = try_parse(lambda: parse_int(args[1])) & 0xFF
+                            fill = parse_int(args[1]) & 0xFF
                         elif len(args) == 1:
                             fill = 0
                         else:
                             raise DecompFailure(
                                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
-                        size = try_parse(lambda: parse_int(args[0]))
+                        size = parse_int(args[0])
                         asm_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
                         data = parse_incbin(args, options, warnings)
@@ -720,9 +738,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     reg_formatter = asm_file.current_function.reg_formatter
                 else:
                     reg_formatter = RegFormatter()
-                defined_vars = {k: v for k, v in defines.items() if v is not None}
-                instr = parse_instruction(line, meta, arch, reg_formatter, defined_vars)
-                asm_file.new_instruction(instr)
+                ins = parse_instruction(line, meta, arch, reg_formatter, defined_vars())
+                asm_file.new_instruction(ins)
 
     if warnings and options.coding_style.comment_style != CodingStyle.CommentStyle.NONE:
         print("/*")

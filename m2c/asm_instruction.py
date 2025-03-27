@@ -611,6 +611,17 @@ def parse_args(
     return output
 
 
+def parse_arg(arg: str, arch: ArchAsmParsing, defines: Dict[str, int]) -> Argument:
+    chars = list(arg)
+    defined_vars = {k: v for k, v in defines.items() if v is not None}
+    value = parse_arg_elems(
+        chars, arch, RegFormatter(), defines, top_level=False, do_replace_bare_reg=False
+    )
+    if chars:
+        raise Exception(f"Failed to parse value: {arg}")
+    return value
+
+
 def parse_asm_instruction(
     line: str,
     arch: ArchAsmParsing,
