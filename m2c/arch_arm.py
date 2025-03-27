@@ -607,6 +607,24 @@ class ArmArch(Arch):
         if len(args) == 2:
             if instr.mnemonic == "mov" and args[0] == args[1] == Register("r8"):
                 return AsmInstruction("nop", [])
+            if (
+                base == "ldr"
+                and isinstance(args[0], Register)
+                and isinstance(args[1], AsmAddressMode)
+                and args[1].base == Register("sp")
+                and args[1].addend == AsmLiteral(4)
+                and args[1].writeback == Writeback.POST
+            ):
+                return AsmInstruction("pop" + suffix, [RegisterList([args[0]])])
+            if (
+                base == "str"
+                and isinstance(args[0], Register)
+                and isinstance(args[1], AsmAddressMode)
+                and args[1].base == Register("sp")
+                and args[1].addend == AsmLiteral(-4)
+                and args[1].writeback == Writeback.PRE
+            ):
+                return AsmInstruction("push" + suffix, [RegisterList([args[0]])])
             if base == "cpy":
                 return AsmInstruction("mov" + suffix, args)
             if base == "neg":
