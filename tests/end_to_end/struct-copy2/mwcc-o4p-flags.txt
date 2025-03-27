@@ -1,0 +1,1 @@
+--target ppc-mwcc-c -f test_0 -f test_1 -f test_2 -f test_3 -f test_4 -f test_5 -f test_6 -f test_7

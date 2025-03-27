@@ -1356,6 +1356,28 @@ def handle_rlwimi(
     return BinaryOp.int(left=masked_base, op="|", right=inserted)
 
 
+def handle_rlwnm(
+    source: Expression, shift_source: Expression, mask_begin: int, mask_end: int
+) -> Expression:
+    # This instruction is very similar to rlwinm, but instead of specifying the shift
+    # as an immediate value, it comes from the low-order 5 bits of a register.
+    # Since this is dynamic, we can't really simplify or calculate things, but we use the
+    # same formula.
+    mask = rlwi_mask(mask_begin, mask_end)
+
+    # Take the lower 5 bits
+    shift = BinaryOp.int(shift_source, "&", Literal(0x1F))
+
+    upper_bits = BinaryOp.int(BinaryOp.int(source, "<<", shift), "&", Literal(mask))
+    lower_bits = BinaryOp.int(
+        BinaryOp.int(source, ">>", BinaryOp.int(Literal(32), "-", shift)),
+        "&",
+        Literal(mask),
+    )
+
+    return BinaryOp.int(upper_bits, "|", lower_bits)
+
+
 def handle_loadx(args: InstrArgs, type: Type) -> Expression:
     # "indexed loads" like `lwzx rD, rA, rB` read `(rA + rB)` into `rD`
     size = type.get_size_bytes()

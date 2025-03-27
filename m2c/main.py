@@ -139,6 +139,7 @@ def run(options: Options) -> int:
         typemap,
         typepool,
         deterministic_vars=options.deterministic_vars,
+        stack_spill_detection=options.stack_spill_detection,
     )
 
     flow_graphs: List[Union[FlowGraph, Exception]] = []
@@ -470,6 +471,18 @@ def parse_flags(flags: List[str]) -> Options:
         help="Name temp and phi vars after their location in the source asm, "
         "rather than using an incrementing suffix. Can help reduce diff size in tests.",
     )
+    group.add_argument(
+        "--descending-regs",
+        dest="descending_regs",
+        action="store_true",
+        help="Sort variables in descending order by register number",
+    )
+    group.add_argument(
+        "--backwards-bss",
+        dest="backwards_bss",
+        action="store_true",
+        help="Sort bss variables backwards compared to what's in the asm",
+    )
 
     group = parser.add_argument_group("Analysis Options")
     group.add_argument(
@@ -538,6 +551,15 @@ def parse_flags(flags: List[str]) -> Options:
         help=(
             "Disable type inference on unknown struct fields & unknown global symbol types. "
             "See the README for more information on unknown inference."
+        ),
+    )
+    group.add_argument(
+        "--no-stack-spill",
+        dest="stack_spill_detection",
+        action="store_false",
+        help=(
+            "Disable stack spilling detection, which introduces unnecessary "
+            "temporaries in unoptimized code instead of using the stack."
         ),
     )
     group.add_argument(
@@ -637,9 +659,12 @@ def parse_flags(flags: List[str]) -> Options:
         target=args.target,
         print_stack_structs=args.print_stack_structs,
         unk_inference=args.unk_inference,
+        stack_spill_detection=args.stack_spill_detection,
         passes=args.passes,
         incbin_dirs=args.incbin_dirs,
         deterministic_vars=args.deterministic_vars,
+        descending_regs=args.descending_regs,
+        backwards_bss=args.backwards_bss,
         disable_gc=args.disable_gc,
     )
 
