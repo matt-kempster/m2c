@@ -1,5 +1,5 @@
-static ? d7;
 static ? s7;
+static ? d7;
 
 void test(void) {
 
@@ -33,7 +33,7 @@ void test_6(s32 arg0, s32 arg1) {
     M2C_STRUCT_COPY(arg0, arg1, 0xE);
 }
 
-void test_7(s32 arg0, s32 arg1) {
-    M2C_STRUCT_COPY(arg0, arg1, 0xF);
-    M2C_STRUCT_COPY(&d7, &s7, 0xF);
+void test_7(Test7 *a, Test7 *b) {
+    M2C_STRUCT_COPY(a, &s7, 0xF);
+    M2C_STRUCT_COPY(&d7, b, 0xF);
 }

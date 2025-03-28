@@ -87,8 +87,8 @@ void test_6(Test6 *a, Test6 *b) {
 }
 
 void test_7(Test7 *a, Test7 *b) {
-	*a = *b;
-	d7 = s7;
+	*a = s7;
+	d7 = *b;
 }
 
 void test() {}
