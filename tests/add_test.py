@@ -48,6 +48,7 @@ def get_environment_variables() -> PathsToBinaries:
     MWCC_CC = load(
         "MWCC_CC", "env variable MWCC_CC should point to a PPC cc binary (mwcceppc.exe)"
     )
+    WINE = None
     if MWCC_CC and sys.platform.startswith("linux"):
         WINE = load("WINE", "env variable WINE should point to wine or wibo binary")
     return PathsToBinaries(IDO_CC=IDO_CC, MWCC_CC=MWCC_CC, WINE=WINE)
