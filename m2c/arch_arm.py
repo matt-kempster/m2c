@@ -506,15 +506,17 @@ class PopAndReturnPattern(SimpleAsmPattern):
         return Replacement([AsmInstruction("bx", [Register("lr")])], len(m.body))
 
 
-class BxIpPattern(SimpleAsmPattern):
+class TailCallPattern(SimpleAsmPattern):
     pattern = make_pattern(
-        "bx $r12",
+        "bx $x",
     )
 
-    def replace(self, m: AsmMatch) -> Replacement:
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        if m.regs["x"] == Register("lr"):
+            return None
         return Replacement(
             [
-                AsmInstruction("blx", [Register("r12")]),
+                AsmInstruction("blx", [m.regs["x"]]),
                 AsmInstruction("bx", [Register("lr")]),
             ],
             len(m.body),
@@ -1019,7 +1021,7 @@ class ArmArch(Arch):
         AddrModeWritebackPattern(),
         RegRegAddrModePattern(),
         PopAndReturnPattern(),
-        BxIpPattern(),
+        TailCallPattern(),
     ]
 
     instrs_ignore: Set[str] = {
