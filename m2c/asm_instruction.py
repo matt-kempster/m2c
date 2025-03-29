@@ -5,9 +5,9 @@ import abc
 from dataclasses import dataclass, field
 from enum import Enum
 import string
-from typing import Dict, List, Optional, Union
+from typing import Dict, Iterator, List, Optional, Union
 
-from .error import DecompFailure
+from .error import DecompFailure, static_assert_unreachable
 
 
 ARM_BARREL_SHIFTER_OPS = ("lsl", "lsr", "asr", "ror", "rrx")
@@ -635,3 +635,22 @@ def parse_asm_instruction(
     args = parse_args(args_str, arch, reg_formatter, defines)
     instr = AsmInstruction(mnemonic.lower(), args)
     return arch.normalize_instruction(instr)
+
+
+def traverse_arg(arg: Argument) -> Iterator[Argument]:
+    yield arg
+    if isinstance(arg, (Register, AsmLiteral, AsmGlobalSymbol)):
+        pass
+    elif isinstance(arg, RegisterList):
+        for reg in arg.regs:
+            yield reg
+    elif isinstance(arg, AsmAddressMode):
+        yield arg.base
+        yield from traverse_arg(arg.addend)
+    elif isinstance(arg, Macro):
+        yield from traverse_arg(arg.argument)
+    elif isinstance(arg, BinOp):
+        yield from traverse_arg(arg.lhs)
+        yield from traverse_arg(arg.rhs)
+    else:
+        static_assert_unreachable(arg)

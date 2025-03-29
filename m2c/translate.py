@@ -43,7 +43,7 @@ from .flow_graph import (
 )
 from .ir_pattern import IrPattern, simplify_ir_patterns
 from .options import CodingStyle, Formatter, Options, Target
-from .asm_file import AsmData, AsmDataEntry
+from .asm_file import AsmData, AsmDataEntry, AsmSymbolicData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -1922,8 +1922,8 @@ class NaivePhiExpr(Expression):
 @dataclass
 class SwitchControl:
     control_expr: Expression
-    # An int indicates an anonymous table in .text of the given size
-    jump_table: Optional[Union[GlobalSymbol, int]] = None
+    num_cases: Optional[int] = None
+    jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
     is_irregular: bool = False
 
@@ -1956,20 +1956,10 @@ class SwitchControl:
             return False
 
         right_expr = late_unwrap(cmp_expr.right)
-        if (
-            self.jump_table is None
-            or isinstance(self.jump_table, int)
-            or self.jump_table.asm_data_entry is None
-            or not self.jump_table.asm_data_entry.is_jtbl
-            or not isinstance(right_expr, Literal)
-        ):
+        if not isinstance(right_expr, Literal):
             return False
 
-        # Count the number of labels (exclude padding bytes)
-        jump_table_len = sum(
-            isinstance(e, str) for e in self.jump_table.asm_data_entry.data
-        )
-        return right_expr.value + int(cmp_exclusive) == jump_table_len
+        return right_expr.value + int(cmp_exclusive) == self.num_cases
 
     @staticmethod
     def irregular_from_expr(control_expr: Expression) -> SwitchControl:
@@ -1978,15 +1968,10 @@ class SwitchControl:
         The switch does not have a single jump table; instead it is a series of
         if statements & other switches.
         """
-        return SwitchControl(
-            control_expr=control_expr,
-            jump_table=None,
-            offset=0,
-            is_irregular=True,
-        )
+        return SwitchControl(control_expr=control_expr, offset=0, is_irregular=True)
 
     @staticmethod
-    def from_expr(expr: Expression) -> SwitchControl:
+    def from_expr(expr: Expression, num_cases: int) -> SwitchControl:
         """
         Try to convert `expr` into a SwitchControl from one of the following forms:
             - `*(&jump_table + (control_expr * 4))`
@@ -2041,10 +2026,12 @@ class SwitchControl:
                 offset = -offset_lit.value
 
         # Check that it is really a jump table
+        # TODO: check that it's actually the same jump table as we found in the
+        # flow_graph pre-check
         if jump_table.asm_data_entry is None or not jump_table.asm_data_entry.is_jtbl:
             return error_expr
 
-        return SwitchControl(control_expr, jump_table, offset)
+        return SwitchControl(control_expr, num_cases, jump_table, offset)
 
 
 @dataclass
@@ -3471,9 +3458,9 @@ class NodeState:
         assert isinstance(self.node, SwitchNode)
         assert self.switch_control is None
         if just_index:
-            self.switch_control = SwitchControl(expr, jump_table=len(self.node.cases))
+            self.switch_control = SwitchControl(expr, num_cases=len(self.node.cases))
         else:
-            self.switch_control = SwitchControl.from_expr(expr)
+            self.switch_control = SwitchControl.from_expr(expr, len(self.node.cases))
 
     def write_statement(self, stmt: Statement) -> None:
         self.to_write.append(stmt)
@@ -4073,16 +4060,19 @@ class GlobalInfo:
                     )
                     offset += 4
             else:
-                entry_name = entry
+                sym = entry.as_symbol_without_addend()
+                if sym is None:
+                    raise DecompFailure(f"Unable to parse vtable data in {sym_name}")
+                entry_name = sym
                 try:
-                    demangled_field_sym = demangle_codewarrior_parse(entry)
+                    demangled_field_sym = demangle_codewarrior_parse(sym)
                     if demangled_field_sym.name.qualified_name is not None:
                         entry_name = str(demangled_field_sym.name.qualified_name[-1])
                 except ValueError:
                     pass
 
                 field = struct.try_add_field(
-                    self.address_of_gsym(entry).type,
+                    self.address_of_gsym(sym).type,
                     offset,
                     name=entry_name,
                     size=4,
@@ -4109,12 +4099,13 @@ class GlobalInfo:
             if not data:
                 raise FailedToGenerateInitializer("not enough data")
             if not isinstance(data[0], bytes):
-                raise FailedToGenerateInitializer(f"cannot parse {data[0]} as integer")
+                arg = data[0].data
+                raise FailedToGenerateInitializer(f"cannot parse {arg} as integer")
             if len(data[0]) < n:
                 if len(data) > 1:
                     sym = data[1]
-                    assert isinstance(sym, str)
-                    raise FailedToGenerateInitializer(f"partial read of {sym}")
+                    assert isinstance(sym, AsmSymbolicData)
+                    raise FailedToGenerateInitializer(f"partial read of {sym.data}")
                 else:
                     raise FailedToGenerateInitializer("not enough data")
             bs = data[0][:n]
@@ -4128,10 +4119,12 @@ class GlobalInfo:
 
         def try_read_pointer() -> Optional[Expression]:
             """Read the next label from `data`"""
-            if not data or not isinstance(data[0], str):
+            if not data or isinstance(data[0], bytes):
+                return None
+            label = data[0].as_symbol_without_addend()
+            if label is None:
                 return None
 
-            label = data[0]
             data.pop(0)
             return self.address_of_gsym(label)
 

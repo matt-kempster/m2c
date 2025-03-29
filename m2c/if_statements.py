@@ -113,9 +113,9 @@ class SwitchStatement:
         comments.extend(comments_for_switch(self.index))
         if self.jump.is_irregular:
             comments.append("irregular")
-        elif not self.jump.jump_table:
+        elif self.jump.num_cases is None:
             comments.append("unable to parse jump table")
-        elif isinstance(self.jump.jump_table, GlobalSymbol) and body_is_empty:
+        elif self.jump.jump_table is not None and body_is_empty:
             comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
         head = f"switch ({format_expr(self.jump.control_expr, fmt)})"
         if body_is_empty:

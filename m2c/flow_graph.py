@@ -904,9 +904,13 @@ def build_graph_from_block(
                 if isinstance(entry, bytes):
                     # We have entered padding, stop reading.
                     break
-                case_block = find_block_by_label(entry)
+                sym = entry.as_symbol_without_addend()
+                if sym is None:
+                    # Also possibly padding
+                    break
+                case_block = find_block_by_label(sym)
                 if case_block is None:
-                    raise DecompFailure(f"Cannot find jtbl target {entry}")
+                    raise DecompFailure(f"Cannot find jtbl target {sym}")
                 case_node = build_graph_from_block(
                     case_block, blocks, parent_blocks + [block], nodes, asm_data, arch
                 )

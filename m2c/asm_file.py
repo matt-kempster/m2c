@@ -21,7 +21,14 @@ from typing import (
 
 from .error import DecompFailure
 from .options import CodingStyle, Options
-from .asm_instruction import AsmGlobalSymbol, AsmLiteral, RegFormatter, parse_arg
+from .asm_instruction import (
+    Argument,
+    AsmGlobalSymbol,
+    AsmLiteral,
+    RegFormatter,
+    parse_arg,
+    traverse_arg,
+)
 from .instruction import (
     ArchAsm,
     Instruction,
@@ -73,9 +80,20 @@ class Function:
 
 
 @dataclass
+class AsmSymbolicData:
+    data: Argument
+    size: int
+
+    def as_symbol_without_addend(self) -> Optional[str]:
+        if isinstance(self.data, AsmGlobalSymbol) and self.size == 4:
+            return self.data.symbol_name
+        return None
+
+
+@dataclass
 class AsmDataEntry:
     sort_order: Tuple[str, int]
-    data: List[Union[str, bytes]] = field(default_factory=list)
+    data: List[Union[bytes, AsmSymbolicData]] = field(default_factory=list)
     is_string: bool = False
     is_readonly: bool = False
     is_bss: bool = False
@@ -91,14 +109,14 @@ class AsmDataEntry:
         # that ends on 16-byte boundaries and is at the end of a section
         max_size = 0
         for x in self.data:
-            if isinstance(x, str):
-                max_size += 4
+            if isinstance(x, AsmSymbolicData):
+                max_size += x.size
             else:
                 max_size += len(x)
 
         padding_size = 0
         if self.data and isinstance(self.data[-1], bytes):
-            assert len(self.data) == 1 or isinstance(self.data[-2], str)
+            assert len(self.data) == 1 or isinstance(self.data[-2], AsmSymbolicData)
             for b in self.data[-1][::-1]:
                 if b != 0:
                     break
@@ -181,10 +199,12 @@ class AsmFile:
         )
         self.asm_data.values[symbol_name] = self.current_data
 
-    def new_data_sym(self, sym: str) -> None:
+    def new_symbolic_data(self, data: Argument, size: int) -> None:
         if self.current_data is not None:
-            self.current_data.data.append(sym)
-        self.asm_data.mentioned_labels.add(sym)
+            self.current_data.data.append(AsmSymbolicData(data, size))
+        for subexpr in traverse_arg(data):
+            if isinstance(subexpr, AsmGlobalSymbol):
+                self.asm_data.mentioned_labels.add(subexpr.symbol_name)
 
     def new_data_bytes(self, data: bytes, *, is_string: bool = False) -> None:
         if self.current_data is None:
@@ -471,14 +491,17 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         endian = ">" if options.target.is_big_endian() else "<"
         return struct.pack(endian + fmt, val)
 
-    def emit_word(w: str) -> None:
+    def emit_word(w: str, size: int) -> None:
         value = try_parse(lambda: parse_arg(w, arch, defined_vars()))
         if isinstance(value, AsmLiteral):
-            asm_file.new_data_bytes(pack("I", value.value & 0xFFFFFFFF))
-        elif isinstance(value, AsmGlobalSymbol):
-            asm_file.new_data_sym(value.symbol_name)
+            ival = value.value & ((1 << (size * 8)) - 1)
+            if options.target.is_big_endian():
+                data = ival.to_bytes(size, "big")
+            else:
+                data = ival.to_bytes(size, "little")
+            asm_file.new_data_bytes(data)
         else:
-            fail_parse()
+            asm_file.new_symbolic_data(value, size)
 
     re_comment_or_string = re.compile(arch.re_comment + r'|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     for lineno, line in enumerate(f, 1):
@@ -651,12 +674,12 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
                         for w in args:
-                            emit_word(w)
+                            emit_word(w, 4)
                     elif directive == ".rel":
                         # .rel is a common dtk disassembler macro used with jump tables.
                         # ".rel name, label" expands to ".4byte name + (label - name)"
                         assert len(args) == 2
-                        emit_word(args[1])
+                        emit_word(args[1], 4)
                     elif directive == ".obj":
                         # dtk disassembler label format
                         assert len(args) == 2
@@ -666,12 +689,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         process_label(args[0], kind=kind)
                     elif directive in (".short", ".half", ".2byte"):
                         for w in args:
-                            ival = parse_int(w) & 0xFFFF
-                            asm_file.new_data_bytes(pack("H", ival))
+                            emit_word(w, 2)
                     elif directive == ".byte":
                         for w in args:
-                            ival = parse_int(w) & 0xFF
-                            asm_file.new_data_bytes(bytes([ival]))
+                            emit_word(w, 1)
                     elif directive == ".float":
                         for w in args:
                             fval = try_parse(lambda: float(w))

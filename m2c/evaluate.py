@@ -10,8 +10,10 @@ from typing import (
     Tuple,
     Union,
 )
+from .asm_file import AsmSymbolicData
 from .asm_instruction import (
     AsmAddressMode,
+    AsmGlobalSymbol,
     AsmLiteral,
     Register,
 )
@@ -446,9 +448,16 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             val: int = struct.unpack(endian + fmt, data[:size])[0]
             return Literal(value=val, type=type)
 
-        if is_arm and ent.is_text and isinstance(data, str) and size == 4:
+        if (
+            is_arm
+            and ent.is_text
+            and isinstance(data, AsmSymbolicData)
+            and data.size == size
+            and isinstance(data.data, AsmGlobalSymbol)
+        ):
+            # TODO: support symbol + imm
             ent.used_as_literal = True
-            addr = args.stack_info.global_info.address_of_gsym(data)
+            addr = args.stack_info.global_info.address_of_gsym(data.data.symbol_name)
             return as_type(addr, type, silent=True)
 
         return None
