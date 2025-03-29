@@ -2077,6 +2077,7 @@ class StoreStmt(Statement):
             # Known destination; fine to elide some casts.
             source = elide_literal_casts(source)
         line = format_assignment(dest, source, fmt)
+        # Used in struct copy statements
         if self.commented_size is None:
             return line
         else:

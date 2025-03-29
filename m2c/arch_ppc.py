@@ -1107,8 +1107,12 @@ class PpcArch(Arch):
 
         elif mnemonic == "structcopy.fictive":
             is_store = True
+            assert isinstance(args[0], AsmAddressMode) and isinstance(
+                args[1], AsmAddressMode
+            )
             inputs = [args[0].base, args[1].base]
-            def eval_fn (s: NodeState, a: InstrArgs) -> None:
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 dest_addr = a.memory_ref(0)
                 source_addr = a.memory_ref(1)
                 size_expr = a.imm(2)
@@ -1126,8 +1130,10 @@ class PpcArch(Arch):
                 dest.use()
                 s.prevent_later_value_uses(dest)
                 s.prevent_later_function_calls()
-                s.write_statement(StoreStmt(source=source, dest=dest, commented_size=size))
-            
+                s.write_statement(
+                    StoreStmt(source=source, dest=dest, commented_size=size)
+                )
+
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
