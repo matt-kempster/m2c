@@ -33,7 +33,7 @@ void test_6(? *arg0, ? *arg1) {
         *arg0 = *arg1;                                  /* size 0xE */
 }
 
-void test_7(s32 arg0, s32 arg1) {
-    M2C_STRUCT_COPY(arg0, arg1, 0xF);
-    M2C_STRUCT_COPY(&d7, &s7, 0xF);
+void test_7(? *arg0, ? *arg1) {
+        *arg0 = *arg1;                                  /* size 0xF */
+        d7 = s7;                                        /* size 0xF */
 }
