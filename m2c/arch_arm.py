@@ -77,6 +77,7 @@ from .evaluate import (
     handle_bitinv,
     handle_load,
     handle_or,
+    handle_sll,
     handle_sra,
     handle_sub,
     make_store,
@@ -1037,9 +1038,7 @@ class ArmArch(Arch):
         "rev16": lambda a: fn_op("BSWAP16X2", [a.reg(1)], Type.intish()),
         "revsh": lambda a: fn_op("BSWAP16", [a.reg(1)], Type.s16()),
         # Shifts (flag-setting forms have been normalized into shift + movs)
-        "lsl": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg_or_imm(2)))
-        ),
+        "lsl": lambda a: handle_sll(a, arm=True),
         "asr": lambda a: handle_sra(a, arm=True),
         "lsr": lambda a: fold_divmod(
             BinaryOp(

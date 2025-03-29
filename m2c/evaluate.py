@@ -614,6 +614,14 @@ def handle_sra(args: InstrArgs, *, arm: bool = False) -> Expression:
     )
 
 
+def handle_sll(args: InstrArgs, *, arm: bool = False) -> Expression:
+    lhs = args.reg(1)
+    rhs = args.reg_or_imm(2) if arm else args.imm(2)
+    if isinstance(lhs, Literal) and isinstance(rhs, Literal):
+        return Literal(lhs.value << rhs.value)
+    return fold_mul_chains(BinaryOp.int(lhs, "<<", as_intish(rhs)))
+
+
 def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
     op = "!=" if nonzero else "=="
     type = Type.any_reg()
