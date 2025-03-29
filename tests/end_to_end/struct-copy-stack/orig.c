@@ -1,16 +1,16 @@
-#pragma push
-#pragma pack(1)
-
 typedef struct Vec {
 	float x;
 	float y;
 	float z;
 } Vec;
 
-void test() {
+void test2(Vec * b) {
+	Vec a = *b;
+	b->z = 4;
+}
+
+void test(Vec *b) {
 	Vec a = {0};
 	Vec c = a;
-	Vec b;
-	b.x = 4;
-	c = b;
+	c = *b;	
 }

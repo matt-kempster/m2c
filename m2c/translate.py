@@ -2063,6 +2063,7 @@ class ExprStmt(Statement):
 class StoreStmt(Statement):
     source: Expression
     dest: Expression
+    commented_size: Optional[int] = field(default=None)
 
     def should_write(self) -> bool:
         return True
@@ -2075,7 +2076,13 @@ class StoreStmt(Statement):
         ) or isinstance(dest, (ArrayAccess, LocalVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_literal_casts(source)
-        return format_assignment(dest, source, fmt)
+        line = format_assignment(dest, source, fmt)
+        if self.commented_size is None:
+            return line
+        else:
+            return fmt.with_comments(
+                line, [f"size 0x{fmt.format_hex(self.commented_size)}"]
+            )
 
 
 @dataclass

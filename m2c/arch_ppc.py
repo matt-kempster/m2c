@@ -55,6 +55,7 @@ from .translate import (
     NodeState,
     StmtInstrMap,
     StoreInstrMap,
+    StoreStmt,
     TernaryOp,
     UnaryOp,
     as_intish,
@@ -67,6 +68,7 @@ from .evaluate import (
     add_imm,
     carry_add_to,
     carry_sub_from,
+    deref,
     error_stmt,
     fn_op,
     fold_divmod,
@@ -277,8 +279,8 @@ class StructCopyPattern(AsmPattern):
     pattern = make_pattern(
         "lwz $a, I($s)",
         "lwz $b, (I+4)($s)",
-        "stw $a, I($d)",
-        "stw $b, (I+4)($d)",
+        "stw $a, J($d)",
+        "stw $b, (J+4)($d)",
     )
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
@@ -292,8 +294,8 @@ class StructCopyPattern(AsmPattern):
             pattern2 = make_pattern(
                 f"lwz $a, (I+{i})($s)",
                 f"lwz $b, (I+{i+4})($s)",
-                f"stw $a, (I+{i})($d)",
-                f"stw $b, (I+{i+4})($d)",
+                f"stw $a, (J+{i})($d)",
+                f"stw $b, (J+{i+4})($d)",
             )
 
             m2 = matcher.try_match(pattern_ext + pattern2)
@@ -305,7 +307,7 @@ class StructCopyPattern(AsmPattern):
                 # Unaligned struct
                 pattern_end_4b = make_pattern(
                     f"lwz $c, (I+{i})($s)",
-                    f"stw $c, (I+{i})($d)",
+                    f"stw $c, (J+{i})($d)",
                 )
                 m_end = matcher.try_match(pattern_ext + pattern_end_4b)
                 if m_end:
@@ -315,7 +317,7 @@ class StructCopyPattern(AsmPattern):
 
                 pattern_end_2b = make_pattern(
                     f"lhz $c, (I+{i})($s)",
-                    f"sth $c, (I+{i})($d)",
+                    f"sth $c, (J+{i})($d)",
                 )
                 m_end = matcher.try_match(pattern_ext + pattern_end_2b)
                 if m_end:
@@ -325,7 +327,7 @@ class StructCopyPattern(AsmPattern):
 
                 pattern_end_1b = make_pattern(
                     f"lbz $c, (I+{i})($s)",
-                    f"stb $c, (I+{i})($d)",
+                    f"stb $c, (J+{i})($d)",
                 )
                 m_end = matcher.try_match(pattern_ext + pattern_end_1b)
                 if m_end:
@@ -333,12 +335,18 @@ class StructCopyPattern(AsmPattern):
                     i += 1
                 break
 
+        # Get correct addressing
+        dest = AsmAddressMode(
+            base=m.regs["d"],
+            addend=AsmLiteral(m.literals["J"]),
+        )
+        source = AsmAddressMode(
+            base=m.regs["s"],
+            addend=AsmLiteral(m.literals["I"]),
+        )
+
         return Replacement(
-            [
-                AsmInstruction(
-                    "structcopy.fictive", [m.regs["d"], m.regs["s"], AsmLiteral(i)]
-                )
-            ],
+            [AsmInstruction("structcopy.fictive", [dest, source, AsmLiteral(i)])],
             len(m.body),
         )
 
@@ -1097,6 +1105,29 @@ class PpcArch(Arch):
                 s.set_reg(Register("cr0_lt"), cls.instrs_ppc_compare[mnemonic](a, "<"))
                 s.set_reg(Register("cr0_so"), Literal(0))
 
+        elif mnemonic == "structcopy.fictive":
+            is_store = True
+            inputs = [args[0].base, args[1].base]
+            def eval_fn (s: NodeState, a: InstrArgs) -> None:
+                dest_addr = a.memory_ref(0)
+                source_addr = a.memory_ref(1)
+                size_expr = a.imm(2)
+                assert isinstance(size_expr, Literal)
+                size = size_expr.value
+
+                stack_info = a.stack_info
+                dest = deref(dest_addr, a.regs, stack_info, size=size, store=False)
+                source = deref(source_addr, a.regs, stack_info, size=size, store=False)
+                if dest.type.is_struct() or source.type.is_struct():
+                    dest.type.unify(source.type)
+
+                # TODO are these four needed?
+                source.use()
+                dest.use()
+                s.prevent_later_value_uses(dest)
+                s.prevent_later_function_calls()
+                s.write_statement(StoreStmt(source=source, dest=dest, commented_size=size))
+            
         elif mnemonic in cls.instrs_ignore:
             pass
         else:
@@ -1251,9 +1282,6 @@ class PpcArch(Arch):
     instrs_no_dest: StmtInstrMap = {
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "isync": lambda a: void_fn_op("M2C_SYNC", []),
-        "structcopy.fictive": lambda a: void_fn_op(
-            "M2C_STRUCT_COPY", [a.reg(0), a.reg(1), a.imm(2)]
-        ),
     }
 
     instrs_dest_first_non_load: InstrMap = {
