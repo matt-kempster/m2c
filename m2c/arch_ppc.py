@@ -304,8 +304,8 @@ class StructCopyPattern(AsmPattern):
             else:
                 # Unaligned struct
                 pattern_end_4b = make_pattern(
-                    f"lwz $b, (I+{i})($s)",
-                    f"stw $b, (I+{i})($d)",
+                    f"lwz $c, (I+{i})($s)",
+                    f"stw $c, (I+{i})($d)",
                 )
                 m_end = matcher.try_match(pattern_ext + pattern_end_4b)
                 if m_end:
@@ -314,8 +314,8 @@ class StructCopyPattern(AsmPattern):
                     pattern_ext.extend(pattern_end_4b)
 
                 pattern_end_2b = make_pattern(
-                    f"lhz $b, (I+{i})($s)",
-                    f"sth $b, (I+{i})($d)",
+                    f"lhz $c, (I+{i})($s)",
+                    f"sth $c, (I+{i})($d)",
                 )
                 m_end = matcher.try_match(pattern_ext + pattern_end_2b)
                 if m_end:
@@ -324,8 +324,8 @@ class StructCopyPattern(AsmPattern):
                     pattern_ext.extend(pattern_end_2b)
 
                 pattern_end_1b = make_pattern(
-                    f"lbz $b, (I+{i})($s)",
-                    f"stb $b, (I+{i})($d)",
+                    f"lbz $c, (I+{i})($s)",
+                    f"stb $c, (I+{i})($d)",
                 )
                 m_end = matcher.try_match(pattern_ext + pattern_end_1b)
                 if m_end:
