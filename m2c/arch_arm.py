@@ -354,6 +354,8 @@ class ConditionalInstrPattern(AsmPattern):
                 if matched_cc is None:
                     # Only match if the first instruction is conditional.
                     return None
+                if instr.is_jump():
+                    break
                 # This instruction does not belong in the if, but we can move
                 # it to the front or end of it, assuming that we don't reorder
                 # impure instructions and there are no dependency issues.
@@ -404,7 +406,7 @@ class ConditionalInstrPattern(AsmPattern):
             moved_before_streak = 0
             moved_after_streak = 0
             checked_reg = CC_REGS[factor_cond(matched_cc)[0]]
-            if checked_reg in outputs:
+            if checked_reg in outputs or instr.is_jump():
                 break
         if matched_cc is None:
             return None
