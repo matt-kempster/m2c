@@ -1301,6 +1301,17 @@ class ArmArch(Arch):
             slot.reg for slot in known_slots if slot.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
+
+        # If register rX is likely, all previous ones are as well.
+        lasti = -1
+        for i in range(4):
+            if Register(f"r{i}") not in likely_regs:
+                break
+            lasti = i
+        for i in range(lasti, 0, -1):
+            if likely_regs[Register(f"r{i}")]:
+                likely_regs[Register(f"r{i - 1}")] = True
+
         for slot in candidate_slots:
             if slot.reg is None or slot.reg not in likely_regs:
                 continue
@@ -1328,7 +1339,6 @@ class ArmArch(Arch):
             # without access to function signatures, or when dealing with
             # varargs functions. Decompiling multiple functions at once
             # would help.
-            # TODO: don't do this in the middle of the argument list.
             if not likely_regs[slot.reg]:
                 continue
 
