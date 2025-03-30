@@ -3986,7 +3986,10 @@ class GlobalInfo:
         else:
             demangled_symbol: Optional[CxxSymbol] = None
             demangled_str: Optional[str] = None
-            if self.target.language == Target.LanguageEnum.CXX:
+            if (
+                self.target.language == Target.LanguageEnum.CXX
+                and self.target.compiler == Target.CompilerEnum.MWCC
+            ):
                 try:
                     demangled_symbol = demangle_codewarrior_parse(sym_name)
                 except ValueError:
@@ -4004,6 +4007,7 @@ class GlobalInfo:
             # If the symbol is a C++ vtable, try to build a custom type for it by parsing it
             if (
                 self.target.language == Target.LanguageEnum.CXX
+                and self.target.compiler == Target.CompilerEnum.MWCC
                 and sym_name.startswith("__vt__")
                 and sym.asm_data_entry is not None
             ):
@@ -4349,6 +4353,7 @@ class GlobalInfo:
                 if (
                     decls != Options.GlobalDeclsEnum.ALL
                     and self.target.language == Target.LanguageEnum.CXX
+                    and self.target.compiler == Target.CompilerEnum.MWCC
                     and name.startswith("__vt__")
                 ):
                     continue
