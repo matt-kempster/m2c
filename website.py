@@ -57,14 +57,12 @@ if "source" in form:
     if "target" in form:
         value = form.getfirst("target")
         if value in (
-            "ppc-mwcc-c",
             "ppc-mwcc-c++",
             "arm-agbcc-c",
             "mips-ido-c",
             "mips-gcc-c",
             "mipsel-gcc-c",
             "mipsee-gcc-c",
-            "mipsee-gcc-c++",
         ):
             cmd.extend(["--target", value])
     if "nounkinference" in form:
@@ -238,16 +236,14 @@ label {
     <option value="none">none</option>
     </select>
     </label>
-    <label>Target arch, compiler, &amp; language:
+    <label>Target platform &amp; compiler:
     <select name="target">
-    <option value="mips-ido-c">MIPS, IDO, C</option>
-    <option value="mips-gcc-c">MIPS, GCC, C</option>
-    <option value="mipsel-gcc-c">MIPSEL, GCC, C</option>
-    <option value="mipsee-gcc-c">MIPSEE, GCC, C</option>
-    <option value="mipsee-gcc-c++">MIPSEE, GCC, C++</option>
-    <option value="ppc-mwcc-c">PPC, MWCC, C</option>
-    <option value="ppc-mwcc-c++">PPC, MWCC, C++</option>
-    <option value="arm-agbcc-c">ARM, agbcc, C</option>
+    <option value="mips-ido-c">MIPS, IDO</option>
+    <option value="mips-gcc-c">MIPS, GCC</option>
+    <option value="mipsel-gcc-c">MIPSEL, GCC</option>
+    <option value="mipsee-gcc-c">MIPSEE, GCC</option>
+    <option value="ppc-mwcc-c++">PPC, MWCC</option>
+    <option value="arm-agbcc-c">ARM, agbcc</option>
     </select>
     </label>
     <label>Comment style:
