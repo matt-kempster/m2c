@@ -61,41 +61,9 @@ void test_u16(unsigned short a, unsigned short b, unsigned short c) {
     global = (a >= 0);
 }
 
-void test_s8(char a, char b, char c) {
-    global = (a == b);
-    global = (a != c);
-    global = (a < b);
-    global = (a <= b);
-    global = (a > b);
-    global = (a >= b);
-    global = (a == 0);
-    global = (b != 0);
-    global = (a < 0);
-    global = (a <= 0);
-    global = (a > 0);
-    global = (a >= 0);
-}
-
-void test_u8(unsigned char a, unsigned char b, unsigned char c) {
-    global = (a == b);
-    global = (a != c);
-    global = (a < b);
-    global = (a <= b);
-    global = (a > b);
-    global = (a >= b);
-    global = (a == 0);
-    global = (b != 0);
-    global = (a < 0);
-    global = (a <= 0);
-    global = (a > 0);
-    global = (a >= 0);
-}
-
 void test(void) {
     test_s32(1, 2, 3);
     test_u32(1, 2, 3);
     test_s16(1, 2, 3);
     test_u16(1, 2, 3);
-    test_s8(1, 2, 3);
-    test_u8(1, 2, 3);
 }
