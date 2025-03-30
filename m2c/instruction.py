@@ -128,6 +128,7 @@ class Instruction:
     is_conditional: bool = False
     is_return: bool = False
     is_store: bool = False
+    is_pure: bool = False  # only used for ARM at the moment
 
     # These are for MIPS. `is_branch_likely` refers to branch instructions which
     # execute their delay slot only if the branch *is* taken. (Maybe these two

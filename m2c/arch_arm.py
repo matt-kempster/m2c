@@ -335,18 +335,64 @@ class ConditionalInstrPattern(AsmPattern):
         i = 0
         if_instrs: List[AsmInstruction] = []
         else_instrs: List[AsmInstruction] = []
+        before_instrs: List[Instruction] = []
+        after_instrs: List[Instruction] = []
+        mid_inputs: Set[Location] = set()
+        mid_outputs: Set[Location] = set()
+        mid_impure = False
+        after_inputs: Set[Location] = set()
+        after_outputs: Set[Location] = set()
+        after_impure = False
+        moved_before_streak = 0
+        moved_after_streak = 0
         while matcher.index + i < len(matcher.input):
             instr = matcher.input[matcher.index + i]
             if not isinstance(instr, Instruction):
                 break
-            if i != 0 and instr.mnemonic == "nop":
+            base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
+            if cc is None:
+                if matched_cc is None:
+                    # Only match if the first instruction is conditional.
+                    return None
+                # This instruction does not belong in the if, but we can move
+                # it to the front or end of it, assuming that we don't reorder
+                # impure instructions and there are no dependency issues.
+                outputs = instr.outputs + instr.clobbers
+                if (
+                    not set(instr.inputs + outputs) & mid_outputs
+                    and not set(outputs) & mid_inputs
+                    and not after_instrs
+                    and not (mid_impure and not instr.is_pure)
+                ):
+                    before_instrs.append(instr)
+                    moved_before_streak += 1
+                else:
+                    after_outputs |= set(instr.outputs + instr.clobbers)
+                    after_inputs |= set(instr.inputs)
+                    after_instrs.append(instr)
+                    moved_after_streak += 1
+                    if not instr.is_pure:
+                        after_impure = True
                 i += 1
                 continue
-            base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
-            if cc is None or (i == 0 and base == "b"):
+            outputs = instr.outputs + instr.clobbers
+            if set(instr.inputs + outputs) & after_outputs:
                 break
+            if set(outputs) & after_inputs:
+                break
+            if after_impure and not instr.is_pure:
+                break
+            if after_instrs and instr.is_jump():
+                # If we have a jump, there is no way to put instructions after.
+                break
+            mid_outputs |= set(outputs)
+            mid_inputs |= set(instr.inputs)
+            if not instr.is_pure:
+                mid_impure = True
             new_instr = AsmInstruction(base + set_flags + direction, instr.args)
             if matched_cc is None:
+                if base == "b":
+                    break
                 matched_cc = cc
             if matched_cc == cc:
                 if_instrs.append(new_instr)
@@ -355,11 +401,17 @@ class ConditionalInstrPattern(AsmPattern):
             else:
                 break
             i += 1
+            moved_before_streak = 0
+            moved_after_streak = 0
             checked_reg = CC_REGS[factor_cond(matched_cc)[0]]
-            if checked_reg in instr.outputs or checked_reg in instr.clobbers:
+            if checked_reg in outputs:
                 break
         if matched_cc is None:
             return None
+
+        i -= moved_before_streak + moved_after_streak
+        del before_instrs[len(before_instrs) - moved_before_streak :]
+        del after_instrs[len(after_instrs) - moved_after_streak :]
 
         b_mn = "b" + negate_cond(matched_cc).value
         label1 = f"._m2c_cc_{matcher.index}"
@@ -367,21 +419,25 @@ class ConditionalInstrPattern(AsmPattern):
         if else_instrs:
             return Replacement(
                 [
+                    *before_instrs,
                     AsmInstruction(b_mn, [AsmGlobalSymbol(label1)]),
                     *if_instrs,
                     AsmInstruction("b", [AsmGlobalSymbol(label2)]),
                     Label([label1]),
                     *else_instrs,
                     Label([label2]),
+                    *after_instrs,
                 ],
                 i,
             )
         else:
             return Replacement(
                 [
+                    *before_instrs,
                     AsmInstruction(b_mn, [AsmGlobalSymbol(label1)]),
                     *if_instrs,
                     Label([label1]),
+                    *after_instrs,
                 ],
                 i,
             )
@@ -724,6 +780,7 @@ class ArmArch(Arch):
         is_conditional = False
         is_return = False
         is_store = False
+        is_pure = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         instr_str = str(AsmInstruction(mnemonic, args))
@@ -763,24 +820,7 @@ class ArmArch(Arch):
                 is_conditional = True
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                    cond: Expression
-                    if cc == Cc.EQ:
-                        cond = a.regs[Register("z")]
-                    elif cc == Cc.CS:
-                        cond = a.regs[Register("c")]
-                    elif cc == Cc.MI:
-                        cond = a.regs[Register("n")]
-                    elif cc == Cc.VS:
-                        cond = a.regs[Register("v")]
-                    elif cc == Cc.HI:
-                        cond = a.regs[Register("hi")]
-                    elif cc == Cc.GE:
-                        cond = a.regs[Register("ge")]
-                    elif cc == Cc.GT:
-                        cond = a.regs[Register("gt")]
-                    else:
-                        assert False
-                    cond = condition_from_expr(cond)
+                    cond = condition_from_expr(a.regs[CC_REGS[cc]])
                     if cc_negated:
                         cond = cond.negated()
                     s.set_branch_condition(cond)
@@ -842,6 +882,7 @@ class ArmArch(Arch):
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             inputs = get_inputs(1)
+            is_pure = not base.startswith("ldr")
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
@@ -872,6 +913,7 @@ class ArmArch(Arch):
             if set_flags:
                 outputs.extend([Register("n"), Register("z")])
                 clobbers = [Register("hi"), Register("ge"), Register("gt")]
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_nz_flags[base](a)
@@ -896,6 +938,7 @@ class ArmArch(Arch):
             inputs = get_inputs(0)
             outputs = [Register("n"), Register("z")]
             clobbers = [Register("hi"), Register("ge"), Register("gt")]
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 lhs = a.reg(0)
@@ -914,6 +957,7 @@ class ArmArch(Arch):
             imm = args[0].value
             outputs = [Register("c"), Register("hi")]
             inputs = [Register("z")] if imm else []
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(Register("c"), Literal(imm))
@@ -927,6 +971,7 @@ class ArmArch(Arch):
             assert len(args) == 1 and isinstance(args[0], Register)
             outputs = [Register("c"), Register("hi")]
             inputs = [Register("z")]
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 c = s.set_reg(
@@ -944,6 +989,7 @@ class ArmArch(Arch):
             inputs = get_inputs(1)
             if base == "adc":
                 inputs.append(Register("c"))
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_add[base](a)
@@ -979,6 +1025,7 @@ class ArmArch(Arch):
             inputs = get_inputs(1)
             if base in ("sbc", "rsc"):
                 inputs.append(Register("c"))
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_sub[base](a)
@@ -1016,6 +1063,7 @@ class ArmArch(Arch):
             assert len(args) == 2 and isinstance(args[0], Register)
             outputs = list(cls.flag_regs)
             inputs = get_inputs(0)
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 lhs = a.reg(0)
@@ -1036,7 +1084,7 @@ class ArmArch(Arch):
                 s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
 
         elif base in cls.instrs_ignore:
-            pass
+            is_pure = True
         else:
             # If the mnemonic is unsupported, guess if it is destination-first
             if args and isinstance(args[0], Register):
@@ -1068,6 +1116,7 @@ class ArmArch(Arch):
             is_conditional=is_conditional,
             is_return=is_return,
             is_store=is_store,
+            is_pure=is_pure,
             eval_fn=eval_fn,
         )
 
