@@ -70,7 +70,6 @@ class Target:
         IDO = "ido"
         GCC = "gcc"
         MWCC = "mwcc"
-        AGBCC = "agbcc"
 
     class LanguageEnum(ChoicesEnum):
         C = "c"
@@ -110,7 +109,7 @@ class Target:
             elif arch == Target.ArchEnum.PPC:
                 compiler = Target.CompilerEnum.MWCC
             elif arch == Target.ArchEnum.ARM:
-                compiler = Target.CompilerEnum.AGBCC
+                compiler = Target.CompilerEnum.GCC
             else:
                 compiler = Target.CompilerEnum.IDO
 

@@ -52,7 +52,7 @@ The following target triples are supported:
 - `--target mipsee-gcc-c++`: Little-endian MIPS (with eabi64), GCC toolchain, C++ language
 - `--target ppc-mwcc-c`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C language
 - `--target ppc-mwcc-c++`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C++ language
-- `--target arm-agbcc-c`: Little-endia ARM, agbcc toolchain, C language
+- `--target arm-gcc-c`: Little-endian ARM, agbcc toolchain, C language
 
 ### Multiple functions
 
