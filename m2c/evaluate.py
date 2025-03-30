@@ -1005,9 +1005,9 @@ def replace_shift_add_carry(expr: BinaryOp) -> BinaryOp:
     left_right_expr = early_unwrap(left_expr.right)
     if not (
         isinstance(left_left_expr, BinaryOp)
-        and early_unwrap(left_left_expr.right) == Literal(31)
+        and left_left_expr.right == Literal(31)
         and isinstance(left_right_expr, BinaryOp)
-        and early_unwrap(left_right_expr.right) == Literal(31)
+        and left_right_expr.right == Literal(31)
     ):
         return expr
 
