@@ -482,9 +482,11 @@ def parse_flags(flags: List[str]) -> Options:
         dest="target",
         type=Target.parse,
         default="mips-ido-c",
-        help="Target architecture, compiler, and language triple. "
-        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, mipsee-gcc-c, mipsee-gcc-c++, ppc-mwcc-c, ppc-mwcc-c++, arm-gcc-c. "
-        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, and `arm` for arm-gcc-c. ",
+        help="Target platform, compiler, and language triple. "
+        "Supported platforms: [mips, mipsel, mipsee, ppc, arm]. "
+        "Supported compilers: [ido, gcc, mwcc]. "
+        "Supported languages: [c, c++]. "
+        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, and `arm` for arm-gcc-c.",
     )
     group.add_argument(
         "--passes",

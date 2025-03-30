@@ -43,16 +43,21 @@ It also has some compiler-specific heuristics and language-specific behavior.
 For example, it can demangle C++ symbol names as used by CodeWarrior.
 
 Collectively, the output's platform, compiler, and source language are referred to as a *target*.
-The following target triples are supported:
+They can be passed to m2c with the `-t` (or `--target` flag), as such: `--target mips-ido-c`.
 
-- `--target mips-ido-c`: MIPS (with O32 ABI), IDO toolchain, C language
-- `--target mips-gcc-c`: MIPS (with O32 ABI), GCC toolchain, C language
-- `--target mipsel-gcc-c`: Little-endian MIPS (with O32 ABI), GCC toolchain, C language
-- `--target mipsee-gcc-c`: Little-endian MIPS (with eabi64), GCC toolchain, C language
-- `--target mipsee-gcc-c++`: Little-endian MIPS (with eabi64), GCC toolchain, C++ language
-- `--target ppc-mwcc-c`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C language
-- `--target ppc-mwcc-c++`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C++ language
-- `--target arm-gcc-c`: Little-endian ARM, agbcc toolchain, C language
+The following platforms are supported:
+- `mips`: MIPS (with O32 ABI)
+- `mipsel`: MIPS (with O32 ABI, little endian)
+- `mipsee`: MIPS (with eabi64, little endian)
+- `ppc`: PowerPC (big endian)
+- `arm`: ARM (little endian)
+
+The following compilers are supported:
+- `ido`: Integrated Development Option (MIPS compiler from SGI)
+- `gcc`: GNU C Compiler
+- `mwcc`: MetroWerks CodeWarrior toolchain (`mwccecpp.exe`)
+
+Supported languages are `c` and `c++`.
 
 ### Multiple functions
 
