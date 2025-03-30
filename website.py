@@ -59,6 +59,7 @@ if "source" in form:
         if value in (
             "ppc-mwcc-c++",
             "arm-gcc-c",
+            "arm-mwcc-c++",
             "mips-ido-c",
             "mips-gcc-c",
             "mipsel-gcc-c",
@@ -244,6 +245,7 @@ label {
     <option value="mipsee-gcc-c">MIPSEE, GCC</option>
     <option value="ppc-mwcc-c++">PPC, MWCC</option>
     <option value="arm-gcc-c">ARM, agbcc</option>
+    <option value="arm-mwcc-c++">ARM, MWCC</option>
     </select>
     </label>
     <label>Comment style:
