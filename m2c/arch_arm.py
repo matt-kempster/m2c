@@ -14,7 +14,7 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Target
-from .asm_file import Label
+from .asm_file import AsmSymbolicData, Label
 from .asm_instruction import (
     ARM_BARREL_SHIFTER_OPS,
     Argument,
@@ -267,6 +267,52 @@ class AddPcPcPattern(AsmPattern):
         cc_str = cc.value if cc is not None else ""
         jump_ins = AsmInstruction("tablejmp.fictive" + cc_str, new_args)
         return Replacement([jump_ins], 1)
+
+
+class ShortJumpTablePattern(AsmPattern):
+    """Detect switch jumps emitted by MWCC for Thumb."""
+
+    # TODO: check that these are correct wrt flag setting
+    pattern1 = make_pattern(
+        "adds $x, $x, $x",
+        "add $x, $x, $pc",
+        "ldrh $x, [$x, 6]",
+        "mov $x, $x, lsl 0x10",
+        "mov $x, $x, asr 0x10",
+        "add $pc, $x",
+        ".label:",
+    )
+    pattern2 = make_pattern(
+        "add $x, $x, $x",
+        "add $x, $x, $pc",
+        "ldrh $x, [$x, 6]",
+        "mov $x, $x, lsl 0x10",
+        "mov $x, $x, asr 0x10",
+        "add $pc, $pc, $x",
+        ".label:",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        m = matcher.try_match(self.pattern1) or matcher.try_match(self.pattern2)
+        if not m:
+            return None
+        label = m.labels[".label"].names[0]
+        ent = matcher.asm_data.values.get(label)
+        if ent is None:
+            return None
+        new_args: List[Argument] = [m.regs["x"]]
+        for data in ent.data:
+            if (
+                not isinstance(data, AsmSymbolicData)
+                or not isinstance(data.data, BinOp)
+                or data.data.rhs != AsmLiteral(2)
+                or not isinstance(data.data.lhs, BinOp)
+                or data.data.lhs.rhs != AsmGlobalSymbol(label)
+            ):
+                break
+            new_args.append(data.data.lhs.lhs)
+        jump_ins = AsmInstruction("tablejmp.fictive", new_args)
+        return Replacement([jump_ins], len(self.pattern1) - 1)
 
 
 class ConditionalInstrPattern(AsmPattern):
@@ -1015,6 +1061,7 @@ class ArmArch(Arch):
 
     asm_patterns = [
         AddPcPcPattern(),
+        ShortJumpTablePattern(),
         ConditionalInstrPattern(),
         NegatedRegAddrModePattern(),
         ShiftedRegAddrModePattern(),

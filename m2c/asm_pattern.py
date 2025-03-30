@@ -4,8 +4,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
-from .asm_file import Label
+from .asm_file import AsmData, Label
 from .asm_instruction import (
+    ARM_BARREL_SHIFTER_OPS,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -60,6 +61,7 @@ class AsmMatch:
     wildcard_items: List[BodyPart]
     regs: Dict[str, Register]
     literals: Dict[str, int]
+    labels: Dict[str, Label]
 
 
 class AsmPattern(abc.ABC):
@@ -165,6 +167,13 @@ class TryMatchState:
                 and a.writeback == e.writeback
             )
         if isinstance(e, BinOp):
+            if e.op in ARM_BARREL_SHIFTER_OPS:
+                return (
+                    isinstance(a, BinOp)
+                    and a.op == e.op
+                    and self.match_arg(a.lhs, e.lhs)
+                    and self.match_arg(a.rhs, e.rhs)
+                )
             return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
         if isinstance(e, Macro):
             return (
@@ -211,6 +220,7 @@ class TryMatchState:
 @dataclass
 class AsmMatcher:
     arch: ArchAsm
+    asm_data: AsmData
     input: List[BodyPart]
     labels: Set[str]
     output: List[BodyPart] = field(default_factory=list)
@@ -233,6 +243,7 @@ class AsmMatcher:
             state.wildcard_items,
             state.symbolic_registers,
             state.symbolic_literals,
+            state.symbolic_labels_def,
         )
 
     def derived_meta(self) -> InstructionMeta:
@@ -275,6 +286,7 @@ class AsmMatcher:
 def simplify_patterns(
     body: List[BodyPart],
     patterns: List[AsmPattern],
+    asm_data: AsmData,
     arch: ArchAsm,
 ) -> List[BodyPart]:
     """Detect and simplify asm standard patterns emitted by known compilers. This is
@@ -282,7 +294,7 @@ def simplify_patterns(
     in the translate phase."""
     labels = {name for item in body if isinstance(item, Label) for name in item.names}
     for pattern in patterns:
-        matcher = AsmMatcher(arch, body, labels)
+        matcher = AsmMatcher(arch, asm_data, body, labels)
         while matcher.index < len(matcher.input):
             m = pattern.match(matcher)
             if m:

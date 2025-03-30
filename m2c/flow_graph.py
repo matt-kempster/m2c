@@ -391,8 +391,10 @@ def minimize_labels(function: Function, asm_data: AsmData) -> Function:
     return new_function
 
 
-def simplify_standard_patterns(function: Function, arch: ArchFlowGraph) -> Function:
-    new_body = simplify_patterns(function.body, arch.asm_patterns, arch)
+def simplify_standard_patterns(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+) -> Function:
+    new_body = simplify_patterns(function.body, arch.asm_patterns, asm_data, arch)
     new_function = function.bodyless_copy()
     new_function.body.extend(new_body)
     return new_function
@@ -408,7 +410,7 @@ def build_blocks(
         function = normalize_ido_likely_branches(function, arch)
 
     function = minimize_labels(function, asm_data)
-    function = simplify_standard_patterns(function, arch)
+    function = simplify_standard_patterns(function, asm_data, arch)
     function = minimize_labels(function, asm_data)
 
     block_builder = BlockBuilder()
