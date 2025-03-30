@@ -180,7 +180,19 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
         return mnemonic, None, "", ""
     if mnemonic.endswith("s"):
         base = mnemonic[:-1]
-        if base in ("mul", "lsl", "umull", "umlal", "smull", "smlal", "mov", "bic"):
+        if base in (
+            "mul",
+            "lsl",
+            "umull",
+            "umlal",
+            "smull",
+            "smlal",
+            "mov",
+            "bic",
+            "adc",
+            "sbc",
+            "rsc",
+        ):
             return base, None, "s", ""
 
     def strip_cc(mnemonic: str) -> Tuple[str, Optional[Cc]]:
