@@ -4238,6 +4238,8 @@ class GlobalInfo:
                 data_entry = sym.asm_data_entry
 
                 if data_entry is not None and data_entry.is_text:
+                    if not sym.type.is_function():
+                        continue
                     data_entry = None
 
                 # Is the label defined in this unit (in the active AsmData file(s))
