@@ -740,12 +740,20 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 "arm_func_start",
                 "thumb_func_start",
                 "non_word_aligned_thumb_func_start",
+                "ARM_FUNC_START",
+                "THUMB_FUNC_START",
+                "NON_WORD_ALIGNED_THUMB_FUNC_START",
             ):
                 parts = line.split()
                 if len(parts) >= 2:
                     process_label(parts[1], kind=LabelKind.GLOBAL)
 
-            elif directive in ("arm_func_end", "thumb_func_end"):
+            elif directive in (
+                "arm_func_end",
+                "thumb_func_end",
+                "ARM_FUNC_END",
+                "THUMB_FUNC_END",
+            ):
                 pass
 
             elif curr_section == ".text":
