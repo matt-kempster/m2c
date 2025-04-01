@@ -3525,6 +3525,7 @@ class NodeState:
                 len(uses) == 1
                 and isinstance(source, InstrRef)
                 and source.instruction.function_target is None
+                and call_instr.instruction.function_target != reg
             ):
                 return True
         return False
@@ -3544,18 +3545,32 @@ class NodeState:
             # registers can be used arguments & return values.
             # The ABI can also mix & match the rN & fN registers, which makes the
             # "require" heuristic less powerful.
+            # The heuristic is as follows:
             #
-            # - `meta.inherited` will only be False for registers set in *this* basic block
-            # - `meta.function_return` will only be accurate for registers set within this
-            #   basic block because we have not called `propagate_register_meta` yet.
-            #   Within this block, it will be True for registers that were return values.
+            # - function returns are never treated as likely arguments
+            # - other values set in the same basic block *are* treated as likely
+            #   arguments
+            # - other values set in a different basic block are not treated as
+            #   likely arguments if they are also read by another instruction
             #
             # We don't do this stricter filtering for variadic functions, though, since
             # those don't provide "fix the context" as a way out if we get it wrong.
+            #
+            # For ARM we have the same filter, except with the second clause removed.
+            # This is because Thumb has high register pressure, so there are even
+            # more false positives.
+            #
+            # Implementation note: the `meta.function_return` bit is only accurate for
+            # registers set within this basic block, because `propagate_register_meta`
+            # has not yet been called. However, it's only in that case we read it.
             if (
-                arch.arch == Target.ArchEnum.PPC
+                arch.arch in (Target.ArchEnum.PPC, Target.ArchEnum.ARM)
                 and not fn_sig.is_variadic
-                and (data.meta.inherited or data.meta.function_return)
+                and (
+                    data.meta.inherited
+                    or data.meta.function_return
+                    or arch.arch == Target.ArchEnum.ARM
+                )
                 and not self._reg_probably_meant_as_function_argument(reg, call_instr)
             ):
                 likely_regs[reg] = False
