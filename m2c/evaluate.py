@@ -316,6 +316,22 @@ def handle_addi(args: InstrArgs) -> Expression:
     return handle_addi_real(output_reg, source_reg, source, imm, args)
 
 
+def handle_sub_arm(args: InstrArgs) -> Expression:
+    stack_info = args.stack_info
+    output_reg = args.reg_ref(0)
+    source_reg = args.reg_ref(1)
+    lhs = args.reg(1)
+    rhs = args.reg_or_imm(2)
+    if (
+        isinstance(rhs, Literal)
+        and stack_info.is_stack_reg(source_reg)
+        and stack_info.is_stack_reg(output_reg)
+    ):
+        # Changing sp. Just ignore that.
+        return lhs
+    return handle_sub(lhs, rhs)
+
+
 def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
     if isinstance(lhs, Literal) and isinstance(rhs, Literal):
         return s32_literal(lhs.value - rhs.value)

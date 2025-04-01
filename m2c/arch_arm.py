@@ -80,6 +80,7 @@ from .evaluate import (
     handle_sll,
     handle_sra,
     handle_sub,
+    handle_sub_arm,
     make_store,
     replace_bitand,
     void_fn_op,
@@ -1198,7 +1199,7 @@ class ArmArch(Arch):
     }
 
     instrs_sub: InstrMap = {
-        "sub": lambda a: handle_sub(a.reg(1), a.reg_or_imm(2)),
+        "sub": lambda a: handle_sub_arm(a),
         "rsb": lambda a: handle_sub(a.reg_or_imm(2), a.reg(1)),
         "sbc": lambda a: BinaryOp.int(
             handle_sub(a.reg(1), a.reg_or_imm(2)),
