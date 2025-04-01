@@ -650,7 +650,7 @@ class ArmArch(Arch):
     home_space_size = 0
 
     stack_pointer_reg = Register("sp")
-    frame_pointer_reg = Register("r11")
+    frame_pointer_regs = [Register("r7"), Register("r11")]  # for Thumb/ARM respectively
     return_address_reg = Register("lr")
 
     base_return_regs = [(Register("r0"), False)]

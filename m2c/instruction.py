@@ -164,7 +164,7 @@ class ArchAsm(ArchAsmParsing):
     re_comment: str
 
     stack_pointer_reg: Register
-    frame_pointer_reg: Optional[Register]
+    frame_pointer_regs: List[Register]
     return_address_reg: Register
 
     all_return_regs: List[Register]

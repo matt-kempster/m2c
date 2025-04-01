@@ -346,7 +346,7 @@ class PpcArch(Arch):
     home_space_size = 8
 
     stack_pointer_reg = Register("r1")
-    frame_pointer_reg = Register("r30")
+    frame_pointer_regs = [Register("r30")]
     return_address_reg = Register("lr")
 
     base_return_regs = [(Register("r3"), False), (Register("f1"), True)]

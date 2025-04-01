@@ -278,7 +278,7 @@ class StackInfo:
     allocated_stack_size: int = 0
     is_leaf: bool = True
     is_variadic: bool = False
-    uses_framepointer: bool = False
+    frame_pointer_reg: Optional[Register] = None
     subroutine_arg_top: int = 0
     callee_save_regs: Set[Register] = field(default_factory=set)
     callee_save_reg_region: Tuple[int, int] = (0, 0)
@@ -521,8 +521,8 @@ class StackInfo:
     def is_stack_reg(self, reg: Register) -> bool:
         if reg == self.global_info.arch.stack_pointer_reg:
             return True
-        if reg == self.global_info.arch.frame_pointer_reg:
-            return self.uses_framepointer
+        if reg == self.frame_pointer_reg:
+            return True
         return False
 
     def get_struct_type_map(self) -> Dict[Expression, Dict[int, Type]]:
@@ -615,13 +615,14 @@ def get_stack_info(
         ):
             info.allocated_stack_size += inst.args[2].value
         elif (
-            arch_mnemonic in ("mips:move", "ppc:mr")
-            and inst.args[0] == arch.frame_pointer_reg
+            arch_mnemonic in ("mips:move", "arm:mov", "ppc:mr")
+            and isinstance(inst.args[0], Register)
+            and inst.args[0] in arch.frame_pointer_regs
             and inst.args[1] == arch.stack_pointer_reg
         ):
             # "move fp, sp" very likely means the code is compiled with frame
             # pointers enabled; thus fp should be treated the same as sp.
-            info.uses_framepointer = True
+            info.frame_pointer_reg = inst.args[0]
         elif (
             arch_mnemonic
             in [

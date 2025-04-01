@@ -736,7 +736,7 @@ class MipsArch(Arch):
     home_space_size = 0x10
 
     stack_pointer_reg = Register("sp")
-    frame_pointer_reg = Register("fp")
+    frame_pointer_regs = [Register("fp")]
     return_address_reg = Register("ra")
 
     base_return_regs = [(Register("v0"), False), (Register("f0"), True)]
