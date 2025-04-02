@@ -222,8 +222,15 @@ def handle_lw(args: InstrArgs) -> Expression:
 
 
 def handle_or(left: Expression, right: Expression) -> Expression:
+    # `or $rD, $rS, $rS` can be used to move $rS into $rD
     if left == right:
-        # `or $rD, $rS, $rS` can be used to move $rS into $rD
+        return left
+
+    # So can ors with zero (in particular this occurs with unoptimized agbcc
+    # output, where stores sometimes look like "a = (a & 0) | b").
+    if isinstance(left, Literal) and left.value == 0:
+        return right
+    if isinstance(right, Literal) and right.value == 0:
         return left
 
     if isinstance(left, Literal) and isinstance(right, Literal):
@@ -894,8 +901,11 @@ def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
 
 
 def replace_bitand(expr: BinaryOp) -> Expression:
-    """Detect expressions using `&` for truncating integer casts"""
+    """Simplify expressions using `&`."""
     if not expr.is_floating() and expr.op == "&":
+        if expr.right == Literal(0):
+            # agbcc emits stores that look like "a = (a & 0) | b"; get rid of the load
+            return Literal(0)
         if expr.right == Literal(0xFF):
             return as_type(expr.left, Type.u8(), silent=False)
         if expr.right == Literal(0xFFFF):
