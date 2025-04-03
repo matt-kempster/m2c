@@ -82,7 +82,7 @@ from .evaluate import (
     handle_or,
     handle_rlwimi,
     handle_rlwinm,
-    handle_sra,
+    handle_shift_right,
     load_upper,
     make_store,
     make_storex,
@@ -1261,7 +1261,7 @@ class PpcArch(Arch):
                 type=Type.s32(),
             )
         ),
-        "srawi": lambda a: handle_sra(a),
+        "srawi": lambda a: handle_shift_right(a, signed=True),
         "extsb": lambda a: as_type(a.reg(1), Type.s8(), silent=False),
         "extsh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
         "cntlzw": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),

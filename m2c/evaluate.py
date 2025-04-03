@@ -50,6 +50,7 @@ from .translate import (
     as_intptr,
     as_sintish,
     as_type,
+    as_uintish,
     early_unwrap,
     early_unwrap_ints,
     var_for_expr,
@@ -613,14 +614,19 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
     return StoreStmt(source=expr, dest=dest)
 
 
-def handle_sra(args: InstrArgs, *, arm: bool = False) -> Expression:
+def handle_shift_right(
+    args: InstrArgs, *, signed: bool, arm: bool = False
+) -> Expression:
     lhs = args.reg(1)
     shift = args.reg_or_imm(2) if arm else args.imm(2)
     if isinstance(shift, Literal) and shift.value in [16, 24]:
         expr = early_unwrap(lhs)
         pow2 = 1 << shift.value
         if isinstance(expr, BinaryOp) and isinstance(expr.right, Literal):
-            tp = Type.s16() if shift.value == 16 else Type.s8()
+            if signed:
+                tp = Type.s16() if shift.value == 16 else Type.s8()
+            else:
+                tp = Type.u16() if shift.value == 16 else Type.u8()
             rhs = expr.right.value
             if expr.op == "<<" and rhs == shift.value:
                 return as_type(expr.left, tp, silent=False)
@@ -632,9 +638,12 @@ def handle_sra(args: InstrArgs, *, arm: bool = False) -> Expression:
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
-    return fold_divmod(
-        BinaryOp(as_sintish(lhs), ">>", as_intish(shift), type=Type.s32())
-    )
+    if signed:
+        return fold_divmod(
+            BinaryOp(as_sintish(lhs), ">>", as_intish(shift), type=Type.s32())
+        )
+    else:
+        return BinaryOp(as_uintish(lhs), ">>", as_intish(shift), type=Type.u32())
 
 
 def handle_sll(args: InstrArgs, *, arm: bool = False) -> Expression:

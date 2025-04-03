@@ -87,9 +87,9 @@ from .evaluate import (
     handle_lwl,
     handle_lwr,
     handle_or,
+    handle_shift_right,
     handle_sltiu,
     handle_sltu,
-    handle_sra,
     handle_swl,
     handle_swr,
     imm_add_32,
@@ -1599,7 +1599,7 @@ class MipsArch(Arch):
                 type=Type.u32(),
             )
         ),
-        "sra": lambda a: handle_sra(a),
+        "sra": lambda a: handle_shift_right(a, signed=True),
         "srav": lambda a: fold_divmod(
             BinaryOp(
                 left=as_sintish(a.reg(1)),
