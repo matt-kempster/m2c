@@ -38,6 +38,7 @@ from .translate import (
     Load3Bytes,
     LocalVar,
     Lwl,
+    NodeState,
     RawSymbolRef,
     RegInfo,
     StackInfo,
@@ -1326,6 +1327,47 @@ def handle_loadx(args: InstrArgs, type: Type) -> Expression:
     ptr = BinaryOp.intptr(left=args.reg(1), op="+", right=args.reg(2))
     expr = deref(ptr, args.regs, args.stack_info, size=size)
     return as_type(expr, type, silent=True)
+
+
+def eval_arm_cmp(s: NodeState, lhs: Expression, rhs: Expression) -> None:
+    s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
+    sub = BinaryOp.intptr(lhs, "-", rhs)
+    sval = Cast(sub, reinterpret=True, silent=True, type=Type.s32())
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
+    s.set_reg(Register("v"), v)
+    ulhs = Cast(lhs, reinterpret=True, silent=True, type=Type.u32())
+    slhs = Cast(lhs, reinterpret=True, silent=True, type=Type.s32())
+    urhs = Cast(rhs, reinterpret=True, silent=True, type=Type.u32())
+    srhs = Cast(rhs, reinterpret=True, silent=True, type=Type.s32())
+    s.set_reg(Register("c"), BinaryOp.scmp(ulhs, ">=", urhs))
+    s.set_reg(Register("hi"), BinaryOp.scmp(ulhs, ">", urhs))
+    s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
+    s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
+
+
+def set_arm_flags_from_add(s: NodeState, val: Expression) -> None:
+    s.set_reg(
+        Register("z"),
+        BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
+    )
+    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+    s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
+    c = fn_op("M2C_CARRY", [val], Type.bool())
+    s.set_reg(Register("c"), c)
+    v = fn_op("M2C_OVERFLOW", [val], Type.bool())
+    s.set_reg(Register("v"), v)
+    # Remaining flag bits are based on the full mathematical result
+    # of unsigned/signed additions. We don't have a good way to
+    # write that; let's cheat and treat a cast of the result to
+    # s64/u64 as the entire subtraction having been performed as
+    # signed/unsigned 64-bit, and hope it gets the picture across.
+    u64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
+    p32 = Literal(2**32)
+    s.set_reg(Register("hi"), BinaryOp.ucmp(u64val, ">", p32))
+    s64val = Cast(val, reinterpret=True, silent=False, type=Type.s64())
+    s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
+    s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
 
 
 def carry_add_to(expr: Expression) -> BinaryOp:

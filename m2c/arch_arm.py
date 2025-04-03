@@ -67,6 +67,7 @@ from .translate import (
 from .evaluate import (
     condition_from_expr,
     error_stmt,
+    eval_arm_cmp,
     fn_op,
     fold_divmod,
     fold_mul_chains,
@@ -83,6 +84,7 @@ from .evaluate import (
     handle_sub_arm,
     make_store,
     replace_bitand,
+    set_arm_flags_from_add,
     void_fn_op,
 )
 from .types import FunctionSignature, Type
@@ -998,27 +1000,7 @@ class ArmArch(Arch):
                 val = cls.instrs_add[base](a)
                 val = s.set_reg(a.reg_ref(0), val)
                 if set_flags:
-                    s.set_reg(
-                        Register("z"),
-                        BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
-                    )
-                    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
-                    s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
-                    c = fn_op("M2C_CARRY", [val], Type.bool())
-                    s.set_reg(Register("c"), c)
-                    v = fn_op("M2C_OVERFLOW", [val], Type.bool())
-                    s.set_reg(Register("v"), v)
-                    # Remaining flag bits are based on the full mathematical result
-                    # of unsigned/signed additions. We don't have a good way to
-                    # write that; let's cheat and treat a cast of the result to
-                    # s64/u64 as the entire subtraction having been performed as
-                    # signed/unsigned 64-bit, and hope it gets the picture across.
-                    u64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
-                    p32 = Literal(2**32)
-                    s.set_reg(Register("hi"), BinaryOp.ucmp(u64val, ">", p32))
-                    s64val = Cast(val, reinterpret=True, silent=False, type=Type.s64())
-                    s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
-                    s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
+                    set_arm_flags_from_add(s, val)
 
         elif base in cls.instrs_sub:
             assert len(args) == 3 and isinstance(args[0], Register)
@@ -1067,24 +1049,21 @@ class ArmArch(Arch):
             outputs = list(cls.flag_regs)
             inputs = get_inputs(0)
             is_pure = True
+            eval_fn = lambda s, a: eval_arm_cmp(s, a.reg(0), a.reg_or_imm(1))
+
+        elif base == "cmn":
+            assert len(args) == 2 and isinstance(args[0], Register)
+            outputs = list(cls.flag_regs)
+            inputs = get_inputs(0)
+            is_pure = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 lhs = a.reg(0)
                 rhs = a.reg_or_imm(1)
-                s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
-                sub = BinaryOp.intptr(lhs, "-", rhs)
-                sval = Cast(sub, reinterpret=True, silent=True, type=Type.s32())
-                s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
-                v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
-                s.set_reg(Register("v"), v)
-                ulhs = Cast(lhs, reinterpret=True, silent=True, type=Type.u32())
-                slhs = Cast(lhs, reinterpret=True, silent=True, type=Type.s32())
-                urhs = Cast(rhs, reinterpret=True, silent=True, type=Type.u32())
-                srhs = Cast(rhs, reinterpret=True, silent=True, type=Type.s32())
-                s.set_reg(Register("c"), BinaryOp.scmp(ulhs, ">=", urhs))
-                s.set_reg(Register("hi"), BinaryOp.scmp(ulhs, ">", urhs))
-                s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
-                s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
+                if isinstance(rhs, Literal) and (rhs.value & 0xFFFFFFFF) != 0x80000000:
+                    eval_arm_cmp(s, lhs, Literal(-rhs.value))
+                else:
+                    set_arm_flags_from_add(s, handle_add_arm(a))
 
         elif base in cls.instrs_ignore:
             is_pure = True
