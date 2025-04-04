@@ -933,6 +933,16 @@ class ArmArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
 
+        elif base == "mov" and args[0] == Register("pc"):
+            assert len(args) == 2 and isinstance(args[1], Register)
+            inputs.append(args[1])
+            if args[1] == Register("lr"):
+                is_return = True
+            else:
+                jump_target = args[1]
+                is_conditional = True
+                eval_fn = lambda s, a: s.set_switch_expr(a.reg(1))
+
         elif base in cls.instrs_store:
             assert isinstance(args[0], Register)
             inputs = [args[0]]
