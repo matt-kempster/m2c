@@ -176,7 +176,9 @@ class ArchAsmParsing(abc.ABC):
     supports_dollar_regs: bool
 
     @abc.abstractmethod
-    def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction: ...
+    def normalize_instruction(
+        self, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction: ...
 
 
 class NaiveParsingArch(ArchAsmParsing):
@@ -187,7 +189,9 @@ class NaiveParsingArch(ArchAsmParsing):
     aliased_regs: Dict[str, Register] = {}
     supports_dollar_regs = True
 
-    def normalize_instruction(self, instr: AsmInstruction) -> AsmInstruction:
+    def normalize_instruction(
+        self, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
         return instr
 
 
@@ -222,6 +226,8 @@ class AsmState:
     # None means "explicitly undefined"
     defines: Dict[str, Optional[int]] = field(default_factory=dict)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
+    is_thumb: bool = False
+    is_unified: bool = False
 
 
 valid_word = string.ascii_letters + string.digits + "_$."
@@ -628,7 +634,7 @@ def parse_asm_instruction(
     # Parse arguments.
     args = parse_args(args_str, arch, asm_state)
     instr = AsmInstruction(mnemonic.lower(), args)
-    return arch.normalize_instruction(instr)
+    return arch.normalize_instruction(instr, asm_state)
 
 
 def traverse_arg(arg: Argument) -> Iterator[Argument]:

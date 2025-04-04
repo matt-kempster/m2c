@@ -19,6 +19,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
     Macro,
@@ -526,13 +527,16 @@ class PpcArch(Arch):
     }
 
     @classmethod
-    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+    def normalize_instruction(
+        cls, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
         # Remove +/- suffix, which indicates branch-(un)likely and can be ignored
         if instr.mnemonic.startswith("b") and (
             instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
         ):
             return PpcArch.normalize_instruction(
-                AsmInstruction(instr.mnemonic[:-1], instr.args)
+                AsmInstruction(instr.mnemonic[:-1], instr.args),
+                asm_state,
             )
 
         args = instr.args
@@ -569,7 +573,8 @@ class PpcArch(Arch):
                 new_args = args[:]
                 new_args[r0_index] = r0_arg
                 return PpcArch.normalize_instruction(
-                    AsmInstruction(instr.mnemonic, new_args)
+                    AsmInstruction(instr.mnemonic, new_args),
+                    asm_state,
                 )
         if len(args) == 4:
             if base_mnemonic == "extlwi":
@@ -598,7 +603,9 @@ class PpcArch(Arch):
             ):
                 mn = "add" + base_mnemonic[3:]
                 negated = AsmLiteral(-args[2].value)
-                return cls.normalize_instruction(make_dotted(mn, args[:2] + [negated]))
+                return cls.normalize_instruction(
+                    make_dotted(mn, args[:2] + [negated]), asm_state
+                )
             if base_mnemonic in ("sub", "subo", "subc", "subco"):
                 mn = "subf" + base_mnemonic[3:]
                 return make_dotted(mn, [args[0], args[2], args[1]])

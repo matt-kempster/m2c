@@ -22,6 +22,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
     Register,
@@ -91,22 +92,54 @@ from .types import FunctionSignature, Type
 
 
 LENGTH_THREE: Set[str] = {
-    "add",
     "adc",
-    "sub",
-    "sbc",
+    "add",
+    "and",
+    "asr",
+    "bic",
+    "eor",
+    "lsl",
+    "lsr",
+    "mul",
+    "orn",
+    "orr",
+    "ror",
     "rsb",
     "rsc",
-    "mul",
-    "eor",
-    "orr",
-    "orn",
+    "sbc",
+    "sub",
+}
+
+
+THUMB1_FLAG_SETTING: Set[str] = {
+    "adc",
+    "add",
     "and",
-    "bic",
-    "lsl",
     "asr",
+    "bic",
+    "eor",
+    "lsl",
     "lsr",
+    "mov",
+    "mul",
+    "mvn",
+    "neg",
+    "orr",
     "ror",
+    "sbc",
+    "sub",
+}
+
+
+HI_REGS: Set[Register] = {
+    Register("r8"),
+    Register("r9"),
+    Register("r10"),
+    Register("r11"),
+    Register("r12"),
+    Register("sp"),
+    Register("lr"),
+    Register("pc"),
 }
 
 
@@ -708,7 +741,24 @@ class ArmArch(Arch):
         ]
 
     @classmethod
-    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+    def normalize_instruction(
+        cls, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
+        if asm_state.is_thumb and not asm_state.is_unified:
+            if len(instr.mnemonic) > 3 and instr.mnemonic.endswith("s"):
+                # Give a best-effort warning for missing ".syntax unified" directives.
+                # This isn't fool-proof, but unfortunately we need to default to
+                # pre-UAL to match GNU as, and there are cases where semantics have
+                # changed.
+                raise DecompFailure("Missing '.syntax unified' marker")
+            if instr.mnemonic in THUMB1_FLAG_SETTING and all(
+                arg not in HI_REGS for arg in instr.args
+            ):
+                instr = replace(instr, mnemonic=instr.mnemonic + "s")
+        return cls.normalize_instruction_real(instr)
+
+    @classmethod
+    def normalize_instruction_real(cls, instr: AsmInstruction) -> AsmInstruction:
         if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
             instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
@@ -716,7 +766,7 @@ class ArmArch(Arch):
         suffix = cc_str + set_flags + direction
         args = instr.args
         if cc == Cc.AL:
-            return cls.normalize_instruction(
+            return cls.normalize_instruction_real(
                 AsmInstruction(base + set_flags + direction, args)
             )
         if len(args) == 3:
@@ -757,7 +807,7 @@ class ArmArch(Arch):
                 )
             sp_excl = AsmAddressMode(Register("sp"), AsmLiteral(0), Writeback.PRE)
             if base in ("stm", "ldm") and not direction:
-                return cls.normalize_instruction(
+                return cls.normalize_instruction_real(
                     AsmInstruction(instr.mnemonic + "ia", args)
                 )
             if base == "stm" and direction == "db" and args[0] == sp_excl:
@@ -765,7 +815,7 @@ class ArmArch(Arch):
             if base == "ldm" and direction == "ia" and args[0] == sp_excl:
                 return AsmInstruction("pop" + cc_str, [args[1]])
             if base in LENGTH_THREE:
-                return cls.normalize_instruction(
+                return cls.normalize_instruction_real(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
                 )
         if instr.mnemonic.startswith("it"):

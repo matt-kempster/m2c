@@ -19,6 +19,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     JumpTarget,
     Register,
     get_jump_target,
@@ -872,7 +873,9 @@ class MipsArch(Arch):
         ]
 
     @classmethod
-    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+    def normalize_instruction(
+        cls, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
         args = instr.args
         if len(args) == 3:
             if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
@@ -924,14 +927,16 @@ class MipsArch(Arch):
                 return AsmInstruction(instr.mnemonic, [Register("zero"), *args])
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
-                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                    AsmInstruction(instr.mnemonic, [args[0]] + args),
+                    asm_state,
                 )
         if len(args) == 1:
             if instr.mnemonic == "jalr":
                 return AsmInstruction("jalr", [Register("ra"), args[0]])
             if instr.mnemonic in LENGTH_TWO:
                 return cls.normalize_instruction(
-                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                    AsmInstruction(instr.mnemonic, [args[0]] + args),
+                    asm_state,
                 )
         return instr
 

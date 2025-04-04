@@ -675,6 +675,20 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         asm_state.defines[args[0]] = parse_int(args[1])
                     else:
                         asm_state.defines[args[0]] = 1
+                elif directive == ".syntax":
+                    if args_str.strip() == "unified":
+                        asm_state.is_unified = True
+                    elif args_str.strip() == "divided":
+                        asm_state.is_unified = False
+                elif directive in (".thumb", ".thumb_func"):
+                    asm_state.is_thumb = True
+                elif directive == ".arm":
+                    asm_state.is_thumb = False
+                elif directive == ".code":
+                    if args_str.strip() == "16":
+                        asm_state.is_thumb = True
+                    elif args_str.strip() == "32":
+                        asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
@@ -749,6 +763,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 "THUMB_FUNC_START",
                 "NON_WORD_ALIGNED_THUMB_FUNC_START",
             ):
+                if "thumb" in directive.lower():
+                    asm_state.is_thumb = True
+                elif "arm" in directive.lower():
+                    asm_state.is_thumb = False
                 parts = line.split()
                 if len(parts) >= 2:
                     process_label(parts[1], kind=LabelKind.GLOBAL)
