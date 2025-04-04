@@ -1256,10 +1256,12 @@ class ArmArch(Arch):
         candidate_slots: List[AbiArgSlot] = []
         if fn_sig.params_known:
             offset = 0
-            if fn_sig.return_type.is_struct():
+            if (
+                fn_sig.return_type.is_struct()
+                and fn_sig.return_type.get_parameter_size_align_bytes()[0] > 4
+            ):
                 # The ABI for struct returns is to pass a pointer to where it should be written
                 # as the first argument.
-                # TODO is this right?
                 known_slots.append(
                     AbiArgSlot(
                         offset=0,
