@@ -76,6 +76,7 @@ from .evaluate import (
     handle_add_arm,
     handle_add_real,
     handle_addi,
+    handle_arm_mov,
     handle_bitinv,
     handle_load,
     handle_or,
@@ -795,11 +796,11 @@ class ArmArch(Arch):
                 return AsmInstruction(
                     "mov" + suffix, [args[0], BinOp(base, args[1], AsmLiteral(1))]
                 )
-            sp_excl = AsmAddressMode(Register("sp"), AsmLiteral(0), Writeback.PRE)
             if base in ("stm", "ldm") and not direction:
                 return cls.normalize_instruction_real(
                     AsmInstruction(instr.mnemonic + "ia", args)
                 )
+            sp_excl = AsmAddressMode(Register("sp"), AsmLiteral(0), Writeback.PRE)
             if base == "stm" and direction == "db" and args[0] == sp_excl:
                 return AsmInstruction("push" + cc_str, [args[1]])
             if base == "ldm" and direction == "ia" and args[0] == sp_excl:
@@ -1186,7 +1187,7 @@ class ArmArch(Arch):
     }
 
     instrs_nz_flags: InstrMap = {
-        "mov": lambda a: a.reg_or_imm(1),
+        "mov": lambda a: handle_arm_mov(a),
         "mul": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "mla": lambda a: BinaryOp.int(
             BinaryOp.int(a.reg(1), "*", a.reg(2)), "+", a.reg(3)

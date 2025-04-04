@@ -1329,6 +1329,19 @@ def handle_loadx(args: InstrArgs, type: Type) -> Expression:
     return as_type(expr, type, silent=True)
 
 
+def handle_arm_mov(args: InstrArgs) -> Expression:
+    dest = args.reg_ref(0)
+    source = args.raw_arg(1)
+    value = args.reg_or_imm(1)
+    if (
+        isinstance(source, Register)
+        and args.stack_info.is_stack_reg(source)
+        and not args.stack_info.is_stack_reg(dest)
+    ):
+        return handle_addi_real(dest, source, value, Literal(0), args)
+    return value
+
+
 def eval_arm_cmp(s: NodeState, lhs: Expression, rhs: Expression) -> None:
     s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
     sub = BinaryOp.intptr(lhs, "-", rhs)
