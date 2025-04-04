@@ -23,9 +23,9 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
-    RegFormatter,
     Register,
     RegisterList,
 )
@@ -62,9 +62,9 @@ class IrPattern(abc.ABC):
 
     def compile(self, arch: ArchFlowGraph) -> CompiledIrPattern:
         missing_meta = InstructionMeta.missing()
-        regf = RegFormatter()
+        asm_state = AsmState()
         replacement_instr = parse_instruction(
-            self.replacement, missing_meta, arch, regf, {}
+            self.replacement, missing_meta, arch, asm_state
         )
 
         name = f"__pattern_{self.__class__.__name__}"
@@ -88,7 +88,7 @@ class IrPattern(abc.ABC):
                 )
             )
         for part in self.parts:
-            func.new_instruction(parse_instruction(part, missing_meta, arch, regf, {}))
+            func.new_instruction(parse_instruction(part, missing_meta, arch, asm_state))
 
         asm_data = AsmData()
         flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)

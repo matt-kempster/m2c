@@ -217,6 +217,13 @@ class RegFormatter:
         return self.used_names.get(reg, reg.register_name)
 
 
+@dataclass
+class AsmState:
+    # None means "explicitly undefined"
+    defines: Dict[str, Optional[int]] = field(default_factory=dict)
+    reg_formatter: RegFormatter = field(default_factory=RegFormatter)
+
+
 valid_word = string.ascii_letters + string.digits + "_$."
 valid_number = "-xX" + string.hexdigits
 
@@ -248,13 +255,15 @@ def parse_number(number_str: str) -> int:
     return ret
 
 
-def constant_fold(arg: Argument, defines: Dict[str, int]) -> Argument:
-    if isinstance(arg, AsmGlobalSymbol) and arg.symbol_name in defines:
-        return AsmLiteral(defines[arg.symbol_name])
+def constant_fold(arg: Argument, asm_state: AsmState) -> Argument:
+    if isinstance(arg, AsmGlobalSymbol):
+        value = asm_state.defines.get(arg.symbol_name)
+        if value is not None:
+            return AsmLiteral(value)
     if not isinstance(arg, BinOp):
         return arg
-    lhs = constant_fold(arg.lhs, defines)
-    rhs = constant_fold(arg.rhs, defines)
+    lhs = constant_fold(arg.lhs, asm_state)
+    rhs = constant_fold(arg.rhs, asm_state)
     if isinstance(lhs, AsmLiteral) and isinstance(rhs, AsmLiteral):
         if arg.op == "+":
             return AsmLiteral(lhs.value + rhs.value)
@@ -276,14 +285,14 @@ def constant_fold(arg: Argument, defines: Dict[str, int]) -> Argument:
 
 
 def replace_bare_reg(
-    arg: Argument, arch: ArchAsmParsing, reg_formatter: RegFormatter
+    arg: Argument, arch: ArchAsmParsing, asm_state: AsmState
 ) -> Argument:
     """If `arg` is an AsmGlobalSymbol whose name matches a known or aliased register,
     convert it into a Register and return it. Otherwise, return the original `arg`."""
     if isinstance(arg, AsmGlobalSymbol):
         reg_name = arg.symbol_name.lower()
         if Register(reg_name) in arch.all_regs or reg_name in arch.aliased_regs:
-            return reg_formatter.parse_and_store(reg_name, arch)
+            return asm_state.reg_formatter.parse_and_store(reg_name, arch)
     return arg
 
 
@@ -296,8 +305,7 @@ def get_jump_target(label: Argument) -> JumpTarget:
 def parse_arg_elems(
     arg_elems: List[str],
     arch: ArchAsmParsing,
-    reg_formatter: RegFormatter,
-    defines: Dict[str, int],
+    asm_state: AsmState,
     *,
     top_level: bool,
     do_constant_fold: bool = True,
@@ -332,7 +340,7 @@ def parse_arg_elems(
                 # If there is a second $ in the word, it's a symbol
                 value = AsmGlobalSymbol(word)
             else:
-                value = reg_formatter.parse_and_store(reg, arch)
+                value = asm_state.reg_formatter.parse_and_store(reg, arch)
         elif tok == "#":
             # ARM immediate.
             assert value is None
@@ -349,7 +357,7 @@ def parse_arg_elems(
                         break
                     consume_ws()
                 word = parse_word(arg_elems)
-                reg1 = reg_formatter.parse_and_store(word, arch)
+                reg1 = asm_state.reg_formatter.parse_and_store(word, arch)
                 consume_ws()
                 if arg_elems[0] != "-":
                     li.append(reg1)
@@ -357,9 +365,9 @@ def parse_arg_elems(
                 arg_elems.pop(0)
                 consume_ws()
                 word = parse_word(arg_elems)
-                reg2 = reg_formatter.parse_and_store(word, arch)
+                reg2 = asm_state.reg_formatter.parse_and_store(word, arch)
                 for i in range(reg1.arm_index(), reg2.arm_index() + 1):
-                    li.append(reg_formatter.parse(f"r{i}", arch))
+                    li.append(asm_state.reg_formatter.parse(f"r{i}", arch))
             consume_ws()
             if arg_elems and arg_elems[0] == "^":
                 expect("^")
@@ -386,8 +394,7 @@ def parse_arg_elems(
             m = parse_arg_elems(
                 arg_elems,
                 arch,
-                reg_formatter,
-                defines,
+                asm_state,
                 top_level=False,
                 do_replace_bare_reg=False,
             )
@@ -411,7 +418,7 @@ def parse_arg_elems(
             if word[0] in valid_number:
                 value = AsmLiteral(-parse_number(word))
             else:
-                val = replace_bare_reg(AsmGlobalSymbol(word), arch, reg_formatter)
+                val = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
                 value = BinOp("-", AsmLiteral(0), val)
         elif tok == "(":
             if value is not None and not top_level:
@@ -424,8 +431,7 @@ def parse_arg_elems(
             rhs = parse_arg_elems(
                 arg_elems,
                 arch,
-                reg_formatter,
-                defines,
+                asm_state,
                 top_level=False,
                 do_constant_fold=False,
             )
@@ -433,7 +439,7 @@ def parse_arg_elems(
             if isinstance(rhs, BinOp):
                 # Binary operation.
                 assert value is None
-                value = constant_fold(rhs, defines)
+                value = constant_fold(rhs, asm_state)
             else:
                 # Address mode.
                 if rhs == AsmLiteral(0):
@@ -441,25 +447,21 @@ def parse_arg_elems(
                 if isinstance(rhs, AsmGlobalSymbol):
                     # Global symbols may be parenthesized.
                     assert value is None
-                    value = constant_fold(rhs, defines)
+                    value = constant_fold(rhs, asm_state)
                 else:
                     assert top_level
                     assert isinstance(rhs, Register)
-                    value = constant_fold(value or AsmLiteral(0), defines)
+                    value = constant_fold(value or AsmLiteral(0), asm_state)
                     value = AsmAddressMode(rhs, value, None)
         elif tok == "[":
             # ARM address mode
             assert value is None
             expect("[")
-            val = parse_arg_elems(
-                arg_elems, arch, reg_formatter, defines, top_level=False
-            )
+            val = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
             assert isinstance(val, Register)
             addend: Optional[Argument] = None
             if expect(",]") == ",":
-                addend = parse_arg_elems(
-                    arg_elems, arch, reg_formatter, defines, top_level=False
-                )
+                addend = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
                 if expect(",]") == ",":
                     consume_ws()
                     op = parse_word(arg_elems).lower()
@@ -469,9 +471,9 @@ def parse_arg_elems(
                         shift = AsmLiteral(1)
                     else:
                         shift = parse_arg_elems(
-                            arg_elems, arch, reg_formatter, defines, top_level=False
+                            arg_elems, arch, asm_state, top_level=False
                         )
-                    addend = BinOp(op, addend, constant_fold(shift, defines))
+                    addend = BinOp(op, addend, constant_fold(shift, asm_state))
                     expect("]")
             consume_ws()
             writeback: Optional[Writeback] = None
@@ -481,9 +483,7 @@ def parse_arg_elems(
             elif arg_elems and arg_elems[0] == ",":
                 expect(",")
                 assert addend is None
-                addend = parse_arg_elems(
-                    arg_elems, arch, reg_formatter, defines, top_level=False
-                )
+                addend = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
                 writeback = Writeback.POST
             if addend is None:
                 addend = AsmLiteral(0)
@@ -493,7 +493,7 @@ def parse_arg_elems(
             # Let's abuse AsmAddressMode for this.
             expect("!")
             if value is not None:
-                value = replace_bare_reg(value, arch, reg_formatter)
+                value = replace_bare_reg(value, arch, asm_state)
             assert isinstance(value, Register)
             value = AsmAddressMode(value, AsmLiteral(0), Writeback.PRE)
         elif tok == '"':
@@ -516,9 +516,7 @@ def parse_arg_elems(
                     # ARM barrel shifter operation. This should be folded into
                     # the previous comma-separated operation; the caller will
                     # do that for us.
-                    shift = parse_arg_elems(
-                        arg_elems, arch, reg_formatter, defines, top_level=False
-                    )
+                    shift = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
                     value = BinOp(op, AsmLiteral(0), shift)
                     assert not arg_elems
                 elif op == "rrx":
@@ -553,8 +551,7 @@ def parse_arg_elems(
                 rhs = parse_arg_elems(
                     arg_elems,
                     arch,
-                    reg_formatter,
-                    defines,
+                    asm_state,
                     top_level=False,
                     do_replace_bare_reg=False,
                     precedence_cap=precedence,
@@ -584,22 +581,21 @@ def parse_arg_elems(
 
     assert value is not None
     if do_constant_fold:
-        value = constant_fold(value, defines)
+        value = constant_fold(value, asm_state)
     if do_replace_bare_reg:
-        value = replace_bare_reg(value, arch, reg_formatter)
+        value = replace_bare_reg(value, arch, asm_state)
     return value
 
 
 def parse_args(
     args: str,
     arch: ArchAsmParsing,
-    reg_formatter: RegFormatter,
-    defines: Dict[str, int],
+    asm_state: AsmState,
 ) -> List[Argument]:
     arg_elems: List[str] = list(args.strip())
     output: List[Argument] = []
     while arg_elems:
-        ret = parse_arg_elems(arg_elems, arch, reg_formatter, defines, top_level=True)
+        ret = parse_arg_elems(arg_elems, arch, asm_state, top_level=True)
         if isinstance(ret, BinOp) and ret.op in ARM_BARREL_SHIFTER_OPS:
             assert output
             output[-1] = BinOp(ret.op, output[-1], ret.rhs)
@@ -611,11 +607,10 @@ def parse_args(
     return output
 
 
-def parse_arg(arg: str, arch: ArchAsmParsing, defines: Dict[str, int]) -> Argument:
+def parse_arg(arg: str, arch: ArchAsmParsing, asm_state: AsmState) -> Argument:
     chars = list(arg)
-    defined_vars = {k: v for k, v in defines.items() if v is not None}
     value = parse_arg_elems(
-        chars, arch, RegFormatter(), defines, top_level=False, do_replace_bare_reg=False
+        chars, arch, asm_state, top_level=False, do_replace_bare_reg=False
     )
     if chars:
         raise Exception(f"Failed to parse value: {arg}")
@@ -625,14 +620,13 @@ def parse_arg(arg: str, arch: ArchAsmParsing, defines: Dict[str, int]) -> Argume
 def parse_asm_instruction(
     line: str,
     arch: ArchAsmParsing,
-    reg_formatter: RegFormatter,
-    defines: Dict[str, int],
+    asm_state: AsmState,
 ) -> AsmInstruction:
     # First token is instruction name, rest is args.
     line = line.strip()
     mnemonic, _, args_str = line.partition(" ")
     # Parse arguments.
-    args = parse_args(args_str, arch, reg_formatter, defines)
+    args = parse_args(args_str, arch, asm_state)
     instr = AsmInstruction(mnemonic.lower(), args)
     return arch.normalize_instruction(instr)
 

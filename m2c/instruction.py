@@ -11,9 +11,9 @@ from .asm_instruction import (
     Argument,
     AsmGlobalSymbol,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
-    RegFormatter,
     Register,
     parse_asm_instruction,
 )
@@ -186,11 +186,10 @@ def parse_instruction(
     line: str,
     meta: InstructionMeta,
     arch: ArchAsm,
-    reg_formatter: RegFormatter,
-    defines: Dict[str, int],
+    asm_state: AsmState,
 ) -> Instruction:
     try:
-        base = parse_asm_instruction(line, arch, reg_formatter, defines)
+        base = parse_asm_instruction(line, arch, asm_state)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception as e:
         msg = f"Failed to parse instruction {meta.loc_str()}: {line}"

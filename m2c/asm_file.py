@@ -25,6 +25,7 @@ from .asm_instruction import (
     Argument,
     AsmGlobalSymbol,
     AsmLiteral,
+    AsmState,
     RegFormatter,
     parse_arg,
     traverse_arg,
@@ -160,13 +161,14 @@ class AsmData:
 @dataclass
 class AsmFile:
     filename: str
+    reg_formatter: RegFormatter
     functions: List[Function] = field(default_factory=list)
     asm_data: AsmData = field(default_factory=AsmData)
     current_function: Optional[Function] = field(default=None, repr=False)
     current_data: Optional[AsmDataEntry] = field(default=None)
 
     def new_function(self, name: str) -> None:
-        self.current_function = Function(name=name)
+        self.current_function = Function(name=name, reg_formatter=self.reg_formatter)
         self.functions.append(self.current_function)
 
     def new_instruction(self, instruction: Instruction) -> None:
@@ -358,22 +360,22 @@ def parse_incbin(
 
 def check_ifdef(
     macro_name: str,
-    defines: Dict[str, Optional[int]],
+    asm_state: AsmState,
     warnings: List[str],
     directive: str,
 ) -> bool:
-    if macro_name not in defines:
-        defines[macro_name] = None
+    if macro_name not in asm_state.defines:
+        asm_state.defines[macro_name] = None
         add_warning(
             warnings,
             f"Note: assuming {macro_name} is unset for {directive}, "
             f"pass -D{macro_name}/-U{macro_name} to set/unset explicitly.",
         )
-    return defines[macro_name] is not None
+    return asm_state.defines[macro_name] is not None
 
 
 def eval_cpp_if(
-    expr: str, defines: Dict[str, Optional[int]], warnings: List[str], directive: str
+    expr: str, asm_state: AsmState, warnings: List[str], directive: str
 ) -> bool:
     token_re = re.compile(r"[a-zA-Z0-9_]+|&&|\|\||.")
     tokens = [m.group() for m in token_re.finditer(expr) if not m.group().isspace()]
@@ -396,13 +398,13 @@ def eval_cpp_if(
             w = tokens[i + 1]
             assert tokens[i + 2] == ")"
             i += 3
-            return check_ifdef(w, defines, warnings, directive)
+            return check_ifdef(w, asm_state, warnings, directive)
         if tok[0].isnumeric():
             return bool(int(tok, 0))
         else:
-            value = defines.get(tok, None)
+            value = asm_state.defines.get(tok, None)
             if value is None:
-                check_ifdef(tok, defines, warnings, directive)
+                check_ifdef(tok, asm_state, warnings, directive)
                 return False
             return bool(value)
 
@@ -432,14 +434,18 @@ def eval_cpp_if(
 
 def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     filename = Path(f.name).name
-    asm_file: AsmFile = AsmFile(filename)
+    reg_formatter = RegFormatter()
+    asm_file: AsmFile = AsmFile(filename, reg_formatter)
     curr_section = ".text"
     warnings: List[str] = []
-    defines: Dict[str, Optional[int]] = {
-        # NULL is a non-standard but common asm macro that expands to 0
-        "NULL": 0,
-        **options.preproc_defines,
-    }
+    asm_state = AsmState(
+        defines={
+            # NULL is a non-standard but common asm macro that expands to 0
+            "NULL": 0,
+            **options.preproc_defines,
+        },
+        reg_formatter=reg_formatter,
+    )
 
     # Each nested ifdef has an associated level which is 0 (active), 1 (inactive)
     # or 2 (inactive, but was active previously). Lines are only processed if the
@@ -478,11 +484,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         except Exception:
             fail_parse()
 
-    def defined_vars() -> Dict[str, int]:
-        return {k: v for k, v in defines.items() if v is not None}
-
     def parse_int(w: str) -> int:
-        value = try_parse(lambda: parse_arg(w, arch, defined_vars()))
+        value = try_parse(lambda: parse_arg(w, arch, asm_state))
         if not isinstance(value, AsmLiteral):
             fail_parse()
         return value.value
@@ -492,7 +495,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         return struct.pack(endian + fmt, val)
 
     def emit_word(w: str, size: int) -> None:
-        value = try_parse(lambda: parse_arg(w, arch, defined_vars()))
+        value = try_parse(lambda: parse_arg(w, arch, asm_state))
         if isinstance(value, AsmLiteral):
             ival = value.value & ((1 << (size * 8)) - 1)
             if options.target.is_big_endian():
@@ -585,7 +588,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 line = "#" + line[1:]
                 directive = line.split()[0]
             if directive in (".ifdef", ".ifndef", "#ifdef", "#ifndef"):
-                active = check_ifdef(args_str, defines, warnings, directive)
+                active = check_ifdef(args_str, asm_state, warnings, directive)
                 if directive[1:] == "ifndef":
                     active = not active
                 level = 1 - int(active)
@@ -604,7 +607,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 ifdef_level += level
                 ifdef_levels.append(level)
             elif directive == "#if":
-                active = eval_cpp_if(args_str, defines, warnings, directive)
+                active = eval_cpp_if(args_str, asm_state, warnings, directive)
                 level = 1 - int(active)
                 ifdef_level += level
                 ifdef_levels.append(level)
@@ -613,11 +616,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 ifdef_level -= level
                 if level == 1:
                     if directive == "#elifdef":
-                        active = check_ifdef(args_str, defines, warnings, directive)
+                        active = check_ifdef(args_str, asm_state, warnings, directive)
                     elif directive == "#elifndef":
-                        active = not check_ifdef(args_str, defines, warnings, directive)
+                        active = not check_ifdef(
+                            args_str, asm_state, warnings, directive
+                        )
                     elif directive == "#elif":
-                        active = eval_cpp_if(args_str, defines, warnings, directive)
+                        active = eval_cpp_if(args_str, asm_state, warnings, directive)
                     else:
                         active = True
                     level = 1 - int(active)
@@ -661,15 +666,15 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        defines[args[0]] = parse_int(args[1])
+                        asm_state.defines[args[0]] = parse_int(args[1])
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
                     args = args_str.split(None, 1)
                     if len(args) == 2:
-                        defines[args[0]] = parse_int(args[1])
+                        asm_state.defines[args[0]] = parse_int(args[1])
                     else:
-                        defines[args[0]] = None
+                        asm_state.defines[args[0]] = None
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
@@ -763,11 +768,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     lineno=lineno,
                     synthetic=False,
                 )
-                if asm_file.current_function is not None:
-                    reg_formatter = asm_file.current_function.reg_formatter
-                else:
-                    reg_formatter = RegFormatter()
-                ins = parse_instruction(line, meta, arch, reg_formatter, defined_vars())
+                ins = parse_instruction(line, meta, arch, asm_state)
                 asm_file.new_instruction(ins)
 
     if warnings and options.coding_style.comment_style != CodingStyle.CommentStyle.NONE:

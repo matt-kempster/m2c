@@ -12,13 +12,13 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
     Macro,
     NaiveParsingArch,
     Register,
     RegisterList,
-    RegFormatter,
     parse_asm_instruction,
 )
 from .instruction import (
@@ -44,7 +44,7 @@ def make_pattern(*parts: str) -> Pattern:
         elif part.endswith(":"):
             ret.append((Label([part[:-1]]), optional))
         else:
-            ins = parse_asm_instruction(part, NaiveParsingArch(), RegFormatter(), {})
+            ins = parse_asm_instruction(part, NaiveParsingArch(), AsmState())
             ret.append((ins, optional))
     return ret
 
