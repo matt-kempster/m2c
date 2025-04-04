@@ -674,7 +674,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     if len(args) == 2:
                         asm_state.defines[args[0]] = parse_int(args[1])
                     else:
-                        asm_state.defines[args[0]] = None
+                        asm_state.defines[args[0]] = 1
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
                     args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
