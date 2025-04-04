@@ -320,28 +320,18 @@ class AddPcPcPattern(AsmPattern):
 class ShortJumpTablePattern(AsmPattern):
     """Detect switch jumps emitted by MWCC for Thumb."""
 
-    # TODO: check that these are correct wrt flag setting
-    pattern1 = make_pattern(
+    pattern = make_pattern(
         "adds $x, $x, $x",
         "add $x, $x, $pc",
         "ldrh $x, [$x, 6]",
-        "mov $x, $x, lsl 0x10",
-        "mov $x, $x, asr 0x10",
-        "add $pc, $x",
-        ".label:",
-    )
-    pattern2 = make_pattern(
-        "add $x, $x, $x",
-        "add $x, $x, $pc",
-        "ldrh $x, [$x, 6]",
-        "mov $x, $x, lsl 0x10",
-        "mov $x, $x, asr 0x10",
+        "movs $x, $x, lsl 0x10",
+        "movs $x, $x, asr 0x10",
         "add $pc, $pc, $x",
         ".label:",
     )
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        m = matcher.try_match(self.pattern1) or matcher.try_match(self.pattern2)
+        m = matcher.try_match(self.pattern)
         if not m:
             return None
         label = m.labels[".label"].names[0]
@@ -360,7 +350,7 @@ class ShortJumpTablePattern(AsmPattern):
                 break
             new_args.append(data.data.lhs.lhs)
         jump_ins = AsmInstruction("tablejmp.fictive", new_args)
-        return Replacement([jump_ins], len(self.pattern1) - 1)
+        return Replacement([jump_ins], len(self.pattern) - 1)
 
 
 class ConditionalInstrPattern(AsmPattern):
