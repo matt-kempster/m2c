@@ -48,6 +48,7 @@ from .instruction import (
 from .translate import (
     Abi,
     AbiArgSlot,
+    ArgLoc,
     Arch,
     BinaryOp,
     Cast,
@@ -64,6 +65,7 @@ from .translate import (
     as_intish,
     as_type,
     as_uintish,
+    format_hex,
 )
 from .evaluate import (
     condition_from_expr,
@@ -1237,17 +1239,21 @@ class ArmArch(Arch):
     }
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
-        # TODO: these stack locations are wrong, registers don't have pre-defined
-        # home space outside of MIPS.
         return [
-            AbiArgSlot(0, Register("r0"), Type.any_reg()),
-            AbiArgSlot(4, Register("r1"), Type.any_reg()),
-            AbiArgSlot(8, Register("r2"), Type.any_reg()),
-            AbiArgSlot(12, Register("r3"), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 0, Register("r0")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 1, Register("r1")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 2, Register("r2")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 3, Register("r3")), Type.any_reg()),
         ]
 
     def is_likely_partial_offset(self, addend: int) -> bool:
         return addend < 0x1000000 and addend % 0x100 == 0
+
+    def arg_name(self, loc: ArgLoc) -> str:
+        if loc.offset is not None:
+            return f"arg{format_hex(loc.offset // 4 + 4)}"
+        assert loc.reg is not None
+        return f"arg{loc.reg.register_name[1:]}"
 
     def function_abi(
         self,
@@ -1274,26 +1280,29 @@ class ArmArch(Arch):
                 # as the first argument.
                 known_slots.append(
                     AbiArgSlot(
-                        offset=0,
-                        reg=Register("r0"),
+                        ArgLoc(None, 0, Register("r0")),
+                        Type.ptr(fn_sig.return_type),
                         name="__return__",
-                        type=Type.ptr(fn_sig.return_type),
                         comment="return",
                     )
                 )
                 offset = 4
 
-            for ind, param in enumerate(fn_sig.params):
+            for param in fn_sig.params:
                 # Array parameters decay into pointers
                 param_type = param.type.decay()
                 size, align = param_type.get_parameter_size_align_bytes()
                 size = (size + 3) & ~3
                 offset = (offset + align - 1) & -align
                 name = param.name
-                reg2: Optional[Register]
                 for i in range(offset // 4, (offset + size) // 4):
                     unk_offset = 4 * i - offset
-                    reg2 = Register(f"r{i}") if i < 4 else None
+                    reg2: Optional[Register] = None
+                    stack_loc: Optional[int] = None
+                    if i < 4:
+                        reg2 = Register(f"r{i}")
+                    else:
+                        stack_loc = 4 * i
                     if size > 4:
                         name2 = f"{name}_unk{unk_offset:X}" if name else None
                         sub_type = Type.any()
@@ -1305,10 +1314,9 @@ class ArmArch(Arch):
                         comment = None
                     known_slots.append(
                         AbiArgSlot(
-                            offset=4 * i,
-                            reg=reg2,
+                            ArgLoc(stack_loc, i, reg2),
+                            sub_type,
                             name=name2,
-                            type=sub_type,
                             comment=comment,
                         )
                     )
@@ -1317,14 +1325,14 @@ class ArmArch(Arch):
             if fn_sig.is_variadic:
                 for i in range(offset // 4, 4):
                     candidate_slots.append(
-                        AbiArgSlot(i * 4, Register(f"r{i}"), Type.any_reg())
+                        AbiArgSlot(ArgLoc(None, i, Register(f"r{i}")), Type.any_reg())
                     )
 
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
 
@@ -1339,7 +1347,8 @@ class ArmArch(Arch):
                 likely_regs[Register(f"r{i - 1}")] = True
 
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -1348,16 +1357,16 @@ class ArmArch(Arch):
                 # For varargs, a subset of r0 .. r3 may be used. Don't check
                 # earlier registers for the first member of that subset.
                 pass
-            elif slot.reg == Register("r1"):
+            elif reg == Register("r1"):
                 require = ["r0"]
-            elif slot.reg == Register("r2"):
+            elif reg == Register("r2"):
                 require = ["r1"]
-            elif slot.reg == Register("r3"):
+            elif reg == Register("r3"):
                 require = ["r2"]
             if require and not any(Register(r) in valid_extra_regs for r in require):
                 continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
             # Skip registers that are untouched from the initial parameter
             # list. This is sometimes wrong (can give both false positives
@@ -1365,7 +1374,7 @@ class ArmArch(Arch):
             # without access to function signatures, or when dealing with
             # varargs functions. Decompiling multiple functions at once
             # would help.
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)

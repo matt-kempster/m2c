@@ -43,6 +43,7 @@ from .translate import (
     Abi,
     AbiArgSlot,
     Arch,
+    ArgLoc,
     BinaryOp,
     Cast,
     CmpInstrMap,
@@ -67,6 +68,7 @@ from .translate import (
     as_u32,
     as_u64,
     as_uintish,
+    format_hex,
 )
 from .evaluate import (
     condition_from_expr,
@@ -1676,16 +1678,20 @@ class MipsArch(Arch):
         "seh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
     }
 
+    def arg_name(self, loc: ArgLoc) -> str:
+        assert loc.offset is not None
+        return f"arg{loc.offset // 4}"
+
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
         return [
-            AbiArgSlot(0, Register("f12"), Type.floatish()),
-            AbiArgSlot(4, Register("f13"), Type.floatish()),
-            AbiArgSlot(4, Register("f14"), Type.floatish()),
-            AbiArgSlot(12, Register("f15"), Type.floatish()),
-            AbiArgSlot(0, Register("a0"), Type.intptr()),
-            AbiArgSlot(4, Register("a1"), Type.any_reg()),
-            AbiArgSlot(8, Register("a2"), Type.any_reg()),
-            AbiArgSlot(12, Register("a3"), Type.any_reg()),
+            AbiArgSlot(ArgLoc(0, 0, Register("f12")), Type.floatish()),
+            AbiArgSlot(ArgLoc(4, 1, Register("f13")), Type.floatish()),
+            AbiArgSlot(ArgLoc(4, 2, Register("f14")), Type.floatish()),
+            AbiArgSlot(ArgLoc(12, 3, Register("f15")), Type.floatish()),
+            AbiArgSlot(ArgLoc(0, 4, Register("a0")), Type.intptr()),
+            AbiArgSlot(ArgLoc(4, 5, Register("a1")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(8, 6, Register("a2")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(12, 7, Register("a3")), Type.any_reg()),
         ]
 
     def function_abi(
@@ -1711,10 +1717,9 @@ class MipsArch(Arch):
                 # as the first argument.
                 known_slots.append(
                     AbiArgSlot(
-                        offset=0,
-                        reg=Register("a0"),
+                        ArgLoc(0, 0, Register("a0")),
+                        Type.ptr(fn_sig.return_type),
                         name="__return__",
-                        type=Type.ptr(fn_sig.return_type),
                         comment="return",
                     )
                 )
@@ -1731,22 +1736,23 @@ class MipsArch(Arch):
                 name = param.name
                 reg2: Optional[Register]
                 if ind < 2 and only_floats:
-                    reg = Register("f12" if ind == 0 else "f14")
+                    reg2 = Register("f12" if ind == 0 else "f14")
                     is_double = (
                         param_type.is_float() and param_type.get_size_bits() == 64
                     )
                     known_slots.append(
-                        AbiArgSlot(offset=offset, reg=reg, name=name, type=param_type)
+                        AbiArgSlot(
+                            ArgLoc(offset, offset // 4, reg2), param_type, name=name
+                        )
                     )
                     if is_double and not for_call:
                         name2 = f"{name}_lo" if name else None
                         reg2 = Register("f13" if ind == 0 else "f15")
                         known_slots.append(
                             AbiArgSlot(
-                                offset=offset + 4,
-                                reg=reg2,
+                                ArgLoc(offset + 4, offset // 4 + 1, reg2),
+                                Type.any_reg(),
                                 name=name2,
-                                type=Type.any_reg(),
                             )
                         )
                 else:
@@ -1764,10 +1770,9 @@ class MipsArch(Arch):
                             comment = None
                         known_slots.append(
                             AbiArgSlot(
-                                offset=4 * i,
-                                reg=reg2,
+                                ArgLoc(4 * i, i, reg2),
+                                sub_type,
                                 name=name2,
-                                type=sub_type,
                                 comment=comment,
                             )
                         )
@@ -1776,18 +1781,19 @@ class MipsArch(Arch):
             if fn_sig.is_variadic:
                 for i in range(offset // 4, 4):
                     candidate_slots.append(
-                        AbiArgSlot(i * 4, Register(f"a{i}"), Type.any_reg())
+                        AbiArgSlot(ArgLoc(i * 4, i, Register(f"a{i}")), Type.any_reg())
                     )
 
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -1802,24 +1808,22 @@ class MipsArch(Arch):
                 # For varargs, a subset of a0 .. a3 may be used. Don't check
                 # earlier registers for the first member of that subset.
                 pass
-            elif slot.reg == Register("f13") or slot.reg == Register("f14"):
+            elif reg == Register("f13") or reg == Register("f14"):
                 require = ["f12"]
-            elif slot.reg == Register("f15"):
+            elif reg == Register("f15"):
                 require = ["f14"]
-            elif slot.reg == Register("a1"):
+            elif reg == Register("a1"):
                 require = ["a0", "f12"]
-            elif slot.reg == Register("a2"):
+            elif reg == Register("a2"):
                 require = ["a1", "f13", "f14"]
-            elif slot.reg == Register("a3"):
+            elif reg == Register("a3"):
                 require = ["a2"]
             if require and not any(Register(r) in valid_extra_regs for r in require):
                 continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
-            if (
-                slot.reg == Register("f13") or slot.reg == Register("f15")
-            ) and for_call:
+            if (reg == Register("f13") or reg == Register("f15")) and for_call:
                 # We don't pass in f13 or f15 because they will often only
                 # contain SecondF64Half(), and otherwise would need to be
                 # merged with f12/f14 which we don't have logic for right
@@ -1835,7 +1839,7 @@ class MipsArch(Arch):
             # would help.
             # TODO: don't do this in the middle of the argument list,
             # except for f12 if a0 is passed and such.
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)
@@ -2038,23 +2042,33 @@ class MipseeArch(MipsArch):
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
         return [
-            AbiArgSlot(0, Register("f12"), Type.floatish()),
-            AbiArgSlot(4, Register("f13"), Type.floatish()),
-            AbiArgSlot(8, Register("f14"), Type.floatish()),
-            AbiArgSlot(12, Register("f15"), Type.floatish()),
-            AbiArgSlot(16, Register("f16"), Type.floatish()),
-            AbiArgSlot(20, Register("f17"), Type.floatish()),
-            AbiArgSlot(24, Register("f18"), Type.floatish()),
-            AbiArgSlot(28, Register("f19"), Type.floatish()),
-            AbiArgSlot(0, Register("a0"), Type.intptr()),
-            AbiArgSlot(4, Register("a1"), Type.any_reg()),
-            AbiArgSlot(8, Register("a2"), Type.any_reg()),
-            AbiArgSlot(12, Register("a3"), Type.any_reg()),
-            AbiArgSlot(16, Register("a4"), Type.any_reg()),
-            AbiArgSlot(20, Register("a5"), Type.any_reg()),
-            AbiArgSlot(24, Register("a6"), Type.any_reg()),
-            AbiArgSlot(28, Register("a7"), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 0, Register("a0")), Type.intptr()),
+            AbiArgSlot(ArgLoc(None, 1, Register("a1")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 2, Register("a2")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 3, Register("a3")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 4, Register("a4")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 5, Register("a5")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 6, Register("a6")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 7, Register("a7")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 8, Register("f12")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 9, Register("f13")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 10, Register("f14")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 11, Register("f15")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 12, Register("f16")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 13, Register("f17")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 14, Register("f18")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 15, Register("f19")), Type.floatish()),
         ]
+
+    def arg_name(self, loc: ArgLoc) -> str:
+        if loc.offset is not None:
+            return f"arg_sp{format_hex(loc.offset)}"
+        assert loc.reg is not None
+        reg_num = int(loc.reg.register_name[1:])
+        if loc.reg.register_name.startswith("a"):
+            return f"arg{reg_num}"
+        else:
+            return f"fparg{reg_num - 12}"
 
     # Duplicated by ArchPpc.function_abi
     def function_abi(
@@ -2071,7 +2085,8 @@ class MipseeArch(MipsArch):
         known_slots: List[AbiArgSlot] = []
         candidate_slots: List[AbiArgSlot] = []
         if fn_sig.params_known:
-            for ind, param in enumerate(fn_sig.params):
+            ind = 0
+            for param in fn_sig.params:
                 # TODO: Support passing parameters on the stack
                 param_type = param.type.decay()
                 reg: Optional[Register]
@@ -2084,35 +2099,32 @@ class MipseeArch(MipsArch):
                     # Stack variable
                     reg = None
                 known_slots.append(
-                    AbiArgSlot(
-                        offset=4 * ind, reg=reg, name=param.name, type=param_type
-                    )
+                    AbiArgSlot(ArgLoc(None, ind, reg), param_type, name=param.name)
                 )
+                ind += 1
             if fn_sig.is_variadic:
-                # TODO: Find a better value to use for `offset`?
                 for reg in intptr_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.intptr()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.intptr())
                     )
+                    ind += 1
                 for reg in float_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.floatish()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
+                    ind += 1
 
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
         possible_slots: List[AbiArgSlot] = []
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
 
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -2122,12 +2134,12 @@ class MipseeArch(MipsArch):
                 pass
             else:
                 # Only a1-a7/f13-f19 can be used for arguments
-                regname = slot.reg.register_name
+                regname = reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
                 if prev_reg in self.argument_regs and prev_reg not in valid_extra_regs:
                     continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
             # Skip registers that are untouched from the initial parameter
             # list. This is sometimes wrong (can give both false positives
@@ -2136,7 +2148,7 @@ class MipseeArch(MipsArch):
             # varargs functions. Decompiling multiple functions at once
             # would help.
             # TODO: don't do this in the middle of the argument list
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)

@@ -45,6 +45,7 @@ from .translate import (
     AbiArgSlot,
     AddressMode,
     Arch,
+    ArgLoc,
     BinaryOp,
     Cast,
     ErrorExpr,
@@ -63,6 +64,7 @@ from .translate import (
     as_u32,
     as_uintish,
     as_type,
+    format_hex,
 )
 from .evaluate import (
     add_imm,
@@ -1379,6 +1381,16 @@ class PpcArch(Arch):
         ),
     }
 
+    def arg_name(self, loc: ArgLoc) -> str:
+        if loc.offset is not None:
+            return f"arg_sp{format_hex(loc.offset)}"
+        assert loc.reg is not None
+        reg_num = int(loc.reg.register_name[1:])
+        if loc.reg.register_name.startswith("r"):
+            return f"arg{reg_num - 3}"
+        else:
+            return f"farg{reg_num - 1}"
+
     # Duplicated by MipseeArch.function_abi
     @staticmethod
     def function_abi(
@@ -1395,10 +1407,14 @@ class PpcArch(Arch):
         float_regs = [r for r in PpcArch.argument_regs if r.register_name[0] == "f"]
 
         if fn_sig.params_known:
-            for ind, param in enumerate(fn_sig.params):
-                # TODO: Support passing parameters on the stack
+            ind = 0
+            stack_offset = 0
+            for param in fn_sig.params:
+                # TODO: Support structs as parameters/return type, and 64-bit values
+                # passed on the stack.
                 param_type = param.type.decay()
-                reg: Optional[Register]
+                reg: Optional[Register] = None
+                offset: Optional[int] = None
                 try:
                     if param_type.is_float():
                         reg = float_regs.pop(0)
@@ -1406,43 +1422,41 @@ class PpcArch(Arch):
                         reg = intptr_regs.pop(0)
                 except IndexError:
                     # Stack variable
-                    reg = None
+                    offset = stack_offset
+                    stack_offset += 4
                 known_slots.append(
-                    AbiArgSlot(
-                        offset=4 * ind, reg=reg, name=param.name, type=param_type
-                    )
+                    AbiArgSlot(ArgLoc(offset, ind, reg), param_type, name=param.name)
                 )
+                ind += 1
             if fn_sig.is_variadic:
-                # TODO: Find a better value to use for `offset`?
                 for reg in intptr_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.intptr()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.intptr())
                     )
+                    ind += 1
                 for reg in float_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.floatish()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
+                    ind += 1
         else:
             for ind, reg in enumerate(PpcArch.argument_regs):
                 if reg.register_name[0] != "f":
                     candidate_slots.append(
-                        AbiArgSlot(offset=4 * ind, reg=reg, type=Type.intptr())
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.intptr())
                     )
                 else:
                     candidate_slots.append(
-                        AbiArgSlot(offset=4 * ind, reg=reg, type=Type.floatish())
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
 
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -1452,7 +1466,7 @@ class PpcArch(Arch):
                 pass
             else:
                 # Only r3-r10/f1-f13 can be used for arguments
-                regname = slot.reg.register_name
+                regname = reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
                 if (
                     prev_reg in PpcArch.argument_regs
@@ -1460,7 +1474,7 @@ class PpcArch(Arch):
                 ):
                     continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
             # Skip registers that are untouched from the initial parameter
             # list. This is sometimes wrong (can give both false positives
@@ -1469,7 +1483,7 @@ class PpcArch(Arch):
             # varargs functions. Decompiling multiple functions at once
             # would help.
             # TODO: don't do this in the middle of the argument list
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)

@@ -1,6 +1,6 @@
-f32 test(f32 arg8) {
-    if (arg8 != 0.0f) {
+f32 test(f32 farg0) {
+    if (farg0 != 0.0f) {
         return 15.0f;
     }
-    return arg8;
+    return farg0;
 }

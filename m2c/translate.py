@@ -84,6 +84,9 @@ class Arch(ArchFlowGraph):
     base_return_regs: List[Tuple[Register, bool]]
 
     @abc.abstractmethod
+    def arg_name(self, loc: ArgLoc) -> str: ...
+
+    @abc.abstractmethod
     def function_abi(
         self,
         fn_sig: FunctionSignature,
@@ -292,7 +295,7 @@ class StackInfo:
     arguments: List[PassedInArg] = field(default_factory=list)
     temp_name_counter: Dict[str, int] = field(default_factory=dict)
     nonzero_accesses: Set[Expression] = field(default_factory=set)
-    param_names: Dict[int, str] = field(default_factory=dict)
+    param_names: Dict[ArgLoc, str] = field(default_factory=dict)
     stack_pointer_type: Optional[Type] = None
     replace_first_arg: Optional[Tuple[str, Type]] = None
     weak_stack_var_types: Dict[int, Type] = field(default_factory=dict)
@@ -325,7 +328,7 @@ class StackInfo:
     def location_above_stack(self, location: int) -> bool:
         return location >= self.allocated_stack_size
 
-    def add_known_param(self, offset: int, name: Optional[str], type: Type) -> Type:
+    def add_known_param(self, loc: ArgLoc, name: Optional[str], type: Type) -> Type:
         # A common pattern in C for OOP-style polymorphism involves casting a general "base" struct
         # to a specific "class" struct, where the first member of the class struct is the base struct.
         #
@@ -333,7 +336,7 @@ class StackInfo:
         # exists a class struct named after the first part of the function name, assume that
         # this pattern is being used. Internally, treat the argument as a pointer to the *class*
         # struct, even though it is only a pointer to the *base* struct in the provided context.
-        if offset == 0 and type.is_pointer() and self.replace_first_arg is None:
+        if loc.sort_index == 0 and type.is_pointer() and self.replace_first_arg is None:
             namespace = self.function.name.partition("_")[0]
             base_struct_type = type.get_pointer_target()
             self_struct = self.global_info.typepool.get_struct_by_tag_name(
@@ -360,14 +363,15 @@ class StackInfo:
                     name = "this" if name == "thisx" else "self"
                     type = Type.ptr(Type.struct(self_struct))
         if name:
-            self.param_names[offset] = name
-        _, arg = self.get_argument(offset)
-        self.add_argument(arg)
+            self.param_names[loc] = name
+        arg = self.get_argument(loc)
+        self.arguments.append(arg)
+        self.arguments.sort(key=lambda a: a.loc)
         arg.type.unify(type)
         return type
 
-    def get_param_name(self, offset: int) -> Optional[str]:
-        return self.param_names.get(offset)
+    def get_param_name(self, loc: ArgLoc) -> Optional[str]:
+        return self.param_names.get(loc)
 
     def add_local_var(self, var: LocalVar) -> None:
         if any(v.value == var.value for v in self.local_vars):
@@ -377,21 +381,25 @@ class StackInfo:
         self.local_vars.sort(key=lambda v: v.value)
 
     def add_argument(self, arg: PassedInArg) -> None:
-        if any(a.value == arg.value for a in self.arguments):
+        if any(a.loc == arg.loc for a in self.arguments):
             return
         self.arguments.append(arg)
-        self.arguments.sort(key=lambda a: a.value)
+        self.arguments.sort(key=lambda a: a.loc)
 
-    def get_argument(self, location: int) -> Tuple[Expression, PassedInArg]:
-        real_location = location & -4
-        arg = PassedInArg(
-            real_location,
+    def get_argument(self, loc: ArgLoc) -> PassedInArg:
+        return PassedInArg(
+            loc,
             stack_info=self,
-            type=self.unique_type_for("arg", real_location, Type.any_reg()),
+            type=self.unique_type_for("arg", loc, Type.any_reg()),
         )
-        if real_location == location - 3:
+
+    def get_argument_above_stack(self, offset: int) -> Tuple[Expression, PassedInArg]:
+        aligned_offset = offset & -4
+        loc = ArgLoc(aligned_offset, None, None)
+        arg = self.get_argument(loc)
+        if aligned_offset == offset - 3:
             return as_type(arg, Type.int_of_size(8), True), arg
-        if real_location == location - 2:
+        if aligned_offset == offset - 2:
             return as_type(arg, Type.int_of_size(16), True), arg
         return arg, arg
 
@@ -419,8 +427,12 @@ class StackInfo:
             expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
         ):
             return True
-        if isinstance(expr, PassedInArg) and (
-            offset is None or offset == self.allocated_stack_size + expr.value
+        if (
+            isinstance(expr, PassedInArg)
+            and expr.loc.offset is not None
+            and (
+                offset is None or offset == self.allocated_stack_size + expr.loc.offset
+            )
         ):
             return True
         return False
@@ -432,7 +444,8 @@ class StackInfo:
             # further special-casing, just return whatever - it won't matter.
             return LocalVar(location, type=Type.any_reg(), path=None)
         elif self.location_above_stack(location):
-            ret, arg = self.get_argument(location - self.allocated_stack_size)
+            offset = location - self.allocated_stack_size
+            ret, arg = self.get_argument_above_stack(offset)
             if not store:
                 self.add_argument(arg)
             return ret
@@ -1381,7 +1394,7 @@ class PlannedPhiExpr(Expression):
 
 @dataclass(frozen=True, eq=True)
 class PassedInArg(Expression):
-    value: int
+    loc: ArgLoc
     stack_info: StackInfo = field(compare=False, repr=False)
     type: Type = field(compare=False)
 
@@ -1389,9 +1402,10 @@ class PassedInArg(Expression):
         return []
 
     def format(self, fmt: Formatter) -> str:
-        assert self.value % 4 == 0
-        name = self.stack_info.get_param_name(self.value)
-        return name or f"arg{format_hex(self.value // 4)}"
+        name = self.stack_info.get_param_name(self.loc)
+        if name:
+            return name
+        return self.stack_info.global_info.arch.arg_name(self.loc)
 
 
 @dataclass(frozen=True, eq=True)
@@ -2232,9 +2246,9 @@ class RegInfo:
             if isinstance(uw_ret, PassedInArg):
                 # Use accessed argument registers as a signal for determining which
                 # arguments actually exist.
-                val, arg = self.stack_info.get_argument(uw_ret.value)
+                arg = self.stack_info.get_argument(uw_ret.loc)
                 self.stack_info.add_argument(arg)
-                val.type.unify(ret.type)
+                arg.type.unify(ret.type)
         if meta.force:
             assert isinstance(ret, EvalOnceExpr)
             ret.force()
@@ -2941,10 +2955,50 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
+@dataclass(frozen=True)
+class ArgLoc:
+    # offset represents the offset above the stack where the argument is loaded from.
+    # reg represents the register the argument is loaded from.
+    # Either value or reg will always be non-None. In the case of MIPS with
+    # arguments with home space, both will be.
+    # sort_index represents a sort index for argument registers, and is always set
+    # when reg is, and may be set in other cases as well for known prototypes.
+    offset: Optional[int]
+    sort_index: Optional[int]
+    reg: Optional[Register]
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, ArgLoc):
+            return NotImplemented
+        if self.sort_index is not None:
+            if other.sort_index is None:
+                return True
+            return self.sort_index < other.sort_index
+        else:
+            if other.sort_index is not None:
+                return False
+            assert self.offset is not None
+            assert other.offset is not None
+            return self.offset < other.offset
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ArgLoc):
+            return NotImplemented
+        if self.offset is not None:
+            return other.offset == self.offset
+        else:
+            return other.offset is None and self.reg == other.reg
+
+    def __hash__(self) -> int:
+        if self.offset is not None:
+            return hash(self.offset)
+        else:
+            return hash(self.reg)
+
+
 @dataclass
 class AbiArgSlot:
-    offset: int
-    reg: Optional[Register]
+    loc: ArgLoc
     type: Type
     name: Optional[str] = None
     comment: Optional[str] = None
@@ -3588,19 +3642,22 @@ class NodeState:
 
         func_args: List[Expression] = []
         for slot in abi.arg_slots:
-            if slot.reg:
-                expr = self.regs[slot.reg]
-            elif slot.offset in self.subroutine_args:
-                expr = self.subroutine_args.pop(slot.offset)
+            if slot.loc.reg:
+                expr = self.regs[slot.loc.reg]
             else:
-                expr = ErrorExpr(f"Unable to find stack arg {slot.offset:#x} in block")
+                offset = slot.loc.offset
+                assert offset is not None
+                if offset in self.subroutine_args:
+                    expr = self.subroutine_args.pop(offset)
+                else:
+                    expr = ErrorExpr(f"Unable to find stack arg {offset:#x} in block")
             func_args.append(
                 CommentExpr.wrap(as_type(expr, slot.type, True), prefix=slot.comment)
             )
 
         for slot in abi.possible_slots:
-            assert slot.reg is not None
-            func_args.append(self.regs[slot.reg])
+            assert slot.loc.reg is not None
+            func_args.append(self.regs[slot.loc.reg])
 
         # Add the arguments after a3.
         # TODO: limit this based on abi.arg_slots. If the function type is known
@@ -4485,9 +4542,10 @@ def setup_initial_registers(state: NodeState, fn_sig: FunctionSignature) -> None
             reg, stack_info.saved_reg_symbol(reg.register_name), RegMeta(initial=True)
         )
 
-    def make_arg(offset: int, type: Type) -> PassedInArg:
-        assert offset % 4 == 0
-        return PassedInArg(offset, stack_info=stack_info, type=type)
+    def make_arg(loc: ArgLoc, type: Type) -> PassedInArg:
+        if loc.offset is not None:
+            assert loc.offset % 4 == 0
+        return PassedInArg(loc, stack_info=stack_info, type=type)
 
     abi = arch.function_abi(
         fn_sig,
@@ -4495,18 +4553,18 @@ def setup_initial_registers(state: NodeState, fn_sig: FunctionSignature) -> None
         for_call=False,
     )
     for slot in abi.arg_slots:
-        type = stack_info.add_known_param(slot.offset, slot.name, slot.type)
-        if slot.reg is not None:
+        type = stack_info.add_known_param(slot.loc, slot.name, slot.type)
+        if slot.loc.reg is not None:
             state.set_initial_reg(
-                slot.reg,
-                make_arg(slot.offset, type),
+                slot.loc.reg,
+                make_arg(slot.loc, type),
                 RegMeta(uninteresting=True, initial=True),
             )
     for slot in abi.possible_slots:
-        if slot.reg is not None:
+        if slot.loc.reg is not None:
             state.set_initial_reg(
-                slot.reg,
-                make_arg(slot.offset, slot.type),
+                slot.loc.reg,
+                make_arg(slot.loc, slot.type),
                 RegMeta(uninteresting=True, initial=True),
             )
 
