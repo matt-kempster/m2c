@@ -610,7 +610,7 @@ def get_stack_info(
             # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)
             assert isinstance(inst.args[1].addend, AsmLiteral)
-            info.allocated_stack_size = abs(inst.args[1].addend.signed_value())
+            info.allocated_stack_size = abs(inst.args[1].addend.value)
         elif arch_mnemonic == "arm:push":
             assert isinstance(inst.args[0], RegisterList)
             for reg in inst.args[0].regs[::-1]:
@@ -709,7 +709,7 @@ def get_stack_info(
                     and isinstance(inst.args[1], AsmAddressMode)
                     and info.is_stack_reg(inst.args[1].base)
                 ):
-                    offset = inst.args[1].lhs_as_literal()
+                    offset = inst.args[1].addend_as_literal()
                     if offset >= arch.home_space_size:
                         info.subroutine_arg_top = min(info.subroutine_arg_top, offset)
                 elif (
@@ -2503,7 +2503,7 @@ class InstrArgs:
                 f"Unable to parse offset for instruction argument {ret}. "
                 "Expected a constant or a %lo macro."
             )
-        return AddressMode(offset=ret.addend.signed_value(), base=ret.base)
+        return AddressMode(offset=ret.addend.value, base=ret.base)
 
     def count(self) -> int:
         return len(self.raw_args)

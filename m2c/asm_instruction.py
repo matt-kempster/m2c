@@ -116,9 +116,9 @@ class AsmAddressMode:
     addend: Argument
     writeback: Optional[Writeback]
 
-    def lhs_as_literal(self) -> int:
+    def addend_as_literal(self) -> int:
         assert isinstance(self.addend, AsmLiteral)
-        return self.addend.signed_value()
+        return self.addend.value
 
     def __str__(self) -> str:
         if self.writeback is not None:

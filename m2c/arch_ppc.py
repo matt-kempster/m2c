@@ -922,7 +922,7 @@ class PpcArch(Arch):
             )
             is_store = mnemonic == "stmw"
             index = int(args[0].register_name[1:])
-            offset = args[1].lhs_as_literal()
+            offset = args[1].addend_as_literal()
             while index <= 31:
                 reg = Register(f"r{index}")
                 mem = make_memory_access(
