@@ -594,7 +594,7 @@ def get_stack_info(
         elif arch_mnemonic == "mips:addiu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on MIPS
             assert isinstance(inst.args[2], AsmLiteral)
-            info.allocated_stack_size = abs(inst.args[2].signed_value())
+            info.allocated_stack_size = abs(inst.args[2].as_s16())
         elif (
             arch_mnemonic == "mips:subu"
             and inst.args[0] == arch.stack_pointer_reg
@@ -2413,13 +2413,13 @@ class InstrArgs:
         ret = literal_expr(arg, self.stack_info)
         return ret
 
-    def imm(self, index: int) -> Expression:
+    def s16_imm(self, index: int) -> Expression:
         ret = self.full_imm(index)
         if isinstance(ret, Literal):
             return Literal(((ret.value + 0x8000) & 0xFFFF) - 0x8000)
         return ret
 
-    def unsigned_imm(self, index: int) -> Expression:
+    def u16_imm(self, index: int) -> Expression:
         ret = self.full_imm(index)
         if isinstance(ret, Literal):
             return Literal(ret.value & 0xFFFF)
@@ -2466,9 +2466,9 @@ class InstrArgs:
             raise DecompFailure(f"Invalid macro argument {val.argument}")
         return ref
 
-    def shifted_imm(self, index: int) -> Expression:
+    def shifted_u16_imm(self, index: int) -> Expression:
         # TODO: Should this be part of hi_imm? Do we need to handle @ha?
-        raw_imm = self.unsigned_imm(index)
+        raw_imm = self.u16_imm(index)
         assert isinstance(raw_imm, Literal)
         return Literal(raw_imm.value << 16)
 

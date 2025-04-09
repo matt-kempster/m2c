@@ -278,7 +278,7 @@ def handle_sltu(args: InstrArgs) -> Expression:
 
 def handle_sltiu(args: InstrArgs) -> Expression:
     left = args.reg(1)
-    right = args.imm(2)
+    right = args.s16_imm(2)
     if isinstance(right, Literal):
         value = right.value & 0xFFFFFFFF
         if value == 1:
@@ -303,7 +303,7 @@ def handle_addi(args: InstrArgs) -> Expression:
         return add_imm(output_reg, sym, Literal(ref.offset), args)
 
     source = args.reg(1)
-    imm = args.imm(2)
+    imm = args.s16_imm(2)
 
     if imm == Literal(0):
         return source
@@ -350,7 +350,7 @@ def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
 def handle_addis(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
-    imm = args.shifted_imm(2)
+    imm = args.shifted_u16_imm(2)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, args)
 
 
@@ -619,7 +619,7 @@ def handle_shift_right(
     args: InstrArgs, *, signed: bool, arm: bool = False
 ) -> Expression:
     lhs = args.reg(1)
-    shift = args.reg_or_imm(2) if arm else args.imm(2)
+    shift = args.reg_or_imm(2) if arm else args.s16_imm(2)
     if isinstance(shift, Literal) and shift.value in [16, 24]:
         expr = early_unwrap(lhs)
         pow2 = 1 << shift.value
@@ -649,7 +649,7 @@ def handle_shift_right(
 
 def handle_sll(args: InstrArgs, *, arm: bool = False) -> Expression:
     lhs = args.reg(1)
-    rhs = args.reg_or_imm(2) if arm else args.imm(2)
+    rhs = args.reg_or_imm(2) if arm else args.s16_imm(2)
     if isinstance(lhs, Literal) and isinstance(rhs, Literal):
         return Literal(lhs.value << rhs.value)
     return fold_mul_chains(BinaryOp.int(lhs, "<<", as_intish(rhs)))

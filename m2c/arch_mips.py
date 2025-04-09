@@ -1373,33 +1373,33 @@ class MipsArch(Arch):
             "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
         ),
         "teqi": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.s16_imm(1))]
         ),
         "tnei": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.s16_imm(1))]
         ),
         "tlti": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.s16_imm(1))]
         ),
         "tltiu": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.s16_imm(1))]
         ),
         "tgei": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.s16_imm(1))]
         ),
         "tgeiu": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.s16_imm(1))]
         ),
         "break": lambda a: void_fn_op(
-            "M2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
+            "M2C_BREAK", [a.s16_imm(0)] if a.count() >= 1 else []
         ),
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
         "memcpy.aligned.fictive": lambda a: void_fn_op(
-            "M2C_MEMCPY_ALIGNED", [a.reg(0), a.reg(1), a.imm(2)]
+            "M2C_MEMCPY_ALIGNED", [a.reg(0), a.reg(1), a.s16_imm(2)]
         ),
         "memcpy.unaligned.fictive": lambda a: void_fn_op(
-            "M2C_MEMCPY_UNALIGNED", [a.reg(0), a.reg(1), a.imm(2)]
+            "M2C_MEMCPY_UNALIGNED", [a.reg(0), a.reg(1), a.s16_imm(2)]
         ),
     }
     instrs_float_comp: InstrMap = {
@@ -1508,7 +1508,7 @@ class MipsArch(Arch):
     instrs_destination_first: InstrMap = {
         # Flag-setting instructions
         "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
-        "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
+        "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.s16_imm(2)),
         "sltu": lambda a: handle_sltu(a),
         "sltiu": lambda a: handle_sltiu(a),
         # Integer arithmetic
@@ -1523,10 +1523,10 @@ class MipsArch(Arch):
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
         "negu": lambda a: fold_mul_chains(
-            UnaryOp.sint(op="-", expr=a.reg(1)),
+            UnaryOp.sint("-", a.reg(1)),
         ),
         "neg": lambda a: fold_mul_chains(
-            UnaryOp.sint(op="-", expr=a.reg(1)),
+            UnaryOp.sint("-", a.reg(1)),
         ),
         "div.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.full_imm(2)),
@@ -1536,10 +1536,10 @@ class MipsArch(Arch):
         "daddu": lambda a: handle_add(a),
         "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
         "dnegu": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
+            UnaryOp("-", as_s64(a.reg(1)), type=Type.s64())
         ),
         "dneg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
+            UnaryOp("-", as_s64(a.reg(1)), type=Type.s64())
         ),
         # Hi/lo register uses (used after division/multiplication)
         "mfhi": lambda a: a.regs[Register("hi")],
@@ -1573,75 +1573,73 @@ class MipsArch(Arch):
         "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
         "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
         # Bit arithmetic
-        "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
-        "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
-        "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
+        "ori": lambda a: handle_or(a.reg(1), a.u16_imm(2)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(2)),
+        "or": lambda a: BinaryOp.int(a.reg(1), "|", a.reg(2)),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
         "nor": lambda a: UnaryOp(
-            "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
+            "~", BinaryOp.int(a.reg(1), "|", a.reg(2)), type=Type.intish()
         ),
-        "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
-        "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
-        "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(2)),
+        "andi": lambda a: BinaryOp.int(a.reg(1), "&", a.u16_imm(2)),
+        "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
         # Shifts
         "sll": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
+            BinaryOp.int(a.reg(1), "<<", as_intish(a.s16_imm(2)))
         ),
         "sllv": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
+            BinaryOp.int(a.reg(1), "<<", as_intish(a.reg(2)))
         ),
         "srl": lambda a: fold_divmod(
             BinaryOp(
-                left=as_uintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.imm(2)),
+                as_uintish(a.reg(1)),
+                ">>",
+                as_intish(a.s16_imm(2)),
                 type=Type.u32(),
             )
         ),
         "srlv": lambda a: fold_divmod(
             BinaryOp(
-                left=as_uintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_uintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.u32(),
             )
         ),
         "sra": lambda a: handle_shift_right(a, signed=True),
         "srav": lambda a: fold_divmod(
             BinaryOp(
-                left=as_sintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_sintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.s32(),
             )
         ),
         # 64-bit shifts
         "dsll": lambda a: fold_mul_chains(
-            BinaryOp.int64(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
+            BinaryOp.int64(a.reg(1), "<<", as_intish(a.s16_imm(2)))
         ),
         "dsll32": lambda a: fold_mul_chains(
-            BinaryOp.int64(left=a.reg(1), op="<<", right=imm_add_32(a.imm(2)))
+            BinaryOp.int64(a.reg(1), "<<", imm_add_32(a.s16_imm(2)))
         ),
-        "dsllv": lambda a: BinaryOp.int64(
-            left=a.reg(1), op="<<", right=as_intish(a.reg(2))
-        ),
+        "dsllv": lambda a: BinaryOp.int64(a.reg(1), "<<", as_intish(a.reg(2))),
         "dsrl": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u64()
+            as_u64(a.reg(1)), ">>", as_intish(a.s16_imm(2)), type=Type.u64()
         ),
         "dsrl32": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.u64()
+            as_u64(a.reg(1)), ">>", imm_add_32(a.s16_imm(2)), type=Type.u64()
         ),
         "dsrlv": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u64()
+            as_u64(a.reg(1)), ">>", as_intish(a.reg(2)), type=Type.u64()
         ),
         "dsra": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s64()
+            as_s64(a.reg(1)), ">>", as_intish(a.s16_imm(2)), type=Type.s64()
         ),
         "dsra32": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.s64()
+            as_s64(a.reg(1)), ">>", imm_add_32(a.s16_imm(2)), type=Type.s64()
         ),
         "dsrav": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s64()
+            as_s64(a.reg(1)), ">>", as_intish(a.reg(2)), type=Type.s64()
         ),
         # Move pseudoinstruction
         "move": lambda a: a.reg(1),

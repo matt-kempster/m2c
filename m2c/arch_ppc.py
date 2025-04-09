@@ -1200,51 +1200,43 @@ class PpcArch(Arch):
         "addi": lambda a: handle_addi(a),
         "addic": lambda a: handle_addi(a),
         "addis": lambda a: handle_addis(a),
-        "subf": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
-        ),
-        "subfc": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
-        ),
+        "subf": lambda a: fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1))),
+        "subfc": lambda a: fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1))),
         "subfe": lambda a: carry_sub_from(
-            fold_divmod(BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)))
+            fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1)))
         ),
-        "subfic": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
-        ),
+        "subfic": lambda a: fold_divmod(BinaryOp.intptr(a.s16_imm(2), "-", a.reg(1))),
         "subfze": lambda a: carry_sub_from(
             fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         ),
         "neg": lambda a: fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         "divw": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "divwu": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
-        "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
+        "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.s16_imm(2)),
         "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
         "mulhwu": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
         # Bit arithmetic
         "or": lambda a: handle_or(a.reg(1), a.reg(2)),
-        "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
-        "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
-        "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
+        "ori": lambda a: handle_or(a.reg(1), a.u16_imm(2)),
+        "oris": lambda a: handle_or(a.reg(1), a.shifted_u16_imm(2)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(2)),
         "andc": lambda a: BinaryOp.int(
-            left=a.reg(1), op="&", right=UnaryOp("~", a.reg(2), type=Type.intish())
+            a.reg(1), "&", UnaryOp("~", a.reg(2), type=Type.intish())
         ),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
         "nor": lambda a: UnaryOp(
-            "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
+            "~", BinaryOp.int(a.reg(1), "|", a.reg(2)), type=Type.intish()
         ),
-        "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(2)),
         "eqv": lambda a: UnaryOp(
-            "~", BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)), type=Type.intish()
+            "~", BinaryOp.int(a.reg(1), "^", a.reg(2)), type=Type.intish()
         ),
-        "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
-        "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
-        "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
-        "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
-        "boolcast.fictive": lambda a: UnaryOp(
-            op="!!", expr=a.reg(1), type=Type.intish()
-        ),
+        "andi": lambda a: BinaryOp.int(a.reg(1), "&", a.u16_imm(2)),
+        "andis": lambda a: BinaryOp.int(a.reg(1), "&", a.shifted_u16_imm(2)),
+        "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
+        "xoris": lambda a: BinaryOp.int(a.reg(1), "^", a.shifted_u16_imm(2)),
+        "boolcast.fictive": lambda a: UnaryOp("!!", a.reg(1), type=Type.intish()),
         "rlwimi": lambda a: handle_rlwimi(
             a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
@@ -1252,28 +1244,28 @@ class PpcArch(Arch):
             a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
         "slw": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
+            BinaryOp.int(a.reg(1), "<<", as_intish(a.reg(2)))
         ),
         "srw": lambda a: fold_divmod(
             BinaryOp(
-                left=as_uintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_uintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.u32(),
             )
         ),
         "sraw": lambda a: fold_divmod(
             BinaryOp(
-                left=as_sintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_sintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.s32(),
             )
         ),
         "srawi": lambda a: handle_shift_right(a, signed=True),
         "extsb": lambda a: as_type(a.reg(1), Type.s8(), silent=False),
         "extsh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
-        "cntlzw": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
+        "cntlzw": lambda a: UnaryOp("CLZ", a.reg(1), type=Type.intish()),
         # Load Immediate
         "li": lambda a: a.full_imm(1),
         "lis": lambda a: load_upper(a),
@@ -1292,7 +1284,7 @@ class PpcArch(Arch):
         "fmuls": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
         "fsub": lambda a: BinaryOp.f64(a.reg(1), "-", a.reg(2)),
         "fsubs": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
-        "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
+        "fneg": lambda a: UnaryOp("-", a.reg(1), type=Type.floatish()),
         "fmr": lambda a: a.reg(1),
         "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
         "fctiwz": lambda a: handle_convert(a.reg(1), Type.sintish(), Type.floatish()),
@@ -1322,13 +1314,13 @@ class PpcArch(Arch):
             BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
         ),
         "fnmadd": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
+            "-",
+            BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
             type=Type.f64(),
         ),
         "fnmadds": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
+            "-",
+            BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
             type=Type.f32(),
         ),
         "fmsub": lambda a: BinaryOp.f64(
@@ -1338,13 +1330,13 @@ class PpcArch(Arch):
             BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)
         ),
         "fnmsub": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
+            "-",
+            BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
             type=Type.f64(),
         ),
         "fnmsubs": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
+            "-",
+            BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
             type=Type.f32(),
         ),
         # TODO: Detect if we should use fabs or fabsf
@@ -1352,9 +1344,9 @@ class PpcArch(Arch):
         "fres": lambda a: fn_op("__fres", [a.reg(1)], Type.floatish()),
         "frsqrte": lambda a: fn_op("__frsqrte", [a.reg(1)], Type.floatish()),
         "fsel": lambda a: TernaryOp(
-            cond=BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
-            left=a.reg(2),
-            right=a.reg(3),
+            BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
+            a.reg(2),
+            a.reg(3),
             type=Type.floatish(),
         ),
     }
@@ -1366,9 +1358,9 @@ class PpcArch(Arch):
     instrs_ppc_compare: Dict[str, Callable[[InstrArgs, str], Expression]] = {
         # Integer (signed/unsigned)
         "cmpw": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.reg(2)),
-        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.imm(2)),
+        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.s16_imm(2)),
         "cmplw": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.reg(2)),
-        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.imm(2)),
+        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.s16_imm(2)),
         # Floating point
         # TODO: There is a difference in how these two instructions handle NaN
         "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
