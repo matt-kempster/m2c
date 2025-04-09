@@ -293,7 +293,7 @@ def handle_sltiu(args: InstrArgs) -> Expression:
     return BinaryOp.ucmp(left, "<", right)
 
 
-def handle_addi(args: InstrArgs) -> Expression:
+def handle_addi(args: InstrArgs, arm: bool = False) -> Expression:
     output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)
 
@@ -303,7 +303,7 @@ def handle_addi(args: InstrArgs) -> Expression:
         return add_imm(output_reg, sym, Literal(ref.offset), args)
 
     source = args.reg(1)
-    imm = args.s16_imm(2)
+    imm = args.full_imm(2) if arm else args.s16_imm(2)
 
     if imm == Literal(0):
         return source
@@ -1143,7 +1143,7 @@ def handle_add_arm(args: InstrArgs) -> Expression:
     if isinstance(args.raw_arg(2), Register):
         return handle_add(args)
     else:
-        return handle_addi(args)
+        return handle_addi(args, arm=True)
 
 
 def handle_add_real(
