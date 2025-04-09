@@ -288,6 +288,8 @@ def simplify_patterns(
     patterns: List[AsmPattern],
     asm_data: AsmData,
     arch: ArchAsm,
+    *,
+    debug_patterns: bool,
 ) -> List[BodyPart]:
     """Detect and simplify asm standard patterns emitted by known compilers. This is
     especially useful for patterns that involve branches, which are hard to deal with
@@ -295,13 +297,21 @@ def simplify_patterns(
     labels = {name for item in body if isinstance(item, Label) for name in item.names}
     for pattern in patterns:
         matcher = AsmMatcher(arch, asm_data, body, labels)
+        matched_any = False
         while matcher.index < len(matcher.input):
             m = pattern.match(matcher)
             if m:
                 matcher.apply(m, arch)
+                matched_any = True
             else:
                 matcher.output.append(matcher.input[matcher.index])
                 matcher.index += 1
         body = matcher.output
+        if debug_patterns and matched_any:
+            print(f"Rewrote asm using {type(pattern).__name__}:")
+            print()
+            for part in body:
+                print(part)
+            print()
 
     return body

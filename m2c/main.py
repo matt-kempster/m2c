@@ -155,6 +155,7 @@ def run(options: Options) -> int:
                 arch,
                 fragment=False,
                 print_warnings=options.debug,
+                debug_patterns=options.debug_patterns,
             )
             flow_graphs.append(graph)
         except Exception as e:
@@ -343,6 +344,12 @@ def parse_flags(flags: List[str]) -> Options:
         dest="debug",
         action="store_true",
         help="Print debug info inline",
+    )
+    group.add_argument(
+        "--debug-patterns",
+        dest="debug_patterns",
+        action="store_true",
+        help="Dump assembly after each matched asm pattern",
     )
     group.add_argument(
         "--stacktrace",
@@ -621,11 +628,13 @@ def parse_flags(flags: List[str]) -> Options:
     # The debug output interferes with the visualize output
     if args.visualize_flowgraph is not None:
         args.debug = False
+        args.debug_patterns = False
 
     return Options(
         filenames=args.filenames,
         function_indexes_or_names=functions,
         debug=args.debug,
+        debug_patterns=args.debug_patterns,
         stacktrace=args.stacktrace,
         void=args.void,
         ifs=args.ifs,

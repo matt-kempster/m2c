@@ -392,16 +392,23 @@ def minimize_labels(function: Function, asm_data: AsmData) -> Function:
 
 
 def simplify_standard_patterns(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph, debug_patterns: bool
 ) -> Function:
-    new_body = simplify_patterns(function.body, arch.asm_patterns, asm_data, arch)
+    new_body = simplify_patterns(
+        function.body, arch.asm_patterns, asm_data, arch, debug_patterns=debug_patterns
+    )
     new_function = function.bodyless_copy()
     new_function.body.extend(new_body)
     return new_function
 
 
 def build_blocks(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph, *, fragment: bool
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    *,
+    fragment: bool,
+    debug_patterns: bool,
 ) -> List[Block]:
     if arch.arch == Target.ArchEnum.MIPS:
         verify_no_trailing_delay_slot(function)
@@ -410,7 +417,9 @@ def build_blocks(
         function = normalize_ido_likely_branches(function, arch)
 
     function = minimize_labels(function, asm_data)
-    function = simplify_standard_patterns(function, asm_data, arch)
+    function = simplify_standard_patterns(
+        function, asm_data, arch, debug_patterns=debug_patterns
+    )
     function = minimize_labels(function, asm_data)
 
     block_builder = BlockBuilder()
@@ -1603,13 +1612,16 @@ def build_flowgraph(
     *,
     fragment: bool,
     print_warnings: bool = False,
+    debug_patterns: bool = False,
 ) -> FlowGraph:
     """
     Build the FlowGraph for the given Function.
     If `fragment` is True, do not treat the asm as a full function: this is used
     for analyzing IR patterns which do not need to be normalized in the same way.
     """
-    blocks = build_blocks(function, asm_data, arch, fragment=fragment)
+    blocks = build_blocks(
+        function, asm_data, arch, fragment=fragment, debug_patterns=debug_patterns
+    )
     verify_no_duplicate_instructions(blocks)
 
     nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
