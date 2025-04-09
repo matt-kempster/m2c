@@ -374,6 +374,9 @@ class ConditionalInstrPattern(AsmPattern):
         after_impure = False
         moved_before_streak = 0
         moved_after_streak = 0
+        label1 = f"._m2c_cc_{matcher.index}"
+        label2 = f"._m2c_cc2_{matcher.index}"
+        flag_check: Optional[AsmInstruction] = None
         while matcher.index + i < len(matcher.input):
             instr = matcher.input[matcher.index + i]
             if not isinstance(instr, Instruction):
@@ -388,6 +391,10 @@ class ConditionalInstrPattern(AsmPattern):
                 # This instruction does not belong in the if, but we can move
                 # it to the front or end of it, assuming that we don't reorder
                 # impure instructions and there are no dependency issues.
+                #
+                # TODO: it would be nice to allow rearranging loads. Currently
+                # we consider them impure, which makes us fail to detect some
+                # instances of this pattern that would otherwise be valid.
                 outputs = instr.outputs + instr.clobbers
                 if (
                     not set(instr.inputs + outputs) & mid_outputs
@@ -425,18 +432,34 @@ class ConditionalInstrPattern(AsmPattern):
                 if base == "b":
                     break
                 matched_cc = cc
+            if cc != matched_cc and cc != negate_cond(matched_cc):
+                break
+            if flag_check is not None:
+                if_instrs.append(flag_check)
+            flag_check = None
             if matched_cc == cc:
                 if_instrs.append(new_instr)
-            elif matched_cc == negate_cond(cc):
-                else_instrs.append(new_instr)
             else:
-                break
+                else_instrs.append(new_instr)
             i += 1
             moved_before_streak = 0
             moved_after_streak = 0
-            checked_reg = CC_REGS[factor_cond(matched_cc)[0]]
-            if checked_reg in outputs or instr.is_jump():
+            if instr.is_jump():
                 break
+            if CC_REGS[factor_cond(matched_cc)[0]] in outputs:
+                if matched_cc == cc and not else_instrs:
+                    # Flags have been updated, so we need to emit a check for
+                    # whether we should branch to the else block (label1).
+                    # Skip this if this is the last instruction in the block.
+                    # We could alternatively just break here, but handling this
+                    # makes us detect cmpeq chains as chains of &&.
+                    b_mn = "b" + negate_cond(matched_cc).value
+                    flag_check = AsmInstruction(b_mn, [AsmGlobalSymbol(label1)])
+                else:
+                    # Jumping into the middle of the other block is not worth
+                    # the complexity to support (and might introduce irreducible
+                    # control flow?).
+                    break
         if matched_cc is None:
             return None
 
@@ -445,8 +468,6 @@ class ConditionalInstrPattern(AsmPattern):
         del after_instrs[len(after_instrs) - moved_after_streak :]
 
         b_mn = "b" + negate_cond(matched_cc).value
-        label1 = f"._m2c_cc_{matcher.index}"
-        label2 = f"._m2c_cc2_{matcher.index}"
         if else_instrs:
             return Replacement(
                 [
