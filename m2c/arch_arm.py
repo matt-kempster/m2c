@@ -682,7 +682,7 @@ class ArmArch(Arch):
     return_address_reg = Register("lr")
 
     base_return_regs = [(Register("r0"), False)]
-    all_return_regs = [Register("r0")]
+    all_return_regs = [Register("r0"), Register("r1")]
     argument_regs = [Register(r) for r in ["r0", "r1", "r2", "r3"]]
     simple_temp_regs = [Register("r12")]
     flag_regs = [Register(r) for r in ["n", "z", "c", "v", "hi", "ge", "gt"]]
@@ -1386,13 +1386,13 @@ class ArmArch(Arch):
 
     @staticmethod
     def function_return(expr: Expression) -> Dict[Register, Expression]:
-        # TODO: support r1 as a return register used for 64-bit values. We could
-        # easily add something like:
-        #   Register("r1"): fn_op("SECOND_REG", [expr], Type.reg32(likely_float=False)),
-        # to this dict, but it causes problems with this SECOND_REG being passed as
-        # argument to functions.
+        # We may not know what this function's return registers are --
+        # $r0 or ($r0,$r1) -- but we don't really care, it's fine to be
+        # liberal here and put the return value in all of them.
+        # (It's not perfect for u64's, but that's rare anyway.)
         return {
             Register("r0"): Cast(
                 expr, reinterpret=True, silent=True, type=Type.intptr()
             ),
+            Register("r1"): fn_op("SECOND_REG", [expr], Type.reg32(likely_float=False)),
         }
