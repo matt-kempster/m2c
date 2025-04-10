@@ -360,26 +360,28 @@ class ShortJumpTablePattern(AsmPattern):
 class InstructionEffects:
     inputs: Set[Location] = field(default_factory=set)
     outputs: Set[Location] = field(default_factory=set)
-    impure: bool = False
+    is_effectful: bool = False
+    has_load: bool = False
 
     def can_move_before(self, instr: Instruction) -> bool:
-        # TODO: it would be nice to allow rearranging loads. Currently
-        # we consider them impure, which makes us fail to detect some
-        # instances of this pattern that would otherwise be valid.
         outputs = instr.outputs + instr.clobbers
         if set(instr.inputs + outputs) & self.outputs:
             return False
         if set(outputs) & self.inputs:
             return False
-        if self.impure and not instr.is_pure:
+        if self.is_effectful and (instr.is_effectful or instr.is_load):
+            return False
+        if self.has_load and instr.is_effectful:
             return False
         return True
 
     def add(self, instr: Instruction) -> None:
         self.outputs |= set(instr.outputs + instr.clobbers)
         self.inputs |= set(instr.inputs)
-        if not instr.is_pure:
-            self.impure = True
+        if instr.is_effectful:
+            self.is_effectful = True
+        if instr.is_load:
+            self.has_load = True
 
 
 class ConditionalInstrPattern(AsmPattern):
@@ -851,8 +853,9 @@ class ArmArch(Arch):
         function_target: Optional[Argument] = None
         is_conditional = False
         is_return = False
+        is_load = False
         is_store = False
-        is_pure = False
+        is_effectful = True
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         instr_str = str(AsmInstruction(mnemonic, args))
@@ -954,7 +957,8 @@ class ArmArch(Arch):
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             inputs = get_inputs(1)
-            is_pure = not base.startswith("ldr")
+            is_effectful = False
+            is_load = base.startswith("ldr")
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
@@ -995,7 +999,7 @@ class ArmArch(Arch):
             if set_flags:
                 outputs.extend([Register("n"), Register("z")])
                 clobbers = [Register("hi"), Register("ge"), Register("gt")]
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_nz_flags[base](a)
@@ -1020,7 +1024,7 @@ class ArmArch(Arch):
             inputs = get_inputs(0)
             outputs = [Register("n"), Register("z")]
             clobbers = [Register("hi"), Register("ge"), Register("gt")]
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 lhs = a.reg(0)
@@ -1039,7 +1043,7 @@ class ArmArch(Arch):
             imm = args[0].value
             outputs = [Register("c"), Register("hi")]
             inputs = [Register("z")] if imm else []
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(Register("c"), Literal(imm))
@@ -1053,7 +1057,7 @@ class ArmArch(Arch):
             assert len(args) == 1 and isinstance(args[0], Register)
             outputs = [Register("c"), Register("hi")]
             inputs = [Register("z")]
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 c = s.set_reg(
@@ -1071,7 +1075,7 @@ class ArmArch(Arch):
             inputs = get_inputs(1)
             if base == "adc":
                 inputs.append(Register("c"))
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_add[base](a)
@@ -1087,7 +1091,7 @@ class ArmArch(Arch):
             inputs = get_inputs(1)
             if base in ("sbc", "rsc"):
                 inputs.append(Register("c"))
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 val = cls.instrs_sub[base](a)
@@ -1125,14 +1129,14 @@ class ArmArch(Arch):
             assert len(args) == 2 and isinstance(args[0], Register)
             outputs = list(cls.flag_regs)
             inputs = get_inputs(0)
-            is_pure = True
+            is_effectful = False
             eval_fn = lambda s, a: eval_arm_cmp(s, a.reg(0), a.reg_or_imm(1))
 
         elif base == "cmn":
             assert len(args) == 2 and isinstance(args[0], Register)
             outputs = list(cls.flag_regs)
             inputs = get_inputs(0)
-            is_pure = True
+            is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 lhs = a.reg(0)
@@ -1143,7 +1147,7 @@ class ArmArch(Arch):
                     set_arm_flags_from_add(s, handle_add_arm(a))
 
         elif base in cls.instrs_ignore:
-            is_pure = True
+            is_effectful = False
         else:
             # If the mnemonic is unsupported, guess if it is destination-first
             if args and isinstance(args[0], Register):
@@ -1175,7 +1179,8 @@ class ArmArch(Arch):
             is_conditional=is_conditional,
             is_return=is_return,
             is_store=is_store,
-            is_pure=is_pure,
+            is_load=is_load,
+            is_effectful=is_effectful,
             eval_fn=eval_fn,
         )
 
