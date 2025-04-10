@@ -1286,11 +1286,13 @@ class ArmArch(Arch):
         "ldrsb": lambda a: handle_load(a, type=Type.s8()),
         "ldrh": lambda a: handle_load(a, type=Type.u16()),
         "ldrsh": lambda a: handle_load(a, type=Type.s16()),
-        # Multiplication
+        # Arithmetic
         "smulbb": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "smlabb": lambda a: handle_add_real(
             a.reg(3), BinaryOp.int(a.reg(1), "*", a.reg(2)), a
         ),
+        "sdiv": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
+        "udiv": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
     }
 
     instrs_nz_flags: InstrMap = {
