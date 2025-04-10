@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import (
     Callable,
@@ -356,6 +356,32 @@ class ShortJumpTablePattern(AsmPattern):
         return Replacement([jump_ins], len(self.pattern) - 1)
 
 
+@dataclass
+class InstructionEffects:
+    inputs: Set[Location] = field(default_factory=set)
+    outputs: Set[Location] = field(default_factory=set)
+    impure: bool = False
+
+    def can_move_before(self, instr: Instruction) -> bool:
+        # TODO: it would be nice to allow rearranging loads. Currently
+        # we consider them impure, which makes us fail to detect some
+        # instances of this pattern that would otherwise be valid.
+        outputs = instr.outputs + instr.clobbers
+        if set(instr.inputs + outputs) & self.outputs:
+            return False
+        if set(outputs) & self.inputs:
+            return False
+        if self.impure and not instr.is_pure:
+            return False
+        return True
+
+    def add(self, instr: Instruction) -> None:
+        self.outputs |= set(instr.outputs + instr.clobbers)
+        self.inputs |= set(instr.inputs)
+        if not instr.is_pure:
+            self.impure = True
+
+
 class ConditionalInstrPattern(AsmPattern):
     """Replace conditionally executed instructions by branches."""
 
@@ -366,12 +392,8 @@ class ConditionalInstrPattern(AsmPattern):
         else_instrs: List[AsmInstruction] = []
         before_instrs: List[Instruction] = []
         after_instrs: List[Instruction] = []
-        mid_inputs: Set[Location] = set()
-        mid_outputs: Set[Location] = set()
-        mid_impure = False
-        after_inputs: Set[Location] = set()
-        after_outputs: Set[Location] = set()
-        after_impure = False
+        mid_set = InstructionEffects()
+        after_set = InstructionEffects()
         moved_before_streak = 0
         moved_after_streak = 0
         label1 = f"._m2c_cc_{matcher.index}"
@@ -391,42 +413,23 @@ class ConditionalInstrPattern(AsmPattern):
                 # This instruction does not belong in the if, but we can move
                 # it to the front or end of it, assuming that we don't reorder
                 # impure instructions and there are no dependency issues.
-                #
-                # TODO: it would be nice to allow rearranging loads. Currently
-                # we consider them impure, which makes us fail to detect some
-                # instances of this pattern that would otherwise be valid.
                 outputs = instr.outputs + instr.clobbers
-                if (
-                    not set(instr.inputs + outputs) & mid_outputs
-                    and not set(outputs) & mid_inputs
-                    and not after_instrs
-                    and not (mid_impure and not instr.is_pure)
-                ):
+                if mid_set.can_move_before(instr) and not after_instrs:
                     before_instrs.append(instr)
                     moved_before_streak += 1
                 else:
-                    after_outputs |= set(instr.outputs + instr.clobbers)
-                    after_inputs |= set(instr.inputs)
+                    after_set.add(instr)
                     after_instrs.append(instr)
                     moved_after_streak += 1
-                    if not instr.is_pure:
-                        after_impure = True
                 i += 1
                 continue
             outputs = instr.outputs + instr.clobbers
-            if set(instr.inputs + outputs) & after_outputs:
-                break
-            if set(outputs) & after_inputs:
-                break
-            if after_impure and not instr.is_pure:
+            if not after_set.can_move_before(instr):
                 break
             if after_instrs and instr.is_jump():
                 # If we have a jump, there is no way to put instructions after.
                 break
-            mid_outputs |= set(outputs)
-            mid_inputs |= set(instr.inputs)
-            if not instr.is_pure:
-                mid_impure = True
+            mid_set.add(instr)
             new_instr = AsmInstruction(base + set_flags + direction, instr.args)
             if matched_cc is None:
                 if base == "b":
