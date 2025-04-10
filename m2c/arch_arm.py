@@ -215,7 +215,7 @@ def factor_cond(cc: Cc) -> Tuple[Cc, bool]:
 
 def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
     # Deal with false positives from naively stripping cc/s
-    if mnemonic in ("teq", "mls", "smmls"):
+    if mnemonic in ("teq", "mls", "smmls", "umlal", "smlal"):
         return mnemonic, None, "", ""
     if mnemonic.endswith("s"):
         base = mnemonic[:-1]
