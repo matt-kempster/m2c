@@ -1019,6 +1019,67 @@ class ArmArch(Arch):
                         )
                     s.set_reg(Register("z"), BinaryOp.icmp(val, "==", Literal(0)))
 
+        elif base in cls.instrs_mul_full:
+            assert len(args) == 4
+            assert isinstance(args[0], Register)
+            assert isinstance(args[1], Register)
+            outputs = [args[0], args[1]]
+            inputs = get_inputs(2)
+            if set_flags:
+                outputs.extend([Register("n"), Register("z")])
+                clobbers = [Register("hi"), Register("ge"), Register("gt")]
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                hi, lo = cls.instrs_mul_full[base](a)
+                lo = s.set_reg(a.reg_ref(0), lo)
+                hi = s.set_reg(a.reg_ref(1), hi)
+                if set_flags:
+                    shi = Cast(hi, reinterpret=True, silent=True, type=Type.s32())
+                    s.set_reg(Register("n"), BinaryOp.scmp(shi, "<", Literal(0)))
+                    s.set_reg(
+                        Register("z"),
+                        BinaryOp(
+                            BinaryOp.icmp(lo, "==", Literal(0)),
+                            "&&",
+                            BinaryOp.icmp(hi, "==", Literal(0)),
+                            type=Type.bool(),
+                        ),
+                    )
+
+        elif base in ("smlal", "umlal"):
+            assert len(args) == 4
+            assert isinstance(args[0], Register)
+            assert isinstance(args[1], Register)
+            outputs = [args[0], args[1], Register("mlal")]
+            inputs = get_inputs(0)
+            if set_flags:
+                outputs.extend([Register("n"), Register("z")])
+                clobbers = [Register("hi"), Register("ge"), Register("gt")]
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                signed = base == "smlal"
+                tp = Type.sintish() if signed else Type.uintish()
+                tp64 = Type.s64() if signed else Type.u64()
+                lhs = as_type(a.reg(2), tp, silent=True)
+                rhs = as_type(a.reg(3), tp, silent=True)
+                orig = BinaryOp.int(
+                    a.reg(0), "+", BinaryOp.int(a.reg(1), "<<", Literal(32))
+                )
+                mul = BinaryOp.int(lhs, "*", rhs)
+                mlal = as_type(BinaryOp.int(orig, "+", mul), tp64, silent=True)
+                mlal = s.set_reg(Register("mlal"), mlal)
+                upper = BinaryOp.int(mlal, ">>", Literal(32))
+                lo = as_type(mlal, Type.int_of_size(32), silent=False)
+                hi = as_type(upper, Type.int_of_size(32), silent=False)
+                s.set_reg(a.reg_ref(0), lo)
+                s.set_reg(a.reg_ref(1), hi)
+                if set_flags:
+                    as_s64 = Cast(mlal, reinterpret=True, silent=True, type=Type.s64())
+                    s.set_reg(Register("n"), BinaryOp.scmp(as_s64, "<", Literal(0)))
+                    s.set_reg(Register("z"), BinaryOp.icmp(mlal, "==", Literal(0)))
+
         elif base in ("tst", "teq"):
             assert len(args) == 2
             inputs = get_inputs(0)
@@ -1225,6 +1286,11 @@ class ArmArch(Arch):
         "ldrsb": lambda a: handle_load(a, type=Type.s8()),
         "ldrh": lambda a: handle_load(a, type=Type.u16()),
         "ldrsh": lambda a: handle_load(a, type=Type.s16()),
+        # Multiplication
+        "smulbb": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
+        "smlabb": lambda a: handle_add_real(
+            a.reg(3), BinaryOp.int(a.reg(1), "*", a.reg(2)), a
+        ),
     }
 
     instrs_nz_flags: InstrMap = {
@@ -1239,6 +1305,17 @@ class ArmArch(Arch):
         "eor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2)),
         "bic": lambda a: BinaryOp.int(a.reg(1), "&", UnaryOp.int("~", a.reg_or_imm(2))),
         "orn": lambda a: BinaryOp.int(a.reg(1), "|", UnaryOp.int("~", a.reg_or_imm(2))),
+    }
+
+    instrs_mul_full: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
+        "smull": lambda a: (
+            fold_divmod(BinaryOp.int(a.reg(2), "MULT_HI", a.reg(3))),
+            BinaryOp.int(a.reg(2), "*", a.reg(3)),
+        ),
+        "umull": lambda a: (
+            fold_divmod(BinaryOp.int(a.reg(2), "MULTU_HI", a.reg(3))),
+            BinaryOp.int(a.reg(2), "*", a.reg(3)),
+        ),
     }
 
     instrs_store: StoreInstrMap = {
