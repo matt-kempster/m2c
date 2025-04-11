@@ -789,7 +789,9 @@ class ArmArch(Arch):
                 AsmInstruction(base + set_flags + direction, args)
             )
         if len(args) == 3:
-            if base in ("add", "lsl") and args[2] == AsmLiteral(0):
+            if base == "lsl" and args[2] == AsmLiteral(0):
+                return AsmInstruction("mov" + suffix, args[:2])
+            if base == "add" and not set_flags and args[2] == AsmLiteral(0):
                 return AsmInstruction("mov" + suffix, args[:2])
             if base in ("asr", "lsl", "lsr", "ror"):
                 return AsmInstruction(
