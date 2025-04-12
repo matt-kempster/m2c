@@ -344,6 +344,8 @@ def handle_sub_arm(args: InstrArgs) -> Expression:
 def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
     if isinstance(lhs, Literal) and isinstance(rhs, Literal):
         return s32_literal(lhs.value - rhs.value)
+    if rhs == Literal(0):
+        return lhs
     return BinaryOp.intptr(lhs, "-", rhs)
 
 
@@ -1152,6 +1154,11 @@ def handle_add_real(
     args: InstrArgs,
 ) -> Expression:
     stack_info = args.stack_info
+
+    if lhs == Literal(0):
+        return rhs
+    if rhs == Literal(0):
+        return lhs
 
     type = Type.intptr()
     # Because lhs & rhs are in registers, it shouldn't be possible for them to be arrays.
