@@ -51,6 +51,7 @@ from .translate import (
     ArgLoc,
     Arch,
     BinaryOp,
+    CarryBit,
     Cast,
     ErrorExpr,
     ExprStmt,
@@ -1123,9 +1124,7 @@ class ArmArch(Arch):
             is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                c = s.set_reg(
-                    Register("c"), fn_op("M2C_CARRY", [a.reg(0)], Type.bool())
-                )
+                c = s.set_reg(Register("c"), CarryBit(a.reg(0)))
                 z = condition_from_expr(a.regs[Register("z")])
                 hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
                 s.set_reg(Register("hi"), hi)
@@ -1336,15 +1335,15 @@ class ArmArch(Arch):
     instrs_sub: InstrMap = {
         "sub": lambda a: handle_sub_arm(a),
         "rsb": lambda a: handle_sub(a.reg_or_imm(2), a.reg(1)),
-        "sbc": lambda a: BinaryOp.int(
+        "sbc": lambda a: handle_add_real(
             handle_sub(a.reg(1), a.reg_or_imm(2)),
-            "+",
-            BinaryOp.int(Literal(1), "-", a.regs[Register("c")]),
+            condition_from_expr(a.regs[Register("c")]).negated(),
+            a,
         ),
-        "rsc": lambda a: BinaryOp.int(
+        "rsc": lambda a: handle_add_real(
             handle_sub(a.reg_or_imm(2), a.reg(1)),
-            "+",
-            BinaryOp.int(Literal(1), "-", a.regs[Register("c")]),
+            condition_from_expr(a.regs[Register("c")]).negated(),
+            a,
         ),
     }
 

@@ -940,12 +940,15 @@ class SecondF64Half(Expression):
 
 @dataclass(frozen=True, eq=False)
 class CarryBit(Expression):
+    expr: Optional[Expression] = None
     type: Type = field(default_factory=Type.intish)
 
     def dependencies(self) -> List[Expression]:
-        return []
+        return [self.expr] if self.expr is not None else []
 
     def format(self, fmt: Formatter) -> str:
+        if self.expr is not None:
+            return f"M2C_CARRY({self.expr.format(fmt)})"
         return "M2C_CARRY"
 
 
