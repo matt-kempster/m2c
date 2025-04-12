@@ -789,6 +789,8 @@ class ArmArch(Arch):
     def normalize_instruction(
         cls, instr: AsmInstruction, asm_state: AsmState
     ) -> AsmInstruction:
+        if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
+            instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         if asm_state.is_thumb and not asm_state.is_unified:
             if len(instr.mnemonic) > 3 and instr.mnemonic.endswith("s"):
                 # Give a best-effort warning for missing ".syntax unified" directives.
@@ -804,16 +806,13 @@ class ArmArch(Arch):
 
     @classmethod
     def normalize_instruction_real(cls, instr: AsmInstruction) -> AsmInstruction:
-        if instr.mnemonic.endswith(".n") or instr.mnemonic.endswith(".w"):
-            instr = replace(instr, mnemonic=instr.mnemonic[:-2])
         base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
+        if cc == Cc.AL:
+            cc = None
+            instr = replace(instr, mnemonic=base + set_flags + direction)
         cc_str = cc.value if cc else ""
         suffix = cc_str + set_flags + direction
         args = instr.args
-        if cc == Cc.AL:
-            return cls.normalize_instruction_real(
-                AsmInstruction(base + set_flags + direction, args)
-            )
         if len(args) == 3:
             if base == "lsl" and args[2] == AsmLiteral(0):
                 return AsmInstruction("mov" + suffix, args[:2])
@@ -952,7 +951,8 @@ class ArmArch(Arch):
             if Register("pc") in args[0].regs:
                 is_return = True
             else:
-                # TODO
+                # Fow now, assume pop instructions are only used at the end of
+                # the function, where they can be ignored for our purposes.
                 pass
         elif base == "blx" and isinstance(args[0], Register):
             # Function call to pointer
