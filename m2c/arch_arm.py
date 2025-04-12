@@ -1054,7 +1054,7 @@ class ArmArch(Arch):
             assert len(args) == 4
             assert isinstance(args[0], Register)
             assert isinstance(args[1], Register)
-            outputs = [args[0], args[1], Register("mlal")]
+            outputs = [args[0], args[1], Register(base)]
             inputs = get_inputs(0)
             if set_flags:
                 outputs.extend([Register("n"), Register("z")])
@@ -1072,7 +1072,7 @@ class ArmArch(Arch):
                 )
                 mul = BinaryOp.int(lhs, "*", rhs)
                 mlal = as_type(BinaryOp.int(orig, "+", mul), tp64, silent=True)
-                mlal = s.set_reg(Register("mlal"), mlal)
+                mlal = s.set_reg(Register(base), mlal)
                 upper = BinaryOp.int(mlal, ">>", Literal(32))
                 lo = as_type(mlal, Type.int_of_size(32), silent=False)
                 hi = as_type(upper, Type.int_of_size(32), silent=False)
