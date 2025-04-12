@@ -697,6 +697,7 @@ class ShiftedRegPattern(AsmPattern):
 class PopAndReturnPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "pop {x}",
+        "add sp, sp, 0x10?",
         "bx $x",
     )
 
