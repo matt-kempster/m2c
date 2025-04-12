@@ -623,48 +623,73 @@ class RegRegAddrModePattern(AsmPattern):
 class ShiftedRegPattern(AsmPattern):
     """Replace barrel shifted registers by additional instructions."""
 
+    @staticmethod
+    def _sets_flags(base: str, set_flags: str) -> bool:
+        return bool(
+            base in ("tst", "teq")
+            or (base in ("mov", "mvn", "and", "eor", "orr", "orn", "bic") and set_flags)
+        )
+
+    @staticmethod
+    def _get_literal_carry(base: str, arg: Argument) -> Optional[int]:
+        if not isinstance(arg, AsmLiteral):
+            return None
+        # Carry = bit 31 if the constant is greater than 255 and can be
+        # produced by shifting an 8-bit value
+        value = arg.value & 0xFFFFFFFF
+        if value >= 0x100 and value < (value & -value) * 0x100:
+            return value >> 31
+        if base in ("mov", "mvn"):
+            value ^= 0xFFFFFFFF
+        if value >= 0x100 and value < (value & -value) * 0x100:
+            return value >> 31
+        return None
+
+    @classmethod
+    def sets_flags_based_on_barrel_shifter(
+        cls, base: str, set_flags: str, args: List[Argument]
+    ) -> bool:
+        if not args:
+            return False
+        arg = args[-1]
+        return cls._sets_flags(base, set_flags) and (
+            cls._get_literal_carry(base, arg) is not None
+            or (isinstance(arg, BinOp) and arg.op in ARM_BARREL_SHIFTER_OPS)
+        )
+
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         instr = matcher.input[matcher.index]
         if not isinstance(instr, Instruction) or not instr.args:
             return None
         base, cc, set_flags, direction = parse_suffix(instr.mnemonic)
-
         arg = instr.args[-1]
-        literal_carry: Optional[int] = None
-        new_instrs: List[ReplacementPart]
-        if isinstance(arg, AsmLiteral):
-            # Carry = bit 31 if the constant is greater than 255 and can be
-            # produced by shifting an 8-bit value
-            value = arg.value & 0xFFFFFFFF
-            if value < 0x100 or value >= (value & -value) * 0x100:
-                if base in ("mov", "mvn"):
-                    value ^= 0xFFFFFFFF
-                if value < 0x100 or value >= (value & -value) * 0x100:
-                    return None
-            new_instrs = [instr]
-            literal_carry = value >> 31
-        elif isinstance(arg, BinOp) and arg.op in ARM_BARREL_SHIFTER_OPS:
-            temp = Register.fictive(arg.op)
-            shift_ins = AsmInstruction(arg.op, [temp, arg.lhs, arg.rhs])
-            if arg.op == "rrx":
-                shift_ins.args.pop()
-            new_instrs = [
-                shift_ins,
-                AsmInstruction(instr.mnemonic, instr.args[:-1] + [temp]),
-            ]
-        else:
+
+        literal_carry = self._get_literal_carry(base, arg)
+        if literal_carry is not None:
+            if not self._sets_flags(base, set_flags):
+                return None
+            return Replacement(
+                [
+                    instr,
+                    AsmInstruction("setcarryi.fictive", [AsmLiteral(literal_carry)]),
+                ],
+                1,
+            )
+
+        if not isinstance(arg, BinOp) or arg.op not in ARM_BARREL_SHIFTER_OPS:
             return None
 
-        if base in ("tst", "teq") or (
-            base in ("mov", "mvn", "and", "eor", "orr", "orn", "bic") and set_flags
-        ):
-            # The instruction sets carry based on the barrel shifter
-            if literal_carry is not None:
-                new_instrs.append(
-                    AsmInstruction("setcarryi.fictive", [AsmLiteral(literal_carry)])
-                )
-            else:
-                new_instrs.append(AsmInstruction("setcarry.fictive", [temp]))
+        temp = Register.fictive(arg.op)
+        shift_ins = AsmInstruction(arg.op, [temp, arg.lhs, arg.rhs])
+        if arg.op == "rrx":
+            shift_ins.args.pop()
+        new_instrs = [
+            shift_ins,
+            AsmInstruction(instr.mnemonic, instr.args[:-1] + [temp]),
+        ]
+
+        if self._sets_flags(base, set_flags):
+            new_instrs.append(AsmInstruction("setcarry.fictive", [temp]))
 
         return Replacement(new_instrs, 1)
 
@@ -957,6 +982,7 @@ class ArmArch(Arch):
             is_conditional = True
             eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
         elif base in cls.instrs_no_flags:
+            assert not set_flags
             assert isinstance(args[0], Register)
             outputs = [args[0]]
             inputs = get_inputs(1)
@@ -1229,6 +1255,9 @@ class ArmArch(Arch):
         if cc is not None:
             inputs.append(CC_REGS[cc])
 
+        if ShiftedRegPattern.sets_flags_based_on_barrel_shifter(base, set_flags, args):
+            outputs += [Register("c"), Register("hi")]
+
         return Instruction(
             mnemonic=mnemonic,
             args=args,
@@ -1271,7 +1300,8 @@ class ArmArch(Arch):
         "rev": lambda a: fn_op("BSWAP32", [a.reg(1)], Type.intish()),
         "rev16": lambda a: fn_op("BSWAP16X2", [a.reg(1)], Type.intish()),
         "revsh": lambda a: fn_op("BSWAP16", [a.reg(1)], Type.s16()),
-        # Shifts (flag-setting forms have been normalized into shift + movs)
+        # Shifts (flag-setting forms have been normalized into first movs with
+        # shifted register, then shift + movs)
         "lsl": lambda a: handle_sll(a, arm=True),
         "asr": lambda a: handle_shift_right(a, arm=True, signed=True),
         "lsr": lambda a: handle_shift_right(a, arm=True, signed=False),
