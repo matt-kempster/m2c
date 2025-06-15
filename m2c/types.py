@@ -973,25 +973,28 @@ class Type:
         return Type(TypeData(kind=TypeData.K_STRUCT, size_bits=size_bits, struct=st))
 
     @staticmethod
+    def gsym_unk_ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> Type:
+        real_ctype = resolve_typedefs(ctype, typemap)
+        type = Type.any()
+
+        if isinstance(real_ctype, ca.TypeDecl) and isinstance(
+            real_ctype.type, ca.IdentifierType
+        ):
+            size_bits = primitive_size(real_ctype.type) * 8
+            if size_bits < 32:
+                # This preserves the size of UNK_TYPE1, UNK_TYPE2
+                type = Type.int_of_size(size_bits)
+
+        if isinstance(ctype, ca.TypeDecl) and ctype.declname:
+            if ctype.declname in typepool.unknown_decls:
+                return typepool.unknown_decls[ctype.declname]
+            typepool.unknown_decls[ctype.declname] = type
+
+        return type
+
+    @staticmethod
     def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> Type:
         real_ctype = resolve_typedefs(ctype, typemap)
-        if typepool.unk_inference and is_unk_type(ctype, typemap):
-            type = Type.any()
-
-            if isinstance(real_ctype, ca.TypeDecl) and isinstance(
-                real_ctype.type, ca.IdentifierType
-            ):
-                size_bits = primitive_size(real_ctype.type) * 8
-                if size_bits < 32:
-                    # This preserves the size of UNK_TYPE1, UNK_TYPE2
-                    type = Type.int_of_size(size_bits)
-
-            if isinstance(ctype, ca.TypeDecl) and ctype.declname:
-                if ctype.declname in typepool.unknown_decls:
-                    return typepool.unknown_decls[ctype.declname]
-                typepool.unknown_decls[ctype.declname] = type
-
-            return type
 
         if isinstance(real_ctype, ca.ArrayDecl):
             dim = None

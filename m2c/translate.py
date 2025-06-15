@@ -23,7 +23,7 @@ from typing import (
     Union,
 )
 
-from .c_types import CType, TypeMap
+from .c_types import CType, TypeMap, is_unk_type
 from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
@@ -3988,7 +3988,11 @@ class GlobalInfo:
                 sym.initializer_in_typemap = (
                     sym_name in self.typemap.vars_with_initializers
                 )
-                sym.type.unify(Type.ctype(ctype, self.typemap, self.typepool))
+                if self.typepool.unk_inference and is_unk_type(ctype, self.typemap):
+                    type = Type.gsym_unk_ctype(ctype, self.typemap, self.typepool)
+                else:
+                    type = Type.ctype(ctype, self.typemap, self.typepool)
+                sym.type.unify(type)
                 if sym_name not in self.typepool.unknown_decls:
                     sym.type_provided = True
             elif sym_name in self.local_functions:
