@@ -40,6 +40,7 @@ from .translate import (
     Lwl,
     NodeState,
     RawSymbolRef,
+    RegExpression,
     RegInfo,
     StackInfo,
     StoreStmt,
@@ -565,6 +566,19 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     else:
         source_val = args.reg(0)
     target = args.memory_ref(1)
+    return make_store_real(source_val, source_raw, target, args.regs, stack_info, type)
+
+
+def make_store_real(
+    source_val: Expression,
+    source_raw: Optional[RegExpression],
+    target: Union[AddressMode, RawSymbolRef],
+    regs: RegInfo,
+    stack_info: StackInfo,
+    type: Type,
+) -> Optional[StoreStmt]:
+    size = type.get_size_bytes()
+    assert size is not None
     is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.base)
     if (
         is_stack
@@ -573,7 +587,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     ):
         # Elide register preserval.
         return None
-    dest = deref(target, args.regs, stack_info, size=size, store=True)
+    dest = deref(target, regs, stack_info, size=size, store=True)
     dest.type.unify(type)
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 

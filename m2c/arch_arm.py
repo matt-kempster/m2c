@@ -48,6 +48,7 @@ from .instruction import (
 from .translate import (
     Abi,
     AbiArgSlot,
+    AddressMode,
     ArgLoc,
     Arch,
     BinaryOp,
@@ -70,6 +71,7 @@ from .translate import (
 )
 from .evaluate import (
     condition_from_expr,
+    deref,
     error_stmt,
     eval_arm_cmp,
     fn_op,
@@ -88,6 +90,7 @@ from .evaluate import (
     handle_sub,
     handle_sub_arm,
     make_store,
+    make_store_real,
     replace_bitand,
     set_arm_flags_from_add,
     void_fn_op,
@@ -292,6 +295,18 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
     if cc is None:
         mnemonic, cc = strip_cc(mnemonic)
     return mnemonic + memsize, cc, set_flags, direction
+
+
+def get_ldm_stm_offset(i: int, num_regs: int, direction: str) -> int:
+    if direction == "ia":
+        return 4 * i
+    if direction == "ib":
+        return 4 * (i + 1)
+    if direction == "da":
+        return 4 * (i + 1 - num_regs)
+    if direction == "db":
+        return 4 * (i - num_regs)
+    assert False, f"bad ldm/stm direction {direction}"
 
 
 class AddPcPcPattern(AsmPattern):
@@ -1013,6 +1028,88 @@ class ArmArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
+
+        elif base == "ldm":
+            assert not set_flags
+            assert direction in ("ia", "ib", "da", "db")
+            assert isinstance(args[1], RegisterList)
+            reg_list = args[1]
+            outputs = list(args[1].regs)
+            writeback = False
+            if isinstance(args[0], Register):
+                base_reg = args[0]
+            else:
+                assert isinstance(args[0], AsmAddressMode)
+                assert args[0].addend == AsmLiteral(0)
+                assert args[0].writeback == Writeback.PRE
+                base_reg = args[0].base
+                if base_reg in outputs:
+                    # According to ARMv6 documentation, "If the base register
+                    # <Rn> is specified in <registers>, and base register
+                    # write-back is specified, the final value of <Rn> is
+                    # UNPREDICTABLE." The pattern does come up in practice
+                    # though, and my best guess at the behavior is that we
+                    # should just ignore the writeback.
+                    pass
+                else:
+                    outputs.append(base_reg)
+                    writeback = True
+            inputs = [base_reg]
+            is_effectful = False
+            is_load = True
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                loads: List[Expression] = []
+                for i in range(len(reg_list.regs)):
+                    offset = get_ldm_stm_offset(i, len(reg_list.regs), direction)
+                    target = AddressMode(offset, base_reg)
+                    loads.append(deref(target, a.regs, a.stack_info, size=4))
+                for r, v in zip(reg_list.regs, loads):
+                    s.set_reg(
+                        r, as_type(v, Type.reg32(likely_float=False), silent=True)
+                    )
+                if writeback:
+                    imm = Literal(4 * len(reg_list.regs))
+                    op = "+" if direction in ("ia", "ib") else "-"
+                    s.set_reg(base_reg, BinaryOp.intptr(a.regs[base_reg], op, imm))
+
+        elif base == "stm":
+            assert not set_flags
+            assert direction in ("ia", "ib", "da", "db")
+            assert isinstance(args[1], RegisterList)
+            reg_list = args[1]
+            inputs = list(args[1].regs)
+            writeback = False
+            if isinstance(args[0], Register):
+                base_reg = args[0]
+            else:
+                assert isinstance(args[0], AsmAddressMode)
+                assert args[0].addend == AsmLiteral(0)
+                assert args[0].writeback == Writeback.PRE
+                base_reg = args[0].base
+                outputs.append(base_reg)
+                writeback = True
+            inputs.append(base_reg)
+            is_store = True
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                for i, r in enumerate(reg_list.regs):
+                    offset = get_ldm_stm_offset(i, len(reg_list.regs), direction)
+                    target = AddressMode(offset, base_reg)
+                    store = make_store_real(
+                        a.regs[r],
+                        a.regs.get_raw(r),
+                        target,
+                        a.regs,
+                        a.stack_info,
+                        Type.reg32(likely_float=False),
+                    )
+                    if store is not None:
+                        s.store_memory(store, r)
+                if writeback:
+                    imm = Literal(4 * len(reg_list.regs))
+                    op = "+" if direction in ("ia", "ib") else "-"
+                    s.set_reg(base_reg, BinaryOp.intptr(a.regs[base_reg], op, imm))
 
         elif base == "mov" and args[0] == Register("pc"):
             assert len(args) == 2 and isinstance(args[1], Register)
