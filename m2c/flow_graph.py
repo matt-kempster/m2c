@@ -372,8 +372,11 @@ def minimize_labels(function: Function, asm_data: AsmData) -> Function:
         if name in asm_data.mentioned_labels
     }
     for item in function.body:
-        if isinstance(item, Instruction) and isinstance(item.jump_target, JumpTarget):
-            labels_used.add(item.jump_target.target)
+        if isinstance(item, Instruction):
+            if isinstance(item.jump_target, JumpTarget):
+                labels_used.add(item.jump_target.target)
+            if isinstance(item.function_target, AsmGlobalSymbol):
+                labels_used.add(item.function_target.symbol_name)
 
     new_function = function.bodyless_copy()
     cur_label: List[str] = []
