@@ -279,6 +279,8 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
         memsize = "s" + memsize
 
     mnemonic, cc = strip_cc(mnemonic)
+    if not direction:
+        mnemonic, direction = strip_dir(mnemonic)
     set_flags = ""
     if mnemonic.endswith("s"):
         set_flags = "s"
