@@ -1373,7 +1373,7 @@ class ArmArch(Arch):
                 if isinstance(rhs, Literal) and (rhs.value & 0xFFFFFFFF) != 0x80000000:
                     eval_arm_cmp(s, lhs, Literal(-rhs.value))
                 else:
-                    set_arm_flags_from_add(s, handle_add_arm(a))
+                    set_arm_flags_from_add(s, handle_add_real(lhs, rhs, a))
 
         elif base in cls.instrs_ignore:
             is_effectful = False
