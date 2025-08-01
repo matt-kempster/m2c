@@ -19,7 +19,7 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Formatter, Options, Target
-from .asm_file import AsmData, Function, Label
+from .asm_file import AsmData, AsmSymbolicData, Function, Label
 from .asm_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -882,6 +882,31 @@ def build_graph_from_block(
                             )
                         ):
                             jtbl_names.add(arg.argument.symbol_name)
+                        if (
+                            isinstance(arg, AsmGlobalSymbol)
+                            and ins.arch_mnemonic(arch) == "arm:ldr"
+                        ):
+                            sym_name = arg.symbol_name
+                            ent = asm_data.values.get(sym_name)
+                            if (
+                                ent is not None
+                                and ent.is_text
+                                and ent.data
+                                and isinstance(ent.data[0], AsmSymbolicData)
+                            ):
+                                jtbl_name = ent.data[0].as_symbol_without_addend()
+                                if jtbl_name is not None:
+                                    ent = asm_data.values.get(jtbl_name)
+                                    if (
+                                        ent is not None
+                                        and ent.is_text
+                                        and ent.data
+                                        and isinstance(ent.data[0], AsmSymbolicData)
+                                        and ent.data[0].as_symbol_without_addend()
+                                        is not None
+                                    ):
+                                        jtbl_names.add(jtbl_name)
+
                 if jtbl_names:
                     break
             if len(jtbl_names) > 1:
@@ -892,10 +917,14 @@ def build_graph_from_block(
                     "setup instructions within the same block as the jump instruction."
                 )
             if not jtbl_names:
+                help_text = ""
+                if arch.arch != Target.ArchEnum.ARM:
+                    help_text = (
+                        "\n\nThere must be a read of a variable before the instruction\n"
+                        'which has a name starting with with "jtbl"/"jpt_"/"lbl_"/"jumptable_".'
+                    )
                 raise DecompFailure(
-                    f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.\n\n"
-                    "There must be a read of a variable before the instruction\n"
-                    'which has a name starting with with "jtbl"/"jpt_"/"lbl_"/"jumptable_".'
+                    f"Unable to determine jump table for {jump.mnemonic} instruction {jump.meta.loc_str()}.{help_text}"
                 )
 
             jtbl_name = list(jtbl_names)[0]
@@ -905,8 +934,6 @@ def build_graph_from_block(
                     "corresponding jump table is not provided.\n"
                     "\n"
                     "Please include it in the input .s file(s), or in an additional file.\n"
-                    'It needs to be within a data section (e.g. ".section .rodata", or\n'
-                    ".late_rodata/.data/.sdata/.sdata2).\n"
                 )
 
             jtbl_value = asm_data.values[jtbl_name]
