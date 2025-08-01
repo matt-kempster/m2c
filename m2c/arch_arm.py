@@ -758,6 +758,28 @@ class TailCallPattern(SimpleAsmPattern):
         )
 
 
+class BlBranchPattern(AsmPattern):
+    """Replace bl by b when used for intra-function jumps, which is common
+    in Thumb code to extend the range of branches."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if (
+            isinstance(instr, Instruction)
+            and instr.mnemonic == "bl"
+            and isinstance(instr.args[0], AsmGlobalSymbol)
+            and matcher.is_local_label(instr.args[0].symbol_name)
+        ):
+            return Replacement(
+                [
+                    AsmInstruction("b", instr.args),
+                ],
+                1,
+                clobbers=[Register("lr")],
+            )
+        return None
+
+
 class ArmArch(Arch):
     arch = Target.ArchEnum.ARM
 
@@ -1405,6 +1427,7 @@ class ArmArch(Arch):
         RegRegAddrModePattern(),
         PopAndReturnPattern(),
         TailCallPattern(),
+        BlBranchPattern(),
     ]
 
     instrs_ignore: Set[str] = {

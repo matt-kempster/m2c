@@ -53,6 +53,7 @@ def make_pattern(*parts: str) -> Pattern:
 class Replacement:
     new_body: Sequence[ReplacementPart]
     num_consumed: int
+    clobbers: Optional[List[Register]] = None
 
 
 @dataclass
@@ -270,14 +271,19 @@ class AsmMatcher:
                 final_instr = part
             self.output.append(part)
 
-        # Calculate which regs are *not* written by the repl asm, but were in the input asm
-        # Denote the replacement asm as "clobbering" these regs by marking the final instr
-        for part in self.input[self.index : self.index + repl.num_consumed]:
-            if isinstance(part, Instruction):
-                for arg in part.outputs + part.clobbers:
-                    assert final_instr is not None
-                    if arg not in repl_writes and arg not in final_instr.clobbers:
-                        final_instr.clobbers.append(arg)
+        if repl.clobbers is None:
+            # Calculate which regs are *not* written by the repl asm, but were
+            # in the input asm. Denote the replacement asm as "clobbering" these
+            # regs by marking the final instr.
+            for part in self.input[self.index : self.index + repl.num_consumed]:
+                if isinstance(part, Instruction):
+                    for arg in part.outputs + part.clobbers:
+                        assert final_instr is not None
+                        if arg not in repl_writes and arg not in final_instr.clobbers:
+                            final_instr.clobbers.append(arg)
+        elif repl.clobbers:
+            assert final_instr is not None
+            final_instr.clobbers.extend(repl.clobbers)
 
         # Advance the input
         self.index += repl.num_consumed
