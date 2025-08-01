@@ -274,7 +274,11 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
                 mnemonic = mnemonic[:-1]
                 memsize = suffix
                 break
-    if memsize in ("b", "h") and mnemonic.endswith("s") and not strip_cc(mnemonic)[1]:
+    if (
+        memsize in ("b", "h")
+        and mnemonic.endswith("s")
+        and (not strip_cc(mnemonic)[1] or strip_cc(mnemonic[:-1])[1])
+    ):
         mnemonic = mnemonic[:-1]
         memsize = "s" + memsize
 
