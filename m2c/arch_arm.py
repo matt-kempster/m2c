@@ -247,10 +247,25 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
                 return mnemonic[: -len(suffix)], cc
         return mnemonic, None
 
-    direction = ""
-    if any(mnemonic.endswith(suffix) for suffix in ("ia", "ib", "da", "db")):
-        direction = mnemonic[-2:]
-        mnemonic = mnemonic[:-2]
+    def strip_dir(mnemonic: str) -> Tuple[str, str]:
+        ldm = mnemonic.startswith("ldm")
+        stm = mnemonic.startswith("stm")
+        if not ldm and not stm:
+            return mnemonic, ""
+        if any(mnemonic.endswith(suffix) for suffix in ("ia", "ib", "da", "db")):
+            return mnemonic[:-2], mnemonic[-2:]
+        if any(mnemonic.endswith(suffix) for suffix in ("fa", "ea", "fd", "ed")):
+            # Pre-UAL syntax
+            tr = {
+                "fa": ["da", "ib"],
+                "ea": ["db", "ia"],
+                "fd": ["ia", "db"],
+                "ed": ["ib", "da"],
+            }
+            return mnemonic[:-2], tr[mnemonic[-2:]][0 if ldm else 1]
+        return mnemonic, ""
+
+    mnemonic, direction = strip_dir(mnemonic)
 
     memsize = ""
     if mnemonic.startswith("str") or mnemonic.startswith("ldr"):
