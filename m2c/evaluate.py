@@ -15,6 +15,7 @@ from .asm_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmLiteral,
+    BinOp,
     Register,
 )
 from .error import DecompFailure
@@ -443,6 +444,7 @@ def add_imm(
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     size = type.get_size_bytes()
     assert size is not None
+    output_reg = args.reg_ref(0)
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     def load_rodata_constant() -> Optional[Expression]:
@@ -481,12 +483,21 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             and ent.is_text
             and isinstance(data, AsmSymbolicData)
             and data.size == size
-            and isinstance(data.data, AsmGlobalSymbol)
         ):
-            # TODO: support symbol + imm
-            ent.used_as_literal = True
-            addr = args.stack_info.global_info.address_of_gsym(data.data.symbol_name)
-            return as_type(addr, type, silent=True)
+            sym = data.data
+            addend = 0
+            if (
+                isinstance(sym, BinOp)
+                and sym.op in ("+", "-")
+                and isinstance(sym.rhs, AsmLiteral)
+            ):
+                addend = sym.rhs.value * (-1 if sym.op == "-" else 1)
+                sym = sym.lhs
+            if isinstance(sym, AsmGlobalSymbol):
+                ent.used_as_literal = True
+                addr = args.stack_info.global_info.address_of_gsym(sym.symbol_name)
+                addr = add_imm(output_reg, addr, Literal(addend), args)
+                return as_type(addr, type, silent=True)
 
         return None
 
