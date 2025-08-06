@@ -42,7 +42,7 @@ def print_exception(exc: Exception, sanitize: bool) -> None:
         for line in tb.format(chain=False):
             print(line, end="")
     else:
-        traceback.print_exception(exc, file=sys.stdout)
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stdout)
 
 
 def print_exception_as_comment(
