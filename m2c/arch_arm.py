@@ -809,6 +809,29 @@ class BlBranchPattern(AsmPattern):
         return None
 
 
+class MagicFuncPattern(SimpleAsmPattern):
+    pattern = make_pattern("bl")
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        ins = m.body[0]
+        assert isinstance(ins, Instruction)
+        assert isinstance(ins.args[0], AsmGlobalSymbol)
+        target = ins.args[0].symbol_name
+        if target.startswith("_call_via_"):
+            reg_name = target[10:]
+            reg = ArmArch.aliased_regs.get(reg_name)
+            if reg is None and Register(reg_name) in ArmArch.all_regs:
+                reg = Register(reg_name)
+            if reg is not None:
+                return Replacement(
+                    [
+                        AsmInstruction("blx", [reg]),
+                    ],
+                    1,
+                )
+        return None
+
+
 class ArmArch(Arch):
     arch = Target.ArchEnum.ARM
 
@@ -1457,6 +1480,7 @@ class ArmArch(Arch):
         PopAndReturnPattern(),
         TailCallPattern(),
         BlBranchPattern(),
+        MagicFuncPattern(),
     ]
 
     instrs_ignore: Set[str] = {
