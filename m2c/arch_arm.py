@@ -1208,7 +1208,7 @@ class ArmArch(Arch):
                         # Guess that bit 31 represents the sign of a 32-bit integer.
                         # Use a manual cast so that the type of val is not modified
                         # until the resulting bit is .use()'d.
-                        sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+                        sval = as_type(val, Type.s32(), silent=True, unify=False)
                         s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
                     else:
                         # Guess that it's a bit check.
@@ -1234,7 +1234,7 @@ class ArmArch(Arch):
                 lo = s.set_reg(a.reg_ref(0), lo)
                 hi = s.set_reg(a.reg_ref(1), hi)
                 if set_flags:
-                    shi = Cast(hi, reinterpret=True, silent=True, type=Type.s32())
+                    shi = as_type(hi, Type.s32(), silent=True, unify=False)
                     s.set_reg(Register("n"), BinaryOp.scmp(shi, "<", Literal(0)))
                     s.set_reg(
                         Register("z"),
@@ -1275,7 +1275,7 @@ class ArmArch(Arch):
                 s.set_reg(a.reg_ref(0), lo)
                 s.set_reg(a.reg_ref(1), hi)
                 if set_flags:
-                    as_s64 = Cast(mlal, reinterpret=True, silent=True, type=Type.s64())
+                    as_s64 = as_type(mlal, Type.s64(), silent=True, unify=False)
                     s.set_reg(Register("n"), BinaryOp.scmp(as_s64, "<", Literal(0)))
                     s.set_reg(Register("z"), BinaryOp.icmp(mlal, "==", Literal(0)))
 
@@ -1362,7 +1362,7 @@ class ArmArch(Arch):
                         Register("z"),
                         BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
                     )
-                    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+                    sval = as_type(val, Type.s32(), silent=True, unify=False)
                     s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
                     v = fn_op("M2C_OVERFLOW", [val], Type.bool())
                     s.set_reg(Register("v"), v)
@@ -1374,10 +1374,10 @@ class ArmArch(Arch):
                     #
                     # We could special-case subs/rsbs and implement them the same way
                     # as cmp, but it might just make things less legible?
-                    uval = Cast(val, reinterpret=True, silent=True, type=Type.u32())
-                    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
-                    s64u = Cast(uval, reinterpret=True, silent=False, type=Type.s64())
-                    s64s = Cast(sval, reinterpret=True, silent=False, type=Type.s64())
+                    uval = as_type(val, Type.u32(), silent=True, unify=False)
+                    sval = as_type(val, Type.s32(), silent=True, unify=False)
+                    s64u = as_type(uval, Type.s64(), silent=False, unify=False)
+                    s64s = as_type(sval, Type.s64(), silent=False, unify=False)
                     s.set_reg(Register("c"), BinaryOp.scmp(s64u, ">=", Literal(0)))
                     s.set_reg(Register("hi"), BinaryOp.scmp(s64u, ">", Literal(0)))
                     s.set_reg(Register("ge"), BinaryOp.scmp(s64s, ">=", Literal(0)))
@@ -1701,8 +1701,6 @@ class ArmArch(Arch):
         # liberal here and put the return value in all of them.
         # (It's not perfect for u64's, but that's rare anyway.)
         return {
-            Register("r0"): Cast(
-                expr, reinterpret=True, silent=True, type=Type.intptr()
-            ),
+            Register("r0"): as_type(expr, Type.intptr(), silent=True, unify=False),
             Register("r1"): fn_op("SECOND_REG", [expr], Type.reg32(likely_float=False)),
         }

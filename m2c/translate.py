@@ -134,7 +134,9 @@ PSEUDO_FUNCTION_OPS: Set[str] = {
 }
 
 
-def as_type(expr: Expression, type: Type, silent: bool) -> Expression:
+def as_type(
+    expr: Expression, type: Type, silent: bool, *, unify: bool = True
+) -> Expression:
     type = type.weaken_void_ptr()
     if isinstance(expr, Literal):
         # In an interesting twist from how types behave everywhere else, for
@@ -144,8 +146,9 @@ def as_type(expr: Expression, type: Type, silent: bool) -> Expression:
         # Importantly, we do keep information about maybe-floatness and
         # 64-bitness of values.
         expr = Literal(expr.value, expr.type.clone_literal_type())
+        unify = True
     ptr_target_type = type.get_pointer_target()
-    if expr.type.unify(type):
+    if unify and expr.type.unify(type):
         if silent or isinstance(expr, Literal):
             return expr
     elif ptr_target_type is not None:

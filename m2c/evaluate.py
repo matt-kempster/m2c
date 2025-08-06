@@ -1366,14 +1366,14 @@ def handle_arm_mov(args: InstrArgs) -> Expression:
 def eval_arm_cmp(s: NodeState, lhs: Expression, rhs: Expression) -> None:
     s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
     sub = BinaryOp.intptr(lhs, "-", rhs)
-    sval = Cast(sub, reinterpret=True, silent=True, type=Type.s32())
+    sval = as_type(sub, Type.s32(), silent=True, unify=False)
     s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
     v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
     s.set_reg(Register("v"), v)
-    ulhs = Cast(lhs, reinterpret=True, silent=True, type=Type.u32())
-    slhs = Cast(lhs, reinterpret=True, silent=True, type=Type.s32())
-    urhs = Cast(rhs, reinterpret=True, silent=True, type=Type.u32())
-    srhs = Cast(rhs, reinterpret=True, silent=True, type=Type.s32())
+    ulhs = as_type(lhs, Type.u32(), silent=True, unify=False)
+    slhs = as_type(lhs, Type.s32(), silent=True, unify=False)
+    urhs = as_type(rhs, Type.u32(), silent=True, unify=False)
+    srhs = as_type(rhs, Type.s32(), silent=True, unify=False)
     s.set_reg(Register("c"), BinaryOp.ucmp(ulhs, ">=", urhs))
     s.set_reg(Register("hi"), BinaryOp.ucmp(ulhs, ">", urhs))
     s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
@@ -1385,7 +1385,7 @@ def set_arm_flags_from_add(s: NodeState, val: Expression) -> None:
         Register("z"),
         BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
     )
-    sval = Cast(val, reinterpret=True, silent=True, type=Type.s32())
+    sval = as_type(val, Type.s32(), silent=True, unify=False)
     s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
     s.set_reg(Register("c"), CarryBit(val))
     v = fn_op("M2C_OVERFLOW", [val], Type.bool())
@@ -1395,10 +1395,10 @@ def set_arm_flags_from_add(s: NodeState, val: Expression) -> None:
     # write that; let's cheat and treat a cast of the result to
     # s64/u64 as the entire subtraction having been performed as
     # signed/unsigned 64-bit, and hope it gets the picture across.
-    u64val = Cast(val, reinterpret=True, silent=False, type=Type.u64())
+    u64val = as_type(val, Type.u64(), silent=False, unify=False)
     p32 = Literal(2**32)
     s.set_reg(Register("hi"), BinaryOp.ucmp(u64val, ">", p32))
-    s64val = Cast(val, reinterpret=True, silent=False, type=Type.s64())
+    s64val = as_type(val, Type.s64(), silent=False, unify=False)
     s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
     s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
 
