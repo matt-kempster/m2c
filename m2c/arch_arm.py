@@ -763,13 +763,15 @@ class BlBranchPattern(AsmPattern):
     in Thumb code to extend the range of branches."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        def is_local_bl(instr: Instruction) -> bool:
+            return (
+                instr.mnemonic == "bl"
+                and isinstance(instr.args[0], AsmGlobalSymbol)
+                and matcher.is_local_label(instr.args[0].symbol_name)
+            )
+
         instr = matcher.input[matcher.index]
-        if (
-            isinstance(instr, Instruction)
-            and instr.mnemonic == "bl"
-            and isinstance(instr.args[0], AsmGlobalSymbol)
-            and matcher.is_local_label(instr.args[0].symbol_name)
-        ):
+        if isinstance(instr, Instruction) and is_local_bl(instr):
             return Replacement(
                 [
                     AsmInstruction("b", instr.args),
@@ -777,6 +779,33 @@ class BlBranchPattern(AsmPattern):
                 1,
                 clobbers=[Register("lr")],
             )
+
+        # bcc .skip
+        # bl .target
+        # .skip:
+        if matcher.index + 2 >= len(matcher.input):
+            return None
+        instr2 = matcher.input[matcher.index + 1]
+        label = matcher.input[matcher.index + 2]
+        if (
+            isinstance(instr, Instruction)
+            and isinstance(instr2, Instruction)
+            and isinstance(label, Label)
+            and is_local_bl(instr2)
+            and isinstance(instr.jump_target, JumpTarget)
+            and instr.jump_target.target in label.names
+            and instr.is_conditional
+        ):
+            base, cc, _, _ = parse_suffix(instr.mnemonic)
+            if base == "b" and cc is not None:
+                b_mn = "b" + negate_cond(cc).value
+                return Replacement(
+                    [
+                        AsmInstruction(b_mn, instr2.args),
+                    ],
+                    2,
+                    clobbers=[Register("lr")],
+                )
         return None
 
 
