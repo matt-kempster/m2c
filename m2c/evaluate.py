@@ -1374,8 +1374,8 @@ def eval_arm_cmp(s: NodeState, lhs: Expression, rhs: Expression) -> None:
     slhs = Cast(lhs, reinterpret=True, silent=True, type=Type.s32())
     urhs = Cast(rhs, reinterpret=True, silent=True, type=Type.u32())
     srhs = Cast(rhs, reinterpret=True, silent=True, type=Type.s32())
-    s.set_reg(Register("c"), BinaryOp.scmp(ulhs, ">=", urhs))
-    s.set_reg(Register("hi"), BinaryOp.scmp(ulhs, ">", urhs))
+    s.set_reg(Register("c"), BinaryOp.ucmp(ulhs, ">=", urhs))
+    s.set_reg(Register("hi"), BinaryOp.ucmp(ulhs, ">", urhs))
     s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
     s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
 
