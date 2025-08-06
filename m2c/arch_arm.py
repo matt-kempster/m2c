@@ -138,6 +138,21 @@ THUMB1_FLAG_SETTING: Set[str] = {
 }
 
 
+MAGIC_FUNCTIONS = {
+    "__divsi3": ("sdiv", "001"),
+    "__aeabi_idiv": ("sdiv", "001"),
+    "__udivsi3": ("udiv", "001"),
+    "__aeabi_uidiv": ("udiv", "001"),
+    "__modsi3": ("smod.fictive", "001"),
+    "__umodsi3": ("umod.fictive", "001"),
+    "_s32_div_f": ("sdivmod.fictive", "01"),
+    "__aeabi_idivmod": ("sdivmod.fictive", "01"),
+    "_u32_div_f": ("udivmod.fictive", "01"),
+    "__aeabi_uidivmod": ("udivmod.fictive", "01"),
+    "__clzsi2": ("clz", "00"),
+}
+
+
 HI_REGS: Set[Register] = {
     Register("r8"),
     Register("r9"),
@@ -823,33 +838,11 @@ class MagicFuncPattern(SimpleAsmPattern):
             if reg is None and Register(reg_name) in ArmArch.all_regs:
                 reg = Register(reg_name)
             if reg is not None:
-                return Replacement(
-                    [
-                        AsmInstruction("blx", [reg]),
-                    ],
-                    1,
-                )
-        r0_r0_r1: List[Argument] = [Register("r0"), Register("r0"), Register("r1")]
-        if target in ("__divsi3", "__aeabi_idiv"):
-            return Replacement([AsmInstruction("sdiv", r0_r0_r1)], 1)
-        if target in ("__udivsi3", "__aeabi_uidiv"):
-            return Replacement([AsmInstruction("udiv", r0_r0_r1)], 1)
-        if target == "__modsi3":
-            return Replacement([AsmInstruction("smod.fictive", r0_r0_r1)], 1)
-        if target == "__umodsi3":
-            return Replacement([AsmInstruction("umod.fictive", r0_r0_r1)], 1)
-        if target in ("_s32_div_f", "__aeabi_idivmod"):
-            return Replacement(
-                [AsmInstruction("sdivmod.fictive", [Register("r0"), Register("r1")])], 1
-            )
-        if target in ("_u32_div_f", "__aeabi_uidivmod"):
-            return Replacement(
-                [AsmInstruction("udivmod.fictive", [Register("r0"), Register("r1")])], 1
-            )
-        if target == "__clzsi2":
-            return Replacement(
-                [AsmInstruction("clz", [Register("r0"), Register("r0")])], 1
-            )
+                return Replacement([AsmInstruction("blx", [reg])], 1)
+        if target in MAGIC_FUNCTIONS:
+            mn, arg_str = MAGIC_FUNCTIONS[target]
+            args: List[Argument] = [Register("r" + x) for x in arg_str]
+            return Replacement([AsmInstruction(mn, args)], 1)
         return None
 
 
