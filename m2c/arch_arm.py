@@ -829,6 +829,27 @@ class MagicFuncPattern(SimpleAsmPattern):
                     ],
                     1,
                 )
+        r0_r0_r1: List[Argument] = [Register("r0"), Register("r0"), Register("r1")]
+        if target in ("__divsi3", "__aeabi_idiv"):
+            return Replacement([AsmInstruction("sdiv", r0_r0_r1)], 1)
+        if target in ("__udivsi3", "__aeabi_uidiv"):
+            return Replacement([AsmInstruction("udiv", r0_r0_r1)], 1)
+        if target == "__modsi3":
+            return Replacement([AsmInstruction("smod.fictive", r0_r0_r1)], 1)
+        if target == "__umodsi3":
+            return Replacement([AsmInstruction("umod.fictive", r0_r0_r1)], 1)
+        if target in ("_s32_div_f", "__aeabi_idivmod"):
+            return Replacement(
+                [AsmInstruction("sdivmod.fictive", [Register("r0"), Register("r1")])], 1
+            )
+        if target in ("_u32_div_f", "__aeabi_uidivmod"):
+            return Replacement(
+                [AsmInstruction("udivmod.fictive", [Register("r0"), Register("r1")])], 1
+            )
+        if target == "__clzsi2":
+            return Replacement(
+                [AsmInstruction("clz", [Register("r0"), Register("r0")])], 1
+            )
         return None
 
 
@@ -1102,6 +1123,17 @@ class ArmArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
+
+        elif base in cls.instrs_divmod:
+            assert not set_flags
+            outputs = [Register("r0"), Register("r1")]
+            inputs = get_inputs(0)
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                div, mod = cls.instrs_divmod[base](a)
+                s.set_reg(Register("r0"), div)
+                s.set_reg(Register("r1"), mod)
 
         elif base == "ldm":
             assert not set_flags
@@ -1519,6 +1551,19 @@ class ArmArch(Arch):
         ),
         "sdiv": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "udiv": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
+        "smod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.reg(2)),
+        "umod.fictive": lambda a: BinaryOp.uint(a.reg(1), "%", a.reg(2)),
+    }
+
+    instrs_divmod: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
+        "sdivmod.fictive": lambda a: (
+            BinaryOp.sint(a.reg(0), "/", a.reg(1)),
+            BinaryOp.sint(a.reg(0), "%", a.reg(1)),
+        ),
+        "udivmod.fictive": lambda a: (
+            BinaryOp.uint(a.reg(0), "/", a.reg(1)),
+            BinaryOp.uint(a.reg(0), "%", a.reg(1)),
+        ),
     }
 
     instrs_nz_flags: InstrMap = {
