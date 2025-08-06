@@ -1962,7 +1962,7 @@ class SwitchControl:
 
         # The LHS may have been wrapped in a u32 cast
         left_expr = late_unwrap(cmp_expr.left)
-        if isinstance(left_expr, Cast):
+        while isinstance(left_expr, Cast):
             left_expr = late_unwrap(left_expr.expr)
 
         if self.offset != 0:
@@ -3450,7 +3450,7 @@ class NodeState:
                     expr = orig_expr
                     if force:
                         base_expr = expr
-                        if isinstance(base_expr, Cast):
+                        while isinstance(base_expr, Cast):
                             base_expr = base_expr.expr
                         if isinstance(base_expr, EvalOnceExpr):
                             base_expr.force()
@@ -3537,7 +3537,7 @@ class NodeState:
             return
 
         raw_value = source
-        if isinstance(raw_value, Cast) and raw_value.reinterpret:
+        while isinstance(raw_value, Cast) and raw_value.reinterpret:
             raw_value = raw_value.expr
 
         if isinstance(dest, LocalVar):
