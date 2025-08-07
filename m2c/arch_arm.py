@@ -105,6 +105,73 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
+BASE_INSTRUCTIONS: Set[str] = {
+    "adc",
+    "add",
+    "and",
+    "asr",
+    "b",
+    "bic",
+    "bl",
+    "blx",
+    "bx",
+    "cbnz",
+    "cbz",
+    "clz",
+    "cmn",
+    "cmp",
+    "cpy",
+    "eor",
+    "it",
+    "ldm",
+    "ldr",
+    "ldrb",
+    "ldrh",
+    "ldrsb",
+    "ldrsh",
+    "lsl",
+    "lsr",
+    "mla",
+    "mls",
+    "mov",
+    "mul",
+    "mvn",
+    "neg",
+    "nop",
+    "orn",
+    "orr",
+    "pop",
+    "push",
+    "rbit",
+    "rev",
+    "rev16",
+    "revsh",
+    "ror",
+    "rrx",
+    "rsb",
+    "rsc",
+    "sbc",
+    "sdiv",
+    "smlabb",
+    "smlal",
+    "smmla",
+    "smmls",
+    "smmul",
+    "smulbb",
+    "smull",
+    "stm",
+    "str",
+    "strb",
+    "strh",
+    "sub",
+    "tablejmp.fictive",
+    "teq",
+    "tst",
+    "udiv",
+    "umlal",
+    "umull",
+}
+
 LENGTH_THREE: Set[str] = {
     "adc",
     "add",
@@ -123,7 +190,6 @@ LENGTH_THREE: Set[str] = {
     "sbc",
     "sub",
 }
-
 
 THUMB1_FLAG_SETTING: Set[str] = {
     "adc",
@@ -280,25 +346,8 @@ def factor_cond(cc: Cc) -> Tuple[Cc, bool]:
 
 
 def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
-    # Deal with false positives from naively stripping cc/s
-    if mnemonic in ("teq", "mls", "smmls", "umlal", "smlal"):
-        return mnemonic, None, "", ""
-    if mnemonic.endswith("s"):
-        base = mnemonic[:-1]
-        if base in (
-            "mul",
-            "lsl",
-            "umull",
-            "umlal",
-            "smull",
-            "smlal",
-            "mov",
-            "bic",
-            "adc",
-            "sbc",
-            "rsc",
-        ):
-            return base, None, "s", ""
+    ldm = mnemonic.startswith("ldm")
+    stm = mnemonic.startswith("stm")
 
     def strip_cc(mnemonic: str) -> Tuple[str, Optional[Cc]]:
         for suffix in [cond.value for cond in Cc] + ["hs", "lo"]:
@@ -313,8 +362,6 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
         return mnemonic, None
 
     def strip_dir(mnemonic: str) -> Tuple[str, str]:
-        ldm = mnemonic.startswith("ldm")
-        stm = mnemonic.startswith("stm")
         if not ldm and not stm:
             return mnemonic, ""
         if any(mnemonic.endswith(suffix) for suffix in ("ia", "ib", "da", "db")):
@@ -332,31 +379,56 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
 
     mnemonic, direction = strip_dir(mnemonic)
 
+    # bls should be parsed as b + ls, not bl + s
+    s_ok = not mnemonic.startswith("b") or mnemonic.startswith("bic")
+
+    # Strip memory size from the end (legacy ARM syntax); we re-attach it
+    # later and treat it as part of the mnemonic.
     memsize = ""
     if mnemonic.startswith("str") or mnemonic.startswith("ldr"):
+        # ldrhs should be parsed as ldr + hs, not ldrh + s
+        s_ok = False
         for suffix in ("b", "h", "d"):
             if mnemonic.endswith(suffix):
                 mnemonic = mnemonic[:-1]
                 memsize = suffix
                 break
-    if (
-        memsize in ("b", "h")
-        and mnemonic.endswith("s")
-        and (not strip_cc(mnemonic)[1] or strip_cc(mnemonic[:-1])[1])
-    ):
-        mnemonic = mnemonic[:-1]
-        memsize = "s" + memsize
+        if (
+            memsize in ("b", "h")
+            and mnemonic.endswith("s")
+            and (not strip_cc(mnemonic)[1] or strip_cc(mnemonic[:-1])[1])
+        ):
+            mnemonic = mnemonic[:-1]
+            memsize = "s" + memsize
 
-    mnemonic, cc = strip_cc(mnemonic)
-    if not direction:
-        mnemonic, direction = strip_dir(mnemonic)
-    set_flags = ""
-    if mnemonic.endswith("s"):
-        set_flags = "s"
-        mnemonic = mnemonic[:-1]
-    if cc is None:
-        mnemonic, cc = strip_cc(mnemonic)
-    return mnemonic + memsize, cc, set_flags, direction
+    # We want to support both UAL and legacy ARM syntaxes, which means condition
+    # codes can appear in multiple places in the mnemonic. For instance, both
+    # lsllss and lslsls are valid. We deal with this by trying both possibilities,
+    # and returning once we find an instruction that we recognize.
+    orig_mn = mnemonic
+    orig_dir = direction
+    for early in (False, True):
+        mnemonic = orig_mn
+        direction = orig_dir
+        cc: Optional[Cc] = None
+        if early:
+            mnemonic, cc = strip_cc(mnemonic)
+            if not direction:
+                mnemonic, direction = strip_dir(mnemonic)
+        set_flags = ""
+        if mnemonic in BASE_INSTRUCTIONS:
+            return mnemonic + memsize, cc, set_flags, direction
+        if mnemonic.endswith("s") and s_ok:
+            set_flags = "s"
+            mnemonic = mnemonic[:-1]
+            if mnemonic in BASE_INSTRUCTIONS:
+                return mnemonic + memsize, cc, set_flags, direction
+        if not early:
+            mnemonic, cc = strip_cc(mnemonic)
+            if mnemonic in BASE_INSTRUCTIONS:
+                return mnemonic + memsize, cc, set_flags, direction
+
+    return orig_mn + memsize, None, "", orig_dir
 
 
 def get_ldm_stm_offset(i: int, num_regs: int, direction: str) -> int:
