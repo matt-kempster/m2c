@@ -166,6 +166,12 @@ LENGTH_THREE: Set[str] = {
 }
 
 
+def other_f64_reg(reg: Register) -> Register:
+    assert reg.is_float(), "tried to get complement reg of non-floating point register"
+    num = int(reg.register_name[1:])
+    return Register(f"f{num ^ 1}")
+
+
 class DivPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bnez $q, .A",
@@ -416,7 +422,7 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         if not (
             isinstance(ra, Register)
             and ra.is_float()
-            and ra.other_f64_reg() == rb
+            and other_f64_reg(ra) == rb
             and isinstance(ma, AsmAddressMode)
             and isinstance(mb, AsmAddressMode)
             and ma.base == mb.base
@@ -1131,7 +1137,7 @@ class MipsArch(Arch):
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].base)
             if mnemonic == "sdc1":
-                inputs.append(args[0].other_f64_reg())
+                inputs.append(other_f64_reg(args[0]))
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
@@ -1166,17 +1172,17 @@ class MipsArch(Arch):
                 assert 2 <= len(args) <= 3
                 for reg in args[1:]:
                     assert isinstance(reg, Register)
-                    inputs.extend([reg, reg.other_f64_reg()])
-                outputs.append(args[0].other_f64_reg())
+                    inputs.extend([reg, other_f64_reg(reg)])
+                outputs.append(other_f64_reg(args[0]))
             elif mn_parts[0] in ("cvt", "trunc"):
-                # f64 conversion; either the input or output will be an f64
+                # f64 conversion; either the input or output may be an f64
                 assert len(args) == 2 and isinstance(args[1], Register)
                 if mn_parts[2] == "d":
-                    inputs = [args[1], args[1].other_f64_reg()]
+                    inputs = [args[1], other_f64_reg(args[1])]
                 else:
                     inputs = [args[1]]
                 if mn_parts[1] == "d":
-                    outputs.append(args[0].other_f64_reg())
+                    outputs.append(other_f64_reg(args[0]))
             elif mnemonic.startswith("l") and size is not None:
                 # Load instructions
                 assert len(args) == 2
@@ -1188,7 +1194,7 @@ class MipsArch(Arch):
                     # though we treat lwl as not doing so -- see handle_lwl.
                     inputs.append(args[0])
                 elif mnemonic == "ldc1":
-                    outputs.append(args[0].other_f64_reg())
+                    outputs.append(other_f64_reg(args[0]))
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
                 inputs = [args[1].base]
             elif mnemonic == "mfhi":
@@ -1212,7 +1218,7 @@ class MipsArch(Arch):
                 target = a.reg_ref(0)
                 s.set_reg(target, cls.instrs_destination_first[mnemonic](a))
                 if len(outputs) == 2:
-                    s.set_reg(target.other_f64_reg(), SecondF64Half())
+                    s.set_reg(other_f64_reg(target), SecondF64Half())
 
         elif mnemonic in cls.instrs_float_comp:
             assert (
@@ -1223,9 +1229,9 @@ class MipsArch(Arch):
             if mnemonic.endswith(".d"):
                 inputs = [
                     args[0],
-                    args[0].other_f64_reg(),
+                    other_f64_reg(args[0]),
                     args[1],
-                    args[1].other_f64_reg(),
+                    other_f64_reg(args[1]),
                 ]
             else:
                 inputs = [args[0], args[1]]

@@ -2381,7 +2381,10 @@ class InstrArgs:
         """Extract a double from a register. This may involve reading both the
         mentioned register and the next."""
         reg = self.reg_ref(index)
-        if not reg.is_float():
+        if (
+            self.stack_info.global_info.arch.arch != Target.ArchEnum.ARM
+            and not reg.is_float()
+        ):
             raise DecompFailure(
                 f"Expected instruction argument {reg} to be a float register"
             )
@@ -2391,7 +2394,7 @@ class InstrArgs:
         if self.stack_info.global_info.arch.arch == Target.ArchEnum.PPC:
             return ret
 
-        # MIPS: Look at the paired FPR to get the full 64-bit value
+        # ARM/MIPS: Look at the paired FPR to get the full 64-bit value
         if not isinstance(ret, Literal) or ret.type.get_size_bits() == 64:
             return ret
         reg_num = int(reg.register_name[1:])
@@ -2400,7 +2403,7 @@ class InstrArgs:
                 "Tried to use a double-precision instruction with odd-numbered float "
                 f"register {reg}"
             )
-        other = self.regs[Register(f"f{reg_num+1}")]
+        other = self.regs[Register(f"{reg.register_name[0]}{reg_num+1}")]
         if isinstance(other, Literal) and other.type.get_size_bits() != 64:
             value = ret.value | (other.value << 32)
             return Literal(value, type=Type.f64())

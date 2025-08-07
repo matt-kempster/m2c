@@ -54,6 +54,7 @@ from .translate import (
     BinaryOp,
     CarryBit,
     Cast,
+    Condition,
     ErrorExpr,
     ExprStmt,
     Expression,
@@ -61,12 +62,15 @@ from .translate import (
     InstrMap,
     Literal,
     NodeState,
+    SecondF64Half,
     StmtInstrMap,
     StoreInstrMap,
     UnaryOp,
     as_intish,
     as_type,
     as_uintish,
+    as_f32,
+    as_f64,
     format_hex,
 )
 from .evaluate import (
@@ -79,10 +83,13 @@ from .evaluate import (
     fold_mul_chains,
     handle_add,
     handle_add_arm,
+    handle_add_double,
+    handle_add_float,
     handle_add_real,
     handle_addi,
     handle_arm_mov,
     handle_bitinv,
+    handle_convert,
     handle_load,
     handle_or,
     handle_shift_right,
@@ -140,16 +147,56 @@ THUMB1_FLAG_SETTING: Set[str] = {
 
 MAGIC_FUNCTIONS = {
     "__divsi3": ("sdiv", "001"),
-    "__aeabi_idiv": ("sdiv", "001"),
+    "_idiv": ("sdiv", "001"),
     "__udivsi3": ("udiv", "001"),
-    "__aeabi_uidiv": ("udiv", "001"),
+    "_uidiv": ("udiv", "001"),
     "__modsi3": ("smod.fictive", "001"),
     "__umodsi3": ("umod.fictive", "001"),
     "_s32_div_f": ("sdivmod.fictive", "01"),
-    "__aeabi_idivmod": ("sdivmod.fictive", "01"),
+    "_idivmod": ("sdivmod.fictive", "01"),
     "_u32_div_f": ("udivmod.fictive", "01"),
-    "__aeabi_uidivmod": ("udivmod.fictive", "01"),
+    "_uidivmod": ("udivmod.fictive", "01"),
     "__clzsi2": ("clz", "00"),
+    # Soft float emulation from fplib, see:
+    # https://developer.arm.com/documentation/dui0475/m/floating-point-support/the-software-floating-point-library--fplib
+    "_fadd": ("add.s.fictive", "001"),
+    "_fsub": ("sub.s.fictive", "001"),
+    "_frsub": ("sub.s.fictive", "010"),
+    "_fmul": ("mul.s.fictive", "001"),
+    "_fdiv": ("div.s.fictive", "001"),
+    "_frdiv": ("div.s.fictive", "010"),
+    "_fsqrt": ("sqrt.s.fictive", "00"),
+    "_frnd": ("round.s.fictive", "00"),
+    "_fflt": ("cvt.s.w.fictive", "00"),
+    "_ffltu": ("cvt.s.u.fictive", "00"),
+    "_ffix": ("cvt.w.s.fictive", "00"),
+    "_ffixu": ("cvt.u.s.fictive", "00"),
+    "_f2d": ("cvt.d.s.fictive", "00"),
+    "_fls": ("c.lt.s.fictive", "01"),
+    "_fgr": ("c.gt.s.fictive", "01"),
+    "_fleq": ("c.le.s.fictive", "01"),
+    "_fgeq": ("c.ge.s.fictive", "01"),
+    "_feq": ("c.eq.s.fictive", "01"),
+    "_fneq": ("c.neq.s.fictive", "01"),
+    "_dadd": ("add.d.fictive", "002"),
+    "_dsub": ("sub.d.fictive", "002"),
+    "_drsub": ("sub.d.fictive", "020"),
+    "_dmul": ("mul.d.fictive", "002"),
+    "_ddiv": ("div.d.fictive", "002"),
+    "_drdiv": ("div.d.fictive", "020"),
+    "_dsqrt": ("sqrt.d.fictive", "00"),
+    "_drnd": ("round.d.fictive", "00"),
+    "_dflt": ("cvt.d.w.fictive", "00"),
+    "_dfltu": ("cvt.d.u.fictive", "00"),
+    "_dfix": ("cvt.w.d.fictive", "00"),
+    "_dfixu": ("cvt.u.d.fictive", "00"),
+    "_d2f": ("cvt.s.d.fictive", "00"),
+    "_dls": ("c.lt.d.fictive", "02"),
+    "_dgr": ("c.gt.d.fictive", "02"),
+    "_dleq": ("c.le.d.fictive", "02"),
+    "_dgeq": ("c.ge.d.fictive", "02"),
+    "_deq": ("c.eq.d.fictive", "02"),
+    "_dneq": ("c.neq.d.fictive", "02"),
 }
 
 
@@ -322,6 +369,11 @@ def get_ldm_stm_offset(i: int, num_regs: int, direction: str) -> int:
     if direction == "db":
         return 4 * (i - num_regs)
     assert False, f"bad ldm/stm direction {direction}"
+
+
+def other_f64_reg(reg: Register) -> Register:
+    num = int(reg.register_name[1:])
+    return Register(f"r{num ^ 1}")
 
 
 class AddPcPcPattern(AsmPattern):
@@ -839,6 +891,10 @@ class MagicFuncPattern(SimpleAsmPattern):
                 reg = Register(reg_name)
             if reg is not None:
                 return Replacement([AsmInstruction("blx", [reg])], 1)
+        if target.startswith("__aeabi_"):
+            # Both __aeabi_fadd and _fadd occur in practice; let's strip all
+            # __aeabi prefixes to be more accepting.
+            target = target[7:]
         if target in MAGIC_FUNCTIONS:
             mn, arg_str = MAGIC_FUNCTIONS[target]
             args: List[Argument] = [Register("r" + x) for x in arg_str]
@@ -1114,8 +1170,24 @@ class ArmArch(Arch):
             is_effectful = False
             is_load = base.startswith("ldr")
 
+            if base.startswith("cvt."):
+                assert len(args) == 2 and isinstance(args[1], Register)
+                mn_parts = base.split(".")
+                if mn_parts[1] == "d":
+                    outputs.append(other_f64_reg(args[0]))
+                if mn_parts[2] == "d":
+                    inputs.append(other_f64_reg(args[1]))
+            elif base.endswith(".d.fictive"):
+                for reg in args[1:]:
+                    assert isinstance(reg, Register)
+                    inputs.extend([reg, other_f64_reg(reg)])
+                outputs.append(other_f64_reg(args[0]))
+
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(a.reg_ref(0), cls.instrs_no_flags[base](a))
+                target = a.reg_ref(0)
+                s.set_reg(target, cls.instrs_no_flags[base](a))
+                if len(outputs) == 2:
+                    s.set_reg(other_f64_reg(target), SecondF64Half())
 
         elif base in cls.instrs_divmod:
             assert not set_flags
@@ -1452,6 +1524,35 @@ class ArmArch(Arch):
                 else:
                     set_arm_flags_from_add(s, handle_add_real(lhs, rhs, a))
 
+        elif base in cls.instrs_float_comp:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            if ".d." in mnemonic:
+                inputs = [
+                    args[0],
+                    other_f64_reg(args[0]),
+                    args[1],
+                    other_f64_reg(args[1]),
+                ]
+            else:
+                inputs = [args[0], args[1]]
+
+            cmp_cc, handler = cls.instrs_float_comp[base]
+            cmp_cc, cc_negated = factor_cond(cmp_cc)
+            cc_reg = CC_REGS[cmp_cc]
+
+            clobbers = [r for r in cls.flag_regs if r != cc_reg]
+            outputs = [Register("r0"), cc_reg]
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                cond = handler(a)
+                s.set_reg_real(Register("r0"), cond, function_return=True)
+                s.set_reg(cc_reg, cond.negated() if cc_negated else cond)
+
         elif base in cls.instrs_ignore:
             is_effectful = False
         else:
@@ -1546,6 +1647,55 @@ class ArmArch(Arch):
         "udiv": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
         "smod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.reg(2)),
         "umod.fictive": lambda a: BinaryOp.uint(a.reg(1), "%", a.reg(2)),
+        # Floating point arithmetic
+        "add.s.fictive": lambda a: handle_add_float(a),
+        "sub.s.fictive": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
+        "div.s.fictive": lambda a: BinaryOp.f32(a.reg(1), "/", a.reg(2)),
+        "mul.s.fictive": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
+        "sqrt.s.fictive": lambda a: fn_op("sqrtf", [as_f32(a.reg(1))], Type.f32()),
+        "round.s.fictive": lambda a: fn_op("roundf", [as_f32(a.reg(1))], Type.f32()),
+        "add.d.fictive": lambda a: handle_add_double(a),
+        "sub.d.fictive": lambda a: BinaryOp.f64(a.dreg(1), "-", a.dreg(2)),
+        "div.d.fictive": lambda a: BinaryOp.f64(a.dreg(1), "/", a.dreg(2)),
+        "mul.d.fictive": lambda a: BinaryOp.f64(a.dreg(1), "*", a.dreg(2)),
+        "sqrt.d.fictive": lambda a: fn_op("sqrt", [as_f64(a.dreg(1))], Type.f64()),
+        "round.d.fictive": lambda a: fn_op("round", [as_f64(a.dreg(1))], Type.f64()),
+        # Floating point conversions
+        "cvt.d.s.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.f32()),
+        "cvt.d.w.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f64(), Type.intish()
+        ),
+        "cvt.d.u.fictive": lambda a: handle_convert(a.reg(1), Type.f64(), Type.u32()),
+        "cvt.s.d.fictive": lambda a: handle_convert(a.dreg(1), Type.f32(), Type.f64()),
+        "cvt.s.w.fictive": lambda a: handle_convert(
+            a.reg(1), Type.f32(), Type.intish()
+        ),
+        "cvt.s.u.fictive": lambda a: handle_convert(a.reg(1), Type.f32(), Type.u32()),
+        "cvt.w.d.fictive": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
+        "cvt.w.s.fictive": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
+        "cvt.u.d.fictive": lambda a: handle_convert(a.dreg(1), Type.u32(), Type.f64()),
+        "cvt.u.s.fictive": lambda a: handle_convert(a.reg(1), Type.u32(), Type.f32()),
+    }
+
+    instrs_float_comp: Mapping[str, Tuple[Cc, Callable[[InstrArgs], Condition]]] = {
+        "c.eq.s.fictive": (Cc.EQ, lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1))),
+        "c.lt.s.fictive": (Cc.CC, lambda a: BinaryOp.fcmp(a.reg(0), "<", a.reg(1))),
+        "c.ge.s.fictive": (Cc.CS, lambda a: BinaryOp.fcmp(a.reg(0), ">=", a.reg(1))),
+        "c.le.s.fictive": (Cc.LS, lambda a: BinaryOp.fcmp(a.reg(0), "<=", a.reg(1))),
+        "c.gt.s.fictive": (Cc.HI, lambda a: BinaryOp.fcmp(a.reg(0), ">", a.reg(1))),
+        "c.neq.s.fictive": (
+            Cc.NE,
+            lambda a: BinaryOp.fcmp(a.reg(0), "==", a.reg(1)).negated(),
+        ),
+        "c.eq.d.fictive": (Cc.EQ, lambda a: BinaryOp.dcmp(a.dreg(0), "==", a.dreg(1))),
+        "c.lt.d.fictive": (Cc.CC, lambda a: BinaryOp.dcmp(a.dreg(0), "<", a.dreg(1))),
+        "c.ge.d.fictive": (Cc.CS, lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1))),
+        "c.le.d.fictive": (Cc.LS, lambda a: BinaryOp.dcmp(a.dreg(0), "<=", a.dreg(1))),
+        "c.gt.d.fictive": (Cc.HI, lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1))),
+        "c.neq.d.fictive": (
+            Cc.NE,
+            lambda a: BinaryOp.dcmp(a.dreg(0), "==", a.dreg(1)).negated(),
+        ),
     }
 
     instrs_divmod: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {

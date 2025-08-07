@@ -32,13 +32,6 @@ class Register:
         name = self.register_name
         return bool(name) and name[0] == "f" and name != "fp"
 
-    def other_f64_reg(self) -> Register:
-        assert (
-            self.is_float()
-        ), "tried to get complement reg of non-floating point register"
-        num = int(self.register_name[1:])
-        return Register(f"f{num ^ 1}")
-
     def arm_index(self) -> int:
         index = {"sp": 13, "lr": 14, "pc": 15}.get(self.register_name)
         if index is not None:
