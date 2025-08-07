@@ -1197,8 +1197,8 @@ class ArmArch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 div, mod = cls.instrs_divmod[base](a)
-                s.set_reg(Register("r0"), div)
-                s.set_reg(Register("r1"), mod)
+                s.set_reg_real(Register("r0"), div, function_return=True)
+                s.set_reg_real(Register("r1"), mod, function_return=True)
 
         elif base == "ldm":
             assert not set_flags
