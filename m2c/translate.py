@@ -1961,9 +1961,7 @@ class SwitchControl:
         cmp_exclusive = cmp_expr.op == ">"
 
         # The LHS may have been wrapped in a u32 cast
-        left_expr = late_unwrap(cmp_expr.left)
-        while isinstance(left_expr, Cast):
-            left_expr = late_unwrap(left_expr.expr)
+        left_expr = late_unwrap_ints(cmp_expr.left)
 
         if self.offset != 0:
             if (
@@ -1973,7 +1971,7 @@ class SwitchControl:
                 or late_unwrap(left_expr.right) != Literal(-self.offset)
             ):
                 return False
-        elif left_expr != late_unwrap(self.control_expr):
+        elif left_expr != late_unwrap_ints(self.control_expr):
             return False
 
         right_expr = late_unwrap(cmp_expr.right)
@@ -2823,6 +2821,14 @@ def early_unwrap_ints(expr: Expression) -> Expression:
     uw_expr = early_unwrap(expr)
     if isinstance(uw_expr, Cast) and uw_expr.reinterpret and uw_expr.type.is_int():
         return early_unwrap_ints(uw_expr.expr)
+    return uw_expr
+
+
+def late_unwrap_ints(expr: Expression) -> Expression:
+    """Like early_unwrap_ints, but with late_unwrap."""
+    uw_expr = late_unwrap(expr)
+    if isinstance(uw_expr, Cast) and uw_expr.reinterpret and uw_expr.type.is_int():
+        return late_unwrap_ints(uw_expr.expr)
     return uw_expr
 
 
