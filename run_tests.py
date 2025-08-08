@@ -12,6 +12,7 @@ import sys
 from coverage import Coverage
 from pathlib import Path
 from typing import Any, Iterator, List, Optional, Pattern, Tuple
+import unittest
 
 from m2c.options import Options
 
@@ -267,7 +268,7 @@ def run_test(
     return test_case, did_pass, output
 
 
-def main(
+def run(
     project_dirs: List[Tuple[Path, bool]],
     test_options: TestOptions,
 ) -> int:
@@ -340,16 +341,30 @@ def main(
     if test_options.parallel:
         pool.terminate()
 
+    suite = unittest.defaultTestLoader.discover("tests/unit")
+    unit_num = suite.countTestCases()
+    logging.info(f"Running {unit_num} unit test{'s' if unit_num != 1 else ''}")
+    unit_out = io.StringIO()
+    unit_res = unittest.TextTestRunner(stream=unit_out).run(suite)
+
+    passed += unit_res.testsRun - len(unit_res.failures) - len(unit_res.errors)
+    skipped += len(unit_res.skipped)
+    failed += len(unit_res.failures)
+    failed += len(unit_res.errors)
+    if unit_res.failures or unit_res.errors:
+        logging.error("Unit tests failed:")
+        print(unit_out.getvalue(), end="")
+
     logging.info(
         f"Test summary: {passed} passed, {skipped} skipped, {failed} failed, {passed + skipped + failed} total"
     )
 
-    if failed > 0 and not test_options.should_overwrite:
+    if failed > 0 and (not test_options.should_overwrite or unit_res.failures):
         return 1
     return 0
 
 
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run and record end-to-end decompiler tests."
     )
@@ -475,7 +490,7 @@ if __name__ == "__main__":
         extra_flags=args.extra_flags,
         coverage=cov,
     )
-    ret = main(args.project_dirs, test_options)
+    ret = run(args.project_dirs, test_options)
 
     if cov is not None:
         cov.stop()
@@ -485,3 +500,7 @@ if __name__ == "__main__":
         logging.info(f"Wrote html coverage report to {args.coverage_html}")
 
     sys.exit(ret)
+
+
+if __name__ == "__main__":
+    main()

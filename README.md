@@ -304,6 +304,8 @@ There is a small test suite, which works as follows:
    These tests run the decompiler on a small corpus of assembly.
  - Before pushing your commit, run `./run_tests.py --overwrite` to write changed tests to disk, and commit resultant changes.
 
+`./run_tests.py` additionally runs a handful of unit tests in `tests/unit/`.
+
 ### Running Decompilation Project Tests
 
 It's possible to use the entire corpus of assembly files from decompilation projects as regression tests.
