@@ -1786,7 +1786,7 @@ class ArmArch(Arch):
         ),
         "mvn": lambda a: handle_bitinv(a.reg_or_imm(1)),
         "and": lambda a: replace_bitand(BinaryOp.int(a.reg(1), "&", a.reg_or_imm(2))),
-        "orr": lambda a: handle_or(a.reg(1), a.reg_or_imm(2)),
+        "orr": lambda a: handle_or(a.reg(1), a.reg_or_imm(2), is_arm=True),
         "eor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(2)),
         "bic": lambda a: BinaryOp.int(a.reg(1), "&", UnaryOp.int("~", a.reg_or_imm(2))),
         "orn": lambda a: BinaryOp.int(a.reg(1), "|", UnaryOp.int("~", a.reg_or_imm(2))),

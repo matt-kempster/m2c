@@ -225,7 +225,9 @@ def handle_lw(args: InstrArgs) -> Expression:
     return handle_load(args, type=Type.reg32(likely_float=False))
 
 
-def handle_or(left: Expression, right: Expression) -> Expression:
+def handle_or(
+    left: Expression, right: Expression, *, is_arm: bool = False
+) -> Expression:
     # `or $rD, $rS, $rS` can be used to move $rS into $rD
     if left == right:
         return left
@@ -245,7 +247,8 @@ def handle_or(left: Expression, right: Expression) -> Expression:
 
     uw_left = early_unwrap(left)
     if (
-        isinstance(uw_left, BinaryOp)
+        is_arm
+        and isinstance(uw_left, BinaryOp)
         and uw_left.op == "|"
         and isinstance(uw_left.right, Literal)
         and isinstance(right, Literal)
