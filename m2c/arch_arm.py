@@ -105,7 +105,7 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
-BASE_INSTRUCTIONS: Set[str] = {
+SUFFIXABLE_INSTRUCTIONS: Set[str] = {
     "adc",
     "add",
     "and",
@@ -122,7 +122,6 @@ BASE_INSTRUCTIONS: Set[str] = {
     "cmp",
     "cpy",
     "eor",
-    "it",
     "ldm",
     "ldr",
     "ldrb",
@@ -377,12 +376,10 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
             return mnemonic[:-2], tr[mnemonic[-2:]][0 if ldm else 1]
         return mnemonic, ""
 
-    mnemonic, direction = strip_dir(mnemonic)
-
     # bls should be parsed as b + ls, not bl + s
     s_ok = not mnemonic.startswith("b") or mnemonic.startswith("bic")
 
-    # Strip memory size from the end (legacy ARM syntax); we re-attach it
+    # Strip memory size from the end (legacy ARM syntax). We re-attach it
     # later and treat it as part of the mnemonic.
     memsize = ""
     if mnemonic.startswith("str") or mnemonic.startswith("ldr"):
@@ -402,33 +399,33 @@ def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
             memsize = "s" + memsize
 
     # We want to support both UAL and legacy ARM syntaxes, which means condition
-    # codes can appear in multiple places in the mnemonic. For instance, both
+    # codes can appear in multiple places in the mnemonic. For example, both
     # lsllss and lslsls are valid. We deal with this by trying both possibilities,
-    # and returning once we find an instruction that we recognize.
+    # and returning once we find an instruction that we recognize. Having a list
+    # of recognized instructions is somewhat unavoidable, in order to avoid
+    # ambiguities in cases like sdivcs (sdiv + cs) vs addvcs (add + vc + s).
     orig_mn = mnemonic
-    orig_dir = direction
-    for early in (False, True):
-        mnemonic = orig_mn
-        direction = orig_dir
+    for cc_is_last in (False, True):
+        mnemonic, direction = strip_dir(orig_mn)
         cc: Optional[Cc] = None
-        if early:
+        set_flags = ""
+        if cc_is_last:
             mnemonic, cc = strip_cc(mnemonic)
             if not direction:
                 mnemonic, direction = strip_dir(mnemonic)
-        set_flags = ""
-        if mnemonic in BASE_INSTRUCTIONS:
+        if mnemonic in SUFFIXABLE_INSTRUCTIONS:
             return mnemonic + memsize, cc, set_flags, direction
         if mnemonic.endswith("s") and s_ok:
             set_flags = "s"
             mnemonic = mnemonic[:-1]
-            if mnemonic in BASE_INSTRUCTIONS:
+            if mnemonic in SUFFIXABLE_INSTRUCTIONS:
                 return mnemonic + memsize, cc, set_flags, direction
-        if not early:
+        if not cc_is_last:
             mnemonic, cc = strip_cc(mnemonic)
-            if mnemonic in BASE_INSTRUCTIONS:
+            if mnemonic in SUFFIXABLE_INSTRUCTIONS:
                 return mnemonic + memsize, cc, set_flags, direction
 
-    return orig_mn + memsize, None, "", orig_dir
+    return orig_mn + memsize, None, "", ""
 
 
 def get_ldm_stm_offset(i: int, num_regs: int, direction: str) -> int:
