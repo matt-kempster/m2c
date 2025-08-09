@@ -23,10 +23,11 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
-    RegFormatter,
     Register,
+    RegisterList,
 )
 from .instruction import (
     Instruction,
@@ -61,9 +62,9 @@ class IrPattern(abc.ABC):
 
     def compile(self, arch: ArchFlowGraph) -> CompiledIrPattern:
         missing_meta = InstructionMeta.missing()
-        regf = RegFormatter()
+        asm_state = AsmState()
         replacement_instr = parse_instruction(
-            self.replacement, missing_meta, arch, regf, {}
+            self.replacement, missing_meta, arch, asm_state
         )
 
         name = f"__pattern_{self.__class__.__name__}"
@@ -87,7 +88,7 @@ class IrPattern(abc.ABC):
                 )
             )
         for part in self.parts:
-            func.new_instruction(parse_instruction(part, missing_meta, arch, regf, {}))
+            func.new_instruction(parse_instruction(part, missing_meta, arch, asm_state))
 
         asm_data = AsmData()
         flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)
@@ -180,6 +181,7 @@ class IrMatch:
             return AsmAddressMode(
                 base=self.map_reg(key.base),
                 addend=self.map_arg(key.addend),
+                writeback=key.writeback,
             )
         if isinstance(key, BinOp):
             return self.eval_math(key)
@@ -247,9 +249,16 @@ class TryIrMatch(IrMatch):
                 isinstance(cand, AsmAddressMode)
                 and self.match_arg(pat.base, cand.base)
                 and self.match_arg(pat.addend, cand.addend)
+                and pat.writeback == cand.writeback
             )
         if isinstance(pat, BinOp):
             return self.eval_math(pat) == cand
+        if isinstance(pat, RegisterList):
+            return (
+                isinstance(cand, RegisterList)
+                and len(cand.regs) == len(pat.regs)
+                and all(self.match_arg(cr, pr) for cr, pr in zip(cand.regs, pat.regs))
+            )
 
         assert False, f"bad pattern arg: {pat}"
 
@@ -373,8 +382,8 @@ def simplify_ir_patterns(
 
                 # Create a unique fictive register to act as a temporary
                 original_reg = state.map_reg(input_reg)
-                temp_reg = Register(
-                    f"{original_reg.register_name}_fictive_{fictive_reg_index}"
+                temp_reg = Register.fictive(
+                    original_reg.register_name, str(fictive_reg_index)
                 )
                 fictive_reg_index += 1
                 state.rename_reg(input_reg, temp_reg)

@@ -1,4 +1,4 @@
-Warning: missing "jr $ra" in last block (jumptarget_label).
+Warning: missing "jr $ra" in last block of test (jumptarget_label).
 
 extern ? some_symbol;
 

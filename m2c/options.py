@@ -40,6 +40,7 @@ class Target:
         MIPSEL = "mipsel"
         MIPSEE = "mipsee"
         PPC = "ppc"
+        ARM = "arm"
 
         @property
         def arch(self) -> Target.ArchEnum:
@@ -51,12 +52,15 @@ class Target:
                 return Target.ArchEnum.MIPS
             elif self == Target.PlatformEnum.PPC:
                 return Target.ArchEnum.PPC
+            elif self == Target.PlatformEnum.ARM:
+                return Target.ArchEnum.ARM
             else:
                 static_assert_unreachable(self)
 
     class ArchEnum(ChoicesEnum):
         MIPS = "mips"
         PPC = "ppc"
+        ARM = "arm"
 
     class EndianEnum(ChoicesEnum):
         LITTLE = "little"
@@ -92,7 +96,11 @@ class Target:
         terms = name.split("-")
         try:
             platform = Target.PlatformEnum(terms[0])
-            if platform in (Target.PlatformEnum.MIPSEL, Target.PlatformEnum.MIPSEE):
+            if platform in (
+                Target.PlatformEnum.MIPSEL,
+                Target.PlatformEnum.MIPSEE,
+                Target.PlatformEnum.ARM,
+            ):
                 endian = Target.EndianEnum.LITTLE
             arch = platform.arch
 
@@ -100,6 +108,8 @@ class Target:
                 compiler = Target.CompilerEnum(terms[1])
             elif arch == Target.ArchEnum.PPC:
                 compiler = Target.CompilerEnum.MWCC
+            elif arch == Target.ArchEnum.ARM:
+                compiler = Target.CompilerEnum.GCC
             else:
                 compiler = Target.CompilerEnum.IDO
 
@@ -135,6 +145,7 @@ class Options:
     filenames: List[str]
     function_indexes_or_names: List[Union[int, str]]
     debug: bool
+    debug_patterns: bool
     stacktrace: bool
     void: bool
     ifs: bool

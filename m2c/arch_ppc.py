@@ -19,6 +19,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
     Macro,
@@ -44,6 +45,7 @@ from .translate import (
     AbiArgSlot,
     AddressMode,
     Arch,
+    ArgLoc,
     BinaryOp,
     Cast,
     ErrorExpr,
@@ -62,6 +64,7 @@ from .translate import (
     as_u32,
     as_uintish,
     as_type,
+    format_hex,
 )
 from .evaluate import (
     add_imm,
@@ -83,7 +86,7 @@ from .evaluate import (
     handle_rlwimi,
     handle_rlwinm,
     handle_rlwnm,
-    handle_sra,
+    handle_shift_right,
     load_upper,
     make_store,
     make_storex,
@@ -215,6 +218,7 @@ class SaveRestoreRegsFnPattern(AsmPattern):
             stack_pos = AsmAddressMode(
                 base=Register("r1"),
                 addend=AsmLiteral(size * (i - 32) + addend),
+                writeback=None,
             )
             new_instrs.append(AsmInstruction(mnemonic, [reg, stack_pos]))
         return Replacement(new_instrs, 1)
@@ -417,8 +421,13 @@ class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
 class PpcArch(Arch):
     arch = Target.ArchEnum.PPC
 
+    re_comment = r"[#;].*"
+    supports_dollar_regs = True
+
+    home_space_size = 8
+
     stack_pointer_reg = Register("r1")
-    frame_pointer_reg = Register("r30")
+    frame_pointer_regs = [Register("r30")]
     return_address_reg = Register("lr")
 
     base_return_regs = [(Register("r3"), False), (Register("f1"), True)]
@@ -598,13 +607,16 @@ class PpcArch(Arch):
     }
 
     @classmethod
-    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+    def normalize_instruction(
+        cls, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
         # Remove +/- suffix, which indicates branch-(un)likely and can be ignored
         if instr.mnemonic.startswith("b") and (
             instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
         ):
             return PpcArch.normalize_instruction(
-                AsmInstruction(instr.mnemonic[:-1], instr.args)
+                AsmInstruction(instr.mnemonic[:-1], instr.args),
+                asm_state,
             )
 
         args = instr.args
@@ -641,7 +653,8 @@ class PpcArch(Arch):
                 new_args = args[:]
                 new_args[r0_index] = r0_arg
                 return PpcArch.normalize_instruction(
-                    AsmInstruction(instr.mnemonic, new_args)
+                    AsmInstruction(instr.mnemonic, new_args),
+                    asm_state,
                 )
         if len(args) == 4:
             if base_mnemonic == "extlwi":
@@ -670,7 +683,9 @@ class PpcArch(Arch):
             ):
                 mn = "add" + base_mnemonic[3:]
                 negated = AsmLiteral(-args[2].value)
-                return cls.normalize_instruction(make_dotted(mn, args[:2] + [negated]))
+                return cls.normalize_instruction(
+                    make_dotted(mn, args[:2] + [negated]), asm_state
+                )
             if base_mnemonic in ("sub", "subo", "subc", "subco"):
                 mn = "subf" + base_mnemonic[3:]
                 return make_dotted(mn, [args[0], args[2], args[1]])
@@ -985,11 +1000,15 @@ class PpcArch(Arch):
             )
             is_store = mnemonic == "stmw"
             index = int(args[0].register_name[1:])
-            offset = args[1].lhs_as_literal()
+            offset = args[1].addend_as_literal()
             while index <= 31:
                 reg = Register(f"r{index}")
                 mem = make_memory_access(
-                    AsmAddressMode(base=args[1].base, addend=AsmLiteral(offset)),
+                    AsmAddressMode(
+                        base=args[1].base,
+                        addend=AsmLiteral(offset),
+                        writeback=None,
+                    ),
                     4,
                 )
                 if mnemonic == "stmw":
@@ -1044,8 +1063,6 @@ class PpcArch(Arch):
                     target = a.reg_ref(0)
                     val = cls.instrs_destination_first[mnemonic.rstrip(".")](a)
                     target_val = s.set_reg(target, val)
-                    if target_val is None:
-                        target_val = val
                     s.set_reg(
                         Register("cr0_eq"),
                         BinaryOp.icmp(
@@ -1252,7 +1269,7 @@ class PpcArch(Arch):
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "isync": lambda a: void_fn_op("M2C_SYNC", []),
         "structcopy.fictive": lambda a: void_fn_op(
-            "M2C_STRUCT_COPY", [a.reg(0), a.reg(1), a.imm(2)]
+            "M2C_STRUCT_COPY", [a.reg(0), a.reg(1), a.full_imm(2)]
         ),
     }
 
@@ -1266,25 +1283,19 @@ class PpcArch(Arch):
         "addi": lambda a: handle_addi(a),
         "addic": lambda a: handle_addi(a),
         "addis": lambda a: handle_addis(a),
-        "subf": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
-        ),
-        "subfc": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1))
-        ),
+        "subf": lambda a: fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1))),
+        "subfc": lambda a: fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1))),
         "subfe": lambda a: carry_sub_from(
-            fold_divmod(BinaryOp.intptr(left=a.reg(2), op="-", right=a.reg(1)))
+            fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1)))
         ),
-        "subfic": lambda a: fold_divmod(
-            BinaryOp.intptr(left=a.imm(2), op="-", right=a.reg(1))
-        ),
+        "subfic": lambda a: fold_divmod(BinaryOp.intptr(a.s16_imm(2), "-", a.reg(1))),
         "subfze": lambda a: carry_sub_from(
             fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         ),
         "neg": lambda a: fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         "divw": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "divwu": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
-        "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.imm(2)),
+        "mulli": lambda a: BinaryOp.int(a.reg(1), "*", a.s16_imm(2)),
         "mullw": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "mulhw": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
         "mulhwu": lambda a: fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
@@ -1293,27 +1304,25 @@ class PpcArch(Arch):
         "orc": lambda a: handle_or(
             a.reg(1), UnaryOp("~", a.reg(2), type=Type.intish())
         ),
-        "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
-        "oris": lambda a: handle_or(a.reg(1), a.shifted_imm(2)),
-        "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
+        "ori": lambda a: handle_or(a.reg(1), a.u16_imm(2)),
+        "oris": lambda a: handle_or(a.reg(1), a.shifted_u16_imm(2)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(2)),
         "andc": lambda a: BinaryOp.int(
-            left=a.reg(1), op="&", right=UnaryOp("~", a.reg(2), type=Type.intish())
+            a.reg(1), "&", UnaryOp("~", a.reg(2), type=Type.intish())
         ),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
         "nor": lambda a: UnaryOp(
-            "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
+            "~", BinaryOp.int(a.reg(1), "|", a.reg(2)), type=Type.intish()
         ),
-        "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(2)),
         "eqv": lambda a: UnaryOp(
-            "~", BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)), type=Type.intish()
+            "~", BinaryOp.int(a.reg(1), "^", a.reg(2)), type=Type.intish()
         ),
-        "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
-        "andis": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.shifted_imm(2)),
-        "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
-        "xoris": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.shifted_imm(2)),
-        "boolcast.fictive": lambda a: UnaryOp(
-            op="!!", expr=a.reg(1), type=Type.intish()
-        ),
+        "andi": lambda a: BinaryOp.int(a.reg(1), "&", a.u16_imm(2)),
+        "andis": lambda a: BinaryOp.int(a.reg(1), "&", a.shifted_u16_imm(2)),
+        "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
+        "xoris": lambda a: BinaryOp.int(a.reg(1), "^", a.shifted_u16_imm(2)),
+        "boolcast.fictive": lambda a: UnaryOp("!!", a.reg(1), type=Type.intish()),
         "rlwimi": lambda a: handle_rlwimi(
             a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
@@ -1324,28 +1333,28 @@ class PpcArch(Arch):
             a.reg(1), a.reg(2), a.imm_value(3), a.imm_value(4)
         ),
         "slw": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
+            BinaryOp.int(a.reg(1), "<<", as_intish(a.reg(2)))
         ),
         "srw": lambda a: fold_divmod(
             BinaryOp(
-                left=as_uintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_uintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.u32(),
             )
         ),
         "sraw": lambda a: fold_divmod(
             BinaryOp(
-                left=as_sintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_sintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.s32(),
             )
         ),
-        "srawi": lambda a: handle_sra(a),
+        "srawi": lambda a: handle_shift_right(a, signed=True),
         "extsb": lambda a: as_type(a.reg(1), Type.s8(), silent=False),
         "extsh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
-        "cntlzw": lambda a: UnaryOp(op="CLZ", expr=a.reg(1), type=Type.intish()),
+        "cntlzw": lambda a: UnaryOp("CLZ", a.reg(1), type=Type.intish()),
         # Load Immediate
         "li": lambda a: a.full_imm(1),
         "lis": lambda a: load_upper(a),
@@ -1364,7 +1373,7 @@ class PpcArch(Arch):
         "fmuls": lambda a: BinaryOp.f32(a.reg(1), "*", a.reg(2)),
         "fsub": lambda a: BinaryOp.f64(a.reg(1), "-", a.reg(2)),
         "fsubs": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
-        "fneg": lambda a: UnaryOp(op="-", expr=a.reg(1), type=Type.floatish()),
+        "fneg": lambda a: UnaryOp("-", a.reg(1), type=Type.floatish()),
         "fmr": lambda a: a.reg(1),
         "frsp": lambda a: handle_convert(a.reg(1), Type.f32(), Type.f64()),
         "fctiwz": lambda a: handle_convert(a.reg(1), Type.sintish(), Type.floatish()),
@@ -1394,13 +1403,13 @@ class PpcArch(Arch):
             BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)
         ),
         "fnmadd": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
+            "-",
+            BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
             type=Type.f64(),
         ),
         "fnmadds": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
+            "-",
+            BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "+", a.reg(3)),
             type=Type.f32(),
         ),
         "fmsub": lambda a: BinaryOp.f64(
@@ -1410,13 +1419,13 @@ class PpcArch(Arch):
             BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)
         ),
         "fnmsub": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
+            "-",
+            BinaryOp.f64(BinaryOp.f64(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
             type=Type.f64(),
         ),
         "fnmsubs": lambda a: UnaryOp(
-            op="-",
-            expr=BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
+            "-",
+            BinaryOp.f32(BinaryOp.f32(a.reg(1), "*", a.reg(2)), "-", a.reg(3)),
             type=Type.f32(),
         ),
         # TODO: Detect if we should use fabs or fabsf
@@ -1424,9 +1433,9 @@ class PpcArch(Arch):
         "fres": lambda a: fn_op("__fres", [a.reg(1)], Type.floatish()),
         "frsqrte": lambda a: fn_op("__frsqrte", [a.reg(1)], Type.floatish()),
         "fsel": lambda a: TernaryOp(
-            cond=BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
-            left=a.reg(2),
-            right=a.reg(3),
+            BinaryOp.fcmp(a.reg(1), ">=", Literal(0)),
+            a.reg(2),
+            a.reg(3),
             type=Type.floatish(),
         ),
     }
@@ -1438,9 +1447,9 @@ class PpcArch(Arch):
     instrs_ppc_compare: Dict[str, Callable[[InstrArgs, str], Expression]] = {
         # Integer (signed/unsigned)
         "cmpw": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.reg(2)),
-        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.imm(2)),
+        "cmpwi": lambda a, op: BinaryOp.sintptr_cmp(a.reg(1), op, a.s16_imm(2)),
         "cmplw": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.reg(2)),
-        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.imm(2)),
+        "cmplwi": lambda a, op: BinaryOp.uintptr_cmp(a.reg(1), op, a.s16_imm(2)),
         # Floating point
         # TODO: There is a difference in how these two instructions handle NaN
         "fcmpo": lambda a, op: BinaryOp.fcmp(a.reg(1), op, a.reg(2)),
@@ -1452,6 +1461,16 @@ class PpcArch(Arch):
             a.reg(1), op if op != "==" else ">=", a.reg(2)
         ),
     }
+
+    def arg_name(self, loc: ArgLoc) -> str:
+        if loc.offset is not None:
+            return f"arg_sp{format_hex(loc.offset)}"
+        assert loc.reg is not None
+        reg_num = int(loc.reg.register_name[1:])
+        if loc.reg.register_name.startswith("r"):
+            return f"arg{reg_num - 3}"
+        else:
+            return f"farg{reg_num - 1}"
 
     # Duplicated by MipseeArch.function_abi
     @staticmethod
@@ -1469,10 +1488,14 @@ class PpcArch(Arch):
         float_regs = [r for r in PpcArch.argument_regs if r.register_name[0] == "f"]
 
         if fn_sig.params_known:
-            for ind, param in enumerate(fn_sig.params):
-                # TODO: Support passing parameters on the stack
+            ind = 0
+            stack_offset = 0
+            for param in fn_sig.params:
+                # TODO: Support structs as parameters/return type, and 64-bit values
+                # passed on the stack.
                 param_type = param.type.decay()
-                reg: Optional[Register]
+                reg: Optional[Register] = None
+                offset: Optional[int] = None
                 try:
                     if param_type.is_float():
                         reg = float_regs.pop(0)
@@ -1480,43 +1503,41 @@ class PpcArch(Arch):
                         reg = intptr_regs.pop(0)
                 except IndexError:
                     # Stack variable
-                    reg = None
+                    offset = stack_offset
+                    stack_offset += 4
                 known_slots.append(
-                    AbiArgSlot(
-                        offset=4 * ind, reg=reg, name=param.name, type=param_type
-                    )
+                    AbiArgSlot(ArgLoc(offset, ind, reg), param_type, name=param.name)
                 )
+                ind += 1
             if fn_sig.is_variadic:
-                # TODO: Find a better value to use for `offset`?
                 for reg in intptr_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.intptr()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.intptr())
                     )
+                    ind += 1
                 for reg in float_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.floatish()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
+                    ind += 1
         else:
             for ind, reg in enumerate(PpcArch.argument_regs):
                 if reg.register_name[0] != "f":
                     candidate_slots.append(
-                        AbiArgSlot(offset=4 * ind, reg=reg, type=Type.intptr())
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.intptr())
                     )
                 else:
                     candidate_slots.append(
-                        AbiArgSlot(offset=4 * ind, reg=reg, type=Type.floatish())
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
 
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -1526,7 +1547,7 @@ class PpcArch(Arch):
                 pass
             else:
                 # Only r3-r10/f1-f13 can be used for arguments
-                regname = slot.reg.register_name
+                regname = reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
                 if (
                     prev_reg in PpcArch.argument_regs
@@ -1534,7 +1555,7 @@ class PpcArch(Arch):
                 ):
                     continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
             # Skip registers that are untouched from the initial parameter
             # list. This is sometimes wrong (can give both false positives
@@ -1543,7 +1564,7 @@ class PpcArch(Arch):
             # varargs functions. Decompiling multiple functions at once
             # would help.
             # TODO: don't do this in the middle of the argument list
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)

@@ -19,6 +19,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     JumpTarget,
     Register,
     get_jump_target,
@@ -42,6 +43,7 @@ from .translate import (
     Abi,
     AbiArgSlot,
     Arch,
+    ArgLoc,
     BinaryOp,
     Cast,
     CmpInstrMap,
@@ -66,6 +68,7 @@ from .translate import (
     as_u32,
     as_u64,
     as_uintish,
+    format_hex,
 )
 from .evaluate import (
     condition_from_expr,
@@ -87,9 +90,9 @@ from .evaluate import (
     handle_lwl,
     handle_lwr,
     handle_or,
+    handle_shift_right,
     handle_sltiu,
     handle_sltu,
-    handle_sra,
     handle_swl,
     handle_swr,
     imm_add_32,
@@ -161,6 +164,12 @@ LENGTH_THREE: Set[str] = {
     "ddiv",
     "ddivu",
 }
+
+
+def other_f64_reg(reg: Register) -> Register:
+    assert reg.is_float(), "tried to get complement reg of non-floating point register"
+    num = int(reg.register_name[1:])
+    return Register(f"f{num ^ 1}")
 
 
 class DivPattern(SimpleAsmPattern):
@@ -413,7 +422,7 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         if not (
             isinstance(ra, Register)
             and ra.is_float()
-            and ra.other_f64_reg() == rb
+            and other_f64_reg(ra) == rb
             and isinstance(ma, AsmAddressMode)
             and isinstance(mb, AsmAddressMode)
             and ma.base == mb.base
@@ -730,8 +739,13 @@ class TailCallPattern(AsmPattern):
 class MipsArch(Arch):
     arch = Target.ArchEnum.MIPS
 
+    re_comment = r"[#;].*"
+    supports_dollar_regs = True
+
+    home_space_size = 0x10
+
     stack_pointer_reg = Register("sp")
-    frame_pointer_reg = Register("fp")
+    frame_pointer_regs = [Register("fp")]
     return_address_reg = Register("ra")
 
     base_return_regs = [(Register("v0"), False), (Register("f0"), True)]
@@ -867,7 +881,9 @@ class MipsArch(Arch):
         ]
 
     @classmethod
-    def normalize_instruction(cls, instr: AsmInstruction) -> AsmInstruction:
+    def normalize_instruction(
+        cls, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
         args = instr.args
         if len(args) == 3:
             if instr.mnemonic == "sll" and args[0] == args[1] == Register("zero"):
@@ -919,14 +935,16 @@ class MipsArch(Arch):
                 return AsmInstruction(instr.mnemonic, [Register("zero"), *args])
             if instr.mnemonic in LENGTH_THREE:
                 return cls.normalize_instruction(
-                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                    AsmInstruction(instr.mnemonic, [args[0]] + args),
+                    asm_state,
                 )
         if len(args) == 1:
             if instr.mnemonic == "jalr":
                 return AsmInstruction("jalr", [Register("ra"), args[0]])
             if instr.mnemonic in LENGTH_TWO:
                 return cls.normalize_instruction(
-                    AsmInstruction(instr.mnemonic, [args[0]] + args)
+                    AsmInstruction(instr.mnemonic, [args[0]] + args),
+                    asm_state,
                 )
         return instr
 
@@ -1119,7 +1137,7 @@ class MipsArch(Arch):
             if isinstance(args[1], AsmAddressMode):
                 inputs.append(args[1].base)
             if mnemonic == "sdc1":
-                inputs.append(args[0].other_f64_reg())
+                inputs.append(other_f64_reg(args[0]))
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
@@ -1154,17 +1172,17 @@ class MipsArch(Arch):
                 assert 2 <= len(args) <= 3
                 for reg in args[1:]:
                     assert isinstance(reg, Register)
-                    inputs.extend([reg, reg.other_f64_reg()])
-                outputs.append(args[0].other_f64_reg())
+                    inputs.extend([reg, other_f64_reg(reg)])
+                outputs.append(other_f64_reg(args[0]))
             elif mn_parts[0] in ("cvt", "trunc"):
-                # f64 conversion; either the input or output will be an f64
+                # f64 conversion; either the input or output may be an f64
                 assert len(args) == 2 and isinstance(args[1], Register)
                 if mn_parts[2] == "d":
-                    inputs = [args[1], args[1].other_f64_reg()]
+                    inputs = [args[1], other_f64_reg(args[1])]
                 else:
                     inputs = [args[1]]
                 if mn_parts[1] == "d":
-                    outputs.append(args[0].other_f64_reg())
+                    outputs.append(other_f64_reg(args[0]))
             elif mnemonic.startswith("l") and size is not None:
                 # Load instructions
                 assert len(args) == 2
@@ -1176,7 +1194,7 @@ class MipsArch(Arch):
                     # though we treat lwl as not doing so -- see handle_lwl.
                     inputs.append(args[0])
                 elif mnemonic == "ldc1":
-                    outputs.append(args[0].other_f64_reg())
+                    outputs.append(other_f64_reg(args[0]))
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
                 inputs = [args[1].base]
             elif mnemonic == "mfhi":
@@ -1200,7 +1218,7 @@ class MipsArch(Arch):
                 target = a.reg_ref(0)
                 s.set_reg(target, cls.instrs_destination_first[mnemonic](a))
                 if len(outputs) == 2:
-                    s.set_reg(target.other_f64_reg(), SecondF64Half())
+                    s.set_reg(other_f64_reg(target), SecondF64Half())
 
         elif mnemonic in cls.instrs_float_comp:
             assert (
@@ -1211,9 +1229,9 @@ class MipsArch(Arch):
             if mnemonic.endswith(".d"):
                 inputs = [
                     args[0],
-                    args[0].other_f64_reg(),
+                    other_f64_reg(args[0]),
                     args[1],
-                    args[1].other_f64_reg(),
+                    other_f64_reg(args[1]),
                 ]
             else:
                 inputs = [args[0], args[1]]
@@ -1361,33 +1379,33 @@ class MipsArch(Arch):
             "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.reg(1))]
         ),
         "teqi": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "==", a.s16_imm(1))]
         ),
         "tnei": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.icmp(a.reg(0), "!=", a.s16_imm(1))]
         ),
         "tlti": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), "<", a.s16_imm(1))]
         ),
         "tltiu": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), "<", a.s16_imm(1))]
         ),
         "tgei": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.scmp(a.reg(0), ">=", a.s16_imm(1))]
         ),
         "tgeiu": lambda a: void_fn_op(
-            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.imm(1))]
+            "M2C_TRAP_IF", [BinaryOp.ucmp(a.reg(0), ">=", a.s16_imm(1))]
         ),
         "break": lambda a: void_fn_op(
-            "M2C_BREAK", [a.imm(0)] if a.count() >= 1 else []
+            "M2C_BREAK", [a.s16_imm(0)] if a.count() >= 1 else []
         ),
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "trapuv.fictive": lambda a: CommentStmt("code compiled with -trapuv"),
         "memcpy.aligned.fictive": lambda a: void_fn_op(
-            "M2C_MEMCPY_ALIGNED", [a.reg(0), a.reg(1), a.imm(2)]
+            "M2C_MEMCPY_ALIGNED", [a.reg(0), a.reg(1), a.s16_imm(2)]
         ),
         "memcpy.unaligned.fictive": lambda a: void_fn_op(
-            "M2C_MEMCPY_UNALIGNED", [a.reg(0), a.reg(1), a.imm(2)]
+            "M2C_MEMCPY_UNALIGNED", [a.reg(0), a.reg(1), a.s16_imm(2)]
         ),
     }
     instrs_float_comp: InstrMap = {
@@ -1479,7 +1497,6 @@ class MipsArch(Arch):
         "madd": lambda a: (
             ErrorExpr("madd top half"),
             handle_add_real(
-                Register("lo"),
                 a.regs[Register("lo")],
                 BinaryOp.int(a.reg(1), "*", a.reg(2)),
                 a,
@@ -1488,7 +1505,6 @@ class MipsArch(Arch):
         "maddu": lambda a: (
             ErrorExpr("maddu top half"),
             handle_add_real(
-                Register("lo"),
                 a.regs[Register("lo")],
                 BinaryOp.int(a.reg(1), "*", a.reg(2)),
                 a,
@@ -1498,7 +1514,7 @@ class MipsArch(Arch):
     instrs_destination_first: InstrMap = {
         # Flag-setting instructions
         "slt": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
-        "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.imm(2)),
+        "slti": lambda a: BinaryOp.scmp(a.reg(1), "<", a.s16_imm(2)),
         "sltu": lambda a: handle_sltu(a),
         "sltiu": lambda a: handle_sltiu(a),
         # Integer arithmetic
@@ -1513,10 +1529,10 @@ class MipsArch(Arch):
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
         "negu": lambda a: fold_mul_chains(
-            UnaryOp.sint(op="-", expr=a.reg(1)),
+            UnaryOp.sint("-", a.reg(1)),
         ),
         "neg": lambda a: fold_mul_chains(
-            UnaryOp.sint(op="-", expr=a.reg(1)),
+            UnaryOp.sint("-", a.reg(1)),
         ),
         "div.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.full_imm(2)),
@@ -1526,10 +1542,10 @@ class MipsArch(Arch):
         "daddu": lambda a: handle_add(a),
         "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
         "dnegu": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
+            UnaryOp("-", as_s64(a.reg(1)), type=Type.s64())
         ),
         "dneg": lambda a: fold_mul_chains(
-            UnaryOp(op="-", expr=as_s64(a.reg(1)), type=Type.s64())
+            UnaryOp("-", as_s64(a.reg(1)), type=Type.s64())
         ),
         # Hi/lo register uses (used after division/multiplication)
         "mfhi": lambda a: a.regs[Register("hi")],
@@ -1563,75 +1579,73 @@ class MipsArch(Arch):
         "trunc.w.s": lambda a: handle_convert(a.reg(1), Type.s32(), Type.f32()),
         "trunc.w.d": lambda a: handle_convert(a.dreg(1), Type.s32(), Type.f64()),
         # Bit arithmetic
-        "ori": lambda a: handle_or(a.reg(1), a.unsigned_imm(2)),
-        "and": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.reg(2)),
-        "or": lambda a: BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)),
+        "ori": lambda a: handle_or(a.reg(1), a.u16_imm(2)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(2)),
+        "or": lambda a: BinaryOp.int(a.reg(1), "|", a.reg(2)),
         "not": lambda a: UnaryOp("~", a.reg(1), type=Type.intish()),
         "nor": lambda a: UnaryOp(
-            "~", BinaryOp.int(left=a.reg(1), op="|", right=a.reg(2)), type=Type.intish()
+            "~", BinaryOp.int(a.reg(1), "|", a.reg(2)), type=Type.intish()
         ),
-        "xor": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.reg(2)),
-        "andi": lambda a: BinaryOp.int(left=a.reg(1), op="&", right=a.unsigned_imm(2)),
-        "xori": lambda a: BinaryOp.int(left=a.reg(1), op="^", right=a.unsigned_imm(2)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(2)),
+        "andi": lambda a: BinaryOp.int(a.reg(1), "&", a.u16_imm(2)),
+        "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
         # Shifts
         "sll": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
+            BinaryOp.int(a.reg(1), "<<", as_intish(a.s16_imm(2)))
         ),
         "sllv": lambda a: fold_mul_chains(
-            BinaryOp.int(left=a.reg(1), op="<<", right=as_intish(a.reg(2)))
+            BinaryOp.int(a.reg(1), "<<", as_intish(a.reg(2)))
         ),
         "srl": lambda a: fold_divmod(
             BinaryOp(
-                left=as_uintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.imm(2)),
+                as_uintish(a.reg(1)),
+                ">>",
+                as_intish(a.s16_imm(2)),
                 type=Type.u32(),
             )
         ),
         "srlv": lambda a: fold_divmod(
             BinaryOp(
-                left=as_uintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_uintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.u32(),
             )
         ),
-        "sra": lambda a: handle_sra(a),
+        "sra": lambda a: handle_shift_right(a, signed=True),
         "srav": lambda a: fold_divmod(
             BinaryOp(
-                left=as_sintish(a.reg(1)),
-                op=">>",
-                right=as_intish(a.reg(2)),
+                as_sintish(a.reg(1)),
+                ">>",
+                as_intish(a.reg(2)),
                 type=Type.s32(),
             )
         ),
         # 64-bit shifts
         "dsll": lambda a: fold_mul_chains(
-            BinaryOp.int64(left=a.reg(1), op="<<", right=as_intish(a.imm(2)))
+            BinaryOp.int64(a.reg(1), "<<", as_intish(a.s16_imm(2)))
         ),
         "dsll32": lambda a: fold_mul_chains(
-            BinaryOp.int64(left=a.reg(1), op="<<", right=imm_add_32(a.imm(2)))
+            BinaryOp.int64(a.reg(1), "<<", imm_add_32(a.s16_imm(2)))
         ),
-        "dsllv": lambda a: BinaryOp.int64(
-            left=a.reg(1), op="<<", right=as_intish(a.reg(2))
-        ),
+        "dsllv": lambda a: BinaryOp.int64(a.reg(1), "<<", as_intish(a.reg(2))),
         "dsrl": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.u64()
+            as_u64(a.reg(1)), ">>", as_intish(a.s16_imm(2)), type=Type.u64()
         ),
         "dsrl32": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.u64()
+            as_u64(a.reg(1)), ">>", imm_add_32(a.s16_imm(2)), type=Type.u64()
         ),
         "dsrlv": lambda a: BinaryOp(
-            left=as_u64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.u64()
+            as_u64(a.reg(1)), ">>", as_intish(a.reg(2)), type=Type.u64()
         ),
         "dsra": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=as_intish(a.imm(2)), type=Type.s64()
+            as_s64(a.reg(1)), ">>", as_intish(a.s16_imm(2)), type=Type.s64()
         ),
         "dsra32": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=imm_add_32(a.imm(2)), type=Type.s64()
+            as_s64(a.reg(1)), ">>", imm_add_32(a.s16_imm(2)), type=Type.s64()
         ),
         "dsrav": lambda a: BinaryOp(
-            left=as_s64(a.reg(1)), op=">>", right=as_intish(a.reg(2)), type=Type.s64()
+            as_s64(a.reg(1)), ">>", as_intish(a.reg(2)), type=Type.s64()
         ),
         # Move pseudoinstruction
         "move": lambda a: a.reg(1),
@@ -1668,16 +1682,20 @@ class MipsArch(Arch):
         "seh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),
     }
 
+    def arg_name(self, loc: ArgLoc) -> str:
+        assert loc.offset is not None
+        return f"arg{loc.offset // 4}"
+
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
         return [
-            AbiArgSlot(0, Register("f12"), Type.floatish()),
-            AbiArgSlot(4, Register("f13"), Type.floatish()),
-            AbiArgSlot(4, Register("f14"), Type.floatish()),
-            AbiArgSlot(12, Register("f15"), Type.floatish()),
-            AbiArgSlot(0, Register("a0"), Type.intptr()),
-            AbiArgSlot(4, Register("a1"), Type.any_reg()),
-            AbiArgSlot(8, Register("a2"), Type.any_reg()),
-            AbiArgSlot(12, Register("a3"), Type.any_reg()),
+            AbiArgSlot(ArgLoc(0, 0, Register("f12")), Type.floatish()),
+            AbiArgSlot(ArgLoc(4, 1, Register("f13")), Type.floatish()),
+            AbiArgSlot(ArgLoc(4, 2, Register("f14")), Type.floatish()),
+            AbiArgSlot(ArgLoc(12, 3, Register("f15")), Type.floatish()),
+            AbiArgSlot(ArgLoc(0, 4, Register("a0")), Type.intptr()),
+            AbiArgSlot(ArgLoc(4, 5, Register("a1")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(8, 6, Register("a2")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(12, 7, Register("a3")), Type.any_reg()),
         ]
 
     def function_abi(
@@ -1703,10 +1721,9 @@ class MipsArch(Arch):
                 # as the first argument.
                 known_slots.append(
                     AbiArgSlot(
-                        offset=0,
-                        reg=Register("a0"),
+                        ArgLoc(0, 0, Register("a0")),
+                        Type.ptr(fn_sig.return_type),
                         name="__return__",
-                        type=Type.ptr(fn_sig.return_type),
                         comment="return",
                     )
                 )
@@ -1723,22 +1740,23 @@ class MipsArch(Arch):
                 name = param.name
                 reg2: Optional[Register]
                 if ind < 2 and only_floats:
-                    reg = Register("f12" if ind == 0 else "f14")
+                    reg2 = Register("f12" if ind == 0 else "f14")
                     is_double = (
                         param_type.is_float() and param_type.get_size_bits() == 64
                     )
                     known_slots.append(
-                        AbiArgSlot(offset=offset, reg=reg, name=name, type=param_type)
+                        AbiArgSlot(
+                            ArgLoc(offset, offset // 4, reg2), param_type, name=name
+                        )
                     )
                     if is_double and not for_call:
                         name2 = f"{name}_lo" if name else None
                         reg2 = Register("f13" if ind == 0 else "f15")
                         known_slots.append(
                             AbiArgSlot(
-                                offset=offset + 4,
-                                reg=reg2,
+                                ArgLoc(offset + 4, offset // 4 + 1, reg2),
+                                Type.any_reg(),
                                 name=name2,
-                                type=Type.any_reg(),
                             )
                         )
                 else:
@@ -1756,10 +1774,9 @@ class MipsArch(Arch):
                             comment = None
                         known_slots.append(
                             AbiArgSlot(
-                                offset=4 * i,
-                                reg=reg2,
+                                ArgLoc(4 * i, i, reg2),
+                                sub_type,
                                 name=name2,
-                                type=sub_type,
                                 comment=comment,
                             )
                         )
@@ -1768,18 +1785,19 @@ class MipsArch(Arch):
             if fn_sig.is_variadic:
                 for i in range(offset // 4, 4):
                     candidate_slots.append(
-                        AbiArgSlot(i * 4, Register(f"a{i}"), Type.any_reg())
+                        AbiArgSlot(ArgLoc(i * 4, i, Register(f"a{i}")), Type.any_reg())
                     )
 
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
         possible_slots: List[AbiArgSlot] = []
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -1794,24 +1812,22 @@ class MipsArch(Arch):
                 # For varargs, a subset of a0 .. a3 may be used. Don't check
                 # earlier registers for the first member of that subset.
                 pass
-            elif slot.reg == Register("f13") or slot.reg == Register("f14"):
+            elif reg == Register("f13") or reg == Register("f14"):
                 require = ["f12"]
-            elif slot.reg == Register("f15"):
+            elif reg == Register("f15"):
                 require = ["f14"]
-            elif slot.reg == Register("a1"):
+            elif reg == Register("a1"):
                 require = ["a0", "f12"]
-            elif slot.reg == Register("a2"):
+            elif reg == Register("a2"):
                 require = ["a1", "f13", "f14"]
-            elif slot.reg == Register("a3"):
+            elif reg == Register("a3"):
                 require = ["a2"]
             if require and not any(Register(r) in valid_extra_regs for r in require):
                 continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
-            if (
-                slot.reg == Register("f13") or slot.reg == Register("f15")
-            ) and for_call:
+            if (reg == Register("f13") or reg == Register("f15")) and for_call:
                 # We don't pass in f13 or f15 because they will often only
                 # contain SecondF64Half(), and otherwise would need to be
                 # merged with f12/f14 which we don't have logic for right
@@ -1827,7 +1843,7 @@ class MipsArch(Arch):
             # would help.
             # TODO: don't do this in the middle of the argument list,
             # except for f12 if a0 is passed and such.
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)
@@ -2030,23 +2046,33 @@ class MipseeArch(MipsArch):
 
     def default_function_abi_candidate_slots(self) -> List[AbiArgSlot]:
         return [
-            AbiArgSlot(0, Register("f12"), Type.floatish()),
-            AbiArgSlot(4, Register("f13"), Type.floatish()),
-            AbiArgSlot(8, Register("f14"), Type.floatish()),
-            AbiArgSlot(12, Register("f15"), Type.floatish()),
-            AbiArgSlot(16, Register("f16"), Type.floatish()),
-            AbiArgSlot(20, Register("f17"), Type.floatish()),
-            AbiArgSlot(24, Register("f18"), Type.floatish()),
-            AbiArgSlot(28, Register("f19"), Type.floatish()),
-            AbiArgSlot(0, Register("a0"), Type.intptr()),
-            AbiArgSlot(4, Register("a1"), Type.any_reg()),
-            AbiArgSlot(8, Register("a2"), Type.any_reg()),
-            AbiArgSlot(12, Register("a3"), Type.any_reg()),
-            AbiArgSlot(16, Register("a4"), Type.any_reg()),
-            AbiArgSlot(20, Register("a5"), Type.any_reg()),
-            AbiArgSlot(24, Register("a6"), Type.any_reg()),
-            AbiArgSlot(28, Register("a7"), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 0, Register("a0")), Type.intptr()),
+            AbiArgSlot(ArgLoc(None, 1, Register("a1")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 2, Register("a2")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 3, Register("a3")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 4, Register("a4")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 5, Register("a5")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 6, Register("a6")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 7, Register("a7")), Type.any_reg()),
+            AbiArgSlot(ArgLoc(None, 8, Register("f12")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 9, Register("f13")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 10, Register("f14")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 11, Register("f15")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 12, Register("f16")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 13, Register("f17")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 14, Register("f18")), Type.floatish()),
+            AbiArgSlot(ArgLoc(None, 15, Register("f19")), Type.floatish()),
         ]
+
+    def arg_name(self, loc: ArgLoc) -> str:
+        if loc.offset is not None:
+            return f"arg_sp{format_hex(loc.offset)}"
+        assert loc.reg is not None
+        reg_num = int(loc.reg.register_name[1:])
+        if loc.reg.register_name.startswith("a"):
+            return f"arg{reg_num}"
+        else:
+            return f"fparg{reg_num - 12}"
 
     # Duplicated by ArchPpc.function_abi
     def function_abi(
@@ -2063,7 +2089,8 @@ class MipseeArch(MipsArch):
         known_slots: List[AbiArgSlot] = []
         candidate_slots: List[AbiArgSlot] = []
         if fn_sig.params_known:
-            for ind, param in enumerate(fn_sig.params):
+            ind = 0
+            for param in fn_sig.params:
                 # TODO: Support passing parameters on the stack
                 param_type = param.type.decay()
                 reg: Optional[Register]
@@ -2076,35 +2103,32 @@ class MipseeArch(MipsArch):
                     # Stack variable
                     reg = None
                 known_slots.append(
-                    AbiArgSlot(
-                        offset=4 * ind, reg=reg, name=param.name, type=param_type
-                    )
+                    AbiArgSlot(ArgLoc(None, ind, reg), param_type, name=param.name)
                 )
+                ind += 1
             if fn_sig.is_variadic:
-                # TODO: Find a better value to use for `offset`?
                 for reg in intptr_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.intptr()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.intptr())
                     )
+                    ind += 1
                 for reg in float_regs:
                     candidate_slots.append(
-                        AbiArgSlot(
-                            offset=4 * len(known_slots), reg=reg, type=Type.floatish()
-                        )
+                        AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
+                    ind += 1
 
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
         possible_slots: List[AbiArgSlot] = []
         valid_extra_regs: Set[Register] = {
-            slot.reg for slot in known_slots if slot.reg is not None
+            slot.loc.reg for slot in known_slots if slot.loc.reg is not None
         }
 
         for slot in candidate_slots:
-            if slot.reg is None or slot.reg not in likely_regs:
+            reg = slot.loc.reg
+            if reg is None or reg not in likely_regs:
                 continue
 
             # Don't pass this register if lower numbered ones are undefined.
@@ -2114,12 +2138,12 @@ class MipseeArch(MipsArch):
                 pass
             else:
                 # Only a1-a7/f13-f19 can be used for arguments
-                regname = slot.reg.register_name
+                regname = reg.register_name
                 prev_reg = Register(f"{regname[0]}{int(regname[1:])-1}")
                 if prev_reg in self.argument_regs and prev_reg not in valid_extra_regs:
                     continue
 
-            valid_extra_regs.add(slot.reg)
+            valid_extra_regs.add(reg)
 
             # Skip registers that are untouched from the initial parameter
             # list. This is sometimes wrong (can give both false positives
@@ -2128,7 +2152,7 @@ class MipseeArch(MipsArch):
             # varargs functions. Decompiling multiple functions at once
             # would help.
             # TODO: don't do this in the middle of the argument list
-            if not likely_regs[slot.reg]:
+            if not likely_regs[reg]:
                 continue
 
             possible_slots.append(slot)

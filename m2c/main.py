@@ -21,6 +21,7 @@ from .translate import (
     narrow_func_call_outputs,
 )
 from .types import TypePool
+from .arch_arm import ArmArch
 from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
@@ -41,7 +42,7 @@ def print_exception(exc: Exception, sanitize: bool) -> None:
         for line in tb.format(chain=False):
             print(line, end="")
     else:
-        traceback.print_exception(exc, file=sys.stdout)
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stdout)
 
 
 def print_exception_as_comment(
@@ -79,6 +80,8 @@ def run(options: Options) -> int:
             arch = MipsArch()
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
+    elif options.target.arch == Target.ArchEnum.ARM:
+        arch = ArmArch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")
 
@@ -152,6 +155,7 @@ def run(options: Options) -> int:
                 arch,
                 fragment=False,
                 print_warnings=options.debug,
+                debug_patterns=options.debug_patterns,
             )
             flow_graphs.append(graph)
         except Exception as e:
@@ -342,6 +346,12 @@ def parse_flags(flags: List[str]) -> Options:
         help="Print debug info inline",
     )
     group.add_argument(
+        "--debug-patterns",
+        dest="debug_patterns",
+        action="store_true",
+        help="Dump assembly after each matched asm pattern",
+    )
+    group.add_argument(
         "--stacktrace",
         dest="stacktrace",
         action="store_true",
@@ -491,9 +501,11 @@ def parse_flags(flags: List[str]) -> Options:
         dest="target",
         type=Target.parse,
         default="mips-ido-c",
-        help="Target architecture, compiler, and language triple. "
-        "Supported triples: mips-ido-c, mips-gcc-c, mipsel-gcc-c, mipsee-gcc-c, mipsee-gcc-c++, ppc-mwcc-c, ppc-mwcc-c++. "
-        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++. ",
+        help="Target platform, compiler, and language triple. "
+        "Supported platforms: [mips, mipsel, mipsee, ppc, arm]. "
+        "Supported compilers: [ido, gcc, mwcc]. "
+        "Supported languages: [c, c++]. "
+        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, and `arm` for arm-gcc-c.",
     )
     group.add_argument(
         "--passes",
@@ -628,11 +640,13 @@ def parse_flags(flags: List[str]) -> Options:
     # The debug output interferes with the visualize output
     if args.visualize_flowgraph is not None:
         args.debug = False
+        args.debug_patterns = False
 
     return Options(
         filenames=args.filenames,
         function_indexes_or_names=functions,
         debug=args.debug,
+        debug_patterns=args.debug_patterns,
         stacktrace=args.stacktrace,
         void=args.void,
         ifs=args.ifs,

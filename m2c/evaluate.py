@@ -10,11 +10,16 @@ from typing import (
     Tuple,
     Union,
 )
+from .asm_file import AsmSymbolicData
 from .asm_instruction import (
+    AsmAddressMode,
+    AsmGlobalSymbol,
     AsmLiteral,
+    BinOp,
     Register,
 )
 from .error import DecompFailure
+from .options import Target
 from .translate import (
     AddressMode,
     AddressOf,
@@ -34,7 +39,9 @@ from .translate import (
     Load3Bytes,
     LocalVar,
     Lwl,
+    NodeState,
     RawSymbolRef,
+    RegExpression,
     RegInfo,
     StackInfo,
     StoreStmt,
@@ -46,6 +53,7 @@ from .translate import (
     as_intptr,
     as_sintish,
     as_type,
+    as_uintish,
     early_unwrap,
     early_unwrap_ints,
     var_for_expr,
@@ -93,11 +101,22 @@ def deref(
     uw_var = early_unwrap(var)
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
-            if isinstance(addend, Literal) and addend.likely_partial_offset():
+            arch = stack_info.global_info.arch
+            if isinstance(addend, Literal) and arch.is_likely_partial_offset(
+                addend.value
+            ):
                 offset += addend.value
                 var = base
                 uw_var = early_unwrap(var)
                 break
+    elif isinstance(uw_var, AddressOf) and isinstance(uw_var.expr, StructAccess):
+        base = uw_var.expr.struct_var
+        iaddend = uw_var.expr.offset
+        arch = stack_info.global_info.arch
+        if arch.is_likely_partial_offset(iaddend):
+            offset += iaddend
+            var = base
+            uw_var = early_unwrap(var)
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
@@ -206,9 +225,18 @@ def handle_lw(args: InstrArgs) -> Expression:
     return handle_load(args, type=Type.reg32(likely_float=False))
 
 
-def handle_or(left: Expression, right: Expression) -> Expression:
+def handle_or(
+    left: Expression, right: Expression, *, is_arm: bool = False
+) -> Expression:
+    # `or $rD, $rS, $rS` can be used to move $rS into $rD
     if left == right:
-        # `or $rD, $rS, $rS` can be used to move $rS into $rD
+        return left
+
+    # So can ors with zero (in particular this occurs with unoptimized agbcc
+    # output, where stores sometimes look like "a = (a & 0) | b").
+    if isinstance(left, Literal) and left.value == 0:
+        return right
+    if isinstance(right, Literal) and right.value == 0:
         return left
 
     if isinstance(left, Literal) and isinstance(right, Literal):
@@ -216,8 +244,27 @@ def handle_or(left: Expression, right: Expression) -> Expression:
             (right.value & 0xFFFF) == 0 and (left.value & 0xFFFF0000) == 0
         ):
             return Literal(value=(left.value | right.value))
+
+    uw_left = early_unwrap(left)
+    if (
+        is_arm
+        and isinstance(uw_left, BinaryOp)
+        and uw_left.op == "|"
+        and isinstance(uw_left.right, Literal)
+        and isinstance(right, Literal)
+        and (uw_left.right.value % 0x100 == 0 or right.value % 0x100 == 0)
+    ):
+        imm = uw_left.right.value | right.value
+        return BinaryOp.int(left=uw_left.left, op="|", right=Literal(imm))
+
     # Regular bitwise OR.
     return BinaryOp.int(left=left, op="|", right=right)
+
+
+def handle_bitinv(expr: Expression) -> Expression:
+    if isinstance(expr, Literal):
+        return s32_literal(~expr.value)
+    return UnaryOp.int("~", expr)
 
 
 def handle_sltu(args: InstrArgs) -> Expression:
@@ -236,7 +283,7 @@ def handle_sltu(args: InstrArgs) -> Expression:
 
 def handle_sltiu(args: InstrArgs) -> Expression:
     left = args.reg(1)
-    right = args.imm(2)
+    right = args.s16_imm(2)
     if isinstance(right, Literal):
         value = right.value & 0xFFFFFFFF
         if value == 1:
@@ -251,7 +298,7 @@ def handle_sltiu(args: InstrArgs) -> Expression:
     return BinaryOp.ucmp(left, "<", right)
 
 
-def handle_addi(args: InstrArgs) -> Expression:
+def handle_addi(args: InstrArgs, arm: bool = False) -> Expression:
     output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)
 
@@ -261,17 +308,21 @@ def handle_addi(args: InstrArgs) -> Expression:
         return add_imm(output_reg, sym, Literal(ref.offset), args)
 
     source = args.reg(1)
-    imm = args.imm(2)
+    imm = args.full_imm(2) if arm else args.s16_imm(2)
+
+    if imm == Literal(0):
+        return source
 
     # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
     # i.e. as an `addis` followed by an `addi`
+    # ARM is similar but with (x + 0x344) + 0x12000 or (x + 0x35) + 0x1200
     uw_source = early_unwrap(source)
     if (
         isinstance(uw_source, BinaryOp)
         and uw_source.op == "+"
         and isinstance(uw_source.right, Literal)
-        and uw_source.right.value % 0x10000 == 0
         and isinstance(imm, Literal)
+        and (uw_source.right.value % 0x10000 == 0 or (arm and imm.value % 0x100 == 0))
     ):
         return add_imm(
             output_reg, uw_source.left, Literal(imm.value + uw_source.right.value), args
@@ -279,10 +330,34 @@ def handle_addi(args: InstrArgs) -> Expression:
     return handle_addi_real(output_reg, source_reg, source, imm, args)
 
 
+def handle_sub_arm(args: InstrArgs) -> Expression:
+    stack_info = args.stack_info
+    output_reg = args.reg_ref(0)
+    source_reg = args.reg_ref(1)
+    lhs = args.reg(1)
+    rhs = args.reg_or_imm(2)
+    if (
+        isinstance(rhs, Literal)
+        and stack_info.is_stack_reg(source_reg)
+        and stack_info.is_stack_reg(output_reg)
+    ):
+        # Changing sp. Just ignore that.
+        return lhs
+    return handle_sub(lhs, rhs)
+
+
+def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
+    if isinstance(lhs, Literal) and isinstance(rhs, Literal):
+        return s32_literal(lhs.value - rhs.value)
+    if rhs == Literal(0):
+        return lhs
+    return BinaryOp.intptr(lhs, "-", rhs)
+
+
 def handle_addis(args: InstrArgs) -> Expression:
     source_reg = args.reg_ref(1)
     source = args.reg(1)
-    imm = args.shifted_imm(2)
+    imm = args.shifted_u16_imm(2)
     return handle_addi_real(args.reg_ref(0), source_reg, source, imm, args)
 
 
@@ -324,8 +399,13 @@ def add_imm(
         # happens with loops over subarrays and it's better to expose the raw
         # immediate.
         dest_var = stack_info.get_planned_var(output_reg, args.instruction_ref)
+        arch = stack_info.global_info.arch
         inplace = dest_var is not None and var_for_expr(source) == dest_var
-        if isinstance(imm, Literal) and not imm.likely_partial_offset() and not inplace:
+        if (
+            isinstance(imm, Literal)
+            and not arch.is_likely_partial_offset(imm.value)
+            and not inplace
+        ):
             array_access = array_access_from_add(
                 source, imm.value, stack_info, target_size=None, ptr=True
             )
@@ -365,38 +445,71 @@ def add_imm(
 
 
 def handle_load(args: InstrArgs, type: Type) -> Expression:
-    # For now, make the cast silent so that output doesn't become cluttered.
-    # Though really, it would be great to expose the load types somehow...
     size = type.get_size_bytes()
     assert size is not None
+    output_reg = args.reg_ref(0)
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
-    # Detect rodata constants
-    if isinstance(expr, StructAccess) and expr.offset == 0:
-        target = early_unwrap(expr.struct_var)
-        if (
-            isinstance(target, AddressOf)
-            and isinstance(target.expr, GlobalSymbol)
-            and type.is_likely_float()
-        ):
-            sym_name = target.expr.symbol_name
-            ent = args.stack_info.global_info.asm_data_value(sym_name)
-            if (
-                ent
-                and ent.data
-                and isinstance(ent.data[0], bytes)
-                and len(ent.data[0]) >= size
-                and ent.is_readonly
-                and type.unify(target.expr.type)
-            ):
-                data = ent.data[0][:size]
-                val: int
-                if size == 4:
-                    (val,) = struct.unpack(">I", data)
-                else:
-                    (val,) = struct.unpack(">Q", data)
-                return Literal(value=val, type=type)
+    def load_rodata_constant() -> Optional[Expression]:
+        if not isinstance(expr, StructAccess) or expr.offset != 0:
+            return None
 
+        is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
+        if is_arm and isinstance(args.raw_arg(1), AsmAddressMode):
+            # For ARM, only allow constants loaded through `ldr pool`
+            return None
+        if not is_arm and not type.is_likely_float():
+            # For non-ARM, only allow float constants
+            return None
+
+        target = early_unwrap(expr.struct_var)
+        if not isinstance(target, AddressOf) or not isinstance(
+            target.expr, GlobalSymbol
+        ):
+            return None
+
+        sym_name = target.expr.symbol_name
+        ent = args.stack_info.global_info.asm_data_value(sym_name)
+        if ent is None or not ent.data or not ent.is_readonly:
+            return None
+
+        data = ent.data[0]
+        if isinstance(data, bytes) and len(data) >= size and size in (4, 8):
+            ent.used_as_literal = True
+            endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
+            fmt = "I" if size == 4 else "Q"
+            val: int = struct.unpack(endian + fmt, data[:size])[0]
+            return Literal(value=val, type=type)
+
+        if (
+            is_arm
+            and ent.is_text
+            and isinstance(data, AsmSymbolicData)
+            and data.size == size
+        ):
+            sym = data.data
+            addend = 0
+            if (
+                isinstance(sym, BinOp)
+                and sym.op in ("+", "-")
+                and isinstance(sym.rhs, AsmLiteral)
+            ):
+                addend = sym.rhs.value * (-1 if sym.op == "-" else 1)
+                sym = sym.lhs
+            if isinstance(sym, AsmGlobalSymbol):
+                ent.used_as_literal = True
+                addr = args.stack_info.global_info.address_of_gsym(sym.symbol_name)
+                addr = add_imm(output_reg, addr, Literal(addend), args)
+                return as_type(addr, type, silent=True)
+
+        return None
+
+    const = load_rodata_constant()
+    if const is not None:
+        return const
+
+    # For now, make the cast silent so that output doesn't become cluttered.
+    # Though really, it would be great to expose the load types somehow...
     return as_type(expr, type, silent=True)
 
 
@@ -467,6 +580,19 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     else:
         source_val = args.reg(0)
     target = args.memory_ref(1)
+    return make_store_real(source_val, source_raw, target, args.regs, stack_info, type)
+
+
+def make_store_real(
+    source_val: Expression,
+    source_raw: Optional[RegExpression],
+    target: Union[AddressMode, RawSymbolRef],
+    regs: RegInfo,
+    stack_info: StackInfo,
+    type: Type,
+) -> Optional[StoreStmt]:
+    size = type.get_size_bytes()
+    assert size is not None
     is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.base)
     if (
         is_stack
@@ -475,7 +601,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
     ):
         # Elide register preserval.
         return None
-    dest = deref(target, args.regs, stack_info, size=size, store=True)
+    dest = deref(target, regs, stack_info, size=size, store=True)
     dest.type.unify(type)
     return StoreStmt(source=as_type(source_val, type, silent=is_stack), dest=dest)
 
@@ -519,14 +645,19 @@ def handle_swr(args: InstrArgs) -> Optional[StoreStmt]:
     return StoreStmt(source=expr, dest=dest)
 
 
-def handle_sra(args: InstrArgs) -> Expression:
+def handle_shift_right(
+    args: InstrArgs, *, signed: bool, arm: bool = False
+) -> Expression:
     lhs = args.reg(1)
-    shift = args.imm(2)
+    shift = args.reg_or_imm(2) if arm else args.s16_imm(2)
     if isinstance(shift, Literal) and shift.value in [16, 24]:
         expr = early_unwrap(lhs)
         pow2 = 1 << shift.value
         if isinstance(expr, BinaryOp) and isinstance(expr.right, Literal):
-            tp = Type.s16() if shift.value == 16 else Type.s8()
+            if signed:
+                tp = Type.s16() if shift.value == 16 else Type.s8()
+            else:
+                tp = Type.u16() if shift.value == 16 else Type.u8()
             rhs = expr.right.value
             if expr.op == "<<" and rhs == shift.value:
                 return as_type(expr.left, tp, silent=False)
@@ -538,9 +669,20 @@ def handle_sra(args: InstrArgs) -> Expression:
             elif expr.op == "*" and rhs % pow2 == 0 and rhs != pow2:
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
-    return fold_divmod(
-        BinaryOp(as_sintish(lhs), ">>", as_intish(shift), type=Type.s32())
-    )
+    if signed:
+        return fold_divmod(
+            BinaryOp(as_sintish(lhs), ">>", as_intish(shift), type=Type.s32())
+        )
+    else:
+        return BinaryOp(as_uintish(lhs), ">>", as_intish(shift), type=Type.u32())
+
+
+def handle_sll(args: InstrArgs, *, arm: bool = False) -> Expression:
+    lhs = args.reg(1)
+    rhs = args.reg_or_imm(2) if arm else args.s16_imm(2)
+    if isinstance(lhs, Literal) and isinstance(rhs, Literal):
+        return Literal(lhs.value << rhs.value)
+    return fold_mul_chains(BinaryOp.int(lhs, "<<", as_intish(rhs)))
 
 
 def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
@@ -799,12 +941,15 @@ def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
 
 
 def replace_bitand(expr: BinaryOp) -> Expression:
-    """Detect expressions using `&` for truncating integer casts"""
+    """Simplify expressions using `&`."""
     if not expr.is_floating() and expr.op == "&":
+        if expr.right == Literal(0):
+            # agbcc emits stores that look like "a = (a & 0) | b"; get rid of the load
+            return Literal(0)
         if expr.right == Literal(0xFF):
-            return as_type(expr.left, Type.int_of_size(8), silent=False)
+            return as_type(expr.left, Type.u8(), silent=False)
         if expr.right == Literal(0xFFFF):
-            return as_type(expr.left, Type.int_of_size(16), silent=False)
+            return as_type(expr.left, Type.u16(), silent=False)
     return expr
 
 
@@ -1021,16 +1166,27 @@ def handle_add(args: InstrArgs) -> Expression:
             handle_addi_real(output_reg, args.reg_ref(2), rhs, lhs, args)
         )
 
-    return handle_add_real(output_reg, lhs, rhs, args)
+    return handle_add_real(lhs, rhs, args)
+
+
+def handle_add_arm(args: InstrArgs) -> Expression:
+    if isinstance(args.raw_arg(2), Register):
+        return handle_add(args)
+    else:
+        return handle_addi(args, arm=True)
 
 
 def handle_add_real(
-    output_reg: Register,
     lhs: Expression,
     rhs: Expression,
     args: InstrArgs,
 ) -> Expression:
     stack_info = args.stack_info
+
+    if lhs == Literal(0):
+        return rhs
+    if rhs == Literal(0):
+        return lhs
 
     type = Type.intptr()
     # Because lhs & rhs are in registers, it shouldn't be possible for them to be arrays.
@@ -1230,9 +1386,69 @@ def handle_loadx(args: InstrArgs, type: Type) -> Expression:
     return as_type(expr, type, silent=True)
 
 
+def handle_arm_mov(args: InstrArgs) -> Expression:
+    dest = args.reg_ref(0)
+    source = args.raw_arg(1)
+    value = args.reg_or_imm(1)
+    if (
+        isinstance(source, Register)
+        and args.stack_info.is_stack_reg(source)
+        and not args.stack_info.is_stack_reg(dest)
+    ):
+        return handle_addi_real(dest, source, value, Literal(0), args)
+    return value
+
+
+def eval_arm_cmp(s: NodeState, lhs: Expression, rhs: Expression) -> None:
+    s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
+    sub = BinaryOp.intptr(lhs, "-", rhs)
+    sval = as_type(sub, Type.s32(), silent=True, unify=False)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
+    s.set_reg(Register("v"), v)
+    ulhs = as_type(lhs, Type.u32(), silent=True, unify=False)
+    slhs = as_type(lhs, Type.s32(), silent=True, unify=False)
+    urhs = as_type(rhs, Type.u32(), silent=True, unify=False)
+    srhs = as_type(rhs, Type.s32(), silent=True, unify=False)
+    s.set_reg(Register("c"), BinaryOp.ucmp(ulhs, ">=", urhs))
+    s.set_reg(Register("hi"), BinaryOp.ucmp(ulhs, ">", urhs))
+    s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
+    s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
+
+
+def set_arm_flags_from_add(s: NodeState, val: Expression) -> None:
+    s.set_reg(
+        Register("z"),
+        BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
+    )
+    sval = as_type(val, Type.s32(), silent=True, unify=False)
+    s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
+    s.set_reg(Register("c"), CarryBit(val))
+    v = fn_op("M2C_OVERFLOW", [val], Type.bool())
+    s.set_reg(Register("v"), v)
+    # Remaining flag bits are based on the full mathematical result
+    # of unsigned/signed additions. We don't have a good way to
+    # write that; let's cheat and treat a cast of the result to
+    # s64/u64 as the entire subtraction having been performed as
+    # signed/unsigned 64-bit, and hope it gets the picture across.
+    u64val = as_type(val, Type.u64(), silent=False, unify=False)
+    p32 = Literal(2**32)
+    s.set_reg(Register("hi"), BinaryOp.ucmp(u64val, ">", p32))
+    s64val = as_type(val, Type.s64(), silent=False, unify=False)
+    s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
+    s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
+
+
 def carry_add_to(expr: Expression) -> BinaryOp:
     return fold_divmod(BinaryOp.intptr(expr, "+", CarryBit()))
 
 
 def carry_sub_from(expr: Expression) -> BinaryOp:
     return BinaryOp.intptr(expr, "-", UnaryOp("!", CarryBit(), type=Type.intish()))
+
+
+def s32_literal(value: int) -> Literal:
+    # TODO: this makes little sense, given that literals don't have fixed
+    # integer types... we should make sure that uses of literals do this
+    # conversion instead.
+    return Literal(((value + 0x80000000) & 0xFFFFFFFF) - 0x80000000)

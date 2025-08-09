@@ -1,5 +1,5 @@
 # `m2c` Decompiler
-`m2c` ("*Machine code to C*") is a decompiler for MIPS and PowerPC assembly that produces C code, with partial support for C++.
+`m2c` ("*Machine code to C*") is a decompiler for 32-bit MIPS, ARM and PowerPC assembly that produces C code, with partial support for C++.
 
 This project, initially named `mips_to_c`, has the goal to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
 It originally targeted popular compilers of the late 1990's, but it also works well with newer compilers or hand-written assembly.
@@ -38,17 +38,26 @@ Context files provided with `--context` are parsed and cached, so subsequent run
 
 ### Target Architecture / Compiler / Language
 
-`m2c` has support for both MIPS and PowerPC assembly.
+`m2c` has support for MIPS, ARM and PowerPC assembly.
 It also has some compiler-specific heuristics and language-specific behavior.
 For example, it can demangle C++ symbol names as used by CodeWarrior.
 
-Collectively, the output's architecture, compiler, and source language are referred to as a *target*.
-The following target triples are supported:
+Collectively, the output's platform, compiler, and source language are referred to as a *target*.
+They can be passed to m2c with the `-t` (or `--target` flag), as such: `--target mips-ido-c`.
 
-- `--target mips-ido-c`: MIPS (with O32 ABI), IDO toolchain, C language
-- `--target mips-gcc-c`: MIPS (with O32 ABI), GCC toolchain, C language
-- `--target ppc-mwcc-c`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C language
-- `--target ppc-mwcc-c++`: PowerPC, MetroWerks CodeWarrior toolchain (`mwccecpp.exe`), C++ language
+The following platforms are supported:
+- `mips`: MIPS (with O32 ABI)
+- `mipsel`: MIPS (with O32 ABI, little endian)
+- `mipsee`: MIPS (with eabi64, little endian)
+- `ppc`: PowerPC (big endian)
+- `arm`: ARM (little endian)
+
+The following compilers are supported:
+- `ido`: Integrated Development Option (MIPS compiler from SGI)
+- `gcc`: GNU C Compiler
+- `mwcc`: MetroWerks CodeWarrior toolchain (`mwccecpp.exe`)
+
+Supported languages are `c` and `c++`.
 
 ### Multiple functions
 
@@ -296,6 +305,8 @@ There is a small test suite, which works as follows:
  - As you develop your commit, occasionally run `./run_tests.py` to see if any tests have changed output.
    These tests run the decompiler on a small corpus of assembly.
  - Before pushing your commit, run `./run_tests.py --overwrite` to write changed tests to disk, and commit resultant changes.
+
+`./run_tests.py` additionally runs a handful of unit tests in `tests/unit/`.
 
 ### Running Decompilation Project Tests
 

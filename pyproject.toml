@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "m2c"
 version = "0.1.0"
-description = "MIPS and PowerPC decompiler"
+description = "MIPS, ARM and PowerPC decompiler"
 authors = [
     "Matt Kempster <kidpixel@gmail.com>",
     "Simon Lindholm <simon.lindholm10@gmail.com>",

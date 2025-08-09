@@ -11,9 +11,9 @@ from .asm_instruction import (
     Argument,
     AsmGlobalSymbol,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
-    RegFormatter,
     Register,
     parse_asm_instruction,
 )
@@ -123,11 +123,13 @@ class Instruction:
     # This member should only be accessed by `evaluate_instruction`.
     eval_fn: Optional[Callable[..., object]]
 
-    jump_target: Optional[Union[JumpTarget, Register]] = None
+    jump_target: Optional[Union[JumpTarget, Register, List[JumpTarget]]] = None
     function_target: Optional[Argument] = None
     is_conditional: bool = False
     is_return: bool = False
+    is_load: bool = False  # only set for ARM at the moment
     is_store: bool = False
+    is_effectful: bool = True  # only set for ARM at the moment
 
     # These are for MIPS. `is_branch_likely` refers to branch instructions which
     # execute their delay slot only if the branch *is* taken. (Maybe these two
@@ -160,8 +162,10 @@ class ArchAsm(ArchAsmParsing):
 
     arch: Target.ArchEnum
 
+    re_comment: str
+
     stack_pointer_reg: Register
-    frame_pointer_reg: Optional[Register]
+    frame_pointer_regs: List[Register]
     return_address_reg: Register
 
     all_return_regs: List[Register]
@@ -169,7 +173,6 @@ class ArchAsm(ArchAsmParsing):
     simple_temp_regs: List[Register]
     temp_regs: List[Register]
     saved_regs: List[Register]
-    all_regs: List[Register]
 
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]: ...
@@ -184,11 +187,10 @@ def parse_instruction(
     line: str,
     meta: InstructionMeta,
     arch: ArchAsm,
-    reg_formatter: RegFormatter,
-    defines: Dict[str, int],
+    asm_state: AsmState,
 ) -> Instruction:
     try:
-        base = parse_asm_instruction(line, arch, reg_formatter, defines)
+        base = parse_asm_instruction(line, arch, asm_state)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception as e:
         msg = f"Failed to parse instruction {meta.loc_str()}: {line}"

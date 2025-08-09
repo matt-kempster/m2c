@@ -4,19 +4,21 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
-from .asm_file import Label
+from .asm_file import AsmData, Label
 from .asm_instruction import (
+    ARM_BARREL_SHIFTER_OPS,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    AsmState,
     BinOp,
     JumpTarget,
     Macro,
     NaiveParsingArch,
     Register,
-    RegFormatter,
+    RegisterList,
     parse_asm_instruction,
 )
 from .instruction import (
@@ -42,7 +44,7 @@ def make_pattern(*parts: str) -> Pattern:
         elif part.endswith(":"):
             ret.append((Label([part[:-1]]), optional))
         else:
-            ins = parse_asm_instruction(part, NaiveParsingArch(), RegFormatter(), {})
+            ins = parse_asm_instruction(part, NaiveParsingArch(), AsmState())
             ret.append((ins, optional))
     return ret
 
@@ -51,6 +53,7 @@ def make_pattern(*parts: str) -> Pattern:
 class Replacement:
     new_body: Sequence[ReplacementPart]
     num_consumed: int
+    clobbers: Optional[List[Register]] = None
 
 
 @dataclass
@@ -59,6 +62,7 @@ class AsmMatch:
     wildcard_items: List[BodyPart]
     regs: Dict[str, Register]
     literals: Dict[str, int]
+    labels: Dict[str, Label]
 
 
 class AsmPattern(abc.ABC):
@@ -161,14 +165,28 @@ class TryMatchState:
                 isinstance(a, AsmAddressMode)
                 and self.match_reg(a.base, e.base)
                 and self.match_arg(a.addend, e.addend)
+                and a.writeback == e.writeback
             )
         if isinstance(e, BinOp):
+            if e.op in ARM_BARREL_SHIFTER_OPS:
+                return (
+                    isinstance(a, BinOp)
+                    and a.op == e.op
+                    and self.match_arg(a.lhs, e.lhs)
+                    and self.match_arg(a.rhs, e.rhs)
+                )
             return isinstance(a, AsmLiteral) and a.value == self.eval_math(e)
         if isinstance(e, Macro):
             return (
                 isinstance(a, Macro)
                 and a.macro_name == e.macro_name
                 and self.match_arg(a.argument, e.argument)
+            )
+        if isinstance(e, RegisterList):
+            return (
+                isinstance(a, RegisterList)
+                and len(a.regs) == len(e.regs)
+                and all(self.match_reg(ar, er) for ar, er in zip(a.regs, e.regs))
             )
         assert False, f"bad pattern part: {e}"
 
@@ -203,6 +221,7 @@ class TryMatchState:
 @dataclass
 class AsmMatcher:
     arch: ArchAsm
+    asm_data: AsmData
     input: List[BodyPart]
     labels: Set[str]
     output: List[BodyPart] = field(default_factory=list)
@@ -225,6 +244,7 @@ class AsmMatcher:
             state.wildcard_items,
             state.symbolic_registers,
             state.symbolic_literals,
+            state.symbolic_labels_def,
         )
 
     def derived_meta(self) -> InstructionMeta:
@@ -251,14 +271,19 @@ class AsmMatcher:
                 final_instr = part
             self.output.append(part)
 
-        # Calculate which regs are *not* written by the repl asm, but were in the input asm
-        # Denote the replacement asm as "clobbering" these regs by marking the final instr
-        for part in self.input[self.index : self.index + repl.num_consumed]:
-            if isinstance(part, Instruction):
-                for arg in part.outputs + part.clobbers:
-                    assert final_instr is not None
-                    if arg not in repl_writes and arg not in final_instr.clobbers:
-                        final_instr.clobbers.append(arg)
+        if repl.clobbers is None:
+            # Calculate which regs are *not* written by the repl asm, but were
+            # in the input asm. Denote the replacement asm as "clobbering" these
+            # regs by marking the final instr.
+            for part in self.input[self.index : self.index + repl.num_consumed]:
+                if isinstance(part, Instruction):
+                    for arg in part.outputs + part.clobbers:
+                        assert final_instr is not None
+                        if arg not in repl_writes and arg not in final_instr.clobbers:
+                            final_instr.clobbers.append(arg)
+        elif repl.clobbers:
+            assert final_instr is not None
+            final_instr.clobbers.extend(repl.clobbers)
 
         # Advance the input
         self.index += repl.num_consumed
@@ -267,20 +292,32 @@ class AsmMatcher:
 def simplify_patterns(
     body: List[BodyPart],
     patterns: List[AsmPattern],
+    asm_data: AsmData,
     arch: ArchAsm,
+    *,
+    debug_patterns: bool,
 ) -> List[BodyPart]:
     """Detect and simplify asm standard patterns emitted by known compilers. This is
     especially useful for patterns that involve branches, which are hard to deal with
     in the translate phase."""
     labels = {name for item in body if isinstance(item, Label) for name in item.names}
-    matcher = AsmMatcher(arch, body, labels)
-    while matcher.index < len(matcher.input):
-        for pattern in patterns:
+    for pattern in patterns:
+        matcher = AsmMatcher(arch, asm_data, body, labels)
+        matched_any = False
+        while matcher.index < len(matcher.input):
             m = pattern.match(matcher)
             if m:
                 matcher.apply(m, arch)
-                break
-        else:
-            matcher.apply(Replacement([matcher.input[matcher.index]], 1), arch)
+                matched_any = True
+            else:
+                matcher.output.append(matcher.input[matcher.index])
+                matcher.index += 1
+        body = matcher.output
+        if debug_patterns and matched_any:
+            print(f"Rewrote asm using {type(pattern).__name__}:")
+            print()
+            for part in body:
+                print(part)
+            print()
 
-    return matcher.output
+    return body
