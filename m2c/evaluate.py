@@ -322,7 +322,7 @@ def handle_addi(args: InstrArgs, arm: bool = False) -> Expression:
         and uw_source.op == "+"
         and isinstance(uw_source.right, Literal)
         and isinstance(imm, Literal)
-        and (uw_source.right.value % 0x10000 == 0 or imm.value % 0x100 == 0)
+        and (uw_source.right.value % 0x10000 == 0 or (arm and imm.value % 0x100 == 0))
     ):
         return add_imm(
             output_reg, uw_source.left, Literal(imm.value + uw_source.right.value), args
