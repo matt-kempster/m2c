@@ -4663,6 +4663,8 @@ def translate_to_ast(
     else:
         return_type.unify(Type.void())
 
+    assign_naive_phis(used_naive_phis, stack_info)
+
     # Guess parameters
     if not fn_sig.params_known:
         while len(fn_sig.params) < len(stack_info.arguments):
@@ -4672,7 +4674,6 @@ def translate_to_ast(
             if not param.name:
                 param.name = arg.format(Formatter())
 
-    assign_naive_phis(used_naive_phis, stack_info)
     resolve_types_late(stack_info)
 
     if options.pdb_translate:
