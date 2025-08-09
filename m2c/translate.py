@@ -384,8 +384,15 @@ class StackInfo:
         self.local_vars.sort(key=lambda v: v.value)
 
     def add_argument(self, arg: PassedInArg) -> None:
-        if any(a.loc == arg.loc for a in self.arguments):
-            return
+        for a in self.arguments:
+            if a.loc == arg.loc:
+                # If the first mention of the argument is by taking a pointer
+                # (e.g. from a loop over a stack array), and we only then read
+                # from a register, refine saved location info.
+                if a.loc.reg is None and arg.loc.reg is not None:
+                    self.arguments.remove(a)
+                    break
+                return
         self.arguments.append(arg)
         self.arguments.sort(key=lambda a: a.loc)
 
