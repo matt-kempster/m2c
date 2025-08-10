@@ -1220,6 +1220,20 @@ class ArmArch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[0]
             eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
+        elif base == "ldr" and args[0] == Register("pc"):
+            # Tail call to result of load, probably from literal pool.
+            # We could resolve the target statically in that case but it's
+            # not worth the effort given how seldom this comes up.
+            assert not set_flags
+            inputs = get_inputs(1)
+            outputs = list(cls.all_return_regs)
+            is_return = True
+            function_target = args[1]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                target = handle_load(a, type=Type.reg32(likely_float=False))
+                s.make_function_call(target, outputs)
+
         elif base == "tablejmp.fictive":
             # Switch tables of the form "add pc, pc, reg, lsl 2"
             assert len(args) >= 1 and isinstance(args[0], Register)
