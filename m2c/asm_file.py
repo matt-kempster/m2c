@@ -462,8 +462,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             return s
 
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
-    re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{8}")
-    re_local_label = re.compile("loc_|locret_|def_|lbl_|LAB_|jump_|_[0-9A-F]{8}$")
+    re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
+    re_local_label = re.compile("loc_|locret_|def_|lbl_|LAB_|jump_|_[0-9A-F]{7,8}$")
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
     T = TypeVar("T")
