@@ -646,6 +646,16 @@ def strip_comments(text: str) -> str:
     )
     return re.sub(pattern, replacer, text)
 
+def process_ifdef(text: str) -> str:
+    pattern = re.compile(
+        r"^[ \t]*#ifdef[ \t]+M2CTX_DUAL\s+"
+        r"(?P<ifdef_body>.*?)"
+        r"^[ \t]*#else\s+"
+        r".*?"
+        r"^[ \t]*#endif.*?$",
+        flags=re.DOTALL | re.MULTILINE
+    )
+    return re.sub(pattern, lambda m: m.group("ifdef_body"), text)
 
 def strip_macro_defs(text: str) -> str:
     """Strip macro definitions from C source. m2c does not run the preprocessor,
@@ -740,6 +750,7 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
         source = add_builtin_typedefs(source)
         source = strip_comments(source)
+        source = process_ifdef(source)
         source = strip_macro_defs(source)
 
         ast, result_scope = parse_c(source, typemap.cparser_scope)
