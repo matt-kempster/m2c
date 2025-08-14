@@ -271,6 +271,20 @@ python3 ./m2c.py --visualize=c --context ctx.c -f my_fn my_asm.s > my_fn_c.svg
 python3 ./m2c.py --visualize=asm --context ctx.c -f my_fn my_asm.s > my_fn_asm.svg
 ```
 
+### Preprocessing
+
+There currently is a psuedo-macro in lieu of a full preprocessor that allows for the conditional switching of code in a context file. This allows for both m2c and i.e. a compiler to use the same context file if both need to define i.e. structs or typedefs slightly differently.
+
+```c
+#ifdef M2C
+...
+#else
+...
+#endif
+```
+
+Any other macros besides `#ifdef M2C` currently will fail, and you also need the `#else` between `#ifdef M2C` and `#endif` for the pattern to match.
+
 ### Migrating from `mips_to_c.py`
 
 This tool was originally known as `mips_to_c`. As part of the rename, deprecated command line arguments were removed.

@@ -648,7 +648,7 @@ def strip_comments(text: str) -> str:
 
 def process_ifdef(text: str) -> str:
     pattern = re.compile(
-        r"^[ \t]*#ifdef[ \t]+M2CTX_DUAL\s+"
+        r"^[ \t]*#ifdef[ \t]+M2C\s+"
         r"(?P<ifdef_body>.*?)"
         r"^[ \t]*#else\s+"
         r".*?"
