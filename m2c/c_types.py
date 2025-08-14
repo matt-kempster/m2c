@@ -646,6 +646,7 @@ def strip_comments(text: str) -> str:
     )
     return re.sub(pattern, replacer, text)
 
+
 def process_ifdef(text: str) -> str:
     pattern = re.compile(
         r"^[ \t]*#ifdef[ \t]+M2C\s+"
@@ -653,9 +654,10 @@ def process_ifdef(text: str) -> str:
         r"^[ \t]*#else\s+"
         r".*?"
         r"^[ \t]*#endif.*?$",
-        flags=re.DOTALL | re.MULTILINE
+        flags=re.DOTALL | re.MULTILINE,
     )
     return re.sub(pattern, lambda m: m.group("ifdef_body"), text)
+
 
 def strip_macro_defs(text: str) -> str:
     """Strip macro definitions from C source. m2c does not run the preprocessor,
