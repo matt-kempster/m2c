@@ -273,7 +273,7 @@ python3 ./m2c.py --visualize=asm --context ctx.c -f my_fn my_asm.s > my_fn_asm.s
 
 ### Preprocessing
 
-There currently is a psuedo-macro in lieu of a full preprocessor that allows for the conditional switching of code in a context file. This allows for both m2c and i.e. a compiler to use the same context file if both need to define i.e. structs or typedefs slightly differently.
+There currently is a pseudo-macro in lieu of a full preprocessor that allows for the conditional switching of code in a context file. This allows for both m2c and e.g. a compiler to use the same context file if both need to define e.g. structs or typedefs slightly differently.
 
 ```c
 #ifdef M2C
