@@ -778,6 +778,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 "thumb_func_end",
                 "ARM_FUNC_END",
                 "THUMB_FUNC_END",
+                "endlabel",
+                "enddlabel",
+                "alabel",
+                "nmlabel",
             ):
                 pass
 
