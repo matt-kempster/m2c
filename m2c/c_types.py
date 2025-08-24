@@ -367,6 +367,8 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
         return parse_constant_int(expr.exprs[-1], typemap)
     if isinstance(expr, ca.UnaryOp) and not isinstance(expr.expr, ca.Typename):
         sub = parse_constant_int(expr.expr, typemap)
+        if expr.op == "+":
+            return sub
         if expr.op == "-":
             return -sub
         if expr.op == "~":
