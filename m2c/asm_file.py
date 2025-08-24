@@ -781,7 +781,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 "endlabel",
                 "enddlabel",
                 "alabel",
-                "nmlabel",
+                "nonmatching",
             ):
                 pass
 
