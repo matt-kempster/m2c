@@ -367,6 +367,8 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
         return parse_constant_int(expr.exprs[-1], typemap)
     if isinstance(expr, ca.UnaryOp) and not isinstance(expr.expr, ca.Typename):
         sub = parse_constant_int(expr.expr, typemap)
+        if expr.op == "+":
+            return sub
         if expr.op == "-":
             return -sub
         if expr.op == "~":
@@ -482,7 +484,7 @@ def parse_struct_member(
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
     is_union = isinstance(struct, ca.Union)
     assert struct.decls is not None, "enforced by caller"
-    assert struct.decls, "Empty structs are not valid C"
+    assert struct.decls, f"{struct.name}: Empty structs are not valid C"
 
     fields: Dict[int, List[StructField]] = defaultdict(list)
     bitfields: Dict[int, List[BitField]] = defaultdict(list)
