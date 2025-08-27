@@ -1907,7 +1907,8 @@ class ArmArch(Arch):
                     if i < 4:
                         reg2 = Register(f"r{i}")
                     else:
-                        stack_loc = 4 * i
+                        # First stack parameter is at offset 0x00, so start at index (i - 4), which is 0.
+                        stack_loc = (i - 4) * 4
                     if size > 4:
                         name2 = f"{name}_unk{unk_offset:X}" if name else None
                         sub_type = Type.any()
