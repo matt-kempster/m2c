@@ -38,6 +38,9 @@ from .instruction import (
 )
 
 
+RE_COMMA_OR_STRING = re.compile(r',|"(?:\\.|[^\\"])*"')
+
+
 @dataclass(frozen=True)
 class Label:
     # Various pattern matching code assumes that there cannot be consecutive
@@ -223,7 +226,7 @@ class AsmFile:
         return f"# {self.filename}\n{functions_str}"
 
 
-def split_arg_list(args: str) -> List[str]:
+def split_quotable_arg_list(args: str) -> List[str]:
     """Split a string of comma-separated arguments, handling quotes"""
     reader = csv.reader(
         [args],
@@ -234,6 +237,17 @@ def split_arg_list(args: str) -> List[str]:
         skipinitialspace=True,
     )
     return [a.strip() for a in next(reader)]
+
+
+def split_arg_list(args: str) -> List[str]:
+    if '"' not in args:
+        return [a.strip() for a in args.split(",")]
+    commas = [
+        m.span()[0] for m in RE_COMMA_OR_STRING.finditer(args) if m.group(0) == ","
+    ]
+    return [
+        args[a + 1 : b].strip() for a, b in zip([-1] + commas, commas + [len(args)])
+    ]
 
 
 def parse_ascii_directive(line: str, z: bool) -> bytes:
@@ -639,7 +653,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             elif directive == ".endm":
                 ifdef_level -= 1
             elif directive == ".fn":
-                args = split_arg_list(args_str)
+                args = split_quotable_arg_list(args_str)
                 asm_file.new_function(args[0])
             elif ifdef_level == 0:
                 if directive == ".section":
@@ -663,7 +677,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 elif directive == ".text":
                     curr_section = ".text"
                 elif directive == ".set":
-                    args = split_arg_list(args_str)
+                    args = split_quotable_arg_list(args_str)
                     if len(args) == 1:
                         # ".set noreorder" or similar, just ignore
                         pass
@@ -692,33 +706,39 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif args_str.strip() == "32":
                         asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
-                    args = split_arg_list(args_str)
                     if directive in (".word", ".gpword", ".4byte"):
+                        args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 4)
                     elif directive == ".rel":
                         # .rel is a common dtk disassembler macro used with jump tables.
                         # ".rel name, label" expands to ".4byte name + (label - name)"
+                        args = split_arg_list(args_str)
                         assert len(args) == 2
                         emit_word(args[1], 4)
                     elif directive == ".obj":
                         # dtk disassembler label format
+                        args = split_quotable_arg_list(args_str)
                         assert len(args) == 2
                         kind = (
                             LabelKind.LOCAL if args[1] == "local" else LabelKind.GLOBAL
                         )
                         process_label(args[0], kind=kind)
                     elif directive in (".short", ".half", ".2byte"):
+                        args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 2)
                     elif directive == ".byte":
+                        args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 1)
                     elif directive == ".float":
+                        args = split_arg_list(args_str)
                         for w in args:
                             fval = try_parse(lambda: float(w))
                             asm_file.new_data_bytes(pack("f", fval))
                     elif directive == ".double":
+                        args = split_arg_list(args_str)
                         for w in args:
                             fval = try_parse(lambda: float(w))
                             asm_file.new_data_bytes(pack("d", fval))
@@ -734,6 +754,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             parse_ascii_directive(line, z), is_string=True
                         )
                     elif directive in (".space", ".skip"):
+                        args = split_arg_list(args_str)
                         if len(args) == 2:
                             fill = parse_int(args[1]) & 0xFF
                         elif len(args) == 1:
@@ -745,6 +766,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         size = parse_int(args[0])
                         asm_file.new_data_bytes(bytes([fill] * size))
                     elif line.startswith(".incbin"):
+                        args = split_quotable_arg_list(args_str)
                         data = parse_incbin(args, options, warnings)
                         if data is not None:
                             asm_file.new_data_bytes(data)
