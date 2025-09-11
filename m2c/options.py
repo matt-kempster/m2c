@@ -263,11 +263,21 @@ class Formatter:
         padding = ""
         if line:
             padding = max(1, self.coding_style.comment_column - len(base)) * " "
+        comment_str = "; ".join(comments)
         if self.coding_style.comment_style == CodingStyle.CommentStyle.ONELINE:
-            comment = f"// {'; '.join(comments)}"
+            start = "// "
+            mid = "// "
+            end = ""
         else:
-            comment = f"/* {'; '.join(comments)} */"
-        return f"{base}{padding}{comment}"
+            start = "/* "
+            mid = " * "
+            end = " */"
+        lines = comment_str.split("\n")
+        ret = f"{base}{padding}{start}{lines[0]}"
+        for cline in lines[1:]:
+            new_base = self.indent("", indent=indent) + " " * len(line)
+            ret += f"\n{new_base}{padding}{mid}{cline}"
+        return ret + end
 
     def format_hex(self, val: int) -> str:
         return format(val, "x").upper()

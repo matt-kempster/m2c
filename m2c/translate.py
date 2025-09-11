@@ -281,6 +281,7 @@ class StackInfo:
     persistent_state: PersistentFunctionState
     global_info: GlobalInfo
     flow_graph: FlowGraph
+    warnings: List[str] = field(default_factory=list)
     allocated_stack_size: int = 0
     is_leaf: bool = True
     is_variadic: bool = False
@@ -748,15 +749,17 @@ def get_stack_info(
         # 4-byte word between subregions.
         top = bottom
         internal_padding_added = False
+        has_warned = False
         for offset in callee_saved_offsets:
             if offset != top:
                 if not internal_padding_added and offset == top + 4:
                     internal_padding_added = True
-                else:
-                    raise DecompFailure(
-                        f"Gap in callee-saved word stack region. "
-                        f"Saved: {callee_saved_offsets}, "
-                        f"gap at: {offset} != {top}."
+                elif not has_warned:
+                    has_warned = True
+                    info.warnings.append(
+                        f"Gap in callee-saved word stack region.\n"
+                        f"Saved: [{', '.join(hex(o) for o in callee_saved_offsets)}], "
+                        f"gap at: {hex(top)}."
                     )
             top = offset + 4
         info.callee_save_reg_region = (bottom, top)

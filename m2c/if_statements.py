@@ -1414,6 +1414,11 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
 
     function_lines: List[str] = []
 
+    for warning in function_info.stack_info.warnings:
+        line = fmt.with_comments("", [f"Warning: {warning}"])
+        if line:
+            function_lines.append(line)
+
     if function_info.symbol.demangled_str is not None:
         line = fmt.with_comments("", [function_info.symbol.demangled_str])
         if line:
