@@ -595,6 +595,7 @@ def get_stack_info(
     # a local variable *and* a subroutine argument.) Anything within the stack frame,
     # but outside of these two regions, is considered a local variable.
     callee_saved_offsets: List[int] = []
+    allowed_callee_save_gaps: Set[int] = set()
     # Track simple literal values stored into registers: MIPS compilers need a temp
     # reg to move the stack pointer more than 0x7FFF bytes.
     temp_reg_values: Dict[Register, int] = {}
@@ -651,6 +652,7 @@ def get_stack_info(
             arch_mnemonic
             in [
                 "mips:sw",
+                "mips:sd",
                 "mips:swc1",
                 "mips:sdc1",
                 "ppc:stw",
@@ -681,6 +683,14 @@ def get_stack_info(
                         # as packed singles instead. Prioritize the stfd.
                         info.callee_save_regs.add(inp)
                     callee_saved_offsets.append(stack_offset)
+                    if arch_mnemonic == "mips:sd":
+                        # Some PS2 compilers use sd/ld to save/restore registers, but
+                        # reserve 0x10 bytes of space as if they had used sq/lq.
+                        # Allow for the discrepancy.
+                        allowed_callee_save_gaps.add(stack_offset + 8)
+                    if arch_mnemonic == "mips:swc1":
+                        # Similarly, they use swc1 but reserve 8 bytes of space.
+                        allowed_callee_save_gaps.add(stack_offset + 4)
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
@@ -751,6 +761,8 @@ def get_stack_info(
         internal_padding_added = False
         has_warned = False
         for offset in callee_saved_offsets:
+            while top < offset and top in allowed_callee_save_gaps:
+                top += 4
             if offset != top:
                 if not internal_padding_added and offset == top + 4:
                     internal_padding_added = True
