@@ -22,11 +22,11 @@ from typing import (
     cast,
 )
 
-from pycparser import c_ast as ca
-from pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
-from pycparser.c_generator import CGenerator
-from pycparser.c_parser import CParser
-from pycparser.plyparser import ParseError
+from m2c_pycparser import c_ast as ca
+from m2c_pycparser.c_ast import ArrayDecl, FuncDecl, IdentifierType, PtrDecl, TypeDecl
+from m2c_pycparser.c_generator import CGenerator
+from m2c_pycparser.c_parser import CParser
+from m2c_pycparser.plyparser import ParseError
 
 from .error import DecompFailure
 
@@ -93,7 +93,7 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 5
+    VERSION: ClassVar[int] = 6
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None

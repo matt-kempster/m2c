@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Union
 
-import pycparser.c_ast as ca
+import m2c_pycparser.c_ast as ca
 
 from .c_types import (
     CType,
