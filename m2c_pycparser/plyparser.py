@@ -14,21 +14,37 @@ class Coord(object):
     """ Coordinates of a syntactic element. Consists of:
             - File name
             - Line number
-            - (optional) column number, for the Lexer
+            - Lex data
+            - Lex position
     """
-    __slots__ = ('file', 'line', 'column', '__weakref__')
-    def __init__(self, file, line, column=None):
+    __slots__ = ('file', 'line', 'lexdata', 'lexpos', '__weakref__')
+    def __init__(self, file, line, lexdata, lexpos):
         self.file = file
         self.line = line
-        self.column = column
+        self.lexdata = lexdata
+        self.lexpos = lexpos
+
+    @property
+    def column(self):
+        return self.lexpos - self.lexdata.rfind('\n', 0, self.lexpos)
+
+    def source_line(self):
+        start = self.lexpos - self.column + 1
+        end = self.lexdata.find('\n', start)
+        if end == -1:
+            end = len(self.lexdata)
+        return self.lexdata[start:end].rstrip('\r')
 
     def __str__(self):
-        str = "%s:%s" % (self.file, self.line)
-        if self.column: str += ":%s" % self.column
-        return str
+        return "%s:%s:%s" % (self.file, self.line, self.column)
+
+    def __repr__(self):
+        return "Coord(%s:%s:%s)" % (self.file, self.line, self.column)
 
 
-class ParseError(Exception): pass
+class ParseError(Exception):
+    def __str__(self):
+        return self.args[0]
 
 
 class PLYParser(object):
@@ -46,25 +62,21 @@ class PLYParser(object):
         optrule.__name__ = 'p_%s' % optname
         setattr(self.__class__, optrule.__name__, optrule)
 
-    def _coord(self, lineno, column=None):
+    def _coord(self, lineno, lexpos):
         return Coord(
                 file=self.clex.filename,
                 line=lineno,
-                column=column)
+                lexdata=self.clex.lexer.lexdata,
+                lexpos=lexpos)
 
     def _token_coord(self, p, token_idx):
-        """ Returns the coordinates for the YaccProduction object 'p' indexed
-            with 'token_idx'. The coordinate includes the 'lineno' and
-            'column'. Both follow the lex semantic, starting from 1.
+        """Returns the coordinates for the YaccProduction object 'p' indexed
+        with 'token_idx'.
         """
-        last_cr = p.lexer.lexer.lexdata.rfind('\n', 0, p.lexpos(token_idx))
-        if last_cr < 0:
-            last_cr = -1
-        column = (p.lexpos(token_idx) - (last_cr))
-        return self._coord(p.lineno(token_idx), column)
+        return self._coord(p.lineno(token_idx), p.lexpos(token_idx))
 
     def _parse_error(self, msg, coord):
-        raise ParseError("%s: %s" % (coord, msg))
+        raise ParseError("%s: %s" % (coord, msg), coord)
 
 
 def parameterized(*params):

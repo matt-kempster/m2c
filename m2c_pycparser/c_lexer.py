@@ -76,24 +76,14 @@ class CLexer(object):
         self.last_token = self.lexer.token()
         return self.last_token
 
-    def find_tok_column(self, token):
-        """ Find the column of the token in its line.
-        """
-        last_cr = self.lexer.lexdata.rfind('\n', 0, token.lexpos)
-        return token.lexpos - last_cr
-
     ######################--   PRIVATE   --######################
 
     ##
     ## Internal auxiliary methods
     ##
     def _error(self, msg, token):
-        location = self._make_tok_location(token)
-        self.error_func(msg, location[0], location[1])
+        self.error_func(msg, token.lineno, token.lexpos)
         self.lexer.skip(1)
-
-    def _make_tok_location(self, token):
-        return (token.lineno, self.find_tok_column(token))
 
     ##
     ## Reserved keywords

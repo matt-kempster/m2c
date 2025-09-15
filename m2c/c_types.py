@@ -696,21 +696,15 @@ def parse_c(
         ast = c_parser.cparser.parse(input=source, lexer=c_parser.clex)
     except ParseError as e:
         msg = str(e)
-        position, msg = msg.split(": ", 1)
-        parts = position.split(":")
-        if len(parts) >= 2:
-            # Adjust the line number by 1 to correct for the added typedefs
-            lineno = int(parts[1]) - 1
-            posstr = f" at line {lineno}"
-            if len(parts) >= 3:
-                posstr += f", column {parts[2]}"
-            try:
-                line = source.split("\n")[lineno].rstrip()
-                posstr += "\n\n" + line
-            except IndexError:
-                posstr += "(out of bounds?)"
+        coord = e.args[1]
+        _, msg = msg.split(": ", 1)
+        if isinstance(coord, str):
+            # Error at end of input
+            posstr = " " + coord[0].lower() + coord[1:]
         else:
-            posstr = ""
+            # Adjust the line number by 1 to correct for the added typedefs
+            source = coord.source_line()
+            posstr = f" at line {coord.line - 1}, column {coord.column}\n\n{source}"
         raise DecompFailure(f"Syntax error when parsing C context.\n{msg}{posstr}")
     return ast, c_parser._scope_stack[0].copy()
 

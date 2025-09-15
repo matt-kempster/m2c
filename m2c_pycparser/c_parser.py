@@ -187,8 +187,8 @@ class CParser(PLYParser):
             if in_scope is not None: return in_scope
         return False
 
-    def _lex_error_func(self, msg, line, column):
-        self._parse_error(msg, self._coord(line, column))
+    def _lex_error_func(self, msg, line, lexpos):
+        self._parse_error(msg, self._coord(line, lexpos))
 
     def _lex_on_lbrace_func(self):
         self._push_scope()
@@ -1967,7 +1967,7 @@ class CParser(PLYParser):
         if p:
             self._parse_error(
                 'before: %s' % p.value,
-                self._coord(lineno=p.lineno,
-                            column=self.clex.find_tok_column(p)))
+                self._coord(lineno=p.lineno, lexpos=p.lexpos),
+            )
         else:
             self._parse_error('At end of input', self.clex.filename)
