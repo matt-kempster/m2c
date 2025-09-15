@@ -916,8 +916,9 @@ class CParser(PLYParser):
     def p_init_declarator(self, p):
         """ init_declarator : declarator
                             | declarator EQUALS initializer
+                            | declarator COLON constant_expression
         """
-        p[0] = dict(decl=p[1], init=(p[3] if len(p) > 2 else None))
+        p[0] = dict(decl=p[1], init=(p[3] if len(p) > 2 and p[2] == '=' else None))
 
     def p_id_init_declarator_list(self, p):
         """ id_init_declarator_list    : id_init_declarator
