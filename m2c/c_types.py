@@ -484,7 +484,6 @@ def parse_struct_member(
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
     is_union = isinstance(struct, ca.Union)
     assert struct.decls is not None, "enforced by caller"
-    assert struct.decls, f"{struct.name}: Empty structs are not valid C"
 
     fields: Dict[int, List[StructField]] = defaultdict(list)
     bitfields: Dict[int, List[BitField]] = defaultdict(list)

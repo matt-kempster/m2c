@@ -1654,6 +1654,8 @@ class GlobalSymbol(Expression):
         at the end of the symbol's data.
         If the extra bytes are nonzero, then it's likely that `element_size` is incorrect.
         """
+        assert element_size != 0, "potential_array_dim cannot be called on zero size"
+
         # If we don't have the .data/.rodata entry for this symbol, we can't guess
         # its array dimension. Jump tables are ignored and not treated as arrays.
         if self.asm_data_entry is None or self.asm_data_entry.is_jtbl:
