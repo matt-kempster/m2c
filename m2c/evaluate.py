@@ -687,9 +687,10 @@ def handle_sll(args: InstrArgs, *, arm: bool = False) -> Expression:
 
 def handle_conditional_move(args: InstrArgs, nonzero: bool) -> Expression:
     op = "!=" if nonzero else "=="
+    val = args.reg(2)
     type = Type.any_reg()
     return TernaryOp(
-        BinaryOp.scmp(args.reg(2), op, Literal(0)),
+        BinaryOp.icmp(val, op, Literal(0, type=val.type)),
         as_type(args.reg(1), type, silent=True),
         as_type(args.reg(0), type, silent=True),
         type,
