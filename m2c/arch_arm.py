@@ -1566,7 +1566,7 @@ class ArmArch(Arch):
                         BinaryOp.icmp(val, "==", Literal(0, type=val.type)),
                     )
                     sval = as_type(val, Type.s32(), silent=True, unify=False)
-                    s.set_reg(Register("n"), BinaryOp.scmp(val, "<", Literal(0)))
+                    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
                     v = fn_op("M2C_OVERFLOW", [val], Type.bool())
                     s.set_reg(Register("v"), v)
                     # Remaining flag bits are based on the full mathematical result
