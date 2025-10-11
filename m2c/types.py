@@ -183,6 +183,9 @@ class TypeData:
         return root
 
 
+DEBUG_REPR_IDS: Dict[TypeData, int] = {}
+
+
 @dataclass(eq=False, repr=False)
 class Type:
     """
@@ -818,7 +821,10 @@ class Type:
             + ("S" if data.kind & TypeData.K_STRUCT else "")
         )
         sizestr = str(data.size_bits) if data.size_bits is not None else "?"
-        return f"Type({signstr + kindstr + sizestr})"
+        if data not in DEBUG_REPR_IDS:
+            DEBUG_REPR_IDS[data] = len(DEBUG_REPR_IDS)
+        ident = DEBUG_REPR_IDS[data]
+        return f"Type({signstr + kindstr + sizestr})@{ident}"
 
     @staticmethod
     def any() -> Type:

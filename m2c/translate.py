@@ -1807,7 +1807,7 @@ class EvalOnceExpr(Expression):
     var: Var
     type: Type
 
-    sources: List[Reference]
+    sources: List[Reference] = field(repr=False)
 
     # True for function calls/errors
     emit_exactly_once: bool
