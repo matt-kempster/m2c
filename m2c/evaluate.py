@@ -1424,7 +1424,7 @@ def set_arm_flags_from_add(s: NodeState, val: Expression) -> None:
     sval = as_type(val, Type.s32(), silent=True, unify=False)
     s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
     s.set_reg(Register("c"), CarryBit(val))
-    v = fn_op("M2C_OVERFLOW", [val], Type.bool())
+    v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
     s.set_reg(Register("v"), v)
     # Remaining flag bits are based on the full mathematical result
     # of unsigned/signed additions. We don't have a good way to
