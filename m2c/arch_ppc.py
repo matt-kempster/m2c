@@ -870,8 +870,9 @@ class PpcArch(Arch):
                 inputs = [args[0], args[1], args[2]]
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = [args[0], args[1].base]
                 outputs = make_memory_access(args[1], size)
+                inputs = [args[0]] * (len(outputs) or 1)
+                inputs.append(args[1].base)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)

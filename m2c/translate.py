@@ -653,6 +653,7 @@ def get_stack_info(
             in [
                 "mips:sw",
                 "mips:sd",
+                "mips:sq",
                 "mips:swc1",
                 "mips:sdc1",
                 "ppc:stw",

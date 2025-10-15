@@ -1137,13 +1137,15 @@ class MipsArch(Arch):
             eval_fn = lambda s, a: s.write_statement(cls.instrs_no_dest[mnemonic](a))
         elif mnemonic in cls.instrs_store:
             assert isinstance(args[0], Register)
-            inputs = [args[0]]
             outputs = make_memory_access(args[1])
+            inputs = [args[0]]
             is_store = True
-            if isinstance(args[1], AsmAddressMode):
-                inputs.append(args[1].base)
             if mnemonic == "sdc1":
                 inputs.append(other_f64_reg(args[0]))
+            elif mnemonic in ("sd", "sq") and outputs:
+                inputs *= len(outputs)
+            if isinstance(args[1], AsmAddressMode):
+                inputs.append(args[1].base)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
