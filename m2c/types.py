@@ -43,6 +43,7 @@ class TypePool:
     )
     unknown_decls: Dict[str, Type] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    union_field_overrides: Dict[str, str] = field(default_factory=dict)
 
     def get_struct_for_ctype(
         self,
@@ -503,19 +504,46 @@ class Type:
             ):
                 possible_results.append(([], self, offset))
 
+            # Check for user-specified union field overrides
+            has_union_override = False
+            if data.struct.is_union and data.struct.preferred_union_field:
+                # Reorder possible_fields to put the preferred field first
+                for i, field in enumerate(possible_fields):
+                    if field.name == data.struct.preferred_union_field:
+                        # Move this field to the front
+                        possible_fields.insert(0, possible_fields.pop(i))
+                        has_union_override = True
+                        break
+
             # Recursively check each of the `possible_fields` to find the best matches
             # for fields at the given offset.
-            for field in possible_fields:
+            for i, field in enumerate(possible_fields):
                 inner_offset_bits = offset - field.offset
+                # When we have a union override and this is the preferred field (first in the
+                # reordered list), be very lenient: try with exact match first, but fall back
+                # to allowing size mismatches if needed
+                is_override_field = has_union_override and i == 0
                 subpath, subtype, sub_remaining_offset = field.type.get_field(
                     inner_offset_bits,
                     target_size=target_size,
-                    exact=exact,
+                    exact=False if is_override_field else exact,
                 )
+                # If override field didn't match with target_size, try without it
+                if subpath is None and is_override_field:
+                    subpath, subtype, sub_remaining_offset = field.type.get_field(
+                        inner_offset_bits,
+                        target_size=None,
+                        exact=False,
+                    )
                 if subpath is None:
                     continue
                 subpath.insert(0, field.name)
                 possible_results.append((subpath, subtype, sub_remaining_offset))
+
+                # If we have a union override and this is the first field (which we reordered
+                # to be the preferred field), return it immediately regardless of size match.
+                if is_override_field and sub_remaining_offset == 0:
+                    return possible_results[-1]
 
                 # Check if this subfield is an exact match. If it is, return it.
                 if (
@@ -1293,6 +1321,7 @@ class StructDeclaration:
     has_bitfields: bool = False
     is_union: bool = False
     is_stack: bool = False
+    preferred_union_field: Optional[str] = None
 
     def min_size(self) -> int:
         if self.size is not None:
@@ -1550,11 +1579,13 @@ class StructDeclaration:
         typepool: TypePool, size: Optional[int], tag_name: str, align: int = 1
     ) -> StructDeclaration:
         """Return an StructDeclaration without any known fields"""
+        preferred_field = typepool.union_field_overrides.get(tag_name)
         decl = StructDeclaration(
             size=size,
             align=align,
             tag_name=tag_name,
             new_field_prefix=typepool.unknown_field_prefix,
+            preferred_union_field=preferred_field,
         )
         typepool.add_struct(decl, tag_name)
         return decl
@@ -1602,6 +1633,14 @@ class StructDeclaration:
             struct_size % struct_align == 0
         ), "struct size must be a multiple of its alignment"
 
+        # Get the preferred union field name, if one was specified
+        struct_name = typedef_name or ctype.name
+        preferred_field = (
+            typepool.union_field_overrides.get(struct_name)
+            if struct_name
+            else None
+        )
+
         decl = StructDeclaration(
             size=struct_size,
             align=struct_align,
@@ -1612,6 +1651,7 @@ class StructDeclaration:
             has_bitfields=struct_has_bitfields,
             is_union=isinstance(ctype, ca.Union),
             new_field_prefix=typepool.unknown_field_prefix,
+            preferred_union_field=preferred_field,
         )
         # Register the struct in the typepool now, before parsing the fields,
         # in case there are any self-referential fields in this struct.

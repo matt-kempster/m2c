@@ -179,6 +179,7 @@ class Options:
     descending_regs: bool
     backwards_bss: bool
     disable_gc: bool
+    union_field_overrides: Dict[str, str]
 
     def formatter(self) -> Formatter:
         return Formatter(
