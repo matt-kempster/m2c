@@ -416,9 +416,6 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         assert isinstance(b, Instruction)
         ra, ma = a.args
         rb, mb = b.args
-        # Ideally we'd verify that the memory locations are consecutive as well,
-        # but that's a bit annoying with %lo macros vs raw offsets, and they
-        # might also be misidentified as separate globals.
         if not (
             isinstance(ra, Register)
             and ra.is_float()
@@ -432,6 +429,15 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         if num % 2 == 1:
             ra, rb = rb, ra
             ma, mb = mb, ma
+        # Try to best-effort verify that the memory locations are consecutive.
+        # This doesn't always work, e.g. if they are misidentified as separate
+        # globals. We also don't handle %lo macros at all right now.
+        if (
+            isinstance(ma.addend, AsmLiteral)
+            and isinstance(mb.addend, AsmLiteral)
+            and ma.addend.value != mb.addend.value + 4
+        ):
+            return None
         # Store the even-numbered register (ra) into the low address (mb).
         new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
