@@ -848,6 +848,9 @@ class Var:
         assert self.is_emitted
         if self.name is None:
             self.name = self.stack_info.temp_var(self.prefix)
+            apply_void_var_type_override(
+                self.name, self.type, self.stack_info.global_info
+            )
         return self.name
 
     def __str__(self) -> str:
@@ -1466,6 +1469,10 @@ class StructAccess(Expression):
     stack_info: Optional[StackInfo] = field(compare=False, repr=False)
     type: Type = field(compare=False)
     checked_late_field_path: bool = field(default=False, compare=False)
+    last_checked_kind: Optional[int] = field(default=None, compare=False)
+    last_checked_struct: Optional[StructDeclaration] = field(
+        default=None, compare=False
+    )
 
     def __post_init__(self) -> None:
         # stack_info is used to resolve field_path late
@@ -1520,20 +1527,38 @@ class StructAccess(Expression):
         # If we didn't have a type at the time when the struct access was
         # constructed, but now we do, compute field name.
 
-        if self.field_path is None and not self.checked_late_field_path:
+        if self.field_path is None:
             var = late_unwrap(self.struct_var)
             # Format var to recursively resolve any late_field_path it has to
             # potentially improve var.type before we look up our field name
-            var.format(Formatter())
-            field_path, field_type, _ = var.type.get_deref_field(
-                self.offset, target_size=self.target_size
-            )
-            if field_path is not None:
-                self.assert_valid_field_path(field_path)
-                self.field_path = field_path
-                self.type.unify(field_type)
+            var_name = var.format(Formatter())
+            var_data = var.type.data()
+            ptr_struct: Optional[StructDeclaration] = None
+            if var_data.ptr_to is not None:
+                ptr_target = var_data.ptr_to.data()
+                if ptr_target.struct is not None:
+                    ptr_struct = ptr_target.struct
 
-            self.checked_late_field_path = True
+            effective_type = var.type
+
+            should_retry = (
+                not self.checked_late_field_path
+                or self.last_checked_kind != var_data.kind
+                or self.last_checked_struct is not ptr_struct
+            )
+
+            if should_retry:
+                field_path, field_type, _ = effective_type.get_deref_field(
+                    self.offset, target_size=self.target_size
+                )
+                if field_path is not None:
+                    self.assert_valid_field_path(field_path)
+                    self.field_path = field_path
+                    self.type.unify(field_type)
+
+                self.checked_late_field_path = True
+                self.last_checked_kind = var_data.kind
+                self.last_checked_struct = ptr_struct
         return self.field_path
 
     def late_has_known_type(self) -> bool:
@@ -4562,6 +4587,19 @@ def setup_planned_vars(
             stack_info.planned_vars[key] = var
 
 
+def apply_void_var_type_override(
+    var_name: str, var_type: Type, global_info: GlobalInfo
+) -> None:
+    """Apply a --void-var-type override to a variable if one is specified."""
+    override_type_str = global_info.typepool.void_var_type_overrides.get(var_name)
+    if override_type_str is not None:
+        override_type = global_info.typepool.parse_type_string(
+            override_type_str, global_info.typemap
+        )
+        if override_type is not None:
+            var_type.data().uf_parent = override_type.data()
+
+
 def setup_reg_vars(stack_info: StackInfo, options: Options) -> None:
     """Set up per-register planned vars based on command line flags."""
     arch = stack_info.global_info.arch
@@ -4705,6 +4743,25 @@ def translate_to_ast(
             param.type.unify(arg.type)
             if not param.name:
                 param.name = arg.format(Formatter())
+
+    # Apply void* variable type overrides to arguments and local variables
+    # This needs to happen after arguments are populated but before final type resolution
+    for arg in stack_info.arguments:
+        arg_name = stack_info.get_param_name(arg.loc)
+        if arg_name is None:
+            # Use the default name if no context name is available
+            arg_name = global_info.arch.arg_name(arg.loc)
+        apply_void_var_type_override(arg_name, arg.type, global_info)
+
+    # Also apply to local stack variables
+    for local_var in stack_info.local_vars:
+        if (
+            local_var.path is not None
+            and len(local_var.path) == 2
+            and isinstance(local_var.path[1], str)
+        ):
+            var_name = local_var.path[1]
+            apply_void_var_type_override(var_name, local_var.type, global_info)
 
     resolve_types_late(stack_info)
 
