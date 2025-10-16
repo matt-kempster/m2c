@@ -78,8 +78,9 @@ def decompile_and_compare(
         original_contents = test_case.output_file.read_text()
     except FileNotFoundError:
         if not test_options.should_overwrite:
-            logging.error(f"{test_case.output_file} does not exist. Skipping.")
-            return None, f"{test_case.output_file} does not exist. Skippping."
+            err = f"{test_case.output_file} does not exist. Skipping."
+            logging.error(err)
+            return None, err
         original_contents = "(file did not exist)"
 
     test_flags = ["--sanitize-tracebacks", "--stop-on-error"]
