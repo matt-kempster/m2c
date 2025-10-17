@@ -10,12 +10,12 @@ typedef struct {
 } FloatPair;
 
 union SameSizeUnion {
-    IntPair ints;
     FloatPair floats;
+    IntPair ints;
 };
 
 struct Container {
     union SameSizeUnion data;
 };
 
-extern int test_func(struct Container *arg);
+extern int test(struct Container *arg);

@@ -507,7 +507,8 @@ class Type:
             # If the user specified a union field override, filter to just that field
             if data.struct.is_union and data.struct.preferred_union_field:
                 possible_fields = [
-                    field for field in possible_fields
+                    field
+                    for field in possible_fields
                     if field.name == data.struct.preferred_union_field
                 ]
 
@@ -1616,9 +1617,7 @@ class StructDeclaration:
         # Get the preferred union field name, if one was specified
         struct_name = typedef_name or ctype.name
         preferred_field = (
-            typepool.union_field_overrides.get(struct_name)
-            if struct_name
-            else None
+            typepool.union_field_overrides.get(struct_name) if struct_name else None
         )
 
         decl = StructDeclaration(
