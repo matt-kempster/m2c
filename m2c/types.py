@@ -504,46 +504,26 @@ class Type:
             ):
                 possible_results.append(([], self, offset))
 
-            # Check for user-specified union field overrides
-            has_union_override = False
+            # If the user specified a union field override, filter to just that field
             if data.struct.is_union and data.struct.preferred_union_field:
-                # Reorder possible_fields to put the preferred field first
-                for i, field in enumerate(possible_fields):
-                    if field.name == data.struct.preferred_union_field:
-                        # Move this field to the front
-                        possible_fields.insert(0, possible_fields.pop(i))
-                        has_union_override = True
-                        break
+                possible_fields = [
+                    field for field in possible_fields
+                    if field.name == data.struct.preferred_union_field
+                ]
 
             # Recursively check each of the `possible_fields` to find the best matches
             # for fields at the given offset.
-            for i, field in enumerate(possible_fields):
+            for field in possible_fields:
                 inner_offset_bits = offset - field.offset
-                # When we have a union override and this is the preferred field (first in the
-                # reordered list), be very lenient: try with exact match first, but fall back
-                # to allowing size mismatches if needed
-                is_override_field = has_union_override and i == 0
                 subpath, subtype, sub_remaining_offset = field.type.get_field(
                     inner_offset_bits,
                     target_size=target_size,
-                    exact=False if is_override_field else exact,
+                    exact=exact,
                 )
-                # If override field didn't match with target_size, try without it
-                if subpath is None and is_override_field:
-                    subpath, subtype, sub_remaining_offset = field.type.get_field(
-                        inner_offset_bits,
-                        target_size=None,
-                        exact=False,
-                    )
                 if subpath is None:
                     continue
                 subpath.insert(0, field.name)
                 possible_results.append((subpath, subtype, sub_remaining_offset))
-
-                # If we have a union override and this is the first field (which we reordered
-                # to be the preferred field), return it immediately regardless of size match.
-                if is_override_field and sub_remaining_offset == 0:
-                    return possible_results[-1]
 
                 # Check if this subfield is an exact match. If it is, return it.
                 if (
