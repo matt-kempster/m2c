@@ -43,6 +43,7 @@ class TypePool:
     )
     unknown_decls: Dict[str, Type] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    union_field_overrides: Dict[str, str] = field(default_factory=dict)
 
     def get_struct_for_ctype(
         self,
@@ -502,6 +503,14 @@ class Type:
                 target_size is None or target_size == self.get_size_bytes()
             ):
                 possible_results.append(([], self, offset))
+
+            # If the user specified a union field override, filter to just that field
+            if data.struct.is_union and data.struct.preferred_union_field:
+                possible_fields = [
+                    field
+                    for field in possible_fields
+                    if field.name == data.struct.preferred_union_field
+                ]
 
             # Recursively check each of the `possible_fields` to find the best matches
             # for fields at the given offset.
@@ -1293,6 +1302,7 @@ class StructDeclaration:
     has_bitfields: bool = False
     is_union: bool = False
     is_stack: bool = False
+    preferred_union_field: Optional[str] = None
 
     def min_size(self) -> int:
         if self.size is not None:
@@ -1550,11 +1560,13 @@ class StructDeclaration:
         typepool: TypePool, size: Optional[int], tag_name: str, align: int = 1
     ) -> StructDeclaration:
         """Return an StructDeclaration without any known fields"""
+        preferred_field = typepool.union_field_overrides.get(tag_name)
         decl = StructDeclaration(
             size=size,
             align=align,
             tag_name=tag_name,
             new_field_prefix=typepool.unknown_field_prefix,
+            preferred_union_field=preferred_field,
         )
         typepool.add_struct(decl, tag_name)
         return decl
@@ -1602,6 +1614,12 @@ class StructDeclaration:
             struct_size % struct_align == 0
         ), "struct size must be a multiple of its alignment"
 
+        # Get the preferred union field name, if one was specified
+        struct_name = typedef_name or ctype.name
+        preferred_field = (
+            typepool.union_field_overrides.get(struct_name) if struct_name else None
+        )
+
         decl = StructDeclaration(
             size=struct_size,
             align=struct_align,
@@ -1612,6 +1630,7 @@ class StructDeclaration:
             has_bitfields=struct_has_bitfields,
             is_union=isinstance(ctype, ca.Union),
             new_field_prefix=typepool.unknown_field_prefix,
+            preferred_union_field=preferred_field,
         )
         # Register the struct in the typepool now, before parsing the fields,
         # in case there are any self-referential fields in this struct.

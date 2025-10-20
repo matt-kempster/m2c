@@ -133,6 +133,7 @@ def run(options: Options) -> int:
     typepool = TypePool(
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
+        union_field_overrides=options.union_field_overrides,
     )
     global_info = GlobalInfo(
         asm_data,
@@ -610,6 +611,16 @@ def parse_flags(flags: List[str]) -> Options:
         help="Disable Python garbage collection. Can improve performance at "
         "the risk of running out of memory.",
     )
+    group.add_argument(
+        "--union-field",
+        metavar="STRUCT:FIELD",
+        dest="union_fields",
+        action="append",
+        default=[],
+        help="Specify which field to use for a union. "
+        "Format: STRUCT_NAME:FIELD_NAME (e.g., MyUnion:int_value). "
+        "Can be specified multiple times for different unions.",
+    )
 
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
@@ -636,6 +647,20 @@ def parse_flags(flags: List[str]) -> Options:
             functions.append(int(fn))
         except ValueError:
             functions.append(fn)
+
+    # Parse union field overrides
+    union_field_overrides: Dict[str, str] = {}
+    for override in args.union_fields:
+        parts = override.split(":", 1)
+        if len(parts) != 2:
+            print(
+                f"Error: Invalid union field override '{override}'. "
+                "Expected format: STRUCT_NAME:FIELD_NAME",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        struct_name, field_name = parts
+        union_field_overrides[struct_name] = field_name
 
     # The debug output interferes with the visualize output
     if args.visualize_flowgraph is not None:
@@ -680,6 +705,7 @@ def parse_flags(flags: List[str]) -> Options:
         descending_regs=args.descending_regs,
         backwards_bss=args.backwards_bss,
         disable_gc=args.disable_gc,
+        union_field_overrides=union_field_overrides,
     )
 
 
