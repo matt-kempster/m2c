@@ -57,6 +57,16 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("ecx")])
         self.assertTrue(instr.eval_fn, "mov instruction should have eval_fn")
 
+    def test_push_register_updates_stack(self) -> None:
+        instr = self.parse_instruction("push eax")
+        self.assertEqual(instr.outputs, [Register("esp")])
+        self.assertIn(Register("esp"), instr.inputs)
+
+    def test_sub_esp_allocates_stack(self) -> None:
+        instr = self.parse_instruction("sub esp, 0x8")
+        self.assertEqual(instr.outputs, [Register("esp")])
+        self.assertIn(Register("esp"), instr.inputs)
+
 
 if __name__ == "__main__":
     unittest.main()

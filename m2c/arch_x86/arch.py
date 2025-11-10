@@ -11,9 +11,11 @@ from ..translate import (
     AbiArgSlot,
     ArgLoc,
     Arch,
+    BinaryOp,
     Cast,
     Expression,
     InstrArgs,
+    Literal,
     NodeState,
     Type,
     as_u32,
@@ -217,6 +219,65 @@ class X86Arch(Arch):
             eval_fn=eval_mov,
         )
 
+    @classmethod
+    def _parse_push(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "push expects one operand"
+        src = args[0]
+        inputs: List[Register] = [cls.stack_pointer_reg]
+        if isinstance(src, Register):
+            inputs.append(src)
+
+        def eval_push(state: NodeState, a: InstrArgs) -> None:
+            esp = cls.stack_pointer_reg
+            current = state.regs[esp]
+            new_sp = BinaryOp.intptr(current, "-", Literal(4))
+            state.set_reg(esp, new_sp)
+
+        return Instruction(
+            mnemonic="push",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[cls.stack_pointer_reg],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=True,
+            is_load=False,
+            eval_fn=eval_push,
+        )
+
+    @classmethod
+    def _parse_sub(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "sub expects two operands"
+        dst, src = args
+        if dst != cls.stack_pointer_reg or not isinstance(src, AsmLiteral):
+            raise DecompFailure(cls._unsupported_message("sub", args))
+
+        def eval_sub(state: NodeState, a: InstrArgs) -> None:
+            esp = cls.stack_pointer_reg
+            current = state.regs[esp]
+            new_sp = BinaryOp.intptr(current, "-", Literal(src.value))
+            state.set_reg(esp, new_sp)
+
+        return Instruction(
+            mnemonic="sub",
+            args=args,
+            meta=meta,
+            inputs=[cls.stack_pointer_reg],
+            clobbers=[],
+            outputs=[cls.stack_pointer_reg],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_sub,
+        )
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -269,4 +330,6 @@ X86Arch._instr_parsers = {
     "nop": X86Arch._parse_nop,
     "ret": X86Arch._parse_ret,
     "mov": X86Arch._parse_mov,
+    "push": X86Arch._parse_push,
+    "sub": X86Arch._parse_sub,
 }
