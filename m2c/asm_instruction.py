@@ -408,6 +408,13 @@ def parse_arg_elems(
             expect(")")
             # A macro may be the lhs of an AsmAddressMode, so we don't return here.
             value = Macro(macro_name, m)
+        elif tok.lower() == "o" and "".join(arg_elems[:6]).lower().startswith("offset"):
+            # MASM-style "offset symbol"
+            for _ in range(6):
+                arg_elems.pop(0)
+            consume_ws()
+            symbol = parse_word(arg_elems)
+            value = AsmGlobalSymbol(symbol)
         elif tok in (")", "]"):
             # Break out to the parent of this call, since we are in parens.
             break

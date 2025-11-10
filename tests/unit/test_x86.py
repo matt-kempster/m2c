@@ -82,6 +82,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.function_target, AsmGlobalSymbol("_malloc"))
         self.assertEqual(instr.outputs, [Register("eax"), Register("edx")])
 
+    def test_push_offset_symbol(self) -> None:
+        instr = self.parse_instruction("push offset _FUN_0040e440")
+        self.assertEqual(instr.outputs, [Register("esp")])
+        self.assertIn(Register("esp"), instr.inputs)
+
     def test_mov_stack_store_instruction(self) -> None:
         instr = self.parse_instruction("mov dword ptr [esp + 0x8], eax")
         self.assertTrue(instr.is_store)
