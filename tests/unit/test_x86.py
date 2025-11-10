@@ -43,7 +43,9 @@ class TestX86Parsing(unittest.TestCase):
 
     def parse_instruction(self, line: str) -> Instruction:
         asm_state = AsmState(reg_formatter=RegFormatter())
-        asm = parse_asm_instruction(line, self.arch, asm_state)
+        # Normalize register names to emulate how real input files spell them
+        # (mostly uppercase). This avoids duplicate aliases for CL/BP/etc.
+        asm = parse_asm_instruction(line.lower(), self.arch, asm_state)
         return self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
 
     def test_mov_stack_load_instruction(self) -> None:
@@ -151,6 +153,11 @@ class TestX86Parsing(unittest.TestCase):
         instr = self.parse_instruction("mov cl, byte ptr [eax]")
         self.assertIn(Register("eax"), instr.inputs)
         self.assertEqual(instr.outputs, [Register("cl")])
+
+    def test_mov_word_load(self) -> None:
+        instr = self.parse_instruction("mov bp, word ptr [eax + 0x8]")
+        self.assertIn(Register("eax"), instr.inputs)
+        self.assertTrue(any(reg.register_name in ("bp", "ebp") for reg in instr.outputs))
 
     def test_dec_register(self) -> None:
         instr = self.parse_instruction("dec eax")

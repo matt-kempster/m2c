@@ -83,6 +83,14 @@ class X86Arch(Arch):
         "sp": stack_pointer_reg,
         "bp": Register("ebp"),
         "ip": Register("eip"),
+        "cl": Register("ecx"),
+        "ch": Register("ecx"),
+        "al": Register("eax"),
+        "ah": Register("eax"),
+        "bl": Register("ebx"),
+        "bh": Register("ebx"),
+        "dl": Register("edx"),
+        "dh": Register("edx"),
     }
 
     size_prefixes = {
