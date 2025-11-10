@@ -264,6 +264,36 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_pop(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "pop expects one operand"
+        dst = args[0]
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("pop", args))
+
+        def eval_pop(state: NodeState, a: InstrArgs) -> None:
+            esp = cls.stack_pointer_reg
+            current = state.regs[esp]
+            new_sp = BinaryOp.intptr(current, "+", Literal(4))
+            state.set_reg(dst, a.arg(0))
+            state.set_reg(esp, new_sp)
+
+        return Instruction(
+            mnemonic="pop",
+            args=args,
+            meta=meta,
+            inputs=[dst, cls.stack_pointer_reg],
+            clobbers=[],
+            outputs=[dst, cls.stack_pointer_reg],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=True,
+            eval_fn=eval_pop,
+        )
+
+    @classmethod
     def _parse_sub(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "sub expects two operands"
         dst, src = args
@@ -491,6 +521,7 @@ X86Arch._instr_parsers = {
     "ret": X86Arch._parse_ret,
     "mov": X86Arch._parse_mov,
     "push": X86Arch._parse_push,
+    "pop": X86Arch._parse_pop,
     "sub": X86Arch._parse_sub,
     "add": X86Arch._parse_add,
     "test": X86Arch._parse_test,

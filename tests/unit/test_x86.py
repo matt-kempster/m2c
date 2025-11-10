@@ -63,6 +63,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("esp")])
         self.assertIn(Register("esp"), instr.inputs)
 
+    def test_pop_register_updates_stack(self) -> None:
+        instr = self.parse_instruction("pop esi")
+        self.assertIn(Register("esp"), instr.inputs)
+        self.assertEqual(instr.outputs, [Register("esi"), Register("esp")])
+
     def test_sub_esp_allocates_stack(self) -> None:
         instr = self.parse_instruction("sub esp, 0x8")
         self.assertEqual(instr.outputs, [Register("esp")])
