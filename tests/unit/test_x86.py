@@ -8,9 +8,10 @@ from m2c.asm_instruction import (
     AsmLiteral,
     AsmState,
     RegFormatter,
+    Register,
     parse_asm_instruction,
 )
-from m2c.asm_instruction import Register
+from m2c.instruction import Instruction, InstructionMeta, StackLocation
 
 
 class TestX86Parsing(unittest.TestCase):
@@ -38,6 +39,23 @@ class TestX86Parsing(unittest.TestCase):
         self.assertIsInstance(addr, AsmAddressMode)
         self.assertEqual(addr.base, Register("zero"))
         self.assertEqual(addr.addend.symbol_name, "_DAT_0079a8b0")
+
+    def parse_instruction(self, line: str) -> Instruction:
+        asm = parse_asm_instruction(line, self.arch, AsmState(reg_formatter=RegFormatter()))
+        return self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+
+    def test_mov_stack_load_instruction(self) -> None:
+        instr = self.parse_instruction("mov eax, dword ptr [esp + 0x4]")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertTrue(instr.inputs, "mov stack load should read memory")
+        loc = instr.inputs[0]
+        self.assertIsInstance(loc, StackLocation)
+        self.assertEqual(loc.offset, 4)
+
+    def test_mov_absolute_load_instruction(self) -> None:
+        instr = self.parse_instruction("mov ecx, [_DAT_00401000]")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertTrue(instr.eval_fn, "mov instruction should have eval_fn")
 
 
 if __name__ == "__main__":

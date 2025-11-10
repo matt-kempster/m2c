@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -24,8 +24,7 @@ def classify_failure(exc: DecompFailure) -> Tuple[str, str]:
     msg = str(exc).strip()
     if UNSUPPORTED_MARKER in msg:
         detail = msg.split(UNSUPPORTED_MARKER, 1)[1].strip()
-        mnemonic = detail.split(" ", 1)[0]
-        return "unsupported", mnemonic
+        return "unsupported", detail
     return "other", msg.splitlines()[0]
 
 
@@ -40,8 +39,8 @@ def run_harness(
         asm_files = asm_files[:limit]
 
     arch = X86Arch()
-    unsupported_counts: Counter[str] = Counter()
-    samples: Dict[str, List[str]] = defaultdict(list)
+    mnemonic_counts: Counter[str] = Counter()
+    detail_counts: Counter[str] = Counter()
     other_errors: List[Tuple[str, str]] = []
 
     for path in asm_files:
@@ -52,22 +51,23 @@ def run_harness(
         except DecompFailure as exc:
             kind, label = classify_failure(exc)
             if kind == "unsupported":
-                unsupported_counts[label] += 1
-                if len(samples[label]) < sample_limit:
-                    samples[label].append(path.name)
+                mnemonic = label.split(" ", 1)[0]
+                mnemonic_counts[mnemonic] += 1
+                detail_counts[label] += 1
             else:
                 other_errors.append((path.name, label))
 
     total = len(asm_files)
-    failed = sum(unsupported_counts.values()) + len(other_errors)
+    failed = sum(detail_counts.values()) + len(other_errors)
     print(f"Scanned {total} asm files ({failed} with errors).")
 
-    if unsupported_counts:
-        print("\nTop unsupported instructions:")
-        for mnemonic, count in unsupported_counts.most_common(top_n):
-            sample_str = ", ".join(samples[mnemonic])
-            sample_suffix = f" [{sample_str}]" if sample_str else ""
-            print(f"  {mnemonic:<12} {count:>5} hits{sample_suffix}")
+    if detail_counts:
+        print("\nTop unsupported instruction formats:")
+        for detail, count in detail_counts.most_common(top_n):
+            print(f"  {count:>5}  {detail}")
+        print("\nSummary by mnemonic:")
+        for mnemonic, count in mnemonic_counts.most_common(top_n):
+            print(f"  {mnemonic:<12} {count:>5}")
     else:
         print("\nNo unsupported instructions detected.")
 

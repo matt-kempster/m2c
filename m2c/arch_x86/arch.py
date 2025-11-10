@@ -2,15 +2,9 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from ..asm_instruction import (
-    Argument,
-    AsmInstruction,
-    AsmLiteral,
-    AsmState,
-    Register,
-)
+from ..asm_instruction import Argument, AsmAddressMode, AsmInstruction, AsmLiteral, AsmState, Register
 from ..error import DecompFailure
-from ..instruction import Instruction, InstructionMeta
+from ..instruction import Instruction, InstructionMeta, StackLocation
 from ..options import Target
 from ..translate import (
     Abi,
@@ -167,6 +161,62 @@ class X86Arch(Arch):
         assert not args, "nop does not take operands"
         return cls._make_instruction("nop", args, meta)
 
+    @classmethod
+    def _stack_location_from_address(cls, addr: AsmAddressMode) -> Optional[StackLocation]:
+        if addr.base == cls.stack_pointer_reg and isinstance(addr.addend, AsmLiteral):
+            return StackLocation.from_offset(addr.addend)
+        if addr.base == cls.frame_pointer_regs[0] and isinstance(addr.addend, AsmLiteral):
+            loc = StackLocation.from_offset(addr.addend)
+            if loc is not None:
+                return StackLocation(offset=loc.offset, symbolic_offset=None)
+        return None
+
+    @classmethod
+    def _parse_mov(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "mov expects two operands"
+        dst, src = args
+        outputs: List[Register] = []
+        inputs: List[StackLocation] = []
+
+        def eval_mov(state: NodeState, a: InstrArgs) -> None:
+            state.set_reg(dst, a.arg(1))
+
+        src_is_mem = isinstance(src, AsmAddressMode)
+        dst_is_mem = isinstance(dst, AsmAddressMode)
+
+        if src_is_mem and dst_is_mem:
+            raise DecompFailure(cls._unsupported_message("mov", args))
+
+        if isinstance(dst, Register):
+            outputs.append(dst)
+        elif isinstance(dst, AsmAddressMode):
+            loc = cls._stack_location_from_address(dst)
+            if loc is not None:
+                inputs.append(loc)
+        else:
+            raise DecompFailure(cls._unsupported_message("mov", args))
+
+        if isinstance(src, AsmAddressMode):
+            loc = cls._stack_location_from_address(src)
+            if loc is not None:
+                inputs.append(loc)
+
+        return Instruction(
+            mnemonic="mov",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=outputs,
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=dst_is_mem,
+            is_load=src_is_mem,
+            eval_fn=eval_mov,
+        )
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -218,4 +268,5 @@ class X86Arch(Arch):
 X86Arch._instr_parsers = {
     "nop": X86Arch._parse_nop,
     "ret": X86Arch._parse_ret,
+    "mov": X86Arch._parse_mov,
 }
