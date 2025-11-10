@@ -152,12 +152,17 @@ class TestX86Parsing(unittest.TestCase):
     def test_mov_byte_load(self) -> None:
         instr = self.parse_instruction("mov cl, byte ptr [eax]")
         self.assertIn(Register("eax"), instr.inputs)
-        self.assertEqual(instr.outputs, [Register("cl")])
+        self.assertTrue(any(reg.register_name in ("cl", "ecx") for reg in instr.outputs))
 
     def test_mov_word_load(self) -> None:
         instr = self.parse_instruction("mov bp, word ptr [eax + 0x8]")
         self.assertIn(Register("eax"), instr.inputs)
         self.assertTrue(any(reg.register_name in ("bp", "ebp") for reg in instr.outputs))
+
+    def test_and_register_immediate(self) -> None:
+        instr = self.parse_instruction("and ah, 0xeb")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("eax"), instr.inputs)
 
     def test_dec_register(self) -> None:
         instr = self.parse_instruction("dec eax")

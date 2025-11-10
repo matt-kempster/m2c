@@ -366,6 +366,48 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_and(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "and expects two operands"
+        dst, src = args
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("and", args))
+
+        if isinstance(src, Register):
+            inputs = [dst, src]
+
+            def eval_and(state: NodeState, a: InstrArgs) -> None:
+                result = BinaryOp.int(a.reg(0), "&", a.reg(1))
+                state.set_reg(dst, result)
+                state.set_reg(Register("zf"), BinaryOp.icmp(result, "==", Literal(0)))
+
+        elif isinstance(src, AsmLiteral):
+            inputs = [dst]
+
+            def eval_and(state: NodeState, a: InstrArgs) -> None:
+                result = BinaryOp.int(a.reg(0), "&", Literal(src.value))
+                state.set_reg(dst, result)
+                state.set_reg(Register("zf"), BinaryOp.icmp(result, "==", Literal(0)))
+
+        else:
+            raise DecompFailure(cls._unsupported_message("and", args))
+
+        return Instruction(
+            mnemonic="and",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_and,
+        )
+
+    @classmethod
     def _parse_test(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "test expects two operands"
         lhs, rhs = args
@@ -638,6 +680,7 @@ X86Arch._instr_parsers = {
     "pop": X86Arch._parse_pop,
     "sub": X86Arch._parse_sub,
     "add": X86Arch._parse_add,
+    "and": X86Arch._parse_and,
     "test": X86Arch._parse_test,
     "xor": X86Arch._parse_xor,
     "call": X86Arch._parse_call,
