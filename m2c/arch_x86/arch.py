@@ -4,7 +4,7 @@ from typing import Callable, Dict, List, Optional
 
 from ..asm_instruction import Argument, AsmAddressMode, AsmGlobalSymbol, AsmInstruction, AsmLiteral, AsmState, Register
 from ..error import DecompFailure
-from ..instruction import Instruction, InstructionMeta, StackLocation
+from ..instruction import Instruction, InstructionMeta, Location, StackLocation
 from ..options import Target
 from ..translate import (
     Abi,
@@ -177,11 +177,12 @@ class X86Arch(Arch):
     def _parse_mov(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "mov expects two operands"
         dst, src = args
-        outputs: List[Register] = []
-        inputs: List[StackLocation] = []
+        outputs: List[Location] = []
+        inputs: List[Location] = []
 
         def eval_mov(state: NodeState, a: InstrArgs) -> None:
-            state.set_reg(dst, a.arg(1))
+            if isinstance(dst, Register):
+                state.set_reg(dst, a.arg(1))
 
         src_is_mem = isinstance(src, AsmAddressMode)
         dst_is_mem = isinstance(dst, AsmAddressMode)
@@ -194,7 +195,8 @@ class X86Arch(Arch):
         elif isinstance(dst, AsmAddressMode):
             loc = cls._stack_location_from_address(dst)
             if loc is not None:
-                inputs.append(loc)
+                outputs.append(loc)
+            inputs.append(dst.base)
         else:
             raise DecompFailure(cls._unsupported_message("mov", args))
 
@@ -202,6 +204,9 @@ class X86Arch(Arch):
             loc = cls._stack_location_from_address(src)
             if loc is not None:
                 inputs.append(loc)
+            inputs.append(src.base)
+        elif isinstance(src, Register):
+            inputs.append(src)
 
         return Instruction(
             mnemonic="mov",

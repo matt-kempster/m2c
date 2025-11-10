@@ -8,6 +8,7 @@ import string
 from typing import Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure, static_assert_unreachable
+from .options import Target
 
 
 ARM_BARREL_SHIFTER_OPS = ("lsl", "lsr", "asr", "ror", "rrx")
@@ -318,6 +319,7 @@ def parse_arg_elems(
     precedence_cap: int = MAX_PRECEDENCE,
 ) -> Argument:
     value: Optional[Argument] = None
+    is_arm_arch = getattr(arch, "arch", None) == Target.ArchEnum.ARM
 
     def consume_ws() -> None:
         while arg_elems and arg_elems[0].isspace():
@@ -502,7 +504,7 @@ def parse_arg_elems(
             if arg_elems and arg_elems[0] == "!":
                 expect("!")
                 writeback = Writeback.PRE
-            elif arg_elems and arg_elems[0] == ",":
+            elif arg_elems and arg_elems[0] == "," and is_arm_arch:
                 expect(",")
                 assert addend is None
                 addend = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
