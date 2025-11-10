@@ -67,6 +67,15 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("esp")])
         self.assertIn(Register("esp"), instr.inputs)
 
+    def test_test_sets_flags(self) -> None:
+        instr = self.parse_instruction("test eax, eax")
+        self.assertIn(Register("eax"), instr.inputs)
+
+    def test_xor_zeroes_register(self) -> None:
+        instr = self.parse_instruction("xor eax, eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("eax"), instr.inputs)
+
 
 if __name__ == "__main__":
     unittest.main()

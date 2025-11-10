@@ -278,6 +278,64 @@ class X86Arch(Arch):
             eval_fn=eval_sub,
         )
 
+    @classmethod
+    def _parse_test(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "test expects two operands"
+        lhs, rhs = args
+        if not isinstance(lhs, Register) or not isinstance(rhs, Register):
+            raise DecompFailure(cls._unsupported_message("test", args))
+
+        def eval_test(state: NodeState, a: InstrArgs) -> None:
+            value = BinaryOp.int(a.reg(0), "&", a.reg(1))
+            zero = BinaryOp.icmp(value, "==", Literal(0))
+            state.set_reg(Register("zf"), zero)
+
+        return Instruction(
+            mnemonic="test",
+            args=args,
+            meta=meta,
+            inputs=[lhs, rhs],
+            clobbers=[],
+            outputs=[Register("zf")],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_test,
+        )
+
+    @classmethod
+    def _parse_xor(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "xor expects two operands"
+        dst, src = args
+        if not isinstance(dst, Register) or not isinstance(src, Register):
+            raise DecompFailure(cls._unsupported_message("xor", args))
+        if dst != src:
+            raise DecompFailure("xor currently only supports zeroing form (dst == src)")
+
+        def eval_xor(state: NodeState, a: InstrArgs) -> None:
+            zero = Literal(0, type=Type.intptr())
+            state.set_reg(dst, zero)
+            state.set_reg(Register("zf"), Literal(1))
+
+        return Instruction(
+            mnemonic="xor",
+            args=args,
+            meta=meta,
+            inputs=[dst],
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_xor,
+        )
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -332,4 +390,6 @@ X86Arch._instr_parsers = {
     "mov": X86Arch._parse_mov,
     "push": X86Arch._parse_push,
     "sub": X86Arch._parse_sub,
+    "test": X86Arch._parse_test,
+    "xor": X86Arch._parse_xor,
 }
