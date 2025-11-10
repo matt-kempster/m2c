@@ -450,9 +450,11 @@ def parse_arg_elems(
                 if rhs == AsmLiteral(0):
                     rhs = Register("zero")
                 if isinstance(rhs, AsmGlobalSymbol):
-                    # Global symbols may be parenthesized.
+                    # Allow absolute addresses inside brackets/parentheses,
+                    # e.g. MOV EAX, [_DAT_XXXX].
+                    assert top_level
                     assert value is None
-                    value = constant_fold(rhs, asm_state)
+                    value = AsmAddressMode(Register("zero"), rhs, None)
                 else:
                     assert top_level
                     assert isinstance(rhs, Register)
@@ -473,6 +475,9 @@ def parse_arg_elems(
                     literal = val.rhs.value if val.op == "+" else -val.rhs.value
                     initial_addend = AsmLiteral(literal)
                     val = base_candidate
+            elif isinstance(val, AsmGlobalSymbol):
+                initial_addend = val
+                val = Register("zero")
             assert isinstance(val, Register)
             addend: Optional[Argument] = None
             if initial_addend is not None:
