@@ -682,7 +682,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        asm_state.defines[args[0]] = parse_int(args[1])
+                        try:
+                            asm_state.defines[args[0]] = parse_int(args[1])
+                        except DecompFailure:
+                            add_warning(
+                                warnings,
+                                f"Ignoring non-integer .set directive: {line}",
+                            )
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
