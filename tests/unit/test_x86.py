@@ -42,7 +42,8 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(addr.addend.symbol_name, "_DAT_0079a8b0")
 
     def parse_instruction(self, line: str) -> Instruction:
-        asm = parse_asm_instruction(line, self.arch, AsmState(reg_formatter=RegFormatter()))
+        asm_state = AsmState(reg_formatter=RegFormatter())
+        asm = parse_asm_instruction(line, self.arch, asm_state)
         return self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
 
     def test_mov_stack_load_instruction(self) -> None:
@@ -140,6 +141,16 @@ class TestX86Parsing(unittest.TestCase):
         instr = self.parse_instruction("lea eax, [esp + 0x4]")
         self.assertEqual(instr.outputs, [Register("eax")])
         self.assertIn(Register("esp"), instr.inputs)
+
+    def test_lea_scaled_index(self) -> None:
+        instr = self.parse_instruction("lea eax, [edx*4 + 0x0]")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("edx"), instr.inputs)
+
+    def test_mov_byte_load(self) -> None:
+        instr = self.parse_instruction("mov cl, byte ptr [eax]")
+        self.assertIn(Register("eax"), instr.inputs)
+        self.assertEqual(instr.outputs, [Register("cl")])
 
     def test_dec_register(self) -> None:
         instr = self.parse_instruction("dec eax")

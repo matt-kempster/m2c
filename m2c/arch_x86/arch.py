@@ -11,6 +11,7 @@ from ..asm_instruction import (
     AsmState,
     Register,
     get_jump_target,
+    traverse_arg,
 )
 from ..error import DecompFailure
 from ..instruction import Instruction, InstructionMeta, Location, StackLocation
@@ -206,6 +207,9 @@ class X86Arch(Arch):
             if loc is not None:
                 outputs.append(loc)
             inputs.append(dst.base)
+            for sub in traverse_arg(dst.addend):
+                if isinstance(sub, Register) and sub not in inputs:
+                    inputs.append(sub)
         else:
             raise DecompFailure(cls._unsupported_message("mov", args))
 
@@ -214,6 +218,9 @@ class X86Arch(Arch):
             if loc is not None:
                 inputs.append(loc)
             inputs.append(src.base)
+            for sub in traverse_arg(src.addend):
+                if isinstance(sub, Register) and sub not in inputs:
+                    inputs.append(sub)
         elif isinstance(src, Register):
             inputs.append(src)
 
@@ -447,15 +454,10 @@ class X86Arch(Arch):
         if not isinstance(dst, Register) or not isinstance(src, AsmAddressMode):
             raise DecompFailure(cls._unsupported_message("lea", args))
 
-        def eval_lea(state: NodeState, a: InstrArgs) -> None:
-            base = a.reg(1)
-            offset = Literal(src.addend.value if isinstance(src.addend, AsmLiteral) else 0)
-            result = BinaryOp.intptr(base, "+", offset)
-            state.set_reg(dst, result)
-
         inputs: List[Location] = [src.base]
-        if isinstance(src.addend, Register):
-            inputs.append(src.addend)
+        for sub in traverse_arg(src.addend):
+            if isinstance(sub, Register) and sub not in inputs:
+                inputs.append(sub)
 
         return Instruction(
             mnemonic="lea",
@@ -470,7 +472,7 @@ class X86Arch(Arch):
             is_return=False,
             is_store=False,
             is_load=False,
-            eval_fn=eval_lea,
+            eval_fn=_no_op_eval,
         )
 
     @classmethod

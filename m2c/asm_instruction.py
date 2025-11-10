@@ -5,7 +5,7 @@ import abc
 from dataclasses import dataclass, field
 from enum import Enum
 import string
-from typing import Dict, Iterator, List, Optional, Union
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from .error import DecompFailure, static_assert_unreachable
 from .options import Target
@@ -475,22 +475,66 @@ def parse_arg_elems(
             expect("[")
             val = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
             initial_addend: Optional[Argument] = None
-            if isinstance(val, BinOp) and val.op in ("+", "-"):
-                base_candidate = replace_bare_reg(val.lhs, arch, asm_state)
-                if (
-                    isinstance(base_candidate, Register)
-                    and isinstance(val.rhs, AsmLiteral)
-                ):
-                    literal = val.rhs.value if val.op == "+" else -val.rhs.value
-                    initial_addend = AsmLiteral(literal)
-                    val = base_candidate
+            scale = AsmLiteral(1)
+            index: Optional[Register] = None
+            base_candidate = replace_bare_reg(val, arch, asm_state)
+            if isinstance(base_candidate, Register):
+                val = base_candidate
+            elif isinstance(val, BinOp):
+                def scaled_term(term: Argument) -> Optional[Tuple[Register, AsmLiteral]]:
+                    if (
+                        isinstance(term, BinOp)
+                        and term.op == "*"
+                        and isinstance(term.lhs, Register)
+                        and isinstance(term.rhs, AsmLiteral)
+                    ):
+                        return term.lhs, term.rhs
+                    return None
+
+                if val.op in ("+", "-"):
+                    op_sign = 1 if val.op == "+" else -1
+                    left = replace_bare_reg(val.lhs, arch, asm_state)
+                    right = replace_bare_reg(val.rhs, arch, asm_state)
+                    base_candidate = left if isinstance(left, Register) else None
+                    if isinstance(base_candidate, Register):
+                        val = base_candidate
+                    else:
+                        scaled = scaled_term(left)
+                        if scaled is not None:
+                            index, scale = scaled
+                            val = Register("zero")
+                    scaled = scaled_term(right)
+                    if scaled is not None:
+                        index, scale = scaled
+                        if not isinstance(base_candidate, Register):
+                            val = Register("zero")
+                    elif isinstance(right, AsmLiteral):
+                        literal = op_sign * right.value
+                        initial_addend = AsmLiteral(literal)
+                elif val.op == "*":
+                    if isinstance(val.lhs, Register) and isinstance(val.rhs, AsmLiteral):
+                        index = val.lhs
+                        scale = val.rhs
+                        val = Register("zero")
+                else:
+                    scaled = scaled_term(val)
+                    if scaled is not None:
+                        index, scale = scaled
+                        val = Register("zero")
             elif isinstance(val, AsmGlobalSymbol):
                 initial_addend = val
                 val = Register("zero")
-            assert isinstance(val, Register)
             addend: Optional[Argument] = None
             if initial_addend is not None:
                 addend = initial_addend
+            if not isinstance(val, Register):
+                extra = constant_fold(val, asm_state)
+                if addend is None:
+                    addend = extra
+                else:
+                    addend = constant_fold(BinOp("+", addend, extra), asm_state)
+                val = Register("zero")
+            assert isinstance(val, Register)
             if expect(",]") == ",":
                 addend = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
                 if expect(",]") == ",":
@@ -506,6 +550,13 @@ def parse_arg_elems(
                         )
                     addend = BinOp(op, addend, constant_fold(shift, asm_state))
                     expect("]")
+            if index is not None:
+                scaled = BinaryOp("*", index, scale)
+                scaled = constant_fold(scaled, asm_state)
+                if addend is None:
+                    addend = scaled
+                else:
+                    addend = constant_fold(BinOp("+", addend, scaled), asm_state)
             consume_ws()
             writeback: Optional[Writeback] = None
             if arg_elems and arg_elems[0] == "!":
@@ -518,6 +569,19 @@ def parse_arg_elems(
                 writeback = Writeback.POST
             if addend is None:
                 addend = AsmLiteral(0)
+            else:
+                def replace_regs(arg: Argument) -> Argument:
+                    if isinstance(arg, AsmGlobalSymbol):
+                        return replace_bare_reg(arg, arch, asm_state)
+                    if isinstance(arg, BinOp):
+                        return BinOp(
+                            arg.op,
+                            replace_regs(arg.lhs),
+                            replace_regs(arg.rhs),
+                        )
+                    return arg
+
+                addend = replace_regs(addend)
             value = AsmAddressMode(val, addend, writeback)
         elif tok == "!":
             # ARM writeback indicator, e.g. "ldmia sp!, {r3, r4, r5, pc}".
