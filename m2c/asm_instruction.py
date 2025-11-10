@@ -172,6 +172,13 @@ class ArchAsmParsing(abc.ABC):
         self, instr: AsmInstruction, asm_state: AsmState
     ) -> AsmInstruction: ...
 
+    def should_ignore_symbol(self, symbol: str) -> bool:
+        """
+        Allow architectures to ignore certain bare symbols during parsing.
+        Used for syntactic sugar such as x86 size prefixes (e.g. `dword ptr`).
+        """
+        return False
+
 
 class NaiveParsingArch(ArchAsmParsing):
     """A fake arch that can parse asm in a naive fashion. Used by the pattern matching
@@ -456,8 +463,20 @@ def parse_arg_elems(
             assert value is None
             expect("[")
             val = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
+            initial_addend: Optional[Argument] = None
+            if isinstance(val, BinOp) and val.op in ("+", "-"):
+                base_candidate = replace_bare_reg(val.lhs, arch, asm_state)
+                if (
+                    isinstance(base_candidate, Register)
+                    and isinstance(val.rhs, AsmLiteral)
+                ):
+                    literal = val.rhs.value if val.op == "+" else -val.rhs.value
+                    initial_addend = AsmLiteral(literal)
+                    val = base_candidate
             assert isinstance(val, Register)
             addend: Optional[Argument] = None
+            if initial_addend is not None:
+                addend = initial_addend
             if expect(",]") == ",":
                 addend = parse_arg_elems(arg_elems, arch, asm_state, top_level=False)
                 if expect(",]") == ",":
@@ -505,6 +524,8 @@ def parse_arg_elems(
             # Global symbol.
             assert value is None
             word = parse_word(arg_elems)
+            if arch.should_ignore_symbol(word.lower()):
+                continue
             value = AsmGlobalSymbol(word)
 
             op = word.lower()

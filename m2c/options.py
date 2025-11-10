@@ -41,6 +41,7 @@ class Target:
         MIPSEE = "mipsee"
         PPC = "ppc"
         ARM = "arm"
+        X86 = "x86"
 
         @property
         def arch(self) -> Target.ArchEnum:
@@ -54,6 +55,8 @@ class Target:
                 return Target.ArchEnum.PPC
             elif self == Target.PlatformEnum.ARM:
                 return Target.ArchEnum.ARM
+            elif self == Target.PlatformEnum.X86:
+                return Target.ArchEnum.X86
             else:
                 static_assert_unreachable(self)
 
@@ -61,6 +64,7 @@ class Target:
         MIPS = "mips"
         PPC = "ppc"
         ARM = "arm"
+        X86 = "x86"
 
     class EndianEnum(ChoicesEnum):
         LITTLE = "little"
@@ -100,6 +104,7 @@ class Target:
                 Target.PlatformEnum.MIPSEL,
                 Target.PlatformEnum.MIPSEE,
                 Target.PlatformEnum.ARM,
+                Target.PlatformEnum.X86,
             ):
                 endian = Target.EndianEnum.LITTLE
             arch = platform.arch
@@ -108,7 +113,7 @@ class Target:
                 compiler = Target.CompilerEnum(terms[1])
             elif arch == Target.ArchEnum.PPC:
                 compiler = Target.CompilerEnum.MWCC
-            elif arch == Target.ArchEnum.ARM:
+            elif arch in (Target.ArchEnum.ARM, Target.ArchEnum.X86):
                 compiler = Target.CompilerEnum.GCC
             else:
                 compiler = Target.CompilerEnum.IDO

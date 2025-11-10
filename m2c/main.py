@@ -24,6 +24,7 @@ from .types import TypePool
 from .arch_arm import ArmArch
 from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
+from .arch_x86 import X86Arch
 
 
 def print_exception(exc: Exception, sanitize: bool) -> None:
@@ -82,6 +83,8 @@ def run(options: Options) -> int:
         arch = PpcArch()
     elif options.target.arch == Target.ArchEnum.ARM:
         arch = ArmArch()
+    elif options.target.arch == Target.ArchEnum.X86:
+        arch = X86Arch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")
 
@@ -503,10 +506,11 @@ def parse_flags(flags: List[str]) -> Options:
         type=Target.parse,
         default="mips-ido-c",
         help="Target platform, compiler, and language triple. "
-        "Supported platforms: [mips, mipsel, mipsee, ppc, arm]. "
+        "Supported platforms: [mips, mipsel, mipsee, ppc, arm, x86]. "
         "Supported compilers: [ido, gcc, mwcc]. "
         "Supported languages: [c, c++]. "
-        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, and `arm` for arm-gcc-c.",
+        "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, "
+        "`arm` for arm-gcc-c, and `x86` for x86-gcc-c.",
     )
     group.add_argument(
         "--passes",
