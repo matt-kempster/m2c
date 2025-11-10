@@ -441,6 +441,81 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_lea(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "lea expects two operands"
+        dst, src = args
+        if not isinstance(dst, Register) or not isinstance(src, AsmAddressMode):
+            raise DecompFailure(cls._unsupported_message("lea", args))
+
+        def eval_lea(state: NodeState, a: InstrArgs) -> None:
+            base = a.reg(1)
+            offset = Literal(src.addend.value if isinstance(src.addend, AsmLiteral) else 0)
+            result = BinaryOp.intptr(base, "+", offset)
+            state.set_reg(dst, result)
+
+        inputs: List[Location] = [src.base]
+        if isinstance(src.addend, Register):
+            inputs.append(src.addend)
+
+        return Instruction(
+            mnemonic="lea",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_lea,
+        )
+
+    @classmethod
+    def _parse_cmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "cmp expects two operands"
+        lhs, rhs = args
+        if not isinstance(lhs, Register):
+            raise DecompFailure(cls._unsupported_message("cmp", args))
+
+        if isinstance(rhs, Register):
+            inputs = [lhs, rhs]
+
+            def eval_cmp(state: NodeState, a: InstrArgs) -> None:
+                diff = BinaryOp.intptr(a.reg(0), "-", a.reg(1))
+                zero = BinaryOp.icmp(diff, "==", Literal(0))
+                state.set_reg(Register("zf"), zero)
+
+        elif isinstance(rhs, AsmLiteral):
+            inputs = [lhs]
+
+            def eval_cmp(state: NodeState, a: InstrArgs) -> None:
+                diff = BinaryOp.intptr(a.reg(0), "-", Literal(rhs.value))
+                zero = BinaryOp.icmp(diff, "==", Literal(0))
+                state.set_reg(Register("zf"), zero)
+
+        else:
+            raise DecompFailure(cls._unsupported_message("cmp", args))
+
+        return Instruction(
+            mnemonic="cmp",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[Register("zf")],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_cmp,
+        )
+
+    @classmethod
     def _parse_jz(cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str) -> Instruction:
         assert len(args) == 1, "jump expects one operand"
         target = get_jump_target(args[0])
@@ -529,4 +604,6 @@ X86Arch._instr_parsers = {
     "call": X86Arch._parse_call,
     "jz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jz"),
     "jnz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jnz"),
+    "cmp": X86Arch._parse_cmp,
+    "lea": X86Arch._parse_lea,
 }

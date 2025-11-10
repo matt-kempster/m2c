@@ -102,6 +102,16 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("ecx")])
         self.assertIn(Register("ecx"), instr.inputs)
 
+    def test_cmp_reg_imm(self) -> None:
+        instr = self.parse_instruction("cmp eax, 0x1b5")
+        self.assertEqual(instr.outputs, [Register("zf")])
+        self.assertIn(Register("eax"), instr.inputs)
+
+    def test_cmp_reg_reg(self) -> None:
+        instr = self.parse_instruction("cmp ebp, eax")
+        self.assertEqual(instr.outputs, [Register("zf")])
+        self.assertIn(Register("ebp"), instr.inputs)
+
     def test_jz_branch(self) -> None:
         instr = self.parse_instruction("jz _target")
         self.assertTrue(instr.is_conditional)
@@ -125,6 +135,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertTrue(instr.is_store)
         self.assertIn(Register("ecx"), instr.inputs)
         self.assertIn(Register("eax"), instr.inputs)
+
+    def test_lea_base_offset(self) -> None:
+        instr = self.parse_instruction("lea eax, [esp + 0x4]")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("esp"), instr.inputs)
 
 
 if __name__ == "__main__":
