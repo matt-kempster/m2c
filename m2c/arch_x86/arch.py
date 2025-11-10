@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from ..asm_instruction import Argument, AsmAddressMode, AsmInstruction, AsmLiteral, AsmState, Register
+from ..asm_instruction import Argument, AsmAddressMode, AsmGlobalSymbol, AsmInstruction, AsmLiteral, AsmState, Register
 from ..error import DecompFailure
 from ..instruction import Instruction, InstructionMeta, StackLocation
 from ..options import Target
@@ -336,6 +336,38 @@ class X86Arch(Arch):
             eval_fn=eval_xor,
         )
 
+    @classmethod
+    def _parse_call(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "call expects one operand"
+        target = args[0]
+        outputs = list(cls.all_return_regs)
+        clobbers = list(cls.temp_regs)
+        inputs: List[Register] = list(cls.argument_regs)
+
+        if isinstance(target, Register):
+            inputs.append(target)
+            eval_fn = lambda s, a: s.make_function_call(a.reg(0), outputs)
+        elif isinstance(target, (AsmGlobalSymbol, AsmLiteral)):
+            eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
+        else:
+            raise DecompFailure(cls._unsupported_message("call", args))
+
+        return Instruction(
+            mnemonic="call",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=clobbers,
+            outputs=outputs,
+            jump_target=None,
+            function_target=target,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_fn,
+        )
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -392,4 +424,5 @@ X86Arch._instr_parsers = {
     "sub": X86Arch._parse_sub,
     "test": X86Arch._parse_test,
     "xor": X86Arch._parse_xor,
+    "call": X86Arch._parse_call,
 }

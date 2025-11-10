@@ -5,6 +5,7 @@ import unittest
 from m2c.arch_x86 import X86Arch
 from m2c.asm_instruction import (
     AsmAddressMode,
+    AsmGlobalSymbol,
     AsmLiteral,
     AsmState,
     RegFormatter,
@@ -75,6 +76,11 @@ class TestX86Parsing(unittest.TestCase):
         instr = self.parse_instruction("xor eax, eax")
         self.assertEqual(instr.outputs, [Register("eax")])
         self.assertIn(Register("eax"), instr.inputs)
+
+    def test_call_symbol(self) -> None:
+        instr = self.parse_instruction("call _malloc")
+        self.assertEqual(instr.function_target, AsmGlobalSymbol("_malloc"))
+        self.assertEqual(instr.outputs, [Register("eax"), Register("edx")])
 
 
 if __name__ == "__main__":
