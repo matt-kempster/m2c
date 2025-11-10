@@ -284,6 +284,35 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_add(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "add expects two operands"
+        dst, src = args
+        if dst != cls.stack_pointer_reg or not isinstance(src, AsmLiteral):
+            raise DecompFailure(cls._unsupported_message("add", args))
+
+        def eval_add(state: NodeState, a: InstrArgs) -> None:
+            esp = cls.stack_pointer_reg
+            current = state.regs[esp]
+            new_sp = BinaryOp.intptr(current, "+", Literal(src.value))
+            state.set_reg(esp, new_sp)
+
+        return Instruction(
+            mnemonic="add",
+            args=args,
+            meta=meta,
+            inputs=[cls.stack_pointer_reg],
+            clobbers=[],
+            outputs=[cls.stack_pointer_reg],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_add,
+        )
+
+    @classmethod
     def _parse_test(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "test expects two operands"
         lhs, rhs = args
@@ -427,6 +456,7 @@ X86Arch._instr_parsers = {
     "mov": X86Arch._parse_mov,
     "push": X86Arch._parse_push,
     "sub": X86Arch._parse_sub,
+    "add": X86Arch._parse_add,
     "test": X86Arch._parse_test,
     "xor": X86Arch._parse_xor,
     "call": X86Arch._parse_call,

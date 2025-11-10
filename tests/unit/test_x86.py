@@ -87,6 +87,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("esp")])
         self.assertIn(Register("esp"), instr.inputs)
 
+    def test_add_esp_releases_stack(self) -> None:
+        instr = self.parse_instruction("add esp, 0x4")
+        self.assertEqual(instr.outputs, [Register("esp")])
+        self.assertIn(Register("esp"), instr.inputs)
+
     def test_mov_stack_store_instruction(self) -> None:
         instr = self.parse_instruction("mov dword ptr [esp + 0x8], eax")
         self.assertTrue(instr.is_store)
