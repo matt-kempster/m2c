@@ -474,6 +474,35 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_dec(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "dec expects one operand"
+        dst = args[0]
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("dec", args))
+
+        def eval_dec(state: NodeState, a: InstrArgs) -> None:
+            reg_val = state.regs[dst]
+            result = BinaryOp.intptr(reg_val, "-", Literal(1))
+            state.set_reg(dst, result)
+            state.set_reg(Register("zf"), BinaryOp.icmp(result, "==", Literal(0)))
+
+        return Instruction(
+            mnemonic="dec",
+            args=args,
+            meta=meta,
+            inputs=[dst],
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_dec,
+        )
+
+    @classmethod
     def _parse_cmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "cmp expects two operands"
         lhs, rhs = args
@@ -606,4 +635,5 @@ X86Arch._instr_parsers = {
     "jnz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jnz"),
     "cmp": X86Arch._parse_cmp,
     "lea": X86Arch._parse_lea,
+    "dec": X86Arch._parse_dec,
 }
