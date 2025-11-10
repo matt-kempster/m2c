@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional
 
-from ..asm_instruction import Argument, AsmAddressMode, AsmGlobalSymbol, AsmInstruction, AsmLiteral, AsmState, Register
+from ..asm_instruction import (
+    Argument,
+    AsmAddressMode,
+    AsmGlobalSymbol,
+    AsmInstruction,
+    AsmLiteral,
+    AsmState,
+    Register,
+    get_jump_target,
+)
 from ..error import DecompFailure
 from ..instruction import Instruction, InstructionMeta, Location, StackLocation
 from ..options import Target
@@ -287,22 +296,21 @@ class X86Arch(Arch):
     def _parse_add(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "add expects two operands"
         dst, src = args
-        if dst != cls.stack_pointer_reg or not isinstance(src, AsmLiteral):
+        if not isinstance(dst, Register) or not isinstance(src, AsmLiteral):
             raise DecompFailure(cls._unsupported_message("add", args))
 
         def eval_add(state: NodeState, a: InstrArgs) -> None:
-            esp = cls.stack_pointer_reg
-            current = state.regs[esp]
-            new_sp = BinaryOp.intptr(current, "+", Literal(src.value))
-            state.set_reg(esp, new_sp)
+            current = state.regs[dst]
+            add_expr = BinaryOp.intptr(current, "+", Literal(src.value))
+            state.set_reg(dst, add_expr)
 
         return Instruction(
             mnemonic="add",
             args=args,
             meta=meta,
-            inputs=[cls.stack_pointer_reg],
+            inputs=[dst],
             clobbers=[],
-            outputs=[cls.stack_pointer_reg],
+            outputs=[dst],
             jump_target=None,
             function_target=None,
             is_conditional=False,
@@ -402,6 +410,34 @@ class X86Arch(Arch):
             eval_fn=eval_fn,
         )
 
+    @classmethod
+    def _parse_jz(cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str) -> Instruction:
+        assert len(args) == 1, "jump expects one operand"
+        target = get_jump_target(args[0])
+
+        def eval_jump(state: NodeState, a: InstrArgs) -> None:
+            zero = state.regs[Register("zf")]
+            cond = BinaryOp.icmp(zero, "!=", Literal(0))
+            if mnemonic == "jnz":
+                cond = cond.negated()
+            state.set_branch_condition(cond)
+
+        return Instruction(
+            mnemonic=mnemonic,
+            args=args,
+            meta=meta,
+            inputs=[Register("zf")],
+            clobbers=[],
+            outputs=[],
+            jump_target=target,
+            function_target=None,
+            is_conditional=True,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_jump,
+        )
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -460,4 +496,6 @@ X86Arch._instr_parsers = {
     "test": X86Arch._parse_test,
     "xor": X86Arch._parse_xor,
     "call": X86Arch._parse_call,
+    "jz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jz"),
+    "jnz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jnz"),
 }

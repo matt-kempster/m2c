@@ -92,6 +92,21 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("esp")])
         self.assertIn(Register("esp"), instr.inputs)
 
+    def test_add_register_immediate(self) -> None:
+        instr = self.parse_instruction("add ecx, 0x3c")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertIn(Register("ecx"), instr.inputs)
+
+    def test_jz_branch(self) -> None:
+        instr = self.parse_instruction("jz _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+
+    def test_jnz_branch(self) -> None:
+        instr = self.parse_instruction("jnz _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+
     def test_mov_stack_store_instruction(self) -> None:
         instr = self.parse_instruction("mov dword ptr [esp + 0x8], eax")
         self.assertTrue(instr.is_store)
