@@ -306,6 +306,13 @@ class TestX86Parsing(unittest.TestCase):
         self.assertCountEqual(instr.inputs, [Register("esi"), Register("edi"), Register("ecx")])
         self.assertCountEqual(instr.outputs, [Register("esi"), Register("edi"), Register("ecx")])
 
+    def test_rep_movsb(self) -> None:
+        instr = self.parse_instruction("rep movsb")
+        self.assertTrue(instr.is_load)
+        self.assertTrue(instr.is_store)
+        self.assertCountEqual(instr.inputs, [Register("esi"), Register("edi"), Register("ecx")])
+        self.assertCountEqual(instr.outputs, [Register("esi"), Register("edi"), Register("ecx")])
+
     def test_rep_stosd(self) -> None:
         instr = self.parse_instruction("rep stosd")
         self.assertFalse(instr.is_load)

@@ -1213,6 +1213,15 @@ class X86Arch(Arch):
         },
         (
             "rep",
+            "movsb",
+        ): {
+            "inputs": [Register("esi"), Register("edi"), Register("ecx")],
+            "outputs": [Register("esi"), Register("edi"), Register("ecx")],
+            "is_load": True,
+            "is_store": True,
+        },
+        (
+            "rep",
             "stosd",
         ): {
             "inputs": [Register("edi"), Register("eax"), Register("ecx")],
