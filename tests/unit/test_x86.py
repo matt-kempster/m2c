@@ -222,6 +222,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("eax")])
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_inc_register(self) -> None:
+        instr = self.parse_instruction("inc eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("eax"), instr.inputs)
+
 
 if __name__ == "__main__":
     unittest.main()

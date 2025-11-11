@@ -597,6 +597,35 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_inc(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "inc expects one operand"
+        dst = args[0]
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("inc", args))
+
+        def eval_inc(state: NodeState, a: InstrArgs) -> None:
+            reg_val = state.regs[dst]
+            result = BinaryOp.intptr(reg_val, "+", Literal(1))
+            state.set_reg(dst, result)
+            state.set_reg(Register("zf"), BinaryOp.icmp(result, "==", Literal(0)))
+
+        return Instruction(
+            mnemonic="inc",
+            args=args,
+            meta=meta,
+            inputs=[dst],
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_inc,
+        )
+
+    @classmethod
     def _parse_cmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "cmp expects two operands"
         lhs, rhs = args
@@ -732,4 +761,5 @@ X86Arch._instr_parsers = {
     "cmp": X86Arch._parse_cmp,
     "lea": X86Arch._parse_lea,
     "dec": X86Arch._parse_dec,
+    "inc": X86Arch._parse_inc,
 }
