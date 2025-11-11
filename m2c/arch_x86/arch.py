@@ -414,7 +414,7 @@ class X86Arch(Arch):
             esp = cls.stack_pointer_reg
             current = state.regs[esp]
             new_sp = BinaryOp.intptr(current, "+", Literal(4))
-            state.set_reg(dst, a.arg(0))
+            state.set_reg(dst, Literal(0))
             state.set_reg(esp, new_sp)
 
         return Instruction(

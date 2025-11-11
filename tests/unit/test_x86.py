@@ -106,6 +106,9 @@ class TestX86Parsing(unittest.TestCase):
                     return self.regs.get(self._reg_operands[idx], Literal(0))
                 return Literal(0)
 
+            def arg(self, idx: int) -> Literal:
+                return Literal(0)
+
             def sym_imm(self, idx: int) -> Literal:
                 return Literal(0)
 
@@ -173,10 +176,46 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("esp")])
         self.assertIn(Register("esp"), instr.inputs)
 
+    @ensure_eval
     def test_pop_register_updates_stack(self) -> None:
         instr = self.parse_instruction("pop esi")
         self.assertIn(Register("esp"), instr.inputs)
         self.assertEqual(instr.outputs, [Register("esi"), Register("esp")])
+
+    def test_pop_eval_uses_node_state_api(self) -> None:
+        instr = self.parse_instruction("pop esi")
+        self.assertIsNotNone(instr.eval_fn)
+
+        class NoGetRegs:
+            def __init__(self) -> None:
+                self._values: Dict[Register, Literal] = {}
+
+            def __getitem__(self, key: Register) -> Literal:
+                return self._values[key]
+
+            def __setitem__(self, key: Register, value: Literal) -> None:
+                self._values[key] = value
+
+        regs = NoGetRegs()
+        regs[Register("esp")] = Literal(0)
+
+        class State:
+            def __init__(self) -> None:
+                self.regs = regs
+                self.stack_info = type("SI", (), {"global_info": type("GI", (), {})()})()
+
+            def set_reg(self, reg: Register, value: Literal) -> None:
+                pass
+
+        class Args:
+            stack_info = type("SI", (), {})()
+
+            def reg(self, _idx: int) -> Literal:
+                return Literal(0)
+
+        state = State()
+        args = Args()
+        instr.eval_fn(state, args)  # should not raise AttributeError
 
     def test_sub_esp_allocates_stack(self) -> None:
         instr = self.parse_instruction("sub esp, 0x8")
