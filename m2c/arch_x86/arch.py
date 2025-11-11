@@ -506,6 +506,56 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_sbb(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "sbb expects two operands"
+        dst, src = args
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("sbb", args))
+
+        cf = Register("cf")
+
+        if isinstance(src, Register):
+            inputs = [dst]
+            if src != dst:
+                inputs.append(src)
+            inputs.append(cf)
+
+            def rhs_value(a: InstrArgs) -> Expression:
+                return a.reg(1)
+
+        elif isinstance(src, AsmLiteral):
+            inputs = [dst, cf]
+
+            def rhs_value(_: InstrArgs, value: int = src.value) -> Expression:
+                return Literal(value)
+
+        else:
+            raise DecompFailure(cls._unsupported_message("sbb", args))
+
+        def eval_sbb(state: NodeState, a: InstrArgs) -> None:
+            cf_value = state.regs[cf]
+            borrow = BinaryOp.int(cf_value, "&", Literal(1))
+            result = BinaryOp.intptr(BinaryOp.intptr(a.reg(0), "-", rhs_value(a)), "-", borrow)
+            state.set_reg(dst, result)
+            state.set_reg(cf, borrow)
+
+        return Instruction(
+            mnemonic="sbb",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[dst, cf],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_sbb,
+        )
+
+    @classmethod
     def _parse_shift(cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str) -> Instruction:
         assert len(args) == 2, "shift expects two operands"
         dst, src = args
@@ -1297,6 +1347,7 @@ X86Arch._instr_parsers = {
     "pop": X86Arch._parse_pop,
     "sub": X86Arch._parse_sub,
     "add": X86Arch._parse_add,
+    "sbb": X86Arch._parse_sbb,
     "shl": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="shl"),
     "sal": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="sal"),
     "shr": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="shr"),

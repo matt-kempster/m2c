@@ -144,6 +144,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("eax")])
         self.assertCountEqual(instr.inputs, [Register("eax"), Register("ecx")])
 
+    def test_sbb_register_register(self) -> None:
+        instr = self.parse_instruction("sbb eax, eax")
+        self.assertEqual(instr.outputs, [Register("eax"), Register("cf")])
+        self.assertCountEqual(instr.inputs, [Register("eax"), Register("cf")])
+
     def test_shl_register_immediate(self) -> None:
         instr = self.parse_instruction("shl ecx, 0x8")
         self.assertEqual(instr.outputs, [Register("ecx")])
