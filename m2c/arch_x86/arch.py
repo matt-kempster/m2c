@@ -558,6 +558,60 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_neg(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "neg expects one operand"
+        dst = args[0]
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("neg", args))
+
+        def eval_neg(state: NodeState, a: InstrArgs) -> None:
+            result = BinaryOp.intptr(Literal(0), "-", a.reg(0))
+            state.set_reg(dst, result)
+
+        return Instruction(
+            mnemonic="neg",
+            args=args,
+            meta=meta,
+            inputs=[dst],
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_neg,
+        )
+
+    @classmethod
+    def _parse_not(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "not expects one operand"
+        dst = args[0]
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("not", args))
+
+        def eval_not(state: NodeState, a: InstrArgs) -> None:
+            result = BinaryOp.int(a.reg(0), "^", Literal(-1))
+            state.set_reg(dst, result)
+
+        return Instruction(
+            mnemonic="not",
+            args=args,
+            meta=meta,
+            inputs=[dst],
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_not,
+        )
+
+    @classmethod
     def _parse_jmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 1, "jmp expects one operand"
         target = args[0]
@@ -1241,6 +1295,8 @@ X86Arch._instr_parsers = {
     "jmp": X86Arch._parse_jmp,
     "rep": lambda args, meta: X86Arch._parse_rep_string("rep", args, meta),
     "repne": lambda args, meta: X86Arch._parse_rep_string("repne", args, meta),
+    "neg": X86Arch._parse_neg,
+    "not": X86Arch._parse_not,
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,

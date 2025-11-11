@@ -159,6 +159,16 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("eax")])
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_neg_register(self) -> None:
+        instr = self.parse_instruction("neg eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("eax"), instr.inputs)
+
+    def test_not_register(self) -> None:
+        instr = self.parse_instruction("not ecx")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertIn(Register("ecx"), instr.inputs)
+
     def test_setz_register(self) -> None:
         instr = self.parse_instruction("setz eax")
         self.assertEqual(instr.outputs, [Register("eax")])
