@@ -159,29 +159,53 @@ class TestX86Parsing(unittest.TestCase):
         instr, asm_state = self.parse_instruction_with_state("mov cl, byte ptr [eax]")
         self.assertIn(Register("eax"), instr.inputs)
         self.assertEqual(instr.outputs, [Register("ecx")])
-        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "cl")
+        self.assertIn(
+            "cl",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
 
     def test_mov_bl_load(self) -> None:
         instr, asm_state = self.parse_instruction_with_state("mov bl, byte ptr [esi + 0xbb]")
         self.assertIn(Register("esi"), instr.inputs)
         self.assertEqual(instr.outputs, [Register("ebx")])
-        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "bl")
+        self.assertIn(
+            "bl",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
+
+    def test_mov_al_load(self) -> None:
+        instr, asm_state = self.parse_instruction_with_state("mov al, byte ptr [esi]")
+        self.assertIn(Register("esi"), instr.inputs)
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(
+            "al",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
 
     def test_mov_word_load(self) -> None:
         instr, asm_state = self.parse_instruction_with_state("mov bp, word ptr [eax + 0x8]")
         self.assertIn(Register("eax"), instr.inputs)
         self.assertEqual(instr.outputs, [Register("ebp")])
-        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "bp")
+        self.assertIn(
+            "bp",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
 
     def test_mov_cl_immediate(self) -> None:
         instr, asm_state = self.parse_instruction_with_state("mov cl, 0xff")
         self.assertEqual(instr.outputs, [Register("ecx")])
-        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "cl")
+        self.assertIn(
+            "cl",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
 
     def test_mov_ch_immediate(self) -> None:
         instr, asm_state = self.parse_instruction_with_state("mov ch, 0xff")
         self.assertEqual(instr.outputs, [Register("ecx")])
-        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "ch")
+        self.assertIn(
+            "ch",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
 
     def test_and_register_immediate(self) -> None:
         instr = self.parse_instruction("and ah, 0xeb")

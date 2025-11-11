@@ -5,7 +5,7 @@ import abc
 from dataclasses import dataclass, field
 from enum import Enum
 import string
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from .error import DecompFailure, static_assert_unreachable
 from .options import Target
@@ -201,6 +201,7 @@ class RegFormatter:
     saves the input's names, and converts back to the input's names for the output."""
 
     used_names: Dict[Register, str] = field(default_factory=dict)
+    aliases: Dict[Register, Set[str]] = field(default_factory=dict)
 
     def parse(self, reg_name: str, arch: ArchAsmParsing) -> Register:
         return arch.aliased_regs.get(reg_name, Register(reg_name))
@@ -208,17 +209,18 @@ class RegFormatter:
     def parse_and_store(self, reg_name: str, arch: ArchAsmParsing) -> Register:
         reg_name = reg_name.lower()
         internal_reg = arch.aliased_regs.get(reg_name, Register(reg_name))
+        self.aliases.setdefault(internal_reg, set()).add(reg_name)
         existing_reg_name = self.used_names.get(internal_reg)
         if existing_reg_name is None:
             self.used_names[internal_reg] = reg_name
-        elif existing_reg_name != reg_name:
-            raise DecompFailure(
-                f"Source uses multiple names for {internal_reg} ({existing_reg_name}, {reg_name})"
-            )
         return internal_reg
 
     def format(self, reg: Register) -> str:
         return self.used_names.get(reg, reg.register_name)
+
+    def aliases_for(self, reg: Register) -> Set[str]:
+        default_name = self.used_names.get(reg, reg.register_name)
+        return self.aliases.get(reg, {default_name})
 
 
 @dataclass
