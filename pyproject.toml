@@ -5,8 +5,7 @@ description = "MIPS, ARM and PowerPC decompiler"
 authors = [
     "Matt Kempster <kidpixel@gmail.com>",
     "Simon Lindholm <simon.lindholm10@gmail.com>",
-    "Zach Banks <zjbanks@gmail.com>",
-    "Ethan Roseman <ethteck@gmail.com>"
+    "Zach Banks <zjbanks@gmail.com>"
 ]
 license = "GPL-3.0-only"
 readme = "README.md"
