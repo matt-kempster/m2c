@@ -608,24 +608,40 @@ class X86Arch(Arch):
     def _parse_test(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "test expects two operands"
         lhs, rhs = args
-        if not isinstance(lhs, Register):
+        inputs: List[Location]
+        is_load = False
+
+        if isinstance(lhs, Register):
+            inputs = [lhs]
+
+            def lhs_value(a: InstrArgs) -> Expression:
+                return a.reg(0)
+
+        elif isinstance(lhs, AsmAddressMode):
+            addr_mode = cls._address_mode_to_address(lhs)
+            if addr_mode is None:
+                raise DecompFailure(cls._unsupported_message("test", args))
+            inputs = cls._address_inputs(lhs)
+            is_load = True
+
+            def lhs_value(a: InstrArgs, addr=addr_mode) -> Expression:
+                return deref(addr, a.regs, a.stack_info, size=4)
+
+        else:
             raise DecompFailure(cls._unsupported_message("test", args))
 
         if isinstance(rhs, Register):
-            inputs = [lhs, rhs]
+            if rhs not in inputs:
+                inputs.append(rhs)
 
-            def eval_test(state: NodeState, a: InstrArgs) -> None:
-                value = BinaryOp.int(a.reg(0), "&", a.reg(1))
-                zero = BinaryOp.icmp(value, "==", Literal(0))
-                state.set_reg(Register("zf"), zero)
+            def rhs_value(a: InstrArgs) -> Expression:
+                reg_index = 1 if isinstance(lhs, Register) else 0
+                return a.reg(reg_index)
 
         elif isinstance(rhs, AsmLiteral):
-            inputs = [lhs]
 
-            def eval_test(state: NodeState, a: InstrArgs) -> None:
-                value = BinaryOp.int(a.reg(0), "&", Literal(rhs.value))
-                zero = BinaryOp.icmp(value, "==", Literal(0))
-                state.set_reg(Register("zf"), zero)
+            def rhs_value(_: InstrArgs, value: int = rhs.value) -> Expression:
+                return Literal(value)
 
         else:
             raise DecompFailure(cls._unsupported_message("test", args))
@@ -642,9 +658,20 @@ class X86Arch(Arch):
             is_conditional=False,
             is_return=False,
             is_store=False,
-            is_load=False,
-            eval_fn=eval_test,
+            is_load=is_load,
+            eval_fn=lambda state, a: cls._eval_test(state, lhs_value, rhs_value, a),
         )
+
+    @staticmethod
+    def _eval_test(
+        state: NodeState,
+        lhs_value: Callable[[InstrArgs], Expression],
+        rhs_value: Callable[[InstrArgs], Expression],
+        args: InstrArgs,
+    ) -> None:
+        value = BinaryOp.int(lhs_value(args), "&", rhs_value(args))
+        zero = BinaryOp.icmp(value, "==", Literal(0))
+        state.set_reg(Register("zf"), zero)
 
     @classmethod
     def _parse_xor(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:

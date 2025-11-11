@@ -90,6 +90,11 @@ class TestX86Parsing(unittest.TestCase):
         instr = self.parse_instruction("test eax, 0x1")
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_test_stack_memory_immediate(self) -> None:
+        instr = self.parse_instruction("test [esp + 0x8], 0x2")
+        self.assertIn(Register("esp"), instr.inputs)
+        self.assertEqual(instr.outputs, [Register("zf")])
+
     def test_xor_zeroes_register(self) -> None:
         instr = self.parse_instruction("xor eax, eax")
         self.assertEqual(instr.outputs, [Register("eax")])
