@@ -219,6 +219,33 @@ class X86Arch(Arch):
         return None
 
     @classmethod
+    def _value_from_operand(
+        cls,
+        mnemonic: str,
+        full_args: List[Argument],
+        arg: Argument,
+        *,
+        arg_index: int,
+        allow_literal: bool,
+        allow_memory: bool,
+        load_size: int = 4,
+    ) -> Tuple[List[Location], Callable[[InstrArgs], Expression], bool]:
+        if isinstance(arg, Register):
+            return [arg], (lambda a, idx=arg_index: a.reg(idx)), False
+        if allow_memory and isinstance(arg, AsmAddressMode):
+            addr_mode = cls._address_mode_to_address(arg)
+            if addr_mode is None:
+                raise DecompFailure(cls._unsupported_message(mnemonic, full_args))
+            return (
+                cls._address_inputs(arg),
+                lambda a, addr=addr_mode: deref(addr, a.regs, a.stack_info, size=load_size),
+                True,
+            )
+        if allow_literal and isinstance(arg, AsmLiteral):
+            return [], lambda _a, value=arg.value: Literal(value), False
+        raise DecompFailure(cls._unsupported_message(mnemonic, full_args))
+
+    @classmethod
     def _parse_mov(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "mov expects two operands"
         dst, src = args
@@ -608,43 +635,28 @@ class X86Arch(Arch):
     def _parse_test(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "test expects two operands"
         lhs, rhs = args
-        inputs: List[Location]
-        is_load = False
+        inputs: List[Location] = []
+        lhs_inputs, lhs_value, lhs_is_load = cls._value_from_operand(
+            "test",
+            args,
+            lhs,
+            arg_index=0,
+            allow_literal=False,
+            allow_memory=True,
+        )
 
-        if isinstance(lhs, Register):
-            inputs = [lhs]
+        rhs_inputs, rhs_value, _ = cls._value_from_operand(
+            "test",
+            args,
+            rhs,
+            arg_index=1,
+            allow_literal=True,
+            allow_memory=False,
+        )
 
-            def lhs_value(a: InstrArgs) -> Expression:
-                return a.reg(0)
-
-        elif isinstance(lhs, AsmAddressMode):
-            addr_mode = cls._address_mode_to_address(lhs)
-            if addr_mode is None:
-                raise DecompFailure(cls._unsupported_message("test", args))
-            inputs = cls._address_inputs(lhs)
-            is_load = True
-
-            def lhs_value(a: InstrArgs, addr=addr_mode) -> Expression:
-                return deref(addr, a.regs, a.stack_info, size=4)
-
-        else:
-            raise DecompFailure(cls._unsupported_message("test", args))
-
-        if isinstance(rhs, Register):
-            if rhs not in inputs:
-                inputs.append(rhs)
-
-            def rhs_value(a: InstrArgs) -> Expression:
-                reg_index = 1 if isinstance(lhs, Register) else 0
-                return a.reg(reg_index)
-
-        elif isinstance(rhs, AsmLiteral):
-
-            def rhs_value(_: InstrArgs, value: int = rhs.value) -> Expression:
-                return Literal(value)
-
-        else:
-            raise DecompFailure(cls._unsupported_message("test", args))
+        for loc in lhs_inputs + rhs_inputs:
+            if loc not in inputs:
+                inputs.append(loc)
 
         return Instruction(
             mnemonic="test",
@@ -658,7 +670,7 @@ class X86Arch(Arch):
             is_conditional=False,
             is_return=False,
             is_store=False,
-            is_load=is_load,
+            is_load=lhs_is_load,
             eval_fn=lambda state, a: cls._eval_test(state, lhs_value, rhs_value, a),
         )
 
@@ -827,25 +839,25 @@ class X86Arch(Arch):
         lhs, rhs = args
         inputs: List[Location] = []
 
-        def operand_value(arg: Argument, arg_index: int) -> Tuple[List[Location], Callable[[InstrArgs], Expression]]:
-            if isinstance(arg, Register):
-                return [arg], lambda a, idx=arg_index: a.reg(idx)
-            if isinstance(arg, AsmAddressMode):
-                addr_mode = cls._address_mode_to_address(arg)
-                if addr_mode is None:
-                    raise DecompFailure(cls._unsupported_message("cmp", args))
-                return (
-                    cls._address_inputs(arg),
-                    lambda a, addr=addr_mode: deref(addr, a.regs, a.stack_info, size=4),
-                )
-            if isinstance(arg, AsmLiteral) and arg_index == 1:
-                return ([], lambda _a, value=arg.value: Literal(value))
-            raise DecompFailure(cls._unsupported_message("cmp", args))
-
-        lhs_inputs, lhs_value = operand_value(lhs, 0)
+        lhs_inputs, lhs_value, _ = cls._value_from_operand(
+            "cmp",
+            args,
+            lhs,
+            arg_index=0,
+            allow_literal=False,
+            allow_memory=True,
+        )
         if isinstance(lhs, AsmLiteral):
             raise DecompFailure(cls._unsupported_message("cmp", args))
-        rhs_inputs, rhs_value = operand_value(rhs, 1)
+
+        rhs_inputs, rhs_value, _ = cls._value_from_operand(
+            "cmp",
+            args,
+            rhs,
+            arg_index=1,
+            allow_literal=True,
+            allow_memory=True,
+        )
 
         for loc in lhs_inputs + rhs_inputs:
             if loc not in inputs:
@@ -986,6 +998,32 @@ class X86Arch(Arch):
             eval_fn=eval_set,
         )
 
+    @classmethod
+    def _parse_rep_string(
+        cls, prefix: str, args: List[Argument], meta: InstructionMeta
+    ) -> Instruction:
+        assert len(args) == 1 and isinstance(args[0], AsmGlobalSymbol), "rep expects mnemonic"
+        op = args[0].symbol_name.lower()
+        spec = cls._rep_string_specs.get((prefix, op))
+        if spec is None:
+            raise DecompFailure(cls._unsupported_message(prefix, args))
+
+        return Instruction(
+            mnemonic=f"{prefix}_{op}",
+            args=args,
+            meta=meta,
+            inputs=list(spec["inputs"]),
+            clobbers=[],
+            outputs=list(spec["outputs"]),
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=spec["is_store"],
+            is_load=spec["is_load"],
+            eval_fn=_no_op_eval,
+        )
+
     _conditional_jump_specs: Dict[str, Tuple[List[Register], CondBuilder]] = {
         "jz": (
             [Register("zf")],
@@ -1053,6 +1091,36 @@ class X86Arch(Arch):
         "setl": "jl",
     }
 
+    _rep_string_specs: Dict[Tuple[str, str], Dict[str, object]] = {
+        (
+            "rep",
+            "movsd",
+        ): {
+            "inputs": [Register("esi"), Register("edi"), Register("ecx")],
+            "outputs": [Register("esi"), Register("edi"), Register("ecx")],
+            "is_load": True,
+            "is_store": True,
+        },
+        (
+            "rep",
+            "stosd",
+        ): {
+            "inputs": [Register("edi"), Register("eax"), Register("ecx")],
+            "outputs": [Register("edi"), Register("ecx")],
+            "is_load": False,
+            "is_store": True,
+        },
+        (
+            "repne",
+            "scasb",
+        ): {
+            "inputs": [Register("edi"), Register("ecx"), Register("eax")],
+            "outputs": [Register("edi"), Register("ecx"), Register("zf")],
+            "is_load": True,
+            "is_store": False,
+        },
+    }
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -1114,6 +1182,8 @@ X86Arch._instr_parsers = {
     "shr": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="shr"),
     "sar": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="sar"),
     "jmp": X86Arch._parse_jmp,
+    "rep": lambda args, meta: X86Arch._parse_rep_string("rep", args, meta),
+    "repne": lambda args, meta: X86Arch._parse_rep_string("repne", args, meta),
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,

@@ -275,6 +275,27 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.jump_target, Register("eax"))
         self.assertEqual(instr.inputs, [Register("eax")])
 
+    def test_rep_movsd(self) -> None:
+        instr = self.parse_instruction("rep movsd")
+        self.assertTrue(instr.is_load)
+        self.assertTrue(instr.is_store)
+        self.assertCountEqual(instr.inputs, [Register("esi"), Register("edi"), Register("ecx")])
+        self.assertCountEqual(instr.outputs, [Register("esi"), Register("edi"), Register("ecx")])
+
+    def test_rep_stosd(self) -> None:
+        instr = self.parse_instruction("rep stosd")
+        self.assertFalse(instr.is_load)
+        self.assertTrue(instr.is_store)
+        self.assertCountEqual(instr.inputs, [Register("edi"), Register("eax"), Register("ecx")])
+        self.assertCountEqual(instr.outputs, [Register("edi"), Register("ecx")])
+
+    def test_repne_scasb(self) -> None:
+        instr = self.parse_instruction("repne scasb")
+        self.assertTrue(instr.is_load)
+        self.assertFalse(instr.is_store)
+        self.assertCountEqual(instr.inputs, [Register("edi"), Register("ecx"), Register("eax")])
+        self.assertCountEqual(instr.outputs, [Register("edi"), Register("ecx"), Register("zf")])
+
     def test_mov_stack_store_instruction(self) -> None:
         instr = self.parse_instruction("mov dword ptr [esp + 0x8], eax")
         self.assertTrue(instr.is_store)
