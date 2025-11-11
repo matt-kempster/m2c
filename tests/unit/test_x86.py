@@ -212,6 +212,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("eax")])
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_or_register_immediate(self) -> None:
+        instr = self.parse_instruction("or ecx, 0xffffffff")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertIn(Register("ecx"), instr.inputs)
+
     def test_dec_register(self) -> None:
         instr = self.parse_instruction("dec eax")
         self.assertEqual(instr.outputs, [Register("eax")])
