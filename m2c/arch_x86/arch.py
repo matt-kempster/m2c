@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 from ..asm_instruction import (
     Argument,
@@ -28,6 +28,7 @@ from ..translate import (
     InstrArgs,
     Literal,
     NodeState,
+    RawSymbolRef,
     Type,
     as_u32,
 )
@@ -213,9 +214,11 @@ class X86Arch(Arch):
         return inputs
 
     @classmethod
-    def _address_mode_to_address(cls, addr: AsmAddressMode) -> Optional[AddressMode]:
+    def _address_mode_reference(cls, addr: AsmAddressMode) -> Optional[Union[AddressMode, RawSymbolRef]]:
         if isinstance(addr.addend, AsmLiteral):
             return AddressMode(addr.addend.value, addr.base)
+        if isinstance(addr.addend, AsmGlobalSymbol):
+            return RawSymbolRef(0, addr.addend)
         return None
 
     @classmethod
@@ -233,16 +236,26 @@ class X86Arch(Arch):
         if isinstance(arg, Register):
             return [arg], (lambda a, idx=arg_index: a.reg(idx)), False
         if allow_memory and isinstance(arg, AsmAddressMode):
-            addr_mode = cls._address_mode_to_address(arg)
-            if addr_mode is None:
+            ref = cls._address_mode_reference(arg)
+            if ref is None:
                 raise DecompFailure(cls._unsupported_message(mnemonic, full_args))
+
+            def addr_value(a: InstrArgs, ref=ref) -> Expression:
+                return deref(ref, a.regs, a.stack_info, size=load_size)
+
             return (
                 cls._address_inputs(arg),
-                lambda a, addr=addr_mode: deref(addr, a.regs, a.stack_info, size=load_size),
+                addr_value,
                 True,
             )
         if allow_literal and isinstance(arg, AsmLiteral):
             return [], lambda _a, value=arg.value: Literal(value), False
+        if allow_literal and isinstance(arg, AsmGlobalSymbol):
+            return (
+                [],
+                lambda a, sym=arg.symbol_name: a.stack_info.global_info.address_of_gsym(sym),
+                False,
+            )
         raise DecompFailure(cls._unsupported_message(mnemonic, full_args))
 
     @classmethod

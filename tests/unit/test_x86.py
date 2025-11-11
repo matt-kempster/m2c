@@ -214,6 +214,16 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("zf")])
         self.assertIn(Register("ecx"), instr.inputs)
 
+    def test_cmp_absolute_mem_immediate(self) -> None:
+        instr = self.parse_instruction("cmp dword ptr [_DAT_00668fb8], 0x0")
+        self.assertEqual(instr.outputs, [Register("zf")])
+        self.assertIn(Register("zero"), instr.inputs)
+
+    def test_cmp_reg_symbol_offset(self) -> None:
+        instr = self.parse_instruction("cmp eax, offset _dat_00829ae4")
+        self.assertEqual(instr.outputs, [Register("zf")])
+        self.assertIn(Register("eax"), instr.inputs)
+
     def test_cmp_reg_memory(self) -> None:
         instr = self.parse_instruction("cmp edx, [ecx]")
         self.assertEqual(instr.outputs, [Register("zf")])
