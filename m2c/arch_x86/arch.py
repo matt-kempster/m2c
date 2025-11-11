@@ -19,6 +19,7 @@ from ..options import Target
 from ..translate import (
     Abi,
     AbiArgSlot,
+    AddressMode,
     ArgLoc,
     Arch,
     BinaryOp,
@@ -30,6 +31,7 @@ from ..translate import (
     Type,
     as_u32,
 )
+from ..evaluate import deref
 from ..types import FunctionSignature
 
 CondBuilder = Callable[["X86Arch", NodeState], Expression]
@@ -197,6 +199,23 @@ class X86Arch(Arch):
             loc = StackLocation.from_offset(addr.addend)
             if loc is not None:
                 return StackLocation(offset=loc.offset, symbolic_offset=None)
+        return None
+
+    @classmethod
+    def _address_inputs(cls, addr: AsmAddressMode) -> List[Location]:
+        inputs: List[Location] = [addr.base]
+        for sub in traverse_arg(addr.addend):
+            if isinstance(sub, Register) and sub not in inputs:
+                inputs.append(sub)
+        stack_loc = cls._stack_location_from_address(addr)
+        if stack_loc is not None:
+            inputs.append(stack_loc)
+        return inputs
+
+    @classmethod
+    def _address_mode_to_address(cls, addr: AsmAddressMode) -> Optional[AddressMode]:
+        if isinstance(addr.addend, AsmLiteral):
+            return AddressMode(addr.addend.value, addr.base)
         return None
 
     @classmethod
@@ -750,33 +769,36 @@ class X86Arch(Arch):
     def _parse_cmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "cmp expects two operands"
         lhs, rhs = args
-        if isinstance(lhs, AsmAddressMode):
-            inputs = [lhs.base]
-            mem_loc = cls._stack_location_from_address(lhs)
-            if mem_loc is not None:
-                inputs.append(mem_loc)
-        elif isinstance(lhs, Register):
-            inputs = [lhs]
-        else:
+        inputs: List[Location] = []
+
+        def operand_value(arg: Argument, arg_index: int) -> Tuple[List[Location], Callable[[InstrArgs], Expression]]:
+            if isinstance(arg, Register):
+                return [arg], lambda a, idx=arg_index: a.reg(idx)
+            if isinstance(arg, AsmAddressMode):
+                addr_mode = cls._address_mode_to_address(arg)
+                if addr_mode is None:
+                    raise DecompFailure(cls._unsupported_message("cmp", args))
+                return (
+                    cls._address_inputs(arg),
+                    lambda a, addr=addr_mode: deref(addr, a.regs, a.stack_info, size=4),
+                )
+            if isinstance(arg, AsmLiteral) and arg_index == 1:
+                return ([], lambda _a, value=arg.value: Literal(value))
             raise DecompFailure(cls._unsupported_message("cmp", args))
 
-        if isinstance(rhs, Register):
-            inputs.append(rhs)
-
-            def eval_cmp(state: NodeState, a: InstrArgs) -> None:
-                diff = BinaryOp.intptr(a.reg(0), "-", a.reg(1))
-                zero = BinaryOp.icmp(diff, "==", Literal(0))
-                state.set_reg(Register("zf"), zero)
-
-        elif isinstance(rhs, AsmLiteral):
-
-            def eval_cmp(state: NodeState, a: InstrArgs) -> None:
-                diff = BinaryOp.intptr(a.reg(0), "-", Literal(rhs.value))
-                zero = BinaryOp.icmp(diff, "==", Literal(0))
-                state.set_reg(Register("zf"), zero)
-
-        else:
+        lhs_inputs, lhs_value = operand_value(lhs, 0)
+        if isinstance(lhs, AsmLiteral):
             raise DecompFailure(cls._unsupported_message("cmp", args))
+        rhs_inputs, rhs_value = operand_value(rhs, 1)
+
+        for loc in lhs_inputs + rhs_inputs:
+            if loc not in inputs:
+                inputs.append(loc)
+
+        def eval_cmp(state: NodeState, a: InstrArgs) -> None:
+            diff = BinaryOp.intptr(lhs_value(a), "-", rhs_value(a))
+            zero = BinaryOp.icmp(diff, "==", Literal(0))
+            state.set_reg(Register("zf"), zero)
 
         return Instruction(
             mnemonic="cmp",
