@@ -492,6 +492,35 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_jmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "jmp expects one operand"
+        target = args[0]
+        inputs: List[Location] = []
+        jump_target: Optional[Union[JumpTarget, Register]]
+
+        if isinstance(target, Register):
+            inputs = [target]
+            jump_target = target
+        else:
+            jump_target = get_jump_target(target)
+
+        return Instruction(
+            mnemonic="jmp",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[],
+            jump_target=jump_target,
+            function_target=None,
+            is_conditional=isinstance(target, Register),
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=_no_op_eval,
+        )
+
+    @classmethod
     def _parse_and(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "and expects two operands"
         dst, src = args
@@ -1057,6 +1086,7 @@ X86Arch._instr_parsers = {
     "sal": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="sal"),
     "shr": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="shr"),
     "sar": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="sar"),
+    "jmp": X86Arch._parse_jmp,
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,

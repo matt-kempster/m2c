@@ -257,6 +257,19 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.jump_target.target, "_target")
         self.assertCountEqual(instr.inputs, [Register("cf"), Register("zf")])
 
+    def test_jmp_absolute(self) -> None:
+        instr = self.parse_instruction("jmp _target")
+        self.assertTrue(instr.is_jump())
+        self.assertFalse(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+
+    def test_jmp_register(self) -> None:
+        instr = self.parse_instruction("jmp eax")
+        self.assertTrue(instr.is_jump())
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target, Register("eax"))
+        self.assertEqual(instr.inputs, [Register("eax")])
+
     def test_mov_stack_store_instruction(self) -> None:
         instr = self.parse_instruction("mov dword ptr [esp + 0x8], eax")
         self.assertTrue(instr.is_store)
