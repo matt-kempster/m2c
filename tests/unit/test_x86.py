@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from typing import Tuple
+
 from m2c.arch_x86 import X86Arch
 from m2c.asm_instruction import (
     AsmAddressMode,
@@ -42,11 +44,15 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(addr.addend.symbol_name, "_DAT_0079a8b0")
 
     def parse_instruction(self, line: str) -> Instruction:
+        instr, _ = self.parse_instruction_with_state(line)
+        return instr
+
+    def parse_instruction_with_state(self, line: str) -> Tuple[Instruction, AsmState]:
         asm_state = AsmState(reg_formatter=RegFormatter())
-        # Normalize register names to emulate how real input files spell them
-        # (mostly uppercase). This avoids duplicate aliases for CL/BP/etc.
+        # Normalize register names to emulate how real input files spell them.
         asm = parse_asm_instruction(line.lower(), self.arch, asm_state)
-        return self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+        instr = self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+        return instr, asm_state
 
     def test_mov_stack_load_instruction(self) -> None:
         instr = self.parse_instruction("mov eax, dword ptr [esp + 0x4]")
@@ -150,14 +156,32 @@ class TestX86Parsing(unittest.TestCase):
         self.assertIn(Register("edx"), instr.inputs)
 
     def test_mov_byte_load(self) -> None:
-        instr = self.parse_instruction("mov cl, byte ptr [eax]")
+        instr, asm_state = self.parse_instruction_with_state("mov cl, byte ptr [eax]")
         self.assertIn(Register("eax"), instr.inputs)
-        self.assertTrue(any(reg.register_name in ("cl", "ecx") for reg in instr.outputs))
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "cl")
+
+    def test_mov_bl_load(self) -> None:
+        instr, asm_state = self.parse_instruction_with_state("mov bl, byte ptr [esi + 0xbb]")
+        self.assertIn(Register("esi"), instr.inputs)
+        self.assertEqual(instr.outputs, [Register("ebx")])
+        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "bl")
 
     def test_mov_word_load(self) -> None:
-        instr = self.parse_instruction("mov bp, word ptr [eax + 0x8]")
+        instr, asm_state = self.parse_instruction_with_state("mov bp, word ptr [eax + 0x8]")
         self.assertIn(Register("eax"), instr.inputs)
-        self.assertTrue(any(reg.register_name in ("bp", "ebp") for reg in instr.outputs))
+        self.assertEqual(instr.outputs, [Register("ebp")])
+        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "bp")
+
+    def test_mov_cl_immediate(self) -> None:
+        instr, asm_state = self.parse_instruction_with_state("mov cl, 0xff")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "cl")
+
+    def test_mov_ch_immediate(self) -> None:
+        instr, asm_state = self.parse_instruction_with_state("mov ch, 0xff")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertEqual(asm_state.reg_formatter.format(instr.outputs[0]), "ch")
 
     def test_and_register_immediate(self) -> None:
         instr = self.parse_instruction("and ah, 0xeb")
