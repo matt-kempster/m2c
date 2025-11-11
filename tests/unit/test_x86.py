@@ -115,6 +115,56 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("ecx")])
         self.assertIn(Register("ecx"), instr.inputs)
 
+    def test_add_register_register(self) -> None:
+        instr = self.parse_instruction("add eax, edx")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("eax"), Register("edx")])
+
+    def test_sub_register_register(self) -> None:
+        instr = self.parse_instruction("sub eax, ecx")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("eax"), Register("ecx")])
+
+    def test_shl_register_immediate(self) -> None:
+        instr = self.parse_instruction("shl ecx, 0x8")
+        self.assertEqual(instr.outputs, [Register("ecx")])
+        self.assertIn(Register("ecx"), instr.inputs)
+
+    def test_sar_register_immediate(self) -> None:
+        instr = self.parse_instruction("sar eax, 0x8")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("eax"), instr.inputs)
+
+    def test_shr_register_immediate(self) -> None:
+        instr = self.parse_instruction("shr eax, 0x8")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertIn(Register("eax"), instr.inputs)
+
+    def test_setz_register(self) -> None:
+        instr = self.parse_instruction("setz eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("zf")])
+
+    def test_setnz_register(self) -> None:
+        instr = self.parse_instruction("setnz eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("zf")])
+
+    def test_setge_register(self) -> None:
+        instr = self.parse_instruction("setge eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("sf"), Register("of")])
+
+    def test_setg_register(self) -> None:
+        instr = self.parse_instruction("setg eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("zf"), Register("sf"), Register("of")])
+
+    def test_setl_register(self) -> None:
+        instr = self.parse_instruction("setl eax")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertCountEqual(instr.inputs, [Register("sf"), Register("of")])
+
     def test_cmp_reg_imm(self) -> None:
         instr = self.parse_instruction("cmp eax, 0x1b5")
         self.assertEqual(instr.outputs, [Register("zf")])
@@ -240,6 +290,15 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("ebx")])
         self.assertIn(
             "bl",
+            asm_state.reg_formatter.aliases_for(instr.outputs[0]),
+        )
+
+    def test_mov_dx_word_stack_load(self) -> None:
+        instr, asm_state = self.parse_instruction_with_state("mov dx, word ptr [esp + 0x8]")
+        self.assertIn(Register("esp"), instr.inputs)
+        self.assertEqual(instr.outputs, [Register("edx")])
+        self.assertIn(
+            "dx",
             asm_state.reg_formatter.aliases_for(instr.outputs[0]),
         )
 

@@ -85,6 +85,12 @@ class X86Arch(Arch):
         "sp": stack_pointer_reg,
         "bp": Register("ebp"),
         "ip": Register("eip"),
+        "ax": Register("eax"),
+        "bx": Register("ebx"),
+        "cx": Register("ecx"),
+        "dx": Register("edx"),
+        "si": Register("esi"),
+        "di": Register("edi"),
         "cl": Register("ecx"),
         "ch": Register("ecx"),
         "al": Register("eax"),
@@ -314,22 +320,57 @@ class X86Arch(Arch):
     def _parse_sub(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "sub expects two operands"
         dst, src = args
-        if dst != cls.stack_pointer_reg or not isinstance(src, AsmLiteral):
+        if dst == cls.stack_pointer_reg and isinstance(src, AsmLiteral):
+
+            def eval_sp_sub(state: NodeState, a: InstrArgs) -> None:
+                esp = cls.stack_pointer_reg
+                current = state.regs[esp]
+                new_sp = BinaryOp.intptr(current, "-", Literal(src.value))
+                state.set_reg(esp, new_sp)
+
+            return Instruction(
+                mnemonic="sub",
+                args=args,
+                meta=meta,
+                inputs=[cls.stack_pointer_reg],
+                clobbers=[],
+                outputs=[cls.stack_pointer_reg],
+                jump_target=None,
+                function_target=None,
+                is_conditional=False,
+                is_return=False,
+                is_store=False,
+                is_load=False,
+                eval_fn=eval_sp_sub,
+            )
+
+        if not isinstance(dst, Register):
             raise DecompFailure(cls._unsupported_message("sub", args))
 
-        def eval_sub(state: NodeState, a: InstrArgs) -> None:
-            esp = cls.stack_pointer_reg
-            current = state.regs[esp]
-            new_sp = BinaryOp.intptr(current, "-", Literal(src.value))
-            state.set_reg(esp, new_sp)
+        if isinstance(src, Register):
+            inputs = [dst, src]
+
+            def eval_sub(state: NodeState, a: InstrArgs) -> None:
+                result = BinaryOp.intptr(a.reg(0), "-", a.reg(1))
+                state.set_reg(dst, result)
+
+        elif isinstance(src, AsmLiteral):
+            inputs = [dst]
+
+            def eval_sub(state: NodeState, a: InstrArgs) -> None:
+                result = BinaryOp.intptr(a.reg(0), "-", Literal(src.value))
+                state.set_reg(dst, result)
+
+        else:
+            raise DecompFailure(cls._unsupported_message("sub", args))
 
         return Instruction(
             mnemonic="sub",
             args=args,
             meta=meta,
-            inputs=[cls.stack_pointer_reg],
+            inputs=inputs,
             clobbers=[],
-            outputs=[cls.stack_pointer_reg],
+            outputs=[dst],
             jump_target=None,
             function_target=None,
             is_conditional=False,
@@ -343,19 +384,31 @@ class X86Arch(Arch):
     def _parse_add(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "add expects two operands"
         dst, src = args
-        if not isinstance(dst, Register) or not isinstance(src, AsmLiteral):
+        if not isinstance(dst, Register):
             raise DecompFailure(cls._unsupported_message("add", args))
 
-        def eval_add(state: NodeState, a: InstrArgs) -> None:
-            current = state.regs[dst]
-            add_expr = BinaryOp.intptr(current, "+", Literal(src.value))
-            state.set_reg(dst, add_expr)
+        if isinstance(src, Register):
+            inputs = [dst, src]
+
+            def eval_add(state: NodeState, a: InstrArgs) -> None:
+                add_expr = BinaryOp.intptr(a.reg(0), "+", a.reg(1))
+                state.set_reg(dst, add_expr)
+
+        elif isinstance(src, AsmLiteral):
+            inputs = [dst]
+
+            def eval_add(state: NodeState, a: InstrArgs) -> None:
+                add_expr = BinaryOp.intptr(a.reg(0), "+", Literal(src.value))
+                state.set_reg(dst, add_expr)
+
+        else:
+            raise DecompFailure(cls._unsupported_message("add", args))
 
         return Instruction(
             mnemonic="add",
             args=args,
             meta=meta,
-            inputs=[dst],
+            inputs=inputs,
             clobbers=[],
             outputs=[dst],
             jump_target=None,
@@ -365,6 +418,58 @@ class X86Arch(Arch):
             is_store=False,
             is_load=False,
             eval_fn=eval_add,
+        )
+
+    @classmethod
+    def _parse_shift(cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str) -> Instruction:
+        assert len(args) == 2, "shift expects two operands"
+        dst, src = args
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message(mnemonic, args))
+
+        if mnemonic in ("shl", "sal"):
+            op_builder = lambda value, amount: BinaryOp.int(value, "<<", amount)
+        elif mnemonic == "shr":
+            op_builder = lambda value, amount: BinaryOp.uint(value, ">>", amount)
+        elif mnemonic == "sar":
+            op_builder = lambda value, amount: BinaryOp.sint(value, ">>", amount)
+        else:
+            raise DecompFailure(cls._unsupported_message(mnemonic, args))
+
+        if isinstance(src, Register):
+            inputs: List[Register] = [dst, src]
+
+            def shift_amount(a: InstrArgs) -> Expression:
+                return a.reg(1)
+
+        elif isinstance(src, AsmLiteral):
+            inputs = [dst]
+
+            def shift_amount(_: InstrArgs, value: int = src.value) -> Literal:
+                return Literal(value)
+
+        else:
+            raise DecompFailure(cls._unsupported_message(mnemonic, args))
+
+        def eval_shift(state: NodeState, a: InstrArgs) -> None:
+            amount = shift_amount(a)
+            result = op_builder(a.reg(0), amount)
+            state.set_reg(dst, result)
+
+        return Instruction(
+            mnemonic=mnemonic,
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_shift,
         )
 
     @classmethod
@@ -747,18 +852,60 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _condition_spec(
+        cls, mnemonic: str, *, allow_alias: bool = True
+    ) -> Tuple[List[Register], CondBuilder]:
+        spec = cls._conditional_jump_specs.get(mnemonic)
+        if spec is not None:
+            return spec
+        if allow_alias:
+            alias = cls._condition_aliases.get(mnemonic)
+            if alias is not None:
+                return cls._condition_spec(alias, allow_alias=False)
+        raise DecompFailure(cls._unsupported_message(mnemonic, []))
+
+    @classmethod
     def _parse_conditional_jump_mnemonic(
         cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str
     ) -> Instruction:
-        if mnemonic not in cls._conditional_jump_specs:
-            raise DecompFailure(cls._unsupported_message(mnemonic, args))
-        flag_inputs, builder = cls._conditional_jump_specs[mnemonic]
+        flag_inputs, builder = cls._condition_spec(mnemonic)
         return cls._parse_conditional_jump(
             args,
             meta,
             mnemonic=mnemonic,
             flag_inputs=list(flag_inputs),
             condition_builder=lambda state, b=builder: b(cls, state),
+        )
+
+    @classmethod
+    def _parse_setcc(
+        cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str
+    ) -> Instruction:
+        assert len(args) == 1, "setcc expects one operand"
+        dst = args[0]
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message(mnemonic, args))
+        flag_inputs, builder = cls._condition_spec(mnemonic)
+
+        def eval_set(state: NodeState, _: InstrArgs) -> None:
+            cond = builder(cls, state)
+            value = Cast(cond, reinterpret=False, silent=True, type=Type.intish())
+            state.set_reg(dst, value)
+
+        return Instruction(
+            mnemonic=mnemonic,
+            args=args,
+            meta=meta,
+            inputs=list(flag_inputs),
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_set,
         )
 
     _conditional_jump_specs: Dict[str, Tuple[List[Register], CondBuilder]] = {
@@ -820,6 +967,14 @@ class X86Arch(Arch):
         ),
     }
 
+    _condition_aliases: Dict[str, str] = {
+        "setz": "jz",
+        "setnz": "jnz",
+        "setg": "jg",
+        "setge": "jge",
+        "setl": "jl",
+    }
+
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
             return f"arg_sp{loc.offset:#x}"
@@ -876,6 +1031,10 @@ X86Arch._instr_parsers = {
     "pop": X86Arch._parse_pop,
     "sub": X86Arch._parse_sub,
     "add": X86Arch._parse_add,
+    "shl": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="shl"),
+    "sal": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="sal"),
+    "shr": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="shr"),
+    "sar": lambda args, meta: X86Arch._parse_shift(args, meta, mnemonic="sar"),
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,
@@ -892,6 +1051,11 @@ X86Arch._instr_parsers = {
     "jc": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jc"),
     "jnc": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jnc"),
     "jbe": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jbe"),
+    "setz": lambda args, meta: X86Arch._parse_setcc(args, meta, mnemonic="setz"),
+    "setnz": lambda args, meta: X86Arch._parse_setcc(args, meta, mnemonic="setnz"),
+    "setg": lambda args, meta: X86Arch._parse_setcc(args, meta, mnemonic="setg"),
+    "setge": lambda args, meta: X86Arch._parse_setcc(args, meta, mnemonic="setge"),
+    "setl": lambda args, meta: X86Arch._parse_setcc(args, meta, mnemonic="setl"),
     "cmp": X86Arch._parse_cmp,
     "lea": X86Arch._parse_lea,
     "dec": X86Arch._parse_dec,
