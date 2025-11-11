@@ -721,13 +721,30 @@ class X86Arch(Arch):
         target = args[0]
         outputs = list(cls.all_return_regs)
         clobbers = list(cls.temp_regs)
-        inputs: List[Register] = list(cls.argument_regs)
+        inputs: List[Location] = list(cls.argument_regs)
+        is_load = False
 
         if isinstance(target, Register):
             inputs.append(target)
             eval_fn = lambda s, a: s.make_function_call(a.reg(0), outputs)
         elif isinstance(target, (AsmGlobalSymbol, AsmLiteral)):
             eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
+        elif isinstance(target, AsmAddressMode):
+            addr_inputs, addr_value, _ = cls._value_from_operand(
+                "call",
+                args,
+                target,
+                arg_index=0,
+                allow_literal=False,
+                allow_memory=True,
+            )
+            for loc in addr_inputs:
+                if loc not in inputs:
+                    inputs.append(loc)
+            is_load = True
+
+            def eval_fn(s: NodeState, a: InstrArgs, fn=addr_value) -> None:
+                s.make_function_call(fn(a), outputs)
         else:
             raise DecompFailure(cls._unsupported_message("call", args))
 
@@ -743,7 +760,7 @@ class X86Arch(Arch):
             is_conditional=False,
             is_return=False,
             is_store=False,
-            is_load=False,
+            is_load=is_load,
             eval_fn=eval_fn,
         )
 

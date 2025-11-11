@@ -105,6 +105,20 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.function_target, AsmGlobalSymbol("_malloc"))
         self.assertEqual(instr.outputs, [Register("eax"), Register("edx")])
 
+    def test_call_memory_address(self) -> None:
+        instr = self.parse_instruction("call [ecx + 0x8]")
+        self.assertEqual(instr.inputs, [Register("ecx")])
+        self.assertTrue(instr.is_load)
+        self.assertEqual(instr.outputs, [Register("eax"), Register("edx")])
+
+    def test_call_import_symbol(self) -> None:
+        instr = self.parse_instruction("call __imp__MultiByteToWideChar_24")
+        self.assertEqual(
+            instr.function_target,
+            AsmGlobalSymbol("__imp__multibytetowidechar_24"),
+        )
+        self.assertEqual(instr.outputs, [Register("eax"), Register("edx")])
+
     def test_push_offset_symbol(self) -> None:
         instr = self.parse_instruction("push offset _FUN_0040e440")
         self.assertEqual(instr.outputs, [Register("esp")])
