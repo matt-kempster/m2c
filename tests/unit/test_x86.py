@@ -174,6 +174,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("ecx")])
         self.assertIn(Register("ecx"), instr.inputs)
 
+    def test_cdq_instruction(self) -> None:
+        instr = self.parse_instruction("cdq")
+        self.assertEqual(instr.outputs, [Register("edx")])
+        self.assertIn(Register("eax"), instr.inputs)
+
     def test_setz_register(self) -> None:
         instr = self.parse_instruction("setz eax")
         self.assertEqual(instr.outputs, [Register("eax")])

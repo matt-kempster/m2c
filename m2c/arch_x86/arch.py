@@ -675,6 +675,33 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_cdq(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert not args, "cdq expects no operands"
+        eax = Register("eax")
+        edx = Register("edx")
+
+        def eval_cdq(state: NodeState, a: InstrArgs) -> None:
+            value = state.regs[eax]
+            sign = BinaryOp.sint(value, ">>", Literal(31))
+            state.set_reg(edx, sign)
+
+        return Instruction(
+            mnemonic="cdq",
+            args=args,
+            meta=meta,
+            inputs=[eax],
+            clobbers=[],
+            outputs=[edx],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=False,
+            eval_fn=eval_cdq,
+        )
+
+    @classmethod
     def _parse_jmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 1, "jmp expects one operand"
         target = args[0]
@@ -1370,6 +1397,7 @@ X86Arch._instr_parsers = {
     "repne": lambda args, meta: X86Arch._parse_rep_string("repne", args, meta),
     "neg": X86Arch._parse_neg,
     "not": X86Arch._parse_not,
+    "cdq": X86Arch._parse_cdq,
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,
