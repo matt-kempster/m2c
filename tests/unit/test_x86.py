@@ -379,6 +379,20 @@ class TestX86Parsing(unittest.TestCase):
             asm_state.reg_formatter.aliases_for(instr.outputs[0]),
         )
 
+    def test_movsx_ax(self) -> None:
+        instr, asm_state = self.parse_instruction_with_state("movsx edx, ax")
+        self.assertEqual(instr.outputs, [Register("edx")])
+        self.assertIn(Register("eax"), instr.inputs)
+        self.assertIn(
+            "ax",
+            asm_state.reg_formatter.aliases_for(Register("eax")),
+        )
+
+    def test_movsx_word_memory(self) -> None:
+        instr = self.parse_instruction("movsx edx, word ptr [esi + 0x3c]")
+        self.assertEqual(instr.outputs, [Register("edx")])
+        self.assertIn(Register("esi"), instr.inputs)
+
     def test_mov_cl_immediate(self) -> None:
         instr, asm_state = self.parse_instruction_with_state("mov cl, 0xff")
         self.assertEqual(instr.outputs, [Register("ecx")])

@@ -303,6 +303,45 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_movsx(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 2, "movsx expects two operands"
+        dst, src = args
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("movsx", args))
+
+        inputs: List[Location] = []
+        src_inputs, src_value, _ = cls._value_from_operand(
+            "movsx",
+            args,
+            src,
+            arg_index=1,
+            allow_literal=False,
+            allow_memory=True,
+            load_size=2,
+        )
+        inputs.extend(src_inputs)
+
+        def eval_movsx(state: NodeState, a: InstrArgs) -> None:
+            value = src_value(a)
+            state.set_reg(dst, value)
+
+        return Instruction(
+            mnemonic="movsx",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=isinstance(src, AsmAddressMode),
+            eval_fn=eval_movsx,
+        )
+
+    @classmethod
     def _parse_push(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 1, "push expects one operand"
         src = args[0]
@@ -1190,6 +1229,7 @@ X86Arch._instr_parsers = {
     "nop": X86Arch._parse_nop,
     "ret": X86Arch._parse_ret,
     "mov": X86Arch._parse_mov,
+    "movsx": X86Arch._parse_movsx,
     "push": X86Arch._parse_push,
     "pop": X86Arch._parse_pop,
     "sub": X86Arch._parse_sub,
