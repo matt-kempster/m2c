@@ -86,6 +86,10 @@ class TestX86Parsing(unittest.TestCase):
         instr = self.parse_instruction("test eax, eax")
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_test_immediate(self) -> None:
+        instr = self.parse_instruction("test eax, 0x1")
+        self.assertIn(Register("eax"), instr.inputs)
+
     def test_xor_zeroes_register(self) -> None:
         instr = self.parse_instruction("xor eax, eax")
         self.assertEqual(instr.outputs, [Register("eax")])

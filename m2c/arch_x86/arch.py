@@ -453,19 +453,33 @@ class X86Arch(Arch):
     def _parse_test(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "test expects two operands"
         lhs, rhs = args
-        if not isinstance(lhs, Register) or not isinstance(rhs, Register):
+        if not isinstance(lhs, Register):
             raise DecompFailure(cls._unsupported_message("test", args))
 
-        def eval_test(state: NodeState, a: InstrArgs) -> None:
-            value = BinaryOp.int(a.reg(0), "&", a.reg(1))
-            zero = BinaryOp.icmp(value, "==", Literal(0))
-            state.set_reg(Register("zf"), zero)
+        if isinstance(rhs, Register):
+            inputs = [lhs, rhs]
+
+            def eval_test(state: NodeState, a: InstrArgs) -> None:
+                value = BinaryOp.int(a.reg(0), "&", a.reg(1))
+                zero = BinaryOp.icmp(value, "==", Literal(0))
+                state.set_reg(Register("zf"), zero)
+
+        elif isinstance(rhs, AsmLiteral):
+            inputs = [lhs]
+
+            def eval_test(state: NodeState, a: InstrArgs) -> None:
+                value = BinaryOp.int(a.reg(0), "&", Literal(rhs.value))
+                zero = BinaryOp.icmp(value, "==", Literal(0))
+                state.set_reg(Register("zf"), zero)
+
+        else:
+            raise DecompFailure(cls._unsupported_message("test", args))
 
         return Instruction(
             mnemonic="test",
             args=args,
             meta=meta,
-            inputs=[lhs, rhs],
+            inputs=inputs,
             clobbers=[],
             outputs=[Register("zf")],
             jump_target=None,
