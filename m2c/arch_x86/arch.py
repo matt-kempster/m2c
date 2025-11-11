@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..asm_instruction import (
     Argument,
@@ -31,6 +31,8 @@ from ..translate import (
     as_u32,
 )
 from ..types import FunctionSignature
+
+CondBuilder = Callable[["X86Arch", NodeState], Expression]
 
 
 def _no_op_eval(_: NodeState, __: InstrArgs) -> None:
@@ -688,22 +690,51 @@ class X86Arch(Arch):
         )
 
     @classmethod
-    def _parse_jz(cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str) -> Instruction:
+    @staticmethod
+    def _logical_and(lhs: Expression, rhs: Expression) -> BinaryOp:
+        return BinaryOp(left=lhs, op="&&", right=rhs, type=Type.bool())
+
+    @staticmethod
+    def _logical_or(lhs: Expression, rhs: Expression) -> BinaryOp:
+        return BinaryOp(left=lhs, op="||", right=rhs, type=Type.bool())
+
+    @classmethod
+    def _flag_value(cls, state: NodeState, flag: str) -> Expression:
+        return state.regs[Register(flag)]
+
+    @classmethod
+    def _flag_is_set(cls, state: NodeState, flag: str) -> BinaryOp:
+        return BinaryOp.icmp(cls._flag_value(state, flag), "!=", Literal(0))
+
+    @classmethod
+    def _flag_is_clear(cls, state: NodeState, flag: str) -> BinaryOp:
+        return BinaryOp.icmp(cls._flag_value(state, flag), "==", Literal(0))
+
+    @classmethod
+    def _flags_compare(cls, state: NodeState, left: str, op: str, right: str) -> BinaryOp:
+        return BinaryOp.icmp(cls._flag_value(state, left), op, cls._flag_value(state, right))
+
+    @classmethod
+    def _parse_conditional_jump(
+        cls,
+        args: List[Argument],
+        meta: InstructionMeta,
+        *,
+        mnemonic: str,
+        flag_inputs: List[Register],
+        condition_builder: Callable[[NodeState], Expression],
+    ) -> Instruction:
         assert len(args) == 1, "jump expects one operand"
         target = get_jump_target(args[0])
 
-        def eval_jump(state: NodeState, a: InstrArgs) -> None:
-            zero = state.regs[Register("zf")]
-            cond = BinaryOp.icmp(zero, "!=", Literal(0))
-            if mnemonic == "jnz":
-                cond = cond.negated()
-            state.set_branch_condition(cond)
+        def eval_jump(state: NodeState, _: InstrArgs) -> None:
+            state.set_branch_condition(condition_builder(state))
 
         return Instruction(
             mnemonic=mnemonic,
             args=args,
             meta=meta,
-            inputs=[Register("zf")],
+            inputs=list(flag_inputs),
             clobbers=[],
             outputs=[],
             jump_target=target,
@@ -714,6 +745,80 @@ class X86Arch(Arch):
             is_load=False,
             eval_fn=eval_jump,
         )
+
+    @classmethod
+    def _parse_conditional_jump_mnemonic(
+        cls, args: List[Argument], meta: InstructionMeta, *, mnemonic: str
+    ) -> Instruction:
+        if mnemonic not in cls._conditional_jump_specs:
+            raise DecompFailure(cls._unsupported_message(mnemonic, args))
+        flag_inputs, builder = cls._conditional_jump_specs[mnemonic]
+        return cls._parse_conditional_jump(
+            args,
+            meta,
+            mnemonic=mnemonic,
+            flag_inputs=list(flag_inputs),
+            condition_builder=lambda state, b=builder: b(cls, state),
+        )
+
+    _conditional_jump_specs: Dict[str, Tuple[List[Register], CondBuilder]] = {
+        "jz": (
+            [Register("zf")],
+            lambda cls, state: cls._flag_is_set(state, "zf"),
+        ),
+        "jnz": (
+            [Register("zf")],
+            lambda cls, state: cls._flag_is_clear(state, "zf"),
+        ),
+        "ja": (
+            [Register("cf"), Register("zf")],
+            lambda cls, state: cls._logical_and(
+                cls._flag_is_clear(state, "cf"),
+                cls._flag_is_clear(state, "zf"),
+            ),
+        ),
+        "jl": (
+            [Register("sf"), Register("of")],
+            lambda cls, state: cls._flags_compare(state, "sf", "!=", "of"),
+        ),
+        "jle": (
+            [Register("zf"), Register("sf"), Register("of")],
+            lambda cls, state: cls._logical_or(
+                cls._flag_is_set(state, "zf"),
+                cls._flags_compare(state, "sf", "!=", "of"),
+            ),
+        ),
+        "jg": (
+            [Register("zf"), Register("sf"), Register("of")],
+            lambda cls, state: cls._logical_and(
+                cls._flag_is_clear(state, "zf"),
+                cls._flags_compare(state, "sf", "==", "of"),
+            ),
+        ),
+        "jge": (
+            [Register("sf"), Register("of")],
+            lambda cls, state: cls._flags_compare(state, "sf", "==", "of"),
+        ),
+        "jns": (
+            [Register("sf")],
+            lambda cls, state: cls._flag_is_clear(state, "sf"),
+        ),
+        "jc": (
+            [Register("cf")],
+            lambda cls, state: cls._flag_is_set(state, "cf"),
+        ),
+        "jnc": (
+            [Register("cf")],
+            lambda cls, state: cls._flag_is_clear(state, "cf"),
+        ),
+        "jbe": (
+            [Register("cf"), Register("zf")],
+            lambda cls, state: cls._logical_or(
+                cls._flag_is_set(state, "cf"),
+                cls._flag_is_set(state, "zf"),
+            ),
+        ),
+    }
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
@@ -776,8 +881,17 @@ X86Arch._instr_parsers = {
     "test": X86Arch._parse_test,
     "xor": X86Arch._parse_xor,
     "call": X86Arch._parse_call,
-    "jz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jz"),
-    "jnz": lambda args, meta: X86Arch._parse_jz(args, meta, mnemonic="jnz"),
+    "jz": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jz"),
+    "jnz": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jnz"),
+    "ja": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="ja"),
+    "jl": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jl"),
+    "jle": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jle"),
+    "jg": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jg"),
+    "jge": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jge"),
+    "jns": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jns"),
+    "jc": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jc"),
+    "jnc": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jnc"),
+    "jbe": lambda args, meta: X86Arch._parse_conditional_jump_mnemonic(args, meta, mnemonic="jbe"),
     "cmp": X86Arch._parse_cmp,
     "lea": X86Arch._parse_lea,
     "dec": X86Arch._parse_dec,

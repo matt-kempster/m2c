@@ -139,11 +139,67 @@ class TestX86Parsing(unittest.TestCase):
         instr = self.parse_instruction("jz _target")
         self.assertTrue(instr.is_conditional)
         self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("zf")])
 
     def test_jnz_branch(self) -> None:
         instr = self.parse_instruction("jnz _target")
         self.assertTrue(instr.is_conditional)
         self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("zf")])
+
+    def test_ja_branch(self) -> None:
+        instr = self.parse_instruction("ja _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("cf"), Register("zf")])
+
+    def test_jl_branch(self) -> None:
+        instr = self.parse_instruction("jl _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("sf"), Register("of")])
+
+    def test_jle_branch(self) -> None:
+        instr = self.parse_instruction("jle _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("zf"), Register("sf"), Register("of")])
+
+    def test_jg_branch(self) -> None:
+        instr = self.parse_instruction("jg _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("zf"), Register("sf"), Register("of")])
+
+    def test_jge_branch(self) -> None:
+        instr = self.parse_instruction("jge _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("sf"), Register("of")])
+
+    def test_jns_branch(self) -> None:
+        instr = self.parse_instruction("jns _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("sf")])
+
+    def test_jc_branch(self) -> None:
+        instr = self.parse_instruction("jc _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("cf")])
+
+    def test_jnc_branch(self) -> None:
+        instr = self.parse_instruction("jnc _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("cf")])
+
+    def test_jbe_branch(self) -> None:
+        instr = self.parse_instruction("jbe _target")
+        self.assertTrue(instr.is_conditional)
+        self.assertEqual(instr.jump_target.target, "_target")
+        self.assertCountEqual(instr.inputs, [Register("cf"), Register("zf")])
 
     def test_mov_stack_store_instruction(self) -> None:
         instr = self.parse_instruction("mov dword ptr [esp + 0x8], eax")
