@@ -643,11 +643,18 @@ class X86Arch(Arch):
     def _parse_cmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 2, "cmp expects two operands"
         lhs, rhs = args
-        if not isinstance(lhs, Register):
+        if isinstance(lhs, AsmAddressMode):
+            inputs = [lhs.base]
+            mem_loc = cls._stack_location_from_address(lhs)
+            if mem_loc is not None:
+                inputs.append(mem_loc)
+        elif isinstance(lhs, Register):
+            inputs = [lhs]
+        else:
             raise DecompFailure(cls._unsupported_message("cmp", args))
 
         if isinstance(rhs, Register):
-            inputs = [lhs, rhs]
+            inputs.append(rhs)
 
             def eval_cmp(state: NodeState, a: InstrArgs) -> None:
                 diff = BinaryOp.intptr(a.reg(0), "-", a.reg(1))
@@ -655,7 +662,6 @@ class X86Arch(Arch):
                 state.set_reg(Register("zf"), zero)
 
         elif isinstance(rhs, AsmLiteral):
-            inputs = [lhs]
 
             def eval_cmp(state: NodeState, a: InstrArgs) -> None:
                 diff = BinaryOp.intptr(a.reg(0), "-", Literal(rhs.value))

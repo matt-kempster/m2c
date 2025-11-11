@@ -125,6 +125,11 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("zf")])
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_cmp_mem_immediate(self) -> None:
+        instr = self.parse_instruction("cmp [ecx], 0x0")
+        self.assertEqual(instr.outputs, [Register("zf")])
+        self.assertIn(Register("ecx"), instr.inputs)
+
     def test_cmp_reg_reg(self) -> None:
         instr = self.parse_instruction("cmp ebp, eax")
         self.assertEqual(instr.outputs, [Register("zf")])
