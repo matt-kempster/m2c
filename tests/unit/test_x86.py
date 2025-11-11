@@ -208,6 +208,19 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("edi")])
         self.assertCountEqual(instr.inputs, [Register("edi"), Register("ebx")])
 
+    def test_idiv_memory(self) -> None:
+        instr = self.parse_instruction("idiv dword ptr [_dat_00667c1c]")
+        self.assertCountEqual(instr.outputs, [Register("eax"), Register("edx")])
+        self.assertIn(Register("eax"), instr.inputs)
+        self.assertIn(Register("edx"), instr.inputs)
+        self.assertIn(Register("zero"), instr.inputs)
+        self.assertTrue(instr.is_load)
+
+    def test_idiv_register(self) -> None:
+        instr = self.parse_instruction("idiv ecx")
+        self.assertCountEqual(instr.outputs, [Register("eax"), Register("edx")])
+        self.assertCountEqual(instr.inputs, [Register("eax"), Register("edx"), Register("ecx")])
+
     def test_setz_register(self) -> None:
         instr = self.parse_instruction("setz eax")
         self.assertEqual(instr.outputs, [Register("eax")])

@@ -805,6 +805,41 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_idiv(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "idiv expects one operand"
+        operand = args[0]
+        eax = Register("eax")
+        edx = Register("edx")
+        inputs: List[Location] = [eax, edx]
+        operand_inputs, _operand_value, operand_is_load = cls._value_from_operand(
+            "idiv",
+            args,
+            operand,
+            arg_index=0,
+            allow_literal=False,
+            allow_memory=True,
+        )
+        for loc in operand_inputs:
+            if loc not in inputs:
+                inputs.append(loc)
+
+        return Instruction(
+            mnemonic="idiv",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[eax, edx],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=operand_is_load,
+            eval_fn=_no_op_eval,
+        )
+
+    @classmethod
     def _parse_jmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 1, "jmp expects one operand"
         target = args[0]
@@ -1503,6 +1538,7 @@ X86Arch._instr_parsers = {
     "cdq": X86Arch._parse_cdq,
     "mul": X86Arch._parse_mul,
     "imul": X86Arch._parse_imul,
+    "idiv": X86Arch._parse_idiv,
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,
