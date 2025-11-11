@@ -264,10 +264,7 @@ class X86Arch(Arch):
         dst, src = args
         outputs: List[Location] = []
         inputs: List[Location] = []
-
-        def eval_mov(state: NodeState, a: InstrArgs) -> None:
-            if isinstance(dst, Register):
-                state.set_reg(dst, a.arg(1))
+        src_value: Optional[Callable[[InstrArgs], Expression]] = None
 
         src_is_mem = isinstance(src, AsmAddressMode)
         dst_is_mem = isinstance(dst, AsmAddressMode)
@@ -277,6 +274,22 @@ class X86Arch(Arch):
 
         if isinstance(dst, Register):
             outputs.append(dst)
+            if isinstance(src, Register):
+                inputs.append(src)
+                src_value = lambda a: a.reg(1)
+            elif isinstance(src, AsmAddressMode):
+                ref = cls._address_mode_reference(src)
+                if ref is None:
+                    raise DecompFailure(cls._unsupported_message("mov", args))
+                src_value = lambda a, ref=ref: deref(ref, a.regs, a.stack_info, size=4)
+            elif isinstance(src, AsmLiteral):
+                src_value = lambda _a, value=src.value: Literal(value)
+            elif isinstance(src, AsmGlobalSymbol):
+                src_value = (
+                    lambda a, sym=src.symbol_name: a.stack_info.global_info.address_of_gsym(sym)
+                )
+            else:
+                raise DecompFailure(cls._unsupported_message("mov", args))
         elif isinstance(dst, AsmAddressMode):
             loc = cls._stack_location_from_address(dst)
             if loc is not None:
@@ -285,6 +298,8 @@ class X86Arch(Arch):
             for sub in traverse_arg(dst.addend):
                 if isinstance(sub, Register) and sub not in inputs:
                     inputs.append(sub)
+            if isinstance(src, Register):
+                inputs.append(src)
         else:
             raise DecompFailure(cls._unsupported_message("mov", args))
 
@@ -296,8 +311,12 @@ class X86Arch(Arch):
             for sub in traverse_arg(src.addend):
                 if isinstance(sub, Register) and sub not in inputs:
                     inputs.append(sub)
-        elif isinstance(src, Register):
+        elif isinstance(src, Register) and not isinstance(dst, Register):
             inputs.append(src)
+
+        def eval_mov(state: NodeState, a: InstrArgs) -> None:
+            if isinstance(dst, Register) and src_value is not None:
+                state.set_reg(dst, src_value(a))
 
         return Instruction(
             mnemonic="mov",

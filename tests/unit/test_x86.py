@@ -15,6 +15,7 @@ from m2c.asm_instruction import (
     parse_asm_instruction,
 )
 from m2c.instruction import Instruction, InstructionMeta, StackLocation
+from m2c.translate import Literal
 
 
 class TestX86Parsing(unittest.TestCase):
@@ -61,6 +62,39 @@ class TestX86Parsing(unittest.TestCase):
         loc = instr.inputs[0]
         self.assertIsInstance(loc, StackLocation)
         self.assertEqual(loc.offset, 4)
+
+    def test_mov_stack_load_symbolic(self) -> None:
+        instr = self.parse_instruction("mov eax, dword ptr [esp + 0x4]")
+        self.assertEqual(instr.outputs, [Register("eax")])
+        self.assertTrue(instr.is_load)
+        self.assertIn(Register("esp"), instr.inputs)
+
+    def test_mov_eval_uses_public_interface(self) -> None:
+        instr = self.parse_instruction("mov eax, ecx")
+        self.assertIsNotNone(instr.eval_fn)
+
+        class DummyState:
+            def __init__(self) -> None:
+                self.regs = {
+                    Register("eax"): Literal(0),
+                    Register("ecx"): Literal(1),
+                }
+
+            def set_reg(self, reg: Register, value: Literal) -> None:
+                self.regs[reg] = value
+
+        class DummyArgs:
+            def __init__(self, state: DummyState) -> None:
+                self._state = state
+
+            def reg(self, idx: int) -> Literal:
+                reg = Register("eax") if idx == 0 else Register("ecx")
+                return self._state.regs[reg]
+
+        state = DummyState()
+        args = DummyArgs(state)
+        instr.eval_fn(state, args)  # type: ignore[arg-type]
+        self.assertEqual(state.regs[Register("eax")], Literal(1))
 
     def test_mov_absolute_load_instruction(self) -> None:
         instr = self.parse_instruction("mov ecx, [_DAT_00401000]")
