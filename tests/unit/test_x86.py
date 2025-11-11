@@ -179,6 +179,35 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.outputs, [Register("edx")])
         self.assertIn(Register("eax"), instr.inputs)
 
+    def test_mul_register(self) -> None:
+        instr = self.parse_instruction("mul ecx")
+        self.assertCountEqual(instr.outputs, [Register("eax"), Register("edx")])
+        self.assertCountEqual(instr.inputs, [Register("eax"), Register("ecx")])
+
+    def test_imul_single_register(self) -> None:
+        instr = self.parse_instruction("imul ecx")
+        self.assertCountEqual(instr.outputs, [Register("eax"), Register("edx")])
+        self.assertCountEqual(instr.inputs, [Register("eax"), Register("ecx")])
+
+    def test_imul_reg_memory(self) -> None:
+        instr = self.parse_instruction("imul edi, dword ptr [esp + 0x54]")
+        self.assertEqual(instr.outputs, [Register("edi")])
+        self.assertIn(Register("edi"), instr.inputs)
+        self.assertIn(Register("esp"), instr.inputs)
+        self.assertTrue(instr.is_load)
+
+    def test_imul_memory_single(self) -> None:
+        instr = self.parse_instruction("imul dword ptr [ebp - 0xc]")
+        self.assertCountEqual(instr.outputs, [Register("eax"), Register("edx")])
+        self.assertIn(Register("eax"), instr.inputs)
+        self.assertIn(Register("ebp"), instr.inputs)
+        self.assertTrue(instr.is_load)
+
+    def test_imul_reg_reg(self) -> None:
+        instr = self.parse_instruction("imul edi, ebx")
+        self.assertEqual(instr.outputs, [Register("edi")])
+        self.assertCountEqual(instr.inputs, [Register("edi"), Register("ebx")])
+
     def test_setz_register(self) -> None:
         instr = self.parse_instruction("setz eax")
         self.assertEqual(instr.outputs, [Register("eax")])

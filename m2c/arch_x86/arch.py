@@ -702,6 +702,109 @@ class X86Arch(Arch):
         )
 
     @classmethod
+    def _parse_mul(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) == 1, "mul expects one operand"
+        operand = args[0]
+        eax = Register("eax")
+        edx = Register("edx")
+        inputs: List[Location] = [eax]
+        operand_inputs, _operand_value, operand_is_load = cls._value_from_operand(
+            "mul",
+            args,
+            operand,
+            arg_index=0,
+            allow_literal=False,
+            allow_memory=True,
+        )
+        for loc in operand_inputs:
+            if loc not in inputs:
+                inputs.append(loc)
+
+        return Instruction(
+            mnemonic="mul",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[eax, edx],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=operand_is_load,
+            eval_fn=_no_op_eval,
+        )
+
+    @classmethod
+    def _parse_imul(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
+        assert len(args) in (1, 2), "imul expects one or two operands"
+        if len(args) == 1:
+            operand = args[0]
+            eax = Register("eax")
+            edx = Register("edx")
+            inputs: List[Location] = [eax]
+            operand_inputs, _operand_value, operand_is_load = cls._value_from_operand(
+                "imul",
+                args,
+                operand,
+                arg_index=0,
+                allow_literal=False,
+                allow_memory=True,
+            )
+            for loc in operand_inputs:
+                if loc not in inputs:
+                    inputs.append(loc)
+            return Instruction(
+                mnemonic="imul",
+                args=args,
+                meta=meta,
+                inputs=inputs,
+                clobbers=[],
+                outputs=[eax, edx],
+                jump_target=None,
+                function_target=None,
+                is_conditional=False,
+                is_return=False,
+                is_store=False,
+                is_load=operand_is_load,
+                eval_fn=_no_op_eval,
+            )
+
+        dst, src = args
+        if not isinstance(dst, Register):
+            raise DecompFailure(cls._unsupported_message("imul", args))
+
+        inputs: List[Location] = [dst]
+        operand_inputs, _operand_value, operand_is_load = cls._value_from_operand(
+            "imul",
+            args,
+            src,
+            arg_index=1,
+            allow_literal=False,
+            allow_memory=True,
+        )
+        for loc in operand_inputs:
+            if loc not in inputs:
+                inputs.append(loc)
+
+        return Instruction(
+            mnemonic="imul",
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=[],
+            outputs=[dst],
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=False,
+            is_load=operand_is_load,
+            eval_fn=_no_op_eval,
+        )
+
+    @classmethod
     def _parse_jmp(cls, args: List[Argument], meta: InstructionMeta) -> Instruction:
         assert len(args) == 1, "jmp expects one operand"
         target = args[0]
@@ -1398,6 +1501,8 @@ X86Arch._instr_parsers = {
     "neg": X86Arch._parse_neg,
     "not": X86Arch._parse_not,
     "cdq": X86Arch._parse_cdq,
+    "mul": X86Arch._parse_mul,
+    "imul": X86Arch._parse_imul,
     "and": X86Arch._parse_and,
     "or": X86Arch._parse_or,
     "test": X86Arch._parse_test,
