@@ -1,34 +1,47 @@
-[tool.poetry]
+[project]
 name = "m2c"
 version = "0.1.0"
 description = "MIPS, ARM and PowerPC decompiler"
 authors = [
-    "Matt Kempster <kidpixel@gmail.com>",
-    "Simon Lindholm <simon.lindholm10@gmail.com>",
-    "Zach Banks <zjbanks@gmail.com>",
-    "Ethan Roseman <ethteck@gmail.com>"
+    { name = "Matt Kempster", email = "kidpixel@gmail.com" },
+    { name = "Simon Lindholm", email = "simon.lindholm10@gmail.com" },
+    { name = "Zach Banks", email = "zjbanks@gmail.com" },
+    { name = "Ethan Roseman", email = "ethteck@gmail.com" },
 ]
-license = "GPL-3.0-only"
+requires-python = "~=3.8"
 readme = "README.md"
-repository = "https://github.com/matt-kempster/m2c"
-packages = [{include = "m2c"}, {include = "m2c_pycparser"}]
+license = "GPL-3.0-only"
+dependencies = ["graphviz>=0.20.1,<0.21"]
 
-[tool.poetry.scripts]
+[project.urls]
+Repository = "https://github.com/matt-kempster/m2c"
+
+[project.scripts]
 m2c = "m2c.main:main"
 
-[tool.poetry.dependencies]
-python = "^3.8"
-graphviz = "^0.20.1"
+[dependency-groups]
+dev = [
+    "pre-commit>=2.20.0,<3",
+    "mypy>=1.8.0,<2",
+    "coverage>=7.2.7,<8",
+    "black==24.4.2",
+]
 
-[tool.poetry.group.dev.dependencies]
-pre-commit = "^2.20.0"
-mypy = "^1.8.0"
-coverage = "^7.2.7"
-black = "24.4.2"
+[tool.hatch.build.targets.sdist]
+include = [
+    "m2c",
+    "m2c_pycparser",
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "m2c",
+    "m2c_pycparser",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.black]
 force-exclude = "/m2c_pycparser/"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
