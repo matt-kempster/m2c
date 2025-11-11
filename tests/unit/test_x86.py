@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 from m2c.arch_x86 import X86Arch
 from m2c.asm_instruction import (
@@ -18,7 +18,21 @@ from m2c.instruction import Instruction, InstructionMeta, StackLocation
 from m2c.translate import Literal
 
 
+def ensure_eval(fn):
+    def wrapper(self, *args, **kwargs):
+        prev = self.auto_eval
+        self.auto_eval = True
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            self.auto_eval = prev
+
+    return wrapper
+
+
 class TestX86Parsing(unittest.TestCase):
+    auto_eval = False
+
     def setUp(self) -> None:
         self.arch = X86Arch()
         self.asm_state = AsmState(reg_formatter=RegFormatter())
@@ -53,7 +67,59 @@ class TestX86Parsing(unittest.TestCase):
         # Normalize register names to emulate how real input files spell them.
         asm = parse_asm_instruction(line.lower(), self.arch, asm_state)
         instr = self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+        if self.auto_eval:
+            self._evaluate_instruction(instr, asm_state)
         return instr, asm_state
+
+    def _evaluate_instruction(self, instr: Instruction, asm_state: AsmState) -> None:
+        if instr.eval_fn is None:
+            return
+
+        class DummyState:
+            def __init__(self, regs: Dict[Register, Literal]) -> None:
+                self.regs = regs
+
+                class GlobalInfo:
+                    @staticmethod
+                    def address_of_gsym(name: str) -> Literal:
+                        return Literal(0)
+
+                class StackInfo:
+                    global_info = GlobalInfo()
+
+                self.stack_info = StackInfo()
+
+            def set_reg(self, reg: Register, value: Literal) -> None:
+                self.regs[reg] = value
+
+            def make_function_call(self, *_args, **_kwargs) -> None:
+                pass
+
+        class DummyArgs:
+            def __init__(self, reg_operands: List[Register], state: DummyState) -> None:
+                self.stack_info = state.stack_info
+                self.regs = state.regs
+                self._reg_operands = reg_operands
+
+            def reg(self, idx: int) -> Literal:
+                if idx < len(self._reg_operands):
+                    return self.regs.get(self._reg_operands[idx], Literal(0))
+                return Literal(0)
+
+            def sym_imm(self, idx: int) -> Literal:
+                return Literal(0)
+
+            def reg_or_imm(self, idx: int) -> Literal:
+                return Literal(0)
+
+            def __getattr__(self, item: str):
+                raise AttributeError(item)
+
+        reg_inputs = [loc for loc in instr.inputs if isinstance(loc, Register)]
+        regs: Dict[Register, Literal] = {reg: Literal(0) for reg in reg_inputs}
+        state = DummyState(regs)
+        args = DummyArgs(reg_inputs, state)
+        instr.eval_fn(state, args)
 
     def test_mov_stack_load_instruction(self) -> None:
         instr = self.parse_instruction("mov eax, dword ptr [esp + 0x4]")
@@ -69,6 +135,7 @@ class TestX86Parsing(unittest.TestCase):
         self.assertTrue(instr.is_load)
         self.assertIn(Register("esp"), instr.inputs)
 
+    @ensure_eval
     def test_mov_eval_uses_public_interface(self) -> None:
         instr = self.parse_instruction("mov eax, ecx")
         self.assertIsNotNone(instr.eval_fn)
