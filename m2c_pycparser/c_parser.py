@@ -885,8 +885,15 @@ class CParser(PLYParser):
                             | struct_or_union_specifier
                             | type_specifier_no_typeid
                             | atomic_specifier
+                            | typeof_specifier
         """
         p[0] = p[1]
+
+    def p_type_specifier_gnu_typeof(self, p):
+        """ typeof_specifier  : TYPEOF LPAREN expression RPAREN
+                              | TYPEOF LPAREN type_name RPAREN
+        """
+        p[0] = c_ast.Typeof(p[3], coord=self._token_coord(p, 1))
 
     # See section 6.7.2.4 of the C11 standard.
     def p_atomic_specifier(self, p):

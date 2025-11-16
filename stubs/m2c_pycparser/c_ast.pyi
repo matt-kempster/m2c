@@ -62,7 +62,9 @@ Statement = Union_[
     "Pragma",
 ]
 Type = Union_["PtrDecl", "ArrayDecl", "FuncDecl", "TypeDecl"]
-InnerType = Union_["IdentifierType", "Struct", "Union", "Enum"]
+InnerType = Union_[
+    "IdentifierType", "Struct", "Union", "Enum", "Typeof",
+]
 ExternalDeclaration = Union_["FuncDef", "Decl", "Typedef", "Pragma"]
 AnyNode = Union_[
     Statement,
@@ -127,6 +129,7 @@ class NodeVisitor:
     def visit_TypeDecl(self, node: TypeDecl) -> None: ...
     def visit_Typedef(self, node: Typedef) -> None: ...
     def visit_Typename(self, node: Typename) -> None: ...
+    def visit_Typeof(self, node: Typeof) -> None: ...
     def visit_UnaryOp(self, node: UnaryOp) -> None: ...
     def visit_Union(self, node: Union) -> None: ...
     def visit_While(self, node: While) -> None: ...
@@ -512,6 +515,13 @@ class Typename(Node):
         align: List[Alignas],
         type: Type,
         coord: Optional[Coord] = None,
+    ): ...
+
+class Typeof(Node):
+    expr: Union_[Expression, Typename]
+
+    def __init__(
+        self, expr: Union_[Expression, Typename], coord: Optional[Coord] = None
     ): ...
 
 class UnaryOp(Node):

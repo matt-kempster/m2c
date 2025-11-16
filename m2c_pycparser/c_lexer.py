@@ -96,6 +96,7 @@ class CLexer(object):
         'RESTRICT', 'RETURN', 'SHORT', 'SIGNED', 'SIZEOF', 'STATIC', 'STRUCT',
         'SWITCH', 'TYPEDEF', 'UNION', 'UNSIGNED', 'VOID',
         'VOLATILE', 'WHILE', '__INT128',
+        'TYPEOF',
     )
 
     keywords_new = (
@@ -114,6 +115,9 @@ class CLexer(object):
         keyword_map[keyword[:2].upper() + keyword[2:].lower()] = keyword
 
     # GNU extensions
+    keyword_map['typeof'] = 'TYPEOF'
+    keyword_map['__typeof'] = 'TYPEOF'
+    keyword_map['__typeof__'] = 'TYPEOF'
     keyword_map['__alignof'] = '_ALIGNOF'
     keyword_map['__alignof__'] = '_ALIGNOF'
     keyword_map['__const'] = 'CONST'
