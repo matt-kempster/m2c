@@ -127,6 +127,7 @@ class CLexer(object):
     keyword_map['__inline__'] = 'INLINE'
     keyword_map['__volatile'] = 'VOLATILE'
     keyword_map['__volatile__'] = 'VOLATILE'
+    keyword_map['__extension__'] = ''
 
     ##
     ## All the tokens recognized by the lexer
@@ -564,9 +565,12 @@ class CLexer(object):
 
     @TOKEN(identifier)
     def t_ID(self, t):
-        t.type = self.keyword_map.get(t.value, "ID")
-        if t.type == 'ID' and self.type_lookup_func(t.value):
-            t.type = "TYPEID"
+        tp = self.keyword_map.get(t.value, "ID")
+        if not tp:
+            return None
+        if tp == 'ID' and self.type_lookup_func(t.value):
+            tp = 'TYPEID'
+        t.type = tp
         return t
 
     def t_error(self, t):
