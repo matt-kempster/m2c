@@ -124,13 +124,25 @@ def pointer(type: CType) -> CType:
 
 
 def resolve_typedefs(type: CType, typemap: TypeMap) -> CType:
-    while (
-        isinstance(type, TypeDecl)
-        and isinstance(type.type, IdentifierType)
-        and len(type.type.names) == 1
-        and type.type.names[0] in typemap.typedefs
-    ):
-        type = typemap.typedefs[type.type.names[0]]
+    while isinstance(type, TypeDecl):
+        if (
+            isinstance(type.type, IdentifierType)
+            and len(type.type.names) == 1
+            and type.type.names[0] in typemap.typedefs
+        ):
+            type = typemap.typedefs[type.type.names[0]]
+        elif isinstance(type.type, ca.Typeof):
+            typeof = type.type
+            if isinstance(typeof.expr, ca.Typename):
+                type = typeof.expr.type
+            else:
+                expr = typeof.expr
+                if isinstance(expr, ca.UnaryOp) and expr.op == "sizeof":
+                    size_t = ca.IdentifierType(names=["unsigned", "int"])
+                    return TypeDecl(declname=None, quals=[], type=size_t, align=[])
+                raise DecompFailure("typeof() is not supported")
+        else:
+            break
     return type
 
 
@@ -217,6 +229,7 @@ def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
             struct is not None
         ), "Function argument can not be of an incomplete struct"
         return struct.size, struct.align
+    assert not isinstance(inner_type, ca.Typeof), "handled by resolve_typedefs"
     size = primitive_size(inner_type)
     if size == 0:
         raise DecompFailure("Function parameter has void type")
@@ -474,6 +487,7 @@ def parse_struct_member(
         return substr.size, substr.align, substr
     if isinstance(inner_type, ca.Enum):
         parse_enum(inner_type, typemap)
+    assert not isinstance(inner_type, ca.Typeof), "handled by resolve_typedefs"
     # Otherwise it has to be of type Enum or IdentifierType
     size = primitive_size(inner_type)
     if size == 0 and not allow_unsized:

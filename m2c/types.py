@@ -1018,8 +1018,8 @@ class Type:
                     dim = parse_constant_int(real_ctype.dim, typemap)
             except DecompFailure:
                 pass
-            inner_type = Type.ctype(real_ctype.type, typemap, typepool)
-            return Type.array(inner_type, dim)
+            elem_type = Type.ctype(real_ctype.type, typemap, typepool)
+            return Type.array(elem_type, dim)
         if isinstance(real_ctype, ca.PtrDecl):
             return Type.ptr(Type.ctype(real_ctype.type, typemap, typepool))
         if isinstance(real_ctype, ca.FuncDecl):
@@ -1042,16 +1042,17 @@ class Type:
                 fn_sig.params_known = True
             return Type.function(fn_sig)
         if isinstance(real_ctype, ca.TypeDecl):
-            if isinstance(real_ctype.type, (ca.Struct, ca.Union)):
+            inner_type = real_ctype.type
+            if isinstance(inner_type, (ca.Struct, ca.Union)):
                 return Type.struct(
-                    StructDeclaration.from_ctype(real_ctype.type, typemap, typepool)
+                    StructDeclaration.from_ctype(inner_type, typemap, typepool)
                 )
-            if isinstance(real_ctype.type, ca.Enum):
+            if isinstance(inner_type, ca.Enum):
                 enum = None
-                if real_ctype.type.name is not None:
-                    enum = typemap.enums.get(real_ctype.type.name)
+                if inner_type.name is not None:
+                    enum = typemap.enums.get(inner_type.name)
                 if enum is None:
-                    enum = typemap.enums.get(real_ctype.type)
+                    enum = typemap.enums.get(inner_type)
                 return Type(
                     TypeData(
                         kind=TypeData.K_INT,
@@ -1060,15 +1061,16 @@ class Type:
                         enum=enum,
                     )
                 )
+            assert not isinstance(inner_type, ca.Typeof), "handled by resolve_typedefs"
 
-            names = real_ctype.type.names
+            names = inner_type.names
             if "double" in names:
                 return Type.f64()
             if "float" in names:
                 return Type.f32()
             if "void" in names:
                 return Type.void()
-            size_bits = 8 * primitive_size(real_ctype.type)
+            size_bits = 8 * primitive_size(inner_type)
             assert size_bits > 0
             sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
             return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
