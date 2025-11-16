@@ -25,6 +25,7 @@ from .asm_instruction import (
     AsmState,
     BinOp,
     JumpTarget,
+    Macro,
     Register,
     RegisterList,
     Writeback,
@@ -90,6 +91,7 @@ from .evaluate import (
     handle_arm_mov,
     handle_bitinv,
     handle_convert,
+    handle_la,
     handle_load,
     handle_or,
     handle_shift_right,
@@ -107,6 +109,7 @@ from .types import FunctionSignature, Type
 
 SUFFIXABLE_INSTRUCTIONS: Set[str] = {
     "adc",
+    "adr",
     "add",
     "and",
     "asr",
@@ -132,6 +135,7 @@ SUFFIXABLE_INSTRUCTIONS: Set[str] = {
     "lsr",
     "mla",
     "mls",
+    "movimm.fictive",
     "mov",
     "mul",
     "mvn",
@@ -1085,6 +1089,16 @@ class ArmArch(Arch):
             ):
                 return AsmInstruction("pop" + suffix, [RegisterList([args[0]])])
             if (
+                base == "ldr"
+                and isinstance(args[1], Macro)
+                and args[1].macro_name == "eqsign"
+            ):
+                if isinstance(args[1].argument, AsmLiteral):
+                    mn = "movimm.fictive"
+                else:
+                    mn = "adr"
+                return AsmInstruction(mn + suffix, [args[0], args[1].argument])
+            if (
                 base == "str"
                 and isinstance(args[0], Register)
                 and isinstance(args[1], AsmAddressMode)
@@ -1715,6 +1729,9 @@ class ArmArch(Arch):
         "rrx": lambda a: fn_op(
             "ARM_RRX", [a.reg(1), a.regs[Register("c")]], Type.intish()
         ),
+        # Immediate movs
+        "adr": lambda a: handle_la(a),
+        "movimm.fictive": lambda a: a.full_imm(1),
         # Loading instructions
         "ldr": lambda a: handle_load(a, type=Type.reg32(likely_float=False)),
         "ldrb": lambda a: handle_load(a, type=Type.u8()),

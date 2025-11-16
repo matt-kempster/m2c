@@ -83,7 +83,10 @@ class Macro:
     argument: Argument
 
     def __str__(self) -> str:
-        return f"%{self.macro_name}({self.argument})"
+        if self.macro_name == "eqsign":
+            return f"={self.argument}"
+        else:
+            return f"%{self.macro_name}({self.argument})"
 
 
 @dataclass(frozen=True)
@@ -574,6 +577,19 @@ def parse_arg_elems(
             assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
             assert value
             value = Macro(reloc_name, value)
+        elif tok == "=":
+            # ARM reference to symbol
+            assert top_level
+            assert not value
+            expect("=")
+            ref = parse_arg_elems(
+                arg_elems,
+                arch,
+                asm_state,
+                top_level=False,
+                do_constant_fold=True,
+            )
+            value = Macro("eqsign", ref)
         else:
             assert False, f"Unknown token {tok} in {arg_elems}"
 
