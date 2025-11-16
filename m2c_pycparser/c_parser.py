@@ -1712,7 +1712,7 @@ class CParser(PLYParser):
             p[0] = c_ast.TernaryOp(p[1], p[3], p[5], p[1].coord)
 
     def p_binary_expression(self, p):
-        """ binary_expression   : cast_expression
+        """ binary_expression   : unary_expression
                                 | binary_expression TIMES binary_expression
                                 | binary_expression DIVIDE binary_expression
                                 | binary_expression MOD binary_expression
@@ -1737,12 +1737,8 @@ class CParser(PLYParser):
         else:
             p[0] = c_ast.BinaryOp(p[2], p[1], p[3], p[1].coord)
 
-    def p_cast_expression_1(self, p):
-        """ cast_expression : unary_expression """
-        p[0] = p[1]
-
     def p_cast_expression_2(self, p):
-        """ cast_expression : LPAREN type_name RPAREN cast_expression """
+        """ unary_expression : LPAREN type_name RPAREN unary_expression """
         p[0] = c_ast.Cast(p[2], p[4], self._token_coord(p, 1))
 
     def p_unary_expression_1(self, p):
@@ -1752,7 +1748,7 @@ class CParser(PLYParser):
     def p_unary_expression_2(self, p):
         """ unary_expression    : PLUSPLUS unary_expression
                                 | MINUSMINUS unary_expression
-                                | unary_operator cast_expression
+                                | unary_operator unary_expression
         """
         p[0] = c_ast.UnaryOp(p[1], p[2], p[2].coord)
 
