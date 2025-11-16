@@ -861,7 +861,7 @@ class CParser(PLYParser):
         """ function_specifier  : INLINE
                                 | _NORETURN
         """
-        p[0] = p[1]
+        p[0] = p[1].replace("__", "")
 
     def p_type_specifier_no_typeid(self, p):
         """ type_specifier_no_typeid  : VOID
@@ -902,7 +902,7 @@ class CParser(PLYParser):
                             | VOLATILE
                             | _ATOMIC
         """
-        p[0] = p[1]
+        p[0] = p[1].replace("__", "")
 
     def p_init_declarator_list(self, p):
         """ init_declarator_list    : init_declarator
@@ -1758,7 +1758,7 @@ class CParser(PLYParser):
                                 | _ALIGNOF LPAREN type_name RPAREN
         """
         p[0] = c_ast.UnaryOp(
-            p[1],
+            p[1].replace("__alignof", "_Alignof").replace("__", ""),
             p[2] if len(p) == 3 else p[3],
             self._token_coord(p, 1))
 

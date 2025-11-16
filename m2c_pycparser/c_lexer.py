@@ -113,6 +113,17 @@ class CLexer(object):
     for keyword in keywords_new:
         keyword_map[keyword[:2].upper() + keyword[2:].lower()] = keyword
 
+    # GNU extensions
+    keyword_map['__alignof'] = '_ALIGNOF'
+    keyword_map['__alignof__'] = '_ALIGNOF'
+    keyword_map['__const'] = 'CONST'
+    keyword_map['__restrict'] = 'RESTRICT'
+    keyword_map['__restrict__'] = 'RESTRICT'
+    keyword_map['__inline'] = 'INLINE'
+    keyword_map['__inline__'] = 'INLINE'
+    keyword_map['__volatile'] = 'VOLATILE'
+    keyword_map['__volatile__'] = 'VOLATILE'
+
     ##
     ## All the tokens recognized by the lexer
     ##
