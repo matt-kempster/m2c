@@ -33,6 +33,7 @@ Expression = Union_[
     "Cast",
     "CompoundLiteral",
     "Constant",
+    "Compound",
     "ExprList",
     "FuncCall",
     "ID",
