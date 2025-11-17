@@ -100,7 +100,8 @@ class CParser(PLYParser):
             'parameter_type_list',
             'block_item_list',
             'type_qualifier_list',
-            'struct_declarator_list'
+            'struct_declarator_list',
+            'asm_label',
         ]
 
         for rule in rules_with_opt:
@@ -432,6 +433,7 @@ class CParser(PLYParser):
                     type=decl['decl'],
                     init=decl.get('init'),
                     bitsize=decl.get('bitsize'),
+                    asmlabel=decl.get('asmlabel'),
                     coord=decl['decl'].coord)
 
             if isinstance(declaration.type, (
@@ -729,6 +731,7 @@ class CParser(PLYParser):
                     type=ty[0],
                     init=None,
                     bitsize=None,
+                    asmlabel=None,
                     coord=ty[0].coord)]
 
             # However, this case can also occur on redeclared identifiers in
@@ -921,11 +924,11 @@ class CParser(PLYParser):
     # If there's no initializer, uses None
     #
     def p_init_declarator(self, p):
-        """ init_declarator : declarator
-                            | declarator EQUALS initializer
-                            | declarator COLON constant_expression
+        """ init_declarator : declarator asm_label_opt
+                            | declarator asm_label_opt EQUALS initializer
+                            | declarator asm_label_opt COLON constant_expression
         """
-        p[0] = dict(decl=p[1], init=(p[3] if len(p) > 2 and p[2] == '=' else None))
+        p[0] = dict(decl=p[1], asmlabel=p[2], init=(p[4] if len(p) > 3 and p[3] == '=' else None))
 
     def p_id_init_declarator_list(self, p):
         """ id_init_declarator_list    : id_init_declarator
@@ -934,10 +937,10 @@ class CParser(PLYParser):
         p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
 
     def p_id_init_declarator(self, p):
-        """ id_init_declarator : id_declarator
-                               | id_declarator EQUALS initializer
+        """ id_init_declarator : id_declarator asm_label_opt
+                               | id_declarator asm_label_opt EQUALS initializer
         """
-        p[0] = dict(decl=p[1], init=(p[3] if len(p) > 2 else None))
+        p[0] = dict(decl=p[1], asmlabel=p[2], init=(p[4] if len(p) > 3 else None))
 
     # Require at least one type specifier in a specifier-qualifier-list
     #
@@ -1959,6 +1962,11 @@ class CParser(PLYParser):
         """
         p[0] = p[1]
         p.set_lineno(0, p.lineno(1))
+
+    def p_asm_label(self, p):
+        """ asm_label : ASM LPAREN unified_string_literal RPAREN
+        """
+        p[0] = p[3]
 
     def p_empty(self, p):
         'empty : '

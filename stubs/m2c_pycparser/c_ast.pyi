@@ -137,7 +137,6 @@ class NodeVisitor:
 
 class Alignas(Node):
     alignment: Union_[Expression, Typename]
-    coord: Optional[Coord]
 
     def __init__(
         self,
@@ -238,6 +237,7 @@ class Decl(Node):
     type: Union_[Type, "Struct", "Enum", "Union"]
     init: Optional[Union_[Expression, "InitList"]]
     bitsize: Optional[Expression]
+    asmlabel: Optional[Constant]
 
     def __init__(
         self,
@@ -249,6 +249,7 @@ class Decl(Node):
         type: Union_[Type, "Struct", "Enum", "Union"],
         init: Optional[Union_[Expression, "InitList"]],
         bitsize: Optional[Expression],
+        asmlabel: Optional[Constant],
         coord: Optional[Coord] = None,
     ): ...
 

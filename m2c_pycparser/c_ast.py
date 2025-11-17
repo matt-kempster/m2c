@@ -401,8 +401,8 @@ class Continue(Node):
     attr_names = ()
 
 class Decl(Node):
-    __slots__ = ('name', 'quals', 'align', 'storage', 'funcspec', 'type', 'init', 'bitsize', 'coord', '__weakref__')
-    def __init__(self, name, quals, align, storage, funcspec, type, init, bitsize, coord=None):
+    __slots__ = ('name', 'quals', 'align', 'storage', 'funcspec', 'type', 'init', 'bitsize', 'asmlabel', 'coord', '__weakref__')
+    def __init__(self, name, quals, align, storage, funcspec, type, init, bitsize, asmlabel, coord=None):
         self.name = name
         self.quals = quals
         self.align = align
@@ -411,6 +411,7 @@ class Decl(Node):
         self.type = type
         self.init = init
         self.bitsize = bitsize
+        self.asmlabel = asmlabel
         self.coord = coord
 
     def children(self):
@@ -418,6 +419,7 @@ class Decl(Node):
         if self.type is not None: nodelist.append(("type", self.type))
         if self.init is not None: nodelist.append(("init", self.init))
         if self.bitsize is not None: nodelist.append(("bitsize", self.bitsize))
+        if self.asmlabel is not None: nodelist.append(("asmlabel", self.asmlabel))
         return tuple(nodelist)
 
     def __iter__(self):
@@ -427,6 +429,8 @@ class Decl(Node):
             yield self.init
         if self.bitsize is not None:
             yield self.bitsize
+        if self.asmlabel is not None:
+            yield self.asmlabel
 
     attr_names = ('name', 'quals', 'align', 'storage', 'funcspec', )
 

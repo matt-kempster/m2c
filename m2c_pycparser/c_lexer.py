@@ -97,6 +97,7 @@ class CLexer(object):
         'SWITCH', 'TYPEDEF', 'UNION', 'UNSIGNED', 'VOID',
         'VOLATILE', 'WHILE', '__INT128',
         'TYPEOF',
+        'ASM',
     )
 
     keywords_new = (
@@ -120,6 +121,9 @@ class CLexer(object):
     keyword_map['__typeof__'] = 'TYPEOF'
     keyword_map['__alignof'] = '_ALIGNOF'
     keyword_map['__alignof__'] = '_ALIGNOF'
+    keyword_map['asm'] = 'ASM'
+    keyword_map['__asm'] = 'ASM'
+    keyword_map['__asm__'] = 'ASM'
     keyword_map['__const'] = 'CONST'
     keyword_map['__restrict'] = 'RESTRICT'
     keyword_map['__restrict__'] = 'RESTRICT'
