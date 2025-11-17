@@ -43,6 +43,7 @@ Expression = Union_[
 ]
 Statement = Union_[
     Expression,
+    "Asm",
     "Break",
     "Case",
     "Compound",
@@ -65,7 +66,7 @@ Type = Union_["PtrDecl", "ArrayDecl", "FuncDecl", "TypeDecl"]
 InnerType = Union_[
     "IdentifierType", "Struct", "Union", "Enum", "Typeof",
 ]
-ExternalDeclaration = Union_["FuncDef", "Decl", "Typedef", "Pragma"]
+ExternalDeclaration = Union_["Asm", "FuncDef", "Decl", "Typedef", "Pragma"]
 AnyNode = Union_[
     Statement,
     Type,
@@ -88,6 +89,8 @@ class NodeVisitor:
     def visit_Alignas(self, node: Alignas) -> None: ...
     def visit_ArrayDecl(self, node: ArrayDecl) -> None: ...
     def visit_ArrayRef(self, node: ArrayRef) -> None: ...
+    def visit_Asm(self, node: Asm) -> None: ...
+    def visit_AsmOperand(self, node: AsmOperand) -> None: ...
     def visit_Assignment(self, node: Assignment) -> None: ...
     def visit_BinaryOp(self, node: BinaryOp) -> None: ...
     def visit_Break(self, node: Break) -> None: ...
@@ -162,6 +165,38 @@ class ArrayRef(Node):
     subscript: Expression
 
     def __init__(self, name: Node, subscript: Node, coord: Optional[Coord] = None): ...
+
+class Asm(Node):
+    quals: List[str]
+    asm: Constant
+    output_operands: List[AsmOperand]
+    input_operands: List[AsmOperand]
+    clobbers: List[Constant]
+    gotos: List[str]
+
+    def __init__(
+        self,
+        quals: List[str],
+        asm: Constant,
+        output_operands: List[AsmOperand],
+        input_operands: List[AsmOperand],
+        clobbers: List[Constant],
+        gotos: List[str],
+        coord: Optional[Coord] = None,
+    ): ...
+
+class AsmOperand(Node):
+    symbolic_name: Optional[str]
+    constraint: Constant
+    expr: Expression
+
+    def __init__(
+        self,
+        symbolic_name: Optional[str],
+        constraint: Constant,
+        expr: Expression,
+        coord: Optional[Coord] = None,
+    ): ...
 
 class Assignment(Node):
     op: str

@@ -212,6 +212,62 @@ class ArrayRef(Node):
 
     attr_names = ()
 
+class Asm(Node):
+    __slots__ = ('quals', 'asm', 'output_operands', 'input_operands', 'clobbers', 'gotos', 'coord', '__weakref__')
+    def __init__(self, quals, asm, output_operands, input_operands, clobbers, gotos, coord=None):
+        self.quals = quals
+        self.asm = asm
+        self.output_operands = output_operands
+        self.input_operands = input_operands
+        self.clobbers = clobbers
+        self.gotos = gotos
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        if self.asm is not None: nodelist.append(("asm", self.asm))
+        for i, child in enumerate(self.output_operands or []):
+            nodelist.append(("output_operands[%d]" % i, child))
+        for i, child in enumerate(self.input_operands or []):
+            nodelist.append(("input_operands[%d]" % i, child))
+        for i, child in enumerate(self.clobbers or []):
+            nodelist.append(("clobbers[%d]" % i, child))
+        return tuple(nodelist)
+
+    def __iter__(self):
+        if self.asm is not None:
+            yield self.asm
+        for child in (self.output_operands or []):
+            yield child
+        for child in (self.input_operands or []):
+            yield child
+        for child in (self.clobbers or []):
+            yield child
+
+    attr_names = ('quals', 'gotos', )
+
+class AsmOperand(Node):
+    __slots__ = ('symbolic_name', 'constraint', 'expr', 'coord', '__weakref__')
+    def __init__(self, symbolic_name, constraint, expr, coord=None):
+        self.symbolic_name = symbolic_name
+        self.constraint = constraint
+        self.expr = expr
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        if self.constraint is not None: nodelist.append(("constraint", self.constraint))
+        if self.expr is not None: nodelist.append(("expr", self.expr))
+        return tuple(nodelist)
+
+    def __iter__(self):
+        if self.constraint is not None:
+            yield self.constraint
+        if self.expr is not None:
+            yield self.expr
+
+    attr_names = ('symbolic_name', )
+
 class Assignment(Node):
     __slots__ = ('op', 'lvalue', 'rvalue', 'coord', '__weakref__')
     def __init__(self, op, lvalue, rvalue, coord=None):

@@ -102,6 +102,11 @@ class CParser(PLYParser):
             'type_qualifier_list',
             'struct_declarator_list',
             'asm_label',
+            'asm_qualifiers',
+            'asm_operands',
+            'asm_symbolic_name',
+            'asm_string_list',
+            'asm_goto_list',
         ]
 
         for rule in rules_with_opt:
@@ -558,6 +563,16 @@ class CParser(PLYParser):
         """
         p[0] = p[1]
 
+    def p_external_declaration_6(self, p):
+        """ external_declaration    : global_asm
+        """
+        p[0] = [p[1]]
+
+    def p_global_asm(self, p):
+        """ global_asm  : ASM LPAREN unified_string_literal RPAREN SEMI
+        """
+        p[0] = c_ast.Asm([], p[3], [], [], [], [], self._token_coord(p, 1))
+
     def p_static_assert_declaration(self, p):
         """ static_assert           : _STATIC_ASSERT LPAREN constant_expression COMMA unified_string_literal RPAREN
                                     | _STATIC_ASSERT LPAREN constant_expression RPAREN
@@ -640,6 +655,7 @@ class CParser(PLYParser):
                         | jump_statement
                         | pppragma_directive
                         | static_assert
+                        | asm_statement
         """
         p[0] = p[1]
 
@@ -1962,6 +1978,69 @@ class CParser(PLYParser):
         """
         p[0] = p[1]
         p.set_lineno(0, p.lineno(1))
+
+    def p_asm_1(self, p):
+        """ asm_statement   : ASM asm_qualifiers_opt LPAREN unified_string_literal RPAREN SEMI
+        """
+        p[0] = c_ast.Asm((p[2] or []), p[4], [], [], [], [], coord=self._token_coord(p, 1))
+
+    def p_asm_2(self, p):
+        """ asm_statement   : ASM asm_qualifiers_opt LPAREN unified_string_literal COLON asm_operands_opt RPAREN SEMI
+        """
+        p[0] = c_ast.Asm((p[2] or []), p[4], p[6] or [], [], [], [], coord=self._token_coord(p, 1))
+
+    def p_asm_3(self, p):
+        """ asm_statement   : ASM asm_qualifiers_opt LPAREN unified_string_literal COLON asm_operands_opt COLON asm_operands_opt RPAREN SEMI
+        """
+        p[0] = c_ast.Asm((p[2] or []), p[4], p[6] or [], p[8] or [], [], [], coord=self._token_coord(p, 1))
+
+    def p_asm_4(self, p):
+        """ asm_statement   : ASM asm_qualifiers_opt LPAREN unified_string_literal COLON asm_operands_opt COLON asm_operands_opt COLON asm_string_list_opt RPAREN SEMI
+        """
+        p[0] = c_ast.Asm((p[2] or []), p[4], p[6] or [], p[8] or [], p[10] or [], [], coord=self._token_coord(p, 1))
+
+    def p_asm_5(self, p):
+        """ asm_statement   : ASM asm_qualifiers_opt LPAREN unified_string_literal COLON asm_operands_opt COLON asm_operands_opt COLON asm_string_list_opt COLON asm_goto_list_opt RPAREN SEMI
+        """
+        p[0] = c_ast.Asm((p[2] or []), p[4], p[6] or [], p[8] or [], p[10] or [], p[12] or [], coord=self._token_coord(p, 1))
+
+    def p_asm_operands(self, p):
+        """ asm_operands    : asm_operands COMMA asm_operand
+                            | asm_operand
+        """
+        p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
+
+    def p_asm_operand(self, p):
+        """ asm_operand : asm_symbolic_name_opt unified_string_literal LPAREN unary_expression RPAREN
+        """
+        p[0] = c_ast.AsmOperand(p[1], p[2], p[4], coord=self._token_coord(p, 3))
+
+    def p_asm_string_list(self, p):
+        """ asm_string_list : asm_string_list COMMA unified_string_literal
+                            | unified_string_literal
+        """
+        p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
+
+    def p_asm_goto_list(self, p):
+        """ asm_goto_list   : asm_goto_list COMMA ID
+                            | asm_goto_list COMMA TYPEID
+                            | ID
+                            | TYPEID
+        """
+        p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
+
+    def p_asm_symbolic_name(self, p):
+        """ asm_symbolic_name   : LBRACKET ID RBRACKET
+                                | LBRACKET TYPEID RBRACKET
+        """
+        p[0] = p[2]
+
+    def p_asm_qualifiers(self, p):
+        """ asm_qualifiers  : asm_qualifiers_opt VOLATILE
+                            | asm_qualifiers_opt INLINE
+                            | asm_qualifiers_opt GOTO
+        """
+        p[0] = (p[1] or []) + [p[2]]
 
     def p_asm_label(self, p):
         """ asm_label : ASM LPAREN unified_string_literal RPAREN
