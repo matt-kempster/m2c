@@ -392,6 +392,7 @@ class TestCtoC(unittest.TestCase):
             generator._generate_struct_union_enum,
             n=c_ast.Struct(
                 name='TestStruct',
+                gcc_attributes=[],
                 decls=[],
             ),
             name='',

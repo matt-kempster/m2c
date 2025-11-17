@@ -576,20 +576,25 @@ class EmptyStatement(Node):
     attr_names = ()
 
 class Enum(Node):
-    __slots__ = ('name', 'values', 'coord', '__weakref__')
-    def __init__(self, name, values, coord=None):
+    __slots__ = ('name', 'gcc_attributes', 'values', 'coord', '__weakref__')
+    def __init__(self, name, gcc_attributes, values, coord=None):
         self.name = name
+        self.gcc_attributes = gcc_attributes
         self.values = values
         self.coord = coord
 
     def children(self):
         nodelist = []
         if self.values is not None: nodelist.append(("values", self.values))
+        for i, child in enumerate(self.gcc_attributes or []):
+            nodelist.append(("gcc_attributes[%d]" % i, child))
         return tuple(nodelist)
 
     def __iter__(self):
         if self.values is not None:
             yield self.values
+        for child in (self.gcc_attributes or []):
+            yield child
 
     attr_names = ('name', )
 
@@ -761,6 +766,25 @@ class FuncDef(Node):
             yield child
 
     attr_names = ()
+
+class GccAttribute(Node):
+    __slots__ = ('name', 'args', 'coord', '__weakref__')
+    def __init__(self, name, args, coord=None):
+        self.name = name
+        self.args = args
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        for i, child in enumerate(self.args or []):
+            nodelist.append(("args[%d]" % i, child))
+        return tuple(nodelist)
+
+    def __iter__(self):
+        for child in (self.args or []):
+            yield child
+
+    attr_names = ('name', )
 
 class Goto(Node):
     __slots__ = ('name', 'coord', '__weakref__')
@@ -989,19 +1013,24 @@ class StaticAssert(Node):
     attr_names = ()
 
 class Struct(Node):
-    __slots__ = ('name', 'decls', 'coord', '__weakref__')
-    def __init__(self, name, decls, coord=None):
+    __slots__ = ('name', 'gcc_attributes', 'decls', 'coord', '__weakref__')
+    def __init__(self, name, gcc_attributes, decls, coord=None):
         self.name = name
+        self.gcc_attributes = gcc_attributes
         self.decls = decls
         self.coord = coord
 
     def children(self):
         nodelist = []
+        for i, child in enumerate(self.gcc_attributes or []):
+            nodelist.append(("gcc_attributes[%d]" % i, child))
         for i, child in enumerate(self.decls or []):
             nodelist.append(("decls[%d]" % i, child))
         return tuple(nodelist)
 
     def __iter__(self):
+        for child in (self.gcc_attributes or []):
+            yield child
         for child in (self.decls or []):
             yield child
 
@@ -1171,19 +1200,24 @@ class UnaryOp(Node):
     attr_names = ('op', )
 
 class Union(Node):
-    __slots__ = ('name', 'decls', 'coord', '__weakref__')
-    def __init__(self, name, decls, coord=None):
+    __slots__ = ('name', 'gcc_attributes', 'decls', 'coord', '__weakref__')
+    def __init__(self, name, gcc_attributes, decls, coord=None):
         self.name = name
+        self.gcc_attributes = gcc_attributes
         self.decls = decls
         self.coord = coord
 
     def children(self):
         nodelist = []
+        for i, child in enumerate(self.gcc_attributes or []):
+            nodelist.append(("gcc_attributes[%d]" % i, child))
         for i, child in enumerate(self.decls or []):
             nodelist.append(("decls[%d]" % i, child))
         return tuple(nodelist)
 
     def __iter__(self):
+        for child in (self.gcc_attributes or []):
+            yield child
         for child in (self.decls or []):
             yield child
 

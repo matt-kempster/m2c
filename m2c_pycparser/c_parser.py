@@ -107,6 +107,7 @@ class CParser(PLYParser):
             'asm_symbolic_name',
             'asm_string_list',
             'asm_goto_list',
+            'gcc_attributes',
         ]
 
         for rule in rules_with_opt:
@@ -1001,45 +1002,48 @@ class CParser(PLYParser):
         # None means no list of members
         p[0] = klass(
             name=p[2],
+            gcc_attributes=[],
             decls=None,
             coord=self._token_coord(p, 2))
 
     def p_struct_or_union_specifier_2(self, p):
-        """ struct_or_union_specifier : struct_or_union brace_open struct_declaration_list brace_close
-                                      | struct_or_union brace_open brace_close
-        """
-        klass = self._select_struct_union_class(p[1])
-        if len(p) == 4:
-            # Empty sequence means an empty list of members
-            p[0] = klass(
-                name=None,
-                decls=[],
-                coord=self._token_coord(p, 2))
-        else:
-            p[0] = klass(
-                name=None,
-                decls=p[3],
-                coord=self._token_coord(p, 2))
-
-
-    def p_struct_or_union_specifier_3(self, p):
-        """ struct_or_union_specifier   : struct_or_union ID brace_open struct_declaration_list brace_close
-                                        | struct_or_union ID brace_open brace_close
-                                        | struct_or_union TYPEID brace_open struct_declaration_list brace_close
-                                        | struct_or_union TYPEID brace_open brace_close
+        """ struct_or_union_specifier : struct_or_union gcc_attributes_opt brace_open struct_declaration_list brace_close
+                                      | struct_or_union gcc_attributes_opt brace_open brace_close
         """
         klass = self._select_struct_union_class(p[1])
         if len(p) == 5:
             # Empty sequence means an empty list of members
             p[0] = klass(
-                name=p[2],
+                name=None,
+                gcc_attributes=p[2] or [],
                 decls=[],
-                coord=self._token_coord(p, 2))
+                coord=self._token_coord(p, 3))
         else:
             p[0] = klass(
-                name=p[2],
+                name=None,
+                gcc_attributes=p[2] or [],
                 decls=p[4],
-                coord=self._token_coord(p, 2))
+                coord=self._token_coord(p, 3))
+
+
+    def p_struct_or_union_specifier_3(self, p):
+        """ struct_or_union_specifier   : struct_or_union attrs_id_typeid brace_open struct_declaration_list brace_close
+                                        | struct_or_union attrs_id_typeid brace_open brace_close
+        """
+        klass = self._select_struct_union_class(p[1])
+        if len(p) == 5:
+            # Empty sequence means an empty list of members
+            p[0] = klass(
+                name=p[2][0],
+                gcc_attributes=p[2][1],
+                decls=[],
+                coord=p[2][2]
+        else:
+            p[0] = klass(
+                name=p[2][0],
+                gcc_attributes=p[2][1],
+                decls=p[4],
+                coord=p[2][2]
 
     def p_struct_or_union(self, p):
         """ struct_or_union : STRUCT
@@ -1133,18 +1137,17 @@ class CParser(PLYParser):
         """ enum_specifier  : ENUM ID
                             | ENUM TYPEID
         """
-        p[0] = c_ast.Enum(p[2], None, self._token_coord(p, 1))
+        p[0] = c_ast.Enum(p[2], [], None, self._token_coord(p, 1))
 
     def p_enum_specifier_2(self, p):
-        """ enum_specifier  : ENUM brace_open enumerator_list brace_close
+        """ enum_specifier  : ENUM gcc_attributes_opt brace_open enumerator_list brace_close
         """
-        p[0] = c_ast.Enum(None, p[3], self._token_coord(p, 1))
+        p[0] = c_ast.Enum(None, p[2] or [], p[4], self._token_coord(p, 1))
 
     def p_enum_specifier_3(self, p):
-        """ enum_specifier  : ENUM ID brace_open enumerator_list brace_close
-                            | ENUM TYPEID brace_open enumerator_list brace_close
+        """ enum_specifier  : ENUM attrs_id_typeid brace_open enumerator_list brace_close
         """
-        p[0] = c_ast.Enum(p[2], p[4], self._token_coord(p, 1))
+        p[0] = c_ast.Enum(p[2][0], p[2][1], p[4], self._token_coord(p, 1))
 
     def p_enumerator_list(self, p):
         """ enumerator_list : enumerator
@@ -1994,6 +1997,17 @@ class CParser(PLYParser):
             p[1].value = p[1].value.rstrip()[:-1] + p[2][2:]
             p[0] = p[1]
 
+    def p_attrs_id_typeid(self, p):
+        """ attrs_id_typeid : ID
+                            | TYPEID
+                            | gcc_attributes ID
+                            | gcc_attributes TYPEID
+        """
+        if len(p) == 3:
+            p[0] = (p[2], p[1], self._token_coord(p, 2))
+        else:
+            p[0] = (p[1], [], self._token_coord(p, 1))
+
     def p_brace_open(self, p):
         """ brace_open  :   LBRACE
         """
@@ -2073,6 +2087,42 @@ class CParser(PLYParser):
         """ asm_label : ASM LPAREN unified_string_literal RPAREN
         """
         p[0] = p[3]
+
+    def p_gcc_attributes(self, p):
+        """ gcc_attributes  : gcc_attribute
+                            | gcc_attributes gcc_attribute
+        """
+        p[0] = p[1] + p[2] if len(p) == 3 else p[1]
+
+    def p_gcc_attribute(self, p):
+        """ gcc_attribute   : __ATTRIBUTE__ LPAREN LPAREN gcc_attribute_list RPAREN RPAREN
+        """
+        p[0] = p[4] or []
+
+    def p_gcc_attribute_list(self, p):
+        """ gcc_attribute_list  : gcc_attribute_item
+                                | gcc_attribute_list COMMA gcc_attribute_item
+        """
+        p[0] = p[1] + p[3] if len(p) == 4 else p[1]
+
+    def p_gcc_attribute_item(self, p):
+        """ gcc_attribute_item  : empty
+                                | CONST
+                                | ID
+                                | TYPEID
+                                | ID LPAREN argument_expression_list RPAREN
+                                | TYPEID LPAREN argument_expression_list RPAREN
+        """
+        if not p[1]:
+            p[0] = []
+        else:
+            name = p[1]
+            if len(name) > 4 and name.startswith("__") and name.endswith("__"):
+                name = name[2:-2]
+            args = None
+            if len(p) > 2:
+                args = p[3].exprs
+            p[0] = [c_ast.GccAttribute(name, args, coord=self._token_coord(p, 1))]
 
     def p_empty(self, p):
         'empty : '
