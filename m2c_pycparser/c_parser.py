@@ -1596,7 +1596,9 @@ class CParser(PLYParser):
             coord=self._token_coord(p, 1))
 
     def p_labeled_statement_1(self, p):
-        """ labeled_statement : ID COLON pragmacomp_or_statement """
+        """ labeled_statement   : ID COLON pragmacomp_or_statement
+                                | TYPEID COLON pragmacomp_or_statement
+        """
         p[0] = c_ast.Label(p[1], p[3], self._token_coord(p, 1))
 
     def p_labeled_statement_2(self, p):
@@ -1608,7 +1610,9 @@ class CParser(PLYParser):
         p[0] = c_ast.Default([p[3]], self._token_coord(p, 1))
 
     def p_labeled_statement_4(self, p):
-        """ labeled_statement : ID COLON """
+        """ labeled_statement   : ID COLON
+                                | TYPEID COLON
+        """
         p[0] = c_ast.Label(p[1], c_ast.EmptyStatement(self._token_coord(p, 1)), self._token_coord(p, 1))
 
     def p_labeled_statement_5(self, p):
@@ -1650,7 +1654,9 @@ class CParser(PLYParser):
                          p[4], p[6], p[8], self._token_coord(p, 1))
 
     def p_jump_statement_1(self, p):
-        """ jump_statement  : GOTO ID SEMI """
+        """ jump_statement  : GOTO ID SEMI
+                            | GOTO TYPEID SEMI
+        """
         p[0] = c_ast.Goto(p[2], self._token_coord(p, 1))
 
     def p_jump_statement_2(self, p):
