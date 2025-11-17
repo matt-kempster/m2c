@@ -673,8 +673,10 @@ class Type:
             align=[],
             storage=[],
             funcspec=[],
+            gcc_attributes=[],
             init=None,
             bitsize=None,
+            asmlabel=None,
         )
         set_decl_name(decl)
         ret = to_c(decl)
@@ -712,7 +714,7 @@ class Type:
         if data.enum is not None and data.enum.tag is not None:
             assert data.kind == TypeData.K_INT
             return ca.TypeDecl(
-                type=ca.Enum(name=data.enum.tag, values=None),
+                type=ca.Enum(name=data.enum.tag, gcc_attributes=[], values=None),
                 declname=None,
                 quals=[],
                 align=[],
@@ -761,8 +763,10 @@ class Type:
                     align=[],
                     storage=[],
                     funcspec=[],
+                    gcc_attributes=[],
                     init=None,
                     bitsize=None,
+                    asmlabel=None,
                 )
                 set_decl_name(decl)
                 params.append(decl)
@@ -796,9 +800,9 @@ class Type:
             # If there's no typedef or tag name, then label it as `_anonymous`
             name = data.struct.tag_name or "_anonymous"
             type: Union[ca.Union, ca.Struct] = (
-                ca.Union(name=name, decls=None)
+                ca.Union(name=name, gcc_attributes=[], decls=None)
                 if data.struct.is_union
-                else ca.Struct(name=name, decls=None)
+                else ca.Struct(name=name, gcc_attributes=[], decls=None)
             )
             return ca.TypeDecl(
                 declname=name,

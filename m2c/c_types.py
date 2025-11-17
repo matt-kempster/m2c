@@ -164,7 +164,11 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
         param.name = None
         set_decl_name(param)
         return ca.Typename(
-            name=None, quals=param.quals, type=type_of_var_decl(param), align=[]
+            name=None,
+            quals=param.quals,
+            type=type_of_var_decl(param),
+            align=[],
+            gcc_attributes=[],
         )
 
     new_params: List[Union[ca.Decl, ca.ID, ca.Typename, ca.EllipsisParam]] = [
@@ -848,7 +852,7 @@ def type_to_string(type: CType, name: str = "") -> str:
             return f"{su} {type.type.name}"
         else:
             return f"anon {su}"
-    decl = ca.Decl(name, [], [], [], [], copy.deepcopy(type), None, None)
+    decl = ca.Decl(name, [], [], [], [], [], copy.deepcopy(type), None, None, None)
     set_decl_name(decl)
     return to_c(decl)
 
