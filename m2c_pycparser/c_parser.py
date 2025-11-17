@@ -1459,6 +1459,11 @@ class CParser(PLYParser):
         """
         p[0] = p[2]
 
+    def p_range_designator(self, p):
+        """ designator  : LBRACKET constant_expression ELLIPSIS constant_expression RBRACKET
+        """
+        p[0] = c_ast.Range(p[2], p[4], coord=self._token_coord(p, 1))
+
     def p_type_name(self, p):
         """ type_name   : specifier_qualifier_list abstract_declarator_opt
         """
@@ -1605,6 +1610,14 @@ class CParser(PLYParser):
         """ labeled_statement : CASE constant_expression COLON pragmacomp_or_statement """
         p[0] = c_ast.Case(p[2], [p[4]], self._token_coord(p, 1))
 
+    def p_labeled_statement_range(self, p):
+        """ labeled_statement : CASE constant_expression ELLIPSIS constant_expression COLON pragmacomp_or_statement
+        """
+        p[0] = c_ast.Case(
+                c_ast.Range(p[2], p[4], coord=self._token_coord(p, 2)),
+                [p[6]],
+                self._token_coord(p, 1))
+
     def p_labeled_statement_3(self, p):
         """ labeled_statement : DEFAULT COLON pragmacomp_or_statement """
         p[0] = c_ast.Default([p[3]], self._token_coord(p, 1))
@@ -1618,6 +1631,14 @@ class CParser(PLYParser):
     def p_labeled_statement_5(self, p):
         """ labeled_statement : CASE constant_expression COLON """
         p[0] = c_ast.Case(p[2], [c_ast.EmptyStatement(self._token_coord(p, 2))], self._token_coord(p, 1))
+
+    def p_labeled_statement_range_2(self, p):
+        """ labeled_statement : CASE constant_expression ELLIPSIS constant_expression COLON
+        """
+        p[0] = c_ast.Case(
+                c_ast.Range(p[2], p[4], coord=self._token_coord(p, 2)),
+                [c_ast.EmptyStatement(self._token_coord(p, 2))],
+                self._token_coord(p, 1))
 
     def p_labeled_statement_6(self, p):
         """ labeled_statement : DEFAULT COLON """

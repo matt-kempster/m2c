@@ -929,6 +929,27 @@ class PtrDecl(Node):
 
     attr_names = ('quals', )
 
+class Range(Node):
+    __slots__ = ('first', 'last', 'coord', '__weakref__')
+    def __init__(self, first, last, coord=None):
+        self.first = first
+        self.last = last
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        if self.first is not None: nodelist.append(("first", self.first))
+        if self.last is not None: nodelist.append(("last", self.last))
+        return tuple(nodelist)
+
+    def __iter__(self):
+        if self.first is not None:
+            yield self.first
+        if self.last is not None:
+            yield self.last
+
+    attr_names = ()
+
 class Return(Node):
     __slots__ = ('expr', 'coord', '__weakref__')
     def __init__(self, expr, coord=None):

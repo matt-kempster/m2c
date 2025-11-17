@@ -124,6 +124,7 @@ class NodeVisitor:
     def visit_NamedInitializer(self, node: NamedInitializer) -> None: ...
     def visit_ParamList(self, node: ParamList) -> None: ...
     def visit_PtrDecl(self, node: PtrDecl) -> None: ...
+    def visit_Range(self, node: Range) -> None: ...
     def visit_Return(self, node: Return) -> None: ...
     def visit_Struct(self, node: Struct) -> None: ...
     def visit_StructRef(self, node: StructRef) -> None: ...
@@ -224,11 +225,11 @@ class Break(Node):
     def __init__(self, coord: Optional[Coord] = None): ...
 
 class Case(Node):
-    expr: Expression
+    expr: Union_[Expression, Range]
     stmts: List[Statement]
 
     def __init__(
-        self, expr: Expression, stmts: List[Statement], coord: Optional[Coord] = None
+        self, expr: Union_[Expression, Range], stmts: List[Statement], coord: Optional[Coord] = None
     ): ...
 
 class Cast(Node):
@@ -440,11 +441,14 @@ class Label(Node):
     def __init__(self, name: str, stmt: Statement, coord: Optional[Coord] = None): ...
 
 class NamedInitializer(Node):
-    name: List[Expression]  # [ID(x), Constant(4)] for {.x[4] = ...}
+    name: List[Union_[Expression, Range]]  # [ID(x), Constant(4)] for {.x[4] = ...}
     expr: Expression
 
     def __init__(
-        self, name: List[Expression], expr: Expression, coord: Optional[Coord] = None
+        self,
+        name: List[Union_[Expression, Range]],
+        expr: Expression,
+        coord: Optional[Coord] = None,
     ): ...
 
 class ParamList(Node):
@@ -461,6 +465,14 @@ class PtrDecl(Node):
     type: Type
 
     def __init__(self, quals: List[str], type: Type, coord: Optional[Coord] = None): ...
+
+class Range(Node):
+    first: Expression
+    last: Expression
+
+    def __init__(
+        self, first: Expression, last: Expression, coord: Optional[Coord] = None
+    ): ...
 
 class Return(Node):
     expr: Optional[Expression]
