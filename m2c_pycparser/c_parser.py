@@ -1007,43 +1007,26 @@ class CParser(PLYParser):
             coord=self._token_coord(p, 2))
 
     def p_struct_or_union_specifier_2(self, p):
-        """ struct_or_union_specifier : struct_or_union gcc_attributes_opt brace_open struct_declaration_list brace_close
-                                      | struct_or_union gcc_attributes_opt brace_open brace_close
+        """ struct_or_union_specifier : struct_or_union gcc_attributes_opt brace_open struct_declaration_list brace_close gcc_attributes_opt
+                                      | struct_or_union gcc_attributes_opt brace_open brace_close gcc_attributes_opt
         """
         klass = self._select_struct_union_class(p[1])
-        if len(p) == 5:
-            # Empty sequence means an empty list of members
-            p[0] = klass(
-                name=None,
-                gcc_attributes=p[2] or [],
-                decls=[],
-                coord=self._token_coord(p, 3))
-        else:
-            p[0] = klass(
-                name=None,
-                gcc_attributes=p[2] or [],
-                decls=p[4],
-                coord=self._token_coord(p, 3))
-
+        p[0] = klass(
+            name=None,
+            gcc_attributes=(p[2] or []) + (p[len(p) - 1] or []),
+            decls=[] if len(p) == 6 else p[4],
+            coord=self._token_coord(p, 3))
 
     def p_struct_or_union_specifier_3(self, p):
-        """ struct_or_union_specifier   : struct_or_union attrs_id_typeid brace_open struct_declaration_list brace_close
-                                        | struct_or_union attrs_id_typeid brace_open brace_close
+        """ struct_or_union_specifier   : struct_or_union attrs_id_typeid brace_open struct_declaration_list brace_close gcc_attributes_opt
+                                        | struct_or_union attrs_id_typeid brace_open brace_close gcc_attributes_opt
         """
         klass = self._select_struct_union_class(p[1])
-        if len(p) == 5:
-            # Empty sequence means an empty list of members
-            p[0] = klass(
-                name=p[2][0],
-                gcc_attributes=p[2][1],
-                decls=[],
-                coord=p[2][2]
-        else:
-            p[0] = klass(
-                name=p[2][0],
-                gcc_attributes=p[2][1],
-                decls=p[4],
-                coord=p[2][2]
+        p[0] = klass(
+            name=p[2][0],
+            gcc_attributes=p[2][1] + (p[len(p) - 1] or []),
+            decls=[] if len(p) == 6 else p[4],
+            coord=p[2][2])
 
     def p_struct_or_union(self, p):
         """ struct_or_union : STRUCT
@@ -1140,14 +1123,14 @@ class CParser(PLYParser):
         p[0] = c_ast.Enum(p[2], [], None, self._token_coord(p, 1))
 
     def p_enum_specifier_2(self, p):
-        """ enum_specifier  : ENUM gcc_attributes_opt brace_open enumerator_list brace_close
+        """ enum_specifier  : ENUM gcc_attributes_opt brace_open enumerator_list brace_close gcc_attributes_opt
         """
-        p[0] = c_ast.Enum(None, p[2] or [], p[4], self._token_coord(p, 1))
+        p[0] = c_ast.Enum(None, (p[2] or []) + (p[6] or []), p[4], self._token_coord(p, 1))
 
     def p_enum_specifier_3(self, p):
-        """ enum_specifier  : ENUM attrs_id_typeid brace_open enumerator_list brace_close
+        """ enum_specifier  : ENUM attrs_id_typeid brace_open enumerator_list brace_close gcc_attributes_opt
         """
-        p[0] = c_ast.Enum(p[2][0], p[2][1], p[4], self._token_coord(p, 1))
+        p[0] = c_ast.Enum(p[2][0], p[2][1] + (p[6] or []), p[4], self._token_coord(p, 1))
 
     def p_enumerator_list(self, p):
         """ enumerator_list : enumerator
