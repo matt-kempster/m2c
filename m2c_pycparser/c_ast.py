@@ -457,13 +457,14 @@ class Continue(Node):
     attr_names = ()
 
 class Decl(Node):
-    __slots__ = ('name', 'quals', 'align', 'storage', 'funcspec', 'type', 'init', 'bitsize', 'asmlabel', 'coord', '__weakref__')
-    def __init__(self, name, quals, align, storage, funcspec, type, init, bitsize, asmlabel, coord=None):
+    __slots__ = ('name', 'quals', 'align', 'storage', 'funcspec', 'gcc_attributes', 'type', 'init', 'bitsize', 'asmlabel', 'coord', '__weakref__')
+    def __init__(self, name, quals, align, storage, funcspec, gcc_attributes, type, init, bitsize, asmlabel, coord=None):
         self.name = name
         self.quals = quals
         self.align = align
         self.storage = storage
         self.funcspec = funcspec
+        self.gcc_attributes = gcc_attributes
         self.type = type
         self.init = init
         self.bitsize = bitsize
@@ -476,6 +477,8 @@ class Decl(Node):
         if self.init is not None: nodelist.append(("init", self.init))
         if self.bitsize is not None: nodelist.append(("bitsize", self.bitsize))
         if self.asmlabel is not None: nodelist.append(("asmlabel", self.asmlabel))
+        for i, child in enumerate(self.gcc_attributes or []):
+            nodelist.append(("gcc_attributes[%d]" % i, child))
         return tuple(nodelist)
 
     def __iter__(self):
@@ -487,6 +490,8 @@ class Decl(Node):
             yield self.bitsize
         if self.asmlabel is not None:
             yield self.asmlabel
+        for child in (self.gcc_attributes or []):
+            yield child
 
     attr_names = ('name', 'quals', 'align', 'storage', 'funcspec', )
 
@@ -1125,42 +1130,52 @@ class TypeDecl(Node):
     attr_names = ('declname', 'quals', 'align', )
 
 class Typedef(Node):
-    __slots__ = ('name', 'quals', 'storage', 'type', 'coord', '__weakref__')
-    def __init__(self, name, quals, storage, type, coord=None):
+    __slots__ = ('name', 'quals', 'storage', 'gcc_attributes', 'type', 'coord', '__weakref__')
+    def __init__(self, name, quals, storage, gcc_attributes, type, coord=None):
         self.name = name
         self.quals = quals
         self.storage = storage
+        self.gcc_attributes = gcc_attributes
         self.type = type
         self.coord = coord
 
     def children(self):
         nodelist = []
         if self.type is not None: nodelist.append(("type", self.type))
+        for i, child in enumerate(self.gcc_attributes or []):
+            nodelist.append(("gcc_attributes[%d]" % i, child))
         return tuple(nodelist)
 
     def __iter__(self):
         if self.type is not None:
             yield self.type
+        for child in (self.gcc_attributes or []):
+            yield child
 
     attr_names = ('name', 'quals', 'storage', )
 
 class Typename(Node):
-    __slots__ = ('name', 'quals', 'align', 'type', 'coord', '__weakref__')
-    def __init__(self, name, quals, align, type, coord=None):
+    __slots__ = ('name', 'quals', 'align', 'gcc_attributes', 'type', 'coord', '__weakref__')
+    def __init__(self, name, quals, align, gcc_attributes, type, coord=None):
         self.name = name
         self.quals = quals
         self.align = align
+        self.gcc_attributes = gcc_attributes
         self.type = type
         self.coord = coord
 
     def children(self):
         nodelist = []
         if self.type is not None: nodelist.append(("type", self.type))
+        for i, child in enumerate(self.gcc_attributes or []):
+            nodelist.append(("gcc_attributes[%d]" % i, child))
         return tuple(nodelist)
 
     def __iter__(self):
         if self.type is not None:
             yield self.type
+        for child in (self.gcc_attributes or []):
+            yield child
 
     attr_names = ('name', 'quals', 'align', )
 

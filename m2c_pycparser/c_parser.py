@@ -355,6 +355,7 @@ class CParser(PLYParser):
             * type: a list of type specifiers
             * function: a list of function specifiers
             * alignment: a list of alignment specifiers
+            * attr: a list of gcc attributes
 
             This method is given a declaration specifier, and a
             new specifier of a given kind.
@@ -363,12 +364,22 @@ class CParser(PLYParser):
             Returns the declaration specifier, with the new
             specifier incorporated.
         """
-        spec = declspec or dict(qual=[], storage=[], type=[], function=[], alignment=[])
+        spec = declspec or dict(qual=[], storage=[], type=[], function=[], alignment=[], attr=[])
 
         if append:
             spec[kind].append(newspec)
         else:
             spec[kind].insert(0, newspec)
+
+        return spec
+
+    def _add_declaration_specifier_list(self, declspec, newspecs, kind, append=False):
+        spec = declspec or dict(qual=[], storage=[], type=[], function=[], alignment=[], attr=[])
+
+        if append:
+            spec[kind].extend(newspecs)
+        else:
+            spec[kind][:0] = newspecs
 
         return spec
 
@@ -427,6 +438,7 @@ class CParser(PLYParser):
                     name=None,
                     quals=spec['qual'],
                     storage=spec['storage'],
+                    gcc_attributes=spec['attr'],
                     type=decl['decl'],
                     coord=decl['decl'].coord)
             else:
@@ -436,6 +448,7 @@ class CParser(PLYParser):
                     align=spec['alignment'],
                     storage=spec['storage'],
                     funcspec=spec['function'],
+                    gcc_attributes=spec['attr'],
                     type=decl['decl'],
                     init=decl.get('init'),
                     bitsize=decl.get('bitsize'),
@@ -618,13 +631,8 @@ class CParser(PLYParser):
         """ function_definition : id_declarator declaration_list_opt compound_statement
         """
         # no declaration specifiers - 'int' becomes the default type
-        spec = dict(
-            qual=[],
-            alignment=[],
-            storage=[],
-            type=[c_ast.IdentifierType(['int'],
-                                       coord=self._token_coord(p, 1))],
-            function=[])
+        tp = c_ast.IdentifierType(['int'], coord=self._token_coord(p, 1))
+        spec = self._add_declaration_specifier(None, tp, 'type')
 
         p[0] = self._build_function_definition(
             spec=spec,
@@ -745,6 +753,7 @@ class CParser(PLYParser):
                     align=spec['alignment'],
                     storage=spec['storage'],
                     funcspec=spec['function'],
+                    gcc_attributes=spec['attr'],
                     type=ty[0],
                     init=None,
                     bitsize=None,
@@ -832,6 +841,11 @@ class CParser(PLYParser):
         """
         p[0] = self._add_declaration_specifier(p[2], p[1], 'alignment')
 
+    def p_declaration_specifiers_no_type_attrs(self, p):
+        """ declaration_specifiers_no_type  : gcc_attribute declaration_specifiers_no_type_opt
+        """
+        p[0] = self._add_declaration_specifier_list(p[2], p[1], 'attr')
+
     def p_declaration_specifiers_1(self, p):
         """ declaration_specifiers  : declaration_specifiers type_qualifier
         """
@@ -866,6 +880,11 @@ class CParser(PLYParser):
         """ declaration_specifiers  : declaration_specifiers alignment_specifier
         """
         p[0] = self._add_declaration_specifier(p[1], p[2], 'alignment', append=True)
+
+    def p_declaration_specifiers_attrs(self, p):
+        """ declaration_specifiers  : declaration_specifiers gcc_attribute
+        """
+        p[0] = self._add_declaration_specifier_list(p[1], p[2], 'attr', append=True)
 
     def p_storage_class_specifier(self, p):
         """ storage_class_specifier : AUTO
@@ -977,19 +996,24 @@ class CParser(PLYParser):
         p[0] = self._add_declaration_specifier(None, p[1], 'type')
 
     def p_specifier_qualifier_list_4(self, p):
-        """ specifier_qualifier_list  : type_qualifier_list type_specifier
+        """ specifier_qualifier_list  : qualifier_attr_list type_specifier
         """
-        p[0] = dict(qual=p[1], alignment=[], storage=[], type=[p[2]], function=[])
+        p[0] = self._add_declaration_specifier(p[1], p[2], 'type')
 
     def p_specifier_qualifier_list_5(self, p):
         """ specifier_qualifier_list  : alignment_specifier
         """
-        p[0] = dict(qual=[], alignment=[p[1]], storage=[], type=[], function=[])
+        p[0] = self._add_declaration_specifier(None, p[1], 'alignment')
 
     def p_specifier_qualifier_list_6(self, p):
         """ specifier_qualifier_list  : specifier_qualifier_list alignment_specifier
         """
-        p[0] = self._add_declaration_specifier(p[1], p[2], 'alignment')
+        p[0] = self._add_declaration_specifier(p[1], p[2], 'alignment', append=True)
+
+    def p_specifier_qualifier_list_attr(self, p):
+        """ specifier_qualifier_list    : specifier_qualifier_list gcc_attribute
+        """
+        p[0] = self._add_declaration_specifier_list(p[1], p[2], 'attr', append=True)
 
     # TYPEID is allowed here (and in other struct/enum related tag names), because
     # struct/enum tags reside in their own namespace and can be named the same as types
@@ -1316,6 +1340,26 @@ class CParser(PLYParser):
         """
         p[0] = [p[1]] if len(p) == 2 else p[1] + [p[2]]
 
+    def p_type_qualifier_list_1(self, p):
+        """ qualifier_attr_list : type_qualifier
+        """
+        p[0] = self._add_declaration_specifier(None, p[1], 'qual', append=True)
+
+    def p_type_qualifier_list_2(self, p):
+        """ qualifier_attr_list : qualifier_attr_list type_qualifier
+        """
+        p[0] = self._add_declaration_specifier(p[1], p[2], 'qual', append=True)
+
+    def p_type_qualifier_list_3(self, p):
+        """ qualifier_attr_list : gcc_attribute
+        """
+        p[0] = self._add_declaration_specifier_list(None, p[1], 'attr', append=True)
+
+    def p_type_qualifier_list_4(self, p):
+        """ qualifier_attr_list : qualifier_attr_list gcc_attribute
+        """
+        p[0] = self._add_declaration_specifier_list(p[1], p[2], 'attr', append=True)
+
     def p_parameter_type_list(self, p):
         """ parameter_type_list : parameter_list
                                 | parameter_list COMMA ELLIPSIS
@@ -1382,6 +1426,7 @@ class CParser(PLYParser):
                 name='',
                 quals=spec['qual'],
                 align=None,
+                gcc_attributes=spec['attr'],
                 type=p[2] or c_ast.TypeDecl(None, None, None, None),
                 coord=self._token_coord(p, 2))
             typename = spec['type']
@@ -1457,6 +1502,7 @@ class CParser(PLYParser):
             name='',
             quals=p[1]['qual'][:],
             align=None,
+            gcc_attributes=p[1]['attr'],
             type=p[2] or c_ast.TypeDecl(None, None, None, None),
             coord=self._token_coord(p, 2))
 

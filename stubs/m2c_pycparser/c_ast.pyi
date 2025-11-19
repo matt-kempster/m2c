@@ -270,6 +270,7 @@ class Decl(Node):
     align: List[Alignas]
     storage: List[str]  # e.g. register
     funcspec: List[str]  # e.g. inline
+    gcc_attributes: List[GccAttribute]
     type: Union_[Type, "Struct", "Enum", "Union"]
     init: Optional[Union_[Expression, "InitList"]]
     bitsize: Optional[Expression]
@@ -282,6 +283,7 @@ class Decl(Node):
         align: List[Alignas],
         storage: List[str],
         funcspec: List[str],
+        gcc_attributes: List[GccAttribute],
         type: Union_[Type, "Struct", "Enum", "Union"],
         init: Optional[Union_[Expression, "InitList"]],
         bitsize: Optional[Expression],
@@ -551,6 +553,7 @@ class Typedef(Node):
     name: str
     quals: List[str]
     storage: List[str]
+    gcc_attributes: List[GccAttribute]
     type: Type
 
     def __init__(
@@ -558,6 +561,7 @@ class Typedef(Node):
         name: str,
         quals: List[str],
         storage: List[str],
+        gcc_attributes: List[GccAttribute],
         type: Type,
         coord: Optional[Coord] = None,
     ): ...
@@ -566,6 +570,7 @@ class Typename(Node):
     name: None
     quals: List[str]
     align: List[Alignas]
+    gcc_attributes: List[GccAttribute]
     type: Type
 
     def __init__(
@@ -573,6 +578,7 @@ class Typename(Node):
         name: None,
         quals: List[str],
         align: List[Alignas],
+        gcc_attributes: List[GccAttribute],
         type: Type,
         coord: Optional[Coord] = None,
     ): ...
