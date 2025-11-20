@@ -433,12 +433,13 @@ class CParser(PLYParser):
 
         for decl in decls:
             assert decl['decl'] is not None
+            attrs = spec['attr'] + (decl.get('attr') or [])
             if is_typedef:
                 declaration = c_ast.Typedef(
                     name=None,
                     quals=spec['qual'],
                     storage=spec['storage'],
-                    gcc_attributes=spec['attr'],
+                    gcc_attributes=attrs,
                     type=decl['decl'],
                     coord=decl['decl'].coord)
             else:
@@ -448,7 +449,7 @@ class CParser(PLYParser):
                     align=spec['alignment'],
                     storage=spec['storage'],
                     funcspec=spec['function'],
-                    gcc_attributes=spec['attr'],
+                    gcc_attributes=attrs,
                     type=decl['decl'],
                     init=decl.get('init'),
                     bitsize=decl.get('bitsize'),
@@ -956,15 +957,15 @@ class CParser(PLYParser):
         """
         p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
 
-    # Returns a {decl=<declarator> : init=<initializer>} dictionary
+    # Returns a {decl=<declarator>, attr=<gcc attributes>, init=<initializer>} dictionary
     # If there's no initializer, uses None
     #
     def p_init_declarator(self, p):
-        """ init_declarator : declarator asm_label_opt
-                            | declarator asm_label_opt EQUALS initializer
-                            | declarator asm_label_opt COLON constant_expression
+        """ init_declarator : declarator asm_label_opt gcc_attributes_opt
+                            | declarator asm_label_opt gcc_attributes_opt EQUALS initializer
+                            | declarator asm_label_opt gcc_attributes_opt COLON constant_expression
         """
-        p[0] = dict(decl=p[1], asmlabel=p[2], init=(p[4] if len(p) > 3 and p[3] == '=' else None))
+        p[0] = dict(decl=p[1], asmlabel=p[2], attr=p[3], init=(p[5] if len(p) > 4 and p[4] == '=' else None))
 
     def p_id_init_declarator_list(self, p):
         """ id_init_declarator_list    : id_init_declarator
@@ -973,10 +974,10 @@ class CParser(PLYParser):
         p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
 
     def p_id_init_declarator(self, p):
-        """ id_init_declarator : id_declarator asm_label_opt
-                               | id_declarator asm_label_opt EQUALS initializer
+        """ id_init_declarator : id_declarator asm_label_opt gcc_attributes_opt
+                               | id_declarator asm_label_opt gcc_attributes_opt EQUALS initializer
         """
-        p[0] = dict(decl=p[1], asmlabel=p[2], init=(p[4] if len(p) > 3 else None))
+        p[0] = dict(decl=p[1], asmlabel=p[2], attr=p[3], init=(p[5] if len(p) > 4 else None))
 
     # Require at least one type specifier in a specifier-qualifier-list
     #
@@ -1123,22 +1124,24 @@ class CParser(PLYParser):
         """
         p[0] = p[1] + [p[3]] if len(p) == 4 else [p[1]]
 
-    # struct_declarator passes up a dict with the keys: decl (for
-    # the underlying declarator) and bitsize (for the bitsize)
+    # struct_declarator passes up a dict with the keys:
+    # - decl (for the underlying declarator)
+    # - attr (gcc attributes)
+    # - bitsize (for the bitsize)
     #
     def p_struct_declarator_1(self, p):
-        """ struct_declarator : declarator
+        """ struct_declarator : declarator gcc_attributes_opt
         """
-        p[0] = {'decl': p[1], 'bitsize': None}
+        p[0] = {'decl': p[1], 'attr': p[2], 'bitsize': None}
 
     def p_struct_declarator_2(self, p):
-        """ struct_declarator   : declarator COLON constant_expression
-                                | COLON constant_expression
+        """ struct_declarator   : declarator gcc_attributes_opt COLON constant_expression
+                                | gcc_attributes_opt COLON constant_expression
         """
-        if len(p) > 3:
-            p[0] = {'decl': p[1], 'bitsize': p[3]}
+        if len(p) > 4:
+            p[0] = {'decl': p[1], 'attr': p[2], 'bitsize': p[4]}
         else:
-            p[0] = {'decl': c_ast.TypeDecl(None, None, None, None), 'bitsize': p[2]}
+            p[0] = {'decl': c_ast.TypeDecl(None, None, None, None), 'attr': p[1], 'bitsize': p[3]}
 
     def p_enum_specifier_1(self, p):
         """ enum_specifier  : ENUM ID
@@ -1191,8 +1194,16 @@ class CParser(PLYParser):
 
         p[0] = enumerator
 
+    # In case of shift/reduce conflict, it's better to treat id_declarator as
+    # a declarator than as part of an K&R-style function definition, so we
+    # raise the precedence. This matters for GCC attributes:
+    # 'int f(x) __attribute__((a));' must reduce 'int f(x)' to a declarator
+    # early, or else it will aim for 'int f(x) __attribute__((a)) int x; {}'
+    # and shift, and fail to parse once it hits the semicolon. There may be
+    # some better fix here that allows the K&R-style declaration to still
+    # parse, but we don't really care.
     def p_declarator(self, p):
-        """ declarator  : id_declarator
+        """ declarator  : id_declarator %prec TIMES
                         | typeid_declarator
         """
         p[0] = p[1]
@@ -1390,10 +1401,12 @@ class CParser(PLYParser):
     # always treat it as an abstract declarator. Therefore, we only accept
     # `id_declarator`s and `typeid_noparen_declarator`s.
     def p_parameter_declaration_1(self, p):
-        """ parameter_declaration   : declaration_specifiers id_declarator
-                                    | declaration_specifiers typeid_noparen_declarator
+        """ parameter_declaration   : declaration_specifiers id_declarator gcc_attributes_opt
+                                    | declaration_specifiers typeid_noparen_declarator gcc_attributes_opt
         """
         spec = p[1]
+        if p[3]:
+            spec = self._add_declaration_specifier_list(spec, p[3], 'attr', append=True)
         if not spec['type']:
             spec['type'] = [c_ast.IdentifierType(['int'],
                 coord=self._token_coord(p, 1))]
@@ -1402,9 +1415,11 @@ class CParser(PLYParser):
             decls=[dict(decl=p[2])])[0]
 
     def p_parameter_declaration_2(self, p):
-        """ parameter_declaration   : declaration_specifiers abstract_declarator_opt
+        """ parameter_declaration   : declaration_specifiers abstract_declarator_opt gcc_attributes_opt
         """
         spec = p[1]
+        if p[3]:
+            spec = self._add_declaration_specifier_list(spec, p[3], 'attr', append=True)
         if not spec['type']:
             spec['type'] = [c_ast.IdentifierType(['int'],
                 coord=self._token_coord(p, 1))]
