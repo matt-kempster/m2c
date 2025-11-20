@@ -53,6 +53,7 @@ Statement = Union_[
     "DoWhile",
     "EmptyStatement",
     "For",
+    "GccAttributeStatement",
     "Goto",
     "If",
     "Label",
@@ -408,6 +409,11 @@ class GccAttribute(Node):
     def __init__(
         self, name: str, args: Optional[List[Expression]], coord: Optional[Coord] = None
     ): ...
+
+class GccAttributeStatement(Node):
+    attrs: List[GccAttribute]
+
+    def __init__(self, attrs: List[GccAttribute], coord: Optional[Coord] = None): ...
 
 class Goto(Node):
     name: str

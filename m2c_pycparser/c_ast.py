@@ -791,6 +791,24 @@ class GccAttribute(Node):
 
     attr_names = ('name', )
 
+class GccAttributeStatement(Node):
+    __slots__ = ('attrs', 'coord', '__weakref__')
+    def __init__(self, attrs, coord=None):
+        self.attrs = attrs
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        for i, child in enumerate(self.attrs or []):
+            nodelist.append(("attrs[%d]" % i, child))
+        return tuple(nodelist)
+
+    def __iter__(self):
+        for child in (self.attrs or []):
+            yield child
+
+    attr_names = ()
+
 class Goto(Node):
     __slots__ = ('name', 'coord', '__weakref__')
     def __init__(self, name, coord=None):

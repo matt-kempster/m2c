@@ -666,6 +666,7 @@ class CParser(PLYParser):
                         | pppragma_directive
                         | static_assert
                         | asm_statement
+                        | attribute_statement
         """
         p[0] = p[1]
 
@@ -2063,6 +2064,11 @@ class CParser(PLYParser):
         """
         p[0] = p[1]
         p.set_lineno(0, p.lineno(1))
+
+    def p_attr_stmt(self, p):
+        """ attribute_statement : gcc_attributes SEMI
+        """
+        p[0] = c_ast.GccAttributeStatement(p[1], self._token_coord(p, 2))
 
     def p_asm_1(self, p):
         """ asm_statement   : ASM asm_qualifiers_opt LPAREN unified_string_literal RPAREN SEMI
