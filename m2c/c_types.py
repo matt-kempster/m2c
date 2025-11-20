@@ -93,7 +93,7 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 6
+    VERSION: ClassVar[int] = 7
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
