@@ -1180,16 +1180,16 @@ class CParser(PLYParser):
         p[0] = c_ast.Alignas(p[3], self._token_coord(p, 1))
 
     def p_enumerator(self, p):
-        """ enumerator  : ID
-                        | ID EQUALS constant_expression
+        """ enumerator  : ID gcc_attributes_opt
+                        | ID gcc_attributes_opt EQUALS constant_expression
         """
-        if len(p) == 2:
+        if len(p) == 3:
             enumerator = c_ast.Enumerator(
-                        p[1], None,
+                        p[1], p[2] or [], None,
                         self._token_coord(p, 1))
         else:
             enumerator = c_ast.Enumerator(
-                        p[1], p[3],
+                        p[1], p[2] or [], p[4],
                         self._token_coord(p, 1))
         self._add_identifier(enumerator.name, enumerator.coord)
 

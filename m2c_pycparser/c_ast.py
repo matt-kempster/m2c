@@ -604,9 +604,10 @@ class Enum(Node):
     attr_names = ('name', )
 
 class Enumerator(Node):
-    __slots__ = ('name', 'value', 'coord', '__weakref__')
-    def __init__(self, name, value, coord=None):
+    __slots__ = ('name', 'gcc_attributes', 'value', 'coord', '__weakref__')
+    def __init__(self, name, gcc_attributes, value, coord=None):
         self.name = name
+        self.gcc_attributes = gcc_attributes
         self.value = value
         self.coord = coord
 
@@ -619,7 +620,7 @@ class Enumerator(Node):
         if self.value is not None:
             yield self.value
 
-    attr_names = ('name', )
+    attr_names = ('name', 'gcc_attributes', )
 
 class EnumeratorList(Node):
     __slots__ = ('enumerators', 'coord', '__weakref__')

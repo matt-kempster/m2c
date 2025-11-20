@@ -331,10 +331,15 @@ class Enum(Node):
 
 class Enumerator(Node):
     name: str
+    gcc_attributes: List[GccAttribute]
     value: Optional[Expression]
 
     def __init__(
-        self, name: str, value: Optional[Expression], coord: Optional[Coord] = None
+        self,
+        name: str,
+        gcc_attributes: List[GccAttribute],
+        value: Optional[Expression],
+        coord: Optional[Coord] = None,
     ): ...
 
 class EnumeratorList(Node):
