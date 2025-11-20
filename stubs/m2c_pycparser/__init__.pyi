@@ -22,5 +22,6 @@ def parse_file(
     use_cpp: bool = False,
     cpp_path: str = "cpp",
     cpp_args: str = "",
+    debug: bool = False,
     parser: Any = None,
 ) -> c_ast.FileAST: ...
