@@ -7,7 +7,7 @@
 # License: BSD
 # -----------------------------------------------------------------
 
-from typing import TextIO, Iterable, List, Any, Optional, Union as Union_
+from typing import TextIO, Iterable, List, Optional, Union as Union_
 from .plyparser import Coord
 import sys
 
@@ -116,6 +116,8 @@ class NodeVisitor:
     def visit_FuncCall(self, node: FuncCall) -> None: ...
     def visit_FuncDecl(self, node: FuncDecl) -> None: ...
     def visit_FuncDef(self, node: FuncDef) -> None: ...
+    def visit_GccAttribute(self, node: GccAttribute) -> None: ...
+    def visit_GccAttributeStatement(self, node: GccAttributeStatement) -> None: ...
     def visit_Goto(self, node: Goto) -> None: ...
     def visit_ID(self, node: ID) -> None: ...
     def visit_IdentifierType(self, node: IdentifierType) -> None: ...
@@ -580,7 +582,7 @@ class Typedef(Node):
 class Typename(Node):
     name: None
     quals: List[str]
-    align: List[Alignas]
+    align: None
     gcc_attributes: List[GccAttribute]
     type: Type
 
@@ -588,7 +590,7 @@ class Typename(Node):
         self,
         name: None,
         quals: List[str],
-        align: List[Alignas],
+        align: None,
         gcc_attributes: List[GccAttribute],
         type: Type,
         coord: Optional[Coord] = None,
