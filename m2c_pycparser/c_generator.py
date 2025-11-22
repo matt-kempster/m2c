@@ -62,6 +62,9 @@ class CGenerator(object):
         fref = self._parenthesize_unless_simple(n.name)
         return fref + '(' + self.visit(n.args) + ')'
 
+    def visit_Typeof(self, n):
+        return 'typeof(%s)' % self.visit(n.expr)
+
     def visit_UnaryOp(self, n):
         if n.op == 'sizeof':
             # Always parenthesize the argument of sizeof since it can be
@@ -143,6 +146,13 @@ class CGenerator(object):
         # explicitly only for the first declaration in a list.
         #
         s = n.name if no_type else self._generate_decl(n)
+        if n.asmlabel:
+            s += ' asm(' + self.visit(n.asmlabel) + ')'
+        if n.gcc_attributes:
+            if no_type:
+                s += self._generate_attrs(n.gcc_attributes, ' ', '')
+            else:
+                s = self._generate_attrs(n.gcc_attributes, '', ' ') + s
         if n.bitsize: s += ' : ' + self.visit(n.bitsize)
         if n.init:
             s += ' = ' + self._visit_expr(n.init)
@@ -185,14 +195,16 @@ class CGenerator(object):
 
     def visit_Enumerator(self, n):
         if not n.value:
-            return '{indent}{name},\n'.format(
+            return '{indent}{name}{attrs},\n'.format(
                 indent=self._make_indent(),
+                attrs=self._generate_attrs(n.gcc_attributes, ' ', ''),
                 name=n.name,
             )
         else:
-            return '{indent}{name} = {value},\n'.format(
+            return '{indent}{name}{attrs} = {value},\n'.format(
                 indent=self._make_indent(),
                 name=n.name,
+                attrs=self._generate_attrs(n.gcc_attributes, ' ', ''),
                 value=self.visit(n.value),
             )
 
@@ -229,6 +241,8 @@ class CGenerator(object):
     def visit_CompoundLiteral(self, n):
         return '(' + self.visit(n.type) + '){' + self.visit(n.init) + '}'
 
+    def visit_GccAttributeStatement(self, n):
+        return self._generate_attrs(n.attrs, '', '') + ';'
 
     def visit_EmptyStatement(self, n):
         return ';'
@@ -355,6 +369,37 @@ class CGenerator(object):
     def visit_PtrDecl(self, n):
         return self._generate_type(n, emit_declname=False)
 
+    def visit_Range(self, n):
+        return self.visit(n.first) + ' ... ' + self.visit(n.last)
+
+    def visit_GccAttribute(self, n):
+        if n.args is None:
+            return n.name
+        return n.name + '(' + ', '.join(self.visit(e) for e in n.args) + ')'
+
+    def visit_Asm(self, n):
+        s = 'asm' + ''.join(' ' + q for q in n.quals)
+        s += '(' + self.visit(n.asm)
+        parts = [
+            ', '.join(self.visit(op) for op in n.output_operands),
+            ', '.join(self.visit(op) for op in n.input_operands),
+            ', '.join(self.visit(cl) for cl in n.clobbers),
+            ', '.join(n.gotos),
+        ]
+        if 'goto' not in n.quals:
+            while parts and not parts[-1]:
+                parts.pop()
+        for p in parts:
+            s += ' :'
+            if p:
+                s += ' ' + p
+        s += ');'
+        return s
+
+    def visit_AsmOperand(self, n):
+        s = '[' + n.symbolic_name + ']' if n.symbolic_name is not None else ''
+        return s + self.visit(n.constraint) + '(' + self.visit(n.expr) + ')'
+
     def _generate_struct_union_enum(self, n, name):
         """ Generates code for structs, unions, and enums. name should be
             'struct', 'union', or 'enum'.
@@ -366,7 +411,8 @@ class CGenerator(object):
             assert name == 'enum'
             members = None if n.values is None else n.values.enumerators
             body_function = self._generate_enum_body
-        s = name + ' ' + (n.name or '')
+        s = name + self._generate_attrs(n.gcc_attributes, ' ', '')
+        s += ' ' + (n.name or '')
         if members is not None:
             # None means no members
             # Empty sequence means an empty list of members
@@ -478,6 +524,12 @@ class CGenerator(object):
                                        emit_declname = emit_declname)
         else:
             return self.visit(n)
+
+    def _generate_attrs(self, attrs, pre, post):
+        if not attrs:
+            return ''
+        li = [self.visit(attr) for attr in attrs]
+        return pre + '__attribute__((' + ', '.join(li) + '))' + post
 
     def _parenthesize_if(self, n, condition):
         """ Visits 'n' and returns its string representation, parenthesized
