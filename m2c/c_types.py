@@ -93,7 +93,7 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 8
+    VERSION: ClassVar[int] = 9
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
@@ -106,6 +106,7 @@ class TypeMap:
     struct_typedefs: Dict[Union[str, StructUnion], TypeDecl] = field(
         default_factory=dict
     )
+    pragma_packs: Dict[StructUnion, int] = field(default_factory=dict)
     enums: Dict[Union[str, ca.Enum], Enum] = field(default_factory=dict)
     enum_values: Dict[str, int] = field(default_factory=dict)
 
@@ -545,6 +546,8 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     bit_offset = 0
     has_bitfields = False
     align = get_align_override(struct, typemap) or 1
+    pack_struct = any(attr.name == "packed" for attr in struct.gcc_attributes)
+    pragma_pack = typemap.pragma_packs.get(struct, 0)
 
     def flush_bitfields() -> None:
         nonlocal offset, bit_offset
@@ -560,12 +563,19 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             # Ignore pragmas
             continue
 
+        if pack_struct or any(attr.name == "packed" for attr in decl.gcc_attributes):
+            pack_decl = get_align_override(decl, typemap) or 1
+        else:
+            pack_decl = 0
+        if pragma_pack and (not pack_decl or pack_decl > pragma_pack):
+            pack_decl = pragma_pack
+
         type = decl.type
         if isinstance(type, (ca.Struct, ca.Union)):
             if type.decls is None:
                 continue
             substruct = parse_struct(type, typemap)
-            subalign = get_align_override(decl, typemap) or substruct.align
+            subalign = pack_decl or get_align_override(decl, typemap) or substruct.align
             if type.name is not None:
                 # Struct defined within another, which is silly but valid C.
                 # parse_struct already makes sure it gets defined in the global
@@ -615,7 +625,10 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
                 continue
             if width > ssize * 8:
                 raise DecompFailure(f"Width of bitfield {field_name} exceeds its type")
-            if offset // ssize != (offset + (bit_offset + width - 1) // 8) // ssize:
+            if (
+                offset // ssize != (offset + (bit_offset + width - 1) // 8) // ssize
+                and not pack_decl
+            ):
                 bit_offset = 0
                 offset = (offset + ssize) & -ssize
             if decl.name is not None:
@@ -635,7 +648,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
         ssize, salign, substr = parse_struct_member(
             type, field_name, typemap, allow_unsized=False
         )
-        salign = max(salign, get_align_override(decl, typemap))
+        salign = pack_decl or max(salign, get_align_override(decl, typemap))
         align = max(align, salign)
         offset = (offset + salign - 1) & -salign
         fields[offset].append(
@@ -838,12 +851,39 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
                 assert fn is not None
                 typemap.functions[item.name] = fn
 
+        cur_pack = 0
+        pack_stack: List[int] = []
+
         class Visitor(ca.NodeVisitor):
+            def visit_Pragma(self, pragma: ca.Pragma) -> None:
+                nonlocal cur_pack
+                # This only covers top-level structs, but we don't care enough
+                # about nested ones to pay the performance cost of doing another
+                # visitor traversal.
+                parts = pragma.string.split("(")
+                if len(parts) >= 2 and parts[0].strip() == "pack":
+                    args = parts[1].split(")")[0].split(",")
+                    arg = args[0].strip()
+                    if not arg:
+                        cur_pack = 0
+                    elif args[0].strip() == "pop":
+                        cur_pack = pack_stack.pop()
+                    elif args[0].strip() == "push":
+                        pack_stack.append(cur_pack)
+                        if len(args) >= 2:
+                            cur_pack = int(args[1], 0)
+                    else:
+                        cur_pack = int(args[0], 0)
+
             def visit_Struct(self, struct: ca.Struct) -> None:
+                if cur_pack:
+                    typemap.pragma_packs[struct] = cur_pack
                 if struct.decls is not None:
                     parse_struct(struct, typemap)
 
             def visit_Union(self, union: ca.Union) -> None:
+                if cur_pack:
+                    typemap.pragma_packs[union] = cur_pack
                 if union.decls is not None:
                     parse_struct(union, typemap)
 
