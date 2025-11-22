@@ -158,6 +158,16 @@ def get_align_override(
     return align
 
 
+def has_128bit_attr(attrs: List[ca.GccAttribute]) -> bool:
+    return any(
+        attr.name == "mode"
+        and attr.args
+        and isinstance(attr.args[0], ca.ID)
+        and attr.args[0].name == "TI"
+        for attr in attrs
+    )
+
+
 def resolve_typedefs(type: CType, typemap: TypeMap) -> Tuple[CType, int]:
     if isinstance(type, TypeDecl):
         if (
@@ -230,6 +240,8 @@ def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
         return 8
     if "float" in names:
         return 4
+    if "__int128" in names:
+        return 16
     if "short" in names:
         return 2
     if "char" in names:
@@ -830,6 +842,13 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
             if isinstance(item, ca.Typedef):
                 target, align = resolve_typedefs(item.type, typemap)
                 align = get_align_override(item, typemap) or align
+                if (
+                    has_128bit_attr(item.gcc_attributes)
+                    and isinstance(target, TypeDecl)
+                    and isinstance(target.type, ca.IdentifierType)
+                ):
+                    sign = ["unsigned"] if "unsigned" in target.type.names else []
+                    target = basic_type(sign + ["__int128"])
                 typemap.typedefs[item.name] = target, align
                 if (
                     isinstance(item.type, TypeDecl)

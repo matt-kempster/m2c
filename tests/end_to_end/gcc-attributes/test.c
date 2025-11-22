@@ -5,6 +5,7 @@ struct __attribute__((aligned(0x10))) Overaligned1 {
 struct ContainsOveraligned {
 	int x;
 	struct Overaligned1 a;
+	int y;
 };
 
 struct Overaligned2 {
@@ -20,9 +21,16 @@ struct UnderalignedMemberNoop {
 };
 
 typedef __attribute__((aligned(1))) int underaligned;
+typedef __attribute__((aligned(0x10))) int overaligned;
 
 struct UnderalignedMemberViaTypedef {
 	underaligned y;
+};
+
+struct OveralignedMemberViaTypedef {
+	char a;
+	overaligned y;
+	char c;
 };
 
 struct MultipleAttrs {
@@ -37,6 +45,9 @@ struct Alignas {
 
 __attribute__((aligned(1))) int underaligned_var;
 underaligned underaligned_var2;
+
+__attribute__((aligned(0x10))) int overaligned_var;
+overaligned overaligned_var2;
 
 struct __attribute__((packed, aligned(2))) Packed {
 	char x;
@@ -75,4 +86,15 @@ struct __attribute__((packed, aligned(2))) PackedWithOveralignedMember {
 	char x;
 	int y;
 	__attribute__((aligned(0x10))) int z;
+};
+
+typedef int long128 __attribute__ ((mode (TI)));
+typedef unsigned int u_long128 __attribute__ ((mode (TI)));
+
+long128 i128;
+u_long128 u128;
+
+struct I128s {
+	long128 a;
+	u_long128 b;
 };
