@@ -127,6 +127,7 @@ class CLexer(object):
     keyword_map['__asm'] = 'ASM'
     keyword_map['__asm__'] = 'ASM'
     keyword_map['__const'] = 'CONST'
+    keyword_map['__const__'] = 'CONST'
     keyword_map['__restrict'] = 'RESTRICT'
     keyword_map['__restrict__'] = 'RESTRICT'
     keyword_map['__inline'] = 'INLINE'
