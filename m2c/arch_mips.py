@@ -801,6 +801,8 @@ class MipsArch(Arch):
                 "at",
                 "hi",
                 "lo",
+                "lo1",
+                "hi1",
                 "condition_bit",
             ]
         ]
@@ -980,6 +982,11 @@ class MipsArch(Arch):
             "q": 16,
         }
         size = memory_sizes.get(mnemonic[1:2])
+
+        alt_mult_pipeline = mnemonic.endswith("1")
+        base_mult_mnemonic = mnemonic[:-1] if alt_mult_pipeline else mnemonic
+        lo_reg = Register("lo1") if alt_mult_pipeline else Register("lo")
+        hi_reg = Register("hi1") if alt_mult_pipeline else Register("hi")
 
         def make_memory_access(arg: Argument) -> List[Location]:
             assert size is not None
@@ -1205,12 +1212,12 @@ class MipsArch(Arch):
                     outputs.append(other_f64_reg(args[0]))
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
                 inputs = [args[1].base]
-            elif mnemonic == "mfhi":
+            elif base_mult_mnemonic == "mfhi":
                 assert len(args) == 1
-                inputs = [Register("hi")]
-            elif mnemonic == "mflo":
+                inputs = [hi_reg]
+            elif base_mult_mnemonic == "mflo":
                 assert len(args) == 1
-                inputs = [Register("lo")]
+                inputs = [lo_reg]
             elif mnemonic in ("movn", "movz"):
                 assert (
                     len(args) == 3
@@ -1247,7 +1254,7 @@ class MipsArch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("condition_bit"), cls.instrs_float_comp[mnemonic](a)
             )
-        elif mnemonic in cls.instrs_hi_lo:
+        elif base_mult_mnemonic in cls.instrs_hi_lo:
             assert (
                 len(args) == 3
                 and isinstance(args[0], Register)
@@ -1255,24 +1262,24 @@ class MipsArch(Arch):
                 and isinstance(args[2], Register)
             )
             inputs = [args[1], args[2]]
-            if mnemonic in ("madd", "maddu"):
-                inputs.append(Register("lo"))
-            outputs = [Register("hi"), Register("lo")]
+            if base_mult_mnemonic in ("madd", "maddu"):
+                inputs.append(lo_reg)
+            outputs = [hi_reg, lo_reg]
             if args[0] != Register("zero"):
                 outputs.append(args[0])
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                hi, lo = cls.instrs_hi_lo[mnemonic](a)
-                s.set_reg(Register("hi"), hi)
-                s.set_reg(Register("lo"), lo)
+                hi, lo = cls.instrs_hi_lo[base_mult_mnemonic](a, lo_reg)
+                s.set_reg(hi_reg, hi)
+                s.set_reg(lo_reg, lo)
                 copy_lo_to = a.reg_ref(0)
                 if copy_lo_to != Register("zero"):
                     s.set_reg(copy_lo_to, lo)
 
-        elif mnemonic in ("mtlo", "mthi"):
+        elif base_mult_mnemonic in ("mtlo", "mthi"):
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
-            output_reg = Register("hi") if mnemonic == "mthi" else Register("lo")
+            output_reg = hi_reg if base_mult_mnemonic == "mthi" else lo_reg
             outputs = [output_reg]
             eval_fn = lambda s, a: s.set_reg(output_reg, a.reg(0))
         elif mnemonic in cls.instrs_ignore:
@@ -1462,58 +1469,60 @@ class MipsArch(Arch):
         "c.nge.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">=", a.dreg(1)).negated(),
         "c.ngt.d": lambda a: BinaryOp.dcmp(a.dreg(0), ">", a.dreg(1)).negated(),
     }
-    instrs_hi_lo: Dict[str, Callable[[InstrArgs], Tuple[Expression, Expression]]] = {
+    instrs_hi_lo: Dict[
+        str, Callable[[InstrArgs, Register], Tuple[Expression, Expression]]
+    ] = {
         # Div and mul output two results, to LO/HI registers. (Format: (hi, lo))
         # PS2's mult/multu/madd/maddu instructions additionally support an output
         # register to copy LO to, $zero meaning no copying, and GNU as extends
         # that as a pseudo-instruction to div instructions too.
-        "div": lambda a: (
+        "div": lambda a, _: (
             BinaryOp.sint(a.reg(1), "%", a.reg(2)),
             BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         ),
-        "divu": lambda a: (
+        "divu": lambda a, _: (
             BinaryOp.uint(a.reg(1), "%", a.reg(2)),
             BinaryOp.uint(a.reg(1), "/", a.reg(2)),
         ),
-        "ddiv": lambda a: (
+        "ddiv": lambda a, _: (
             BinaryOp.s64(a.reg(1), "%", a.reg(2)),
             BinaryOp.s64(a.reg(1), "/", a.reg(2)),
         ),
-        "ddivu": lambda a: (
+        "ddivu": lambda a, _: (
             BinaryOp.u64(a.reg(1), "%", a.reg(2)),
             BinaryOp.u64(a.reg(1), "/", a.reg(2)),
         ),
-        "mult": lambda a: (
+        "mult": lambda a, _: (
             fold_divmod(BinaryOp.int(a.reg(1), "MULT_HI", a.reg(2))),
             BinaryOp.int(a.reg(1), "*", a.reg(2)),
         ),
-        "multu": lambda a: (
+        "multu": lambda a, _: (
             fold_divmod(BinaryOp.int(a.reg(1), "MULTU_HI", a.reg(2))),
             BinaryOp.int(a.reg(1), "*", a.reg(2)),
         ),
-        "dmult": lambda a: (
+        "dmult": lambda a, _: (
             BinaryOp.int64(a.reg(1), "DMULT_HI", a.reg(2)),
             BinaryOp.int64(a.reg(1), "*", a.reg(2)),
         ),
-        "dmultu": lambda a: (
+        "dmultu": lambda a, _: (
             BinaryOp.int64(a.reg(1), "DMULTU_HI", a.reg(2)),
             BinaryOp.int64(a.reg(1), "*", a.reg(2)),
         ),
         # madd/maddu are PS2 extensions, and act as u64(HI|LO) += x * y.
         # In practice, compiler-generated code only uses the lo part of the
         # output, which means we also only need the lo part of the input.
-        "madd": lambda a: (
+        "madd": lambda a, lo_reg: (
             ErrorExpr("madd top half"),
             handle_add_real(
-                a.regs[Register("lo")],
+                a.regs[lo_reg],
                 BinaryOp.int(a.reg(1), "*", a.reg(2)),
                 a,
             ),
         ),
-        "maddu": lambda a: (
+        "maddu": lambda a, lo_reg: (
             ErrorExpr("maddu top half"),
             handle_add_real(
-                a.regs[Register("lo")],
+                a.regs[lo_reg],
                 BinaryOp.int(a.reg(1), "*", a.reg(2)),
                 a,
             ),
@@ -1558,6 +1567,8 @@ class MipsArch(Arch):
         # Hi/lo register uses (used after division/multiplication)
         "mfhi": lambda a: a.regs[Register("hi")],
         "mflo": lambda a: a.regs[Register("lo")],
+        "mfhi1": lambda a: a.regs[Register("hi1")],
+        "mflo1": lambda a: a.regs[Register("lo1")],
         # Floating point arithmetic
         "add.s": lambda a: handle_add_float(a),
         "sub.s": lambda a: BinaryOp.f32(a.reg(1), "-", a.reg(2)),
