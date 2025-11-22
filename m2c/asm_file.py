@@ -773,9 +773,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
         elif ifdef_level == 0:
             if directive == "jlabel":
-                parts = line.split()
-                if len(parts) >= 2:
-                    process_label(parts[1], kind=LabelKind.JUMP_TARGET)
+                _, _, args_str = line.partition(" ")
+                args = split_quotable_arg_list(args_str)
+                if args:
+                    process_label(args[0], kind=LabelKind.JUMP_TARGET)
 
             elif directive in (
                 "glabel",
@@ -791,9 +792,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     asm_state.is_thumb = True
                 elif "arm" in directive.lower():
                     asm_state.is_thumb = False
-                parts = line.split()
-                if len(parts) >= 2:
-                    process_label(parts[1], kind=LabelKind.GLOBAL)
+                _, _, args_str = line.partition(" ")
+                args = split_quotable_arg_list(args_str)
+                if args:
+                    process_label(args[0], kind=LabelKind.GLOBAL)
 
             elif directive in (
                 "arm_func_end",
