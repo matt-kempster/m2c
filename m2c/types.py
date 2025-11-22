@@ -993,7 +993,7 @@ class Type:
 
     @staticmethod
     def gsym_unk_ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> Type:
-        real_ctype = resolve_typedefs(ctype, typemap)
+        real_ctype, _ = resolve_typedefs(ctype, typemap)
         type = Type.any()
 
         if isinstance(real_ctype, ca.TypeDecl) and isinstance(
@@ -1013,7 +1013,7 @@ class Type:
 
     @staticmethod
     def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> Type:
-        real_ctype = resolve_typedefs(ctype, typemap)
+        real_ctype, _ = resolve_typedefs(ctype, typemap)
 
         if isinstance(real_ctype, ca.ArrayDecl):
             dim = None

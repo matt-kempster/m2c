@@ -93,12 +93,12 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 7
+    VERSION: ClassVar[int] = 8
 
     cparser_scope: CParserScope = field(default_factory=dict)
     source_hash: Optional[str] = None
 
-    typedefs: Dict[str, CType] = field(default_factory=dict)
+    typedefs: Dict[str, Tuple[CType, int]] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
     vars_with_initializers: Set[str] = field(default_factory=set)
     functions: Dict[str, Function] = field(default_factory=dict)
@@ -123,27 +123,62 @@ def pointer(type: CType) -> CType:
     return PtrDecl(quals=[], type=type)
 
 
-def resolve_typedefs(type: CType, typemap: TypeMap) -> CType:
-    while isinstance(type, TypeDecl):
+def get_align_override(
+    decl: Union[ca.Decl, ca.Typedef, ca.Typename, ca.Struct, ca.Union],
+    typemap: TypeMap,
+) -> int:
+    aligns = []
+    for attr in decl.gcc_attributes:
+        if attr.name == "aligned":
+            if not attr.args:
+                align_to = 0x10
+            else:
+                align_to = parse_constant_int(attr.args[0], typemap)
+            aligns.append(align_to)
+    if isinstance(decl, ca.Decl):
+        for alignas in decl.align:
+            if isinstance(alignas.alignment, ca.Typename):
+                _, tp_align, _ = parse_struct_member(
+                    alignas.alignment.type,
+                    "referenced in _Alignas",
+                    typemap,
+                    allow_unsized=False,
+                )
+                align_to = get_align_override(alignas.alignment, typemap) or tp_align
+            else:
+                align_to = parse_constant_int(alignas.alignment, typemap)
+            aligns.append(align_to)
+
+    align = 0
+    for align_to in aligns:
+        if align_to <= 0 or (align_to & (align_to - 1)) != 0:
+            raise DecompFailure(f"Alignment {align_to} is not a power of two")
+        align = max(align, align_to)
+    return align
+
+
+def resolve_typedefs(type: CType, typemap: TypeMap) -> Tuple[CType, int]:
+    if isinstance(type, TypeDecl):
         if (
             isinstance(type.type, IdentifierType)
             and len(type.type.names) == 1
             and type.type.names[0] in typemap.typedefs
         ):
-            type = typemap.typedefs[type.type.names[0]]
-        elif isinstance(type.type, ca.Typeof):
+            type, align_override = typemap.typedefs[type.type.names[0]]
+            type, base_align_override = resolve_typedefs(type, typemap)
+            return type, align_override or base_align_override
+        if isinstance(type.type, ca.Typeof):
             typeof = type.type
             if isinstance(typeof.expr, ca.Typename):
                 type = typeof.expr.type
+                return type, get_align_override(typeof.expr, typemap)
             else:
                 expr = typeof.expr
                 if isinstance(expr, ca.UnaryOp) and expr.op == "sizeof":
                     size_t = ca.IdentifierType(names=["unsigned", "int"])
-                    return TypeDecl(declname=None, quals=[], type=size_t, align=[])
+                    return TypeDecl(declname=None, quals=[], type=size_t, align=[]), 0
                 raise DecompFailure("typeof() is not supported")
-        else:
-            break
-    return type
+    return type, 0
 
 
 def type_of_var_decl(decl: ca.Decl) -> CType:
@@ -167,7 +202,7 @@ def type_from_global_decl(decl: ca.Decl) -> CType:
             name=None,
             quals=param.quals,
             type=type_of_var_decl(param),
-            align=[],
+            align=None,
             gcc_attributes=[],
         )
 
@@ -222,9 +257,9 @@ def primitive_range(type: Union[ca.Enum, ca.IdentifierType]) -> Optional[range]:
 
 
 def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
-    type = resolve_typedefs(type, typemap)
+    type, align_override = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl) or isinstance(type, ArrayDecl):
-        return 4, 4
+        return 4, align_override or 4
     assert not isinstance(type, FuncDecl), "Function argument can not be a function"
     inner_type = type.type
     if isinstance(inner_type, (ca.Struct, ca.Union)):
@@ -232,16 +267,16 @@ def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
         assert (
             struct is not None
         ), "Function argument can not be of an incomplete struct"
-        return struct.size, struct.align
+        return struct.size, align_override or struct.align
     assert not isinstance(inner_type, ca.Typeof), "handled by resolve_typedefs"
     size = primitive_size(inner_type)
     if size == 0:
         raise DecompFailure("Function parameter has void type")
-    return size, size
+    return size, align_override or size
 
 
 def is_struct_type(type: CType, typemap: TypeMap) -> bool:
-    type = resolve_typedefs(type, typemap)
+    type, _ = resolve_typedefs(type, typemap)
     if not isinstance(type, TypeDecl):
         return False
     return isinstance(type.type, (ca.Struct, ca.Union))
@@ -273,7 +308,7 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
             type_name = type.type.names[0]
             if type_name.startswith("UNK_") or type_name.startswith("M2C_UNK"):
                 return True
-            type = typemap.typedefs[type_name]
+            type, _ = typemap.typedefs[type_name]
         elif isinstance(type, (PtrDecl, ArrayDecl)):
             type = type.type
         else:
@@ -399,10 +434,10 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
         if expr.op == "sizeof":
             return size
         if expr.op == "_Alignof":
-            return align
+            return get_align_override(expr.expr, typemap) or align
     if isinstance(expr, ca.Cast):
         value = parse_constant_int(expr.expr, typemap)
-        type = resolve_typedefs(expr.to_type.type, typemap)
+        type, _ = resolve_typedefs(expr.to_type.type, typemap)
         if isinstance(type, ca.TypeDecl) and isinstance(
             type.type, (ca.Enum, ca.IdentifierType)
         ):
@@ -471,9 +506,9 @@ def parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct
 def parse_struct_member(
     type: CType, field_name: str, typemap: TypeMap, *, allow_unsized: bool
 ) -> Tuple[int, int, DetailedStructMember]:
-    type = resolve_typedefs(type, typemap)
+    type, align_override = resolve_typedefs(type, typemap)
     if isinstance(type, PtrDecl):
-        return 4, 4, None
+        return 4, align_override or 4, None
     if isinstance(type, ArrayDecl):
         if type.dim is None:
             raise DecompFailure(f"Array field {field_name} must have a size")
@@ -481,14 +516,14 @@ def parse_struct_member(
         size, align, substr = parse_struct_member(
             type.type, field_name, typemap, allow_unsized=False
         )
-        return size * dim, align, Array(substr, type.type, size, dim)
+        return size * dim, align_override or align, Array(substr, type.type, size, dim)
     if isinstance(type, FuncDecl):
         assert allow_unsized, "Struct can not contain a function"
         return 0, 0, None
     inner_type = type.type
     if isinstance(inner_type, (ca.Struct, ca.Union)):
         substr = parse_struct(inner_type, typemap)
-        return substr.size, substr.align, substr
+        return substr.size, align_override or substr.align, substr
     if isinstance(inner_type, ca.Enum):
         parse_enum(inner_type, typemap)
     assert not isinstance(inner_type, ca.Typeof), "handled by resolve_typedefs"
@@ -496,7 +531,7 @@ def parse_struct_member(
     size = primitive_size(inner_type)
     if size == 0 and not allow_unsized:
         raise DecompFailure(f"Field {field_name} cannot be void")
-    return size, size, None
+    return size, align_override or size, None
 
 
 def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Struct:
@@ -506,10 +541,10 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     fields: Dict[int, List[StructField]] = defaultdict(list)
     bitfields: Dict[int, List[BitField]] = defaultdict(list)
     union_size = 0
-    align = 1
     offset = 0
     bit_offset = 0
     has_bitfields = False
+    align = get_align_override(struct, typemap) or 1
 
     def flush_bitfields() -> None:
         nonlocal offset, bit_offset
@@ -530,6 +565,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             if type.decls is None:
                 continue
             substruct = parse_struct(type, typemap)
+            subalign = get_align_override(decl, typemap) or substruct.align
             if type.name is not None:
                 # Struct defined within another, which is silly but valid C.
                 # parse_struct already makes sure it gets defined in the global
@@ -538,8 +574,8 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             else:
                 # C extension: anonymous struct/union, whose members are flattened
                 flush_bitfields()
-                align = max(align, substruct.align)
-                offset = (offset + substruct.align - 1) & -substruct.align
+                align = max(align, subalign)
+                offset = (offset + subalign - 1) & -subalign
                 for off, sfields in substruct.fields.items():
                     for field in sfields:
                         fields[offset + off].append(field)
@@ -568,11 +604,15 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
             ssize, salign, substr = parse_struct_member(
                 type, field_name, typemap, allow_unsized=False
             )
+            if ssize != salign or substr is not None:
+                raise DecompFailure(f"Bitfield {field_name} is not of primitive type")
+            if get_align_override(decl, typemap):
+                raise DecompFailure(
+                    f"Alignment directive not supported for bitfield {field_name}"
+                )
             align = max(align, salign)
             if width == 0:
                 continue
-            if ssize != salign or substr is not None:
-                raise DecompFailure(f"Bitfield {field_name} is not of primitive type")
             if width > ssize * 8:
                 raise DecompFailure(f"Width of bitfield {field_name} exceeds its type")
             if offset // ssize != (offset + (bit_offset + width - 1) // 8) // ssize:
@@ -595,6 +635,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
         ssize, salign, substr = parse_struct_member(
             type, field_name, typemap, allow_unsized=False
         )
+        salign = max(salign, get_align_override(decl, typemap))
         align = max(align, salign)
         offset = (offset + salign - 1) & -salign
         fields[offset].append(
@@ -774,9 +815,13 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
 
         for item in ast.ext:
             if isinstance(item, ca.Typedef):
-                typemap.typedefs[item.name] = resolve_typedefs(item.type, typemap)
-                if isinstance(item.type, TypeDecl) and isinstance(
-                    item.type.type, (ca.Struct, ca.Union)
+                target, align = resolve_typedefs(item.type, typemap)
+                align = get_align_override(item, typemap) or align
+                typemap.typedefs[item.name] = target, align
+                if (
+                    isinstance(item.type, TypeDecl)
+                    and isinstance(item.type.type, (ca.Struct, ca.Union))
+                    and not get_align_override(item, typemap)
                 ):
                     typedef = basic_type([item.name])
                     if item.type.type.name:
