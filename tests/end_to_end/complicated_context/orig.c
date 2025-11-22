@@ -139,3 +139,25 @@ short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_a
     }
     return (short)arg->int_field;
 }
+
+// GNU extensions, etc.
+
+extern int fixed_addr_sym : 0x1000000;
+int asm_sym asm("label");
+
+__const__ __const __volatile__ __volatile int arr[] = { [1 ... 2] = 1 };
+
+typeof(sizeof(1)) x;
+
+__inline__
+__inline
+int f(int* __restrict__ y) {
+	switch (1) {
+	case 1 ... 2:
+		__extension__ __attribute__((fallthrough));
+	case 3:
+		return __alignof__(int) + __alignof(int) + _Alignof(int);
+	}
+
+	(short)x = 2;
+}

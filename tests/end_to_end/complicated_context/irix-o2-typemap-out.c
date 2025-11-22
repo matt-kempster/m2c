@@ -4,10 +4,16 @@ float globalf;
 struct SubStruct;
 void func_decl(void);
 short test(struct SomeStruct *, unsigned char, union SomeUnion, ...);
+int fixed_addr_sym;
+int asm_sym;
+const const volatile volatile int arr[];
+typeof(sizeof(1)) x;
+int f(int * restrict);
 
 Functions:
 void func_decl(void);
 short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_arg, ...);
+int f(int * restrict y);
 
 Structs:
 SomeUnion: size 0x8, align 8
