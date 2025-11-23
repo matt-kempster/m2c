@@ -523,9 +523,12 @@ def parse_struct_member(
     if isinstance(type, PtrDecl):
         return 4, align_override or 4, None
     if isinstance(type, ArrayDecl):
-        if type.dim is None:
-            raise DecompFailure(f"Array field {field_name} must have a size")
-        dim = parse_constant_int(type.dim, typemap)
+        if type.dim is not None:
+            dim = parse_constant_int(type.dim, typemap)
+        else:
+            # We don't deal very well with flexible array members at the moment,
+            # but let's at least parse them.
+            dim = 1
         size, align, substr = parse_struct_member(
             type.type, field_name, typemap, allow_unsized=False
         )
