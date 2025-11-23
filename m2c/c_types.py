@@ -746,9 +746,10 @@ def process_ifdef(text: str) -> str:
 
     def repl(m: Match[str]) -> str:
         if m.group("neg") == "n":
-            return m.group("else_body") or ""
+            ret = m.group("else_body") or ""
         else:
-            return m.group("if_body")
+            ret = m.group("if_body")
+        return ret + "\n" * (m.group(0).count("\n") - ret.count("\n"))
 
     return re.sub(pattern, repl, text)
 
