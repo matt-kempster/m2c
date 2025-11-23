@@ -5,6 +5,7 @@ float globalf;
 #define IGNORED2(...) a \
     line \
     continuation
+#undef IGNORED3
 union SomeUnion {
     double double_innerfield;
     char char_innerfield;
