@@ -6,14 +6,28 @@ float globalf;
     line \
     continuation
 #undef IGNORED3
+
+#ifdef M2C
 union SomeUnion {
     double double_innerfield;
     char char_innerfield;
 };
+#else
+syntax error
+#endif
 
+#ifdef M2C
 typedef int Int;
 typedef Int Int;
+#endif
 
+#ifndef M2C
+syntax error
+#endif
+
+#ifndef M2C
+syntax error
+#else
 enum SomeEnum
 {
     FIRST_ELEM,
@@ -22,6 +36,7 @@ enum SomeEnum
     FOURTH_ELEM,
     FIFTH_ELEM,
 };
+#endif
 
 struct SomeBitfield {
     char char_bit : 1;

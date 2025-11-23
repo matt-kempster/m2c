@@ -737,14 +737,20 @@ def strip_comments(text: str) -> str:
 
 def process_ifdef(text: str) -> str:
     pattern = re.compile(
-        r"^[ \t]*#ifdef[ \t]+M2C\s+"
-        r"(?P<ifdef_body>.*?)"
-        r"^[ \t]*#else\s+"
-        r".*?"
+        r"^[ \t]*#if(?P<neg>n?)def[ \t]+M2C\s+"
+        r"(?P<if_body>.*?)"
+        r"(?:^[ \t]*#else\s+(?P<else_body>.*?))?"
         r"^[ \t]*#endif.*?$",
         flags=re.DOTALL | re.MULTILINE,
     )
-    return re.sub(pattern, lambda m: m.group("ifdef_body"), text)
+
+    def repl(m: Match[str]) -> str:
+        if m.group("neg") == "n":
+            return m.group("else_body") or ""
+        else:
+            return m.group("if_body")
+
+    return re.sub(pattern, repl, text)
 
 
 def strip_macro_defs(text: str) -> str:
