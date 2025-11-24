@@ -966,7 +966,7 @@ class Type:
         return Type(TypeData(kind=TypeData.K_INT, size_bits=128))
 
     @staticmethod
-    def bool() -> Type:
+    def boolean() -> Type:
         return Type.intish()
 
     @staticmethod
@@ -1134,7 +1134,7 @@ class Type:
             elif term.kind in (CxxTerm.Kind.POINTER, CxxTerm.Kind.REFERENCE):
                 type = Type.ptr(type)
             elif term.kind == CxxTerm.Kind.BOOL:
-                type = Type.bool()
+                type = Type.boolean()
             elif term.kind == CxxTerm.Kind.CHAR:
                 type = Type.int_of_size(8)
             elif term.kind in (CxxTerm.Kind.SHORT, CxxTerm.Kind.WIDE_CHAR):

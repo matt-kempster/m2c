@@ -1006,7 +1006,7 @@ class BinaryOp(Condition):
     @staticmethod
     def icmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
-            left=as_intptr(left), op=op, right=as_intptr(right), type=Type.bool()
+            left=as_intptr(left), op=op, right=as_intptr(right), type=Type.boolean()
         )
 
     @staticmethod
@@ -1015,7 +1015,7 @@ class BinaryOp(Condition):
             left=as_sintish(left, silent=True),
             op=op,
             right=as_sintish(right, silent=True),
-            type=Type.bool(),
+            type=Type.boolean(),
         )
 
     @staticmethod
@@ -1024,13 +1024,13 @@ class BinaryOp(Condition):
             left=as_type(left, Type.sintptr(), False),
             op=op,
             right=as_type(right, Type.sintptr(), False),
-            type=Type.bool(),
+            type=Type.boolean(),
         )
 
     @staticmethod
     def ucmp(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(
-            left=as_uintish(left), op=op, right=as_uintish(right), type=Type.bool()
+            left=as_uintish(left), op=op, right=as_uintish(right), type=Type.boolean()
         )
 
     @staticmethod
@@ -1039,7 +1039,7 @@ class BinaryOp(Condition):
             left=as_type(left, Type.uintptr(), False),
             op=op,
             right=as_type(right, Type.uintptr(), False),
-            type=Type.bool(),
+            type=Type.boolean(),
         )
 
     @staticmethod
@@ -1048,7 +1048,7 @@ class BinaryOp(Condition):
             left=as_f32(left),
             op=op,
             right=as_f32(right),
-            type=Type.bool(),
+            type=Type.boolean(),
         )
 
     @staticmethod
@@ -1057,7 +1057,7 @@ class BinaryOp(Condition):
             left=as_f64(left),
             op=op,
             right=as_f64(right),
-            type=Type.bool(),
+            type=Type.boolean(),
         )
 
     @staticmethod
@@ -1120,21 +1120,21 @@ class BinaryOp(Condition):
                 left=self.left.negated(),
                 op={"&&": "||", "||": "&&"}[self.op],
                 right=self.right.negated(),
-                type=Type.bool(),
+                type=Type.boolean(),
             )
         if not self.is_comparison() or (
             self.is_floating() and self.op in ["<", ">", "<=", ">="]
         ):
             # Floating-point comparisons cannot be negated in any nice way,
             # due to nans.
-            return UnaryOp("!", self, type=Type.bool())
+            return UnaryOp("!", self, type=Type.boolean())
         return BinaryOp(
             left=self.left,
             op={"==": "!=", "!=": "==", ">": "<=", "<": ">=", ">=": "<", "<=": ">"}[
                 self.op
             ],
             right=self.right,
-            type=Type.bool(),
+            type=Type.boolean(),
         )
 
     def dependencies(self) -> List[Expression]:
@@ -1244,7 +1244,7 @@ class UnaryOp(Condition):
     def negated(self) -> Condition:
         if self.op == "!" and isinstance(self.expr, (UnaryOp, BinaryOp)):
             return self.expr
-        return UnaryOp("!", self, type=Type.bool())
+        return UnaryOp("!", self, type=Type.boolean())
 
     def format(self, fmt: Formatter) -> str:
         # These aren't real operators (or functions); format them as a fn call
@@ -1275,7 +1275,7 @@ class ExprCondition(Condition):
 class CommaConditionExpr(Condition):
     statements: List[Statement]
     condition: Condition
-    type: Type = Type.bool()
+    type: Type = Type.boolean()
 
     def dependencies(self) -> List[Expression]:
         assert False, "CommaConditionExpr should not be used within translate.py"

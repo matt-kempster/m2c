@@ -1459,7 +1459,7 @@ class ArmArch(Arch):
                             BinaryOp.icmp(lo, "==", Literal(0)),
                             "&&",
                             BinaryOp.icmp(hi, "==", Literal(0)),
-                            type=Type.bool(),
+                            type=Type.boolean(),
                         ),
                     )
 
@@ -1539,7 +1539,7 @@ class ArmArch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 c = s.set_reg(Register("c"), CarryBit(a.reg(0)))
                 z = condition_from_expr(a.regs[Register("z")])
-                hi = BinaryOp(c, "&&", z.negated(), type=Type.bool())
+                hi = BinaryOp(c, "&&", z.negated(), type=Type.boolean())
                 s.set_reg(Register("hi"), hi)
 
         elif base in cls.instrs_add:
@@ -1581,7 +1581,7 @@ class ArmArch(Arch):
                     )
                     sval = as_type(val, Type.s32(), silent=True, unify=False)
                     s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
-                    v = fn_op("M2C_OVERFLOW", [sval], Type.bool())
+                    v = fn_op("M2C_OVERFLOW", [sval], Type.boolean())
                     s.set_reg(Register("v"), v)
                     # Remaining flag bits are based on the full mathematical result
                     # of unsigned/signed subtractions. We don't have a good way to
