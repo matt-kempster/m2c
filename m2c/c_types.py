@@ -527,7 +527,7 @@ def parse_struct_member(
             dim = parse_constant_int(type.dim, typemap)
         else:
             # We don't deal very well with flexible array members at the moment,
-            # but let's at least parse them.
+            # but let's at least parse them. This mirrors logic in Type.ctype.
             dim = 1
         size, align, substr = parse_struct_member(
             type.type, field_name, typemap, allow_unsized=False

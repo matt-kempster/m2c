@@ -1012,7 +1012,9 @@ class Type:
         return type
 
     @staticmethod
-    def ctype(ctype: CType, typemap: TypeMap, typepool: TypePool) -> Type:
+    def ctype(
+        ctype: CType, typemap: TypeMap, typepool: TypePool, *, in_struct: bool = False
+    ) -> Type:
         real_ctype, _ = resolve_typedefs(ctype, typemap)
 
         if isinstance(real_ctype, ca.ArrayDecl):
@@ -1020,6 +1022,9 @@ class Type:
             try:
                 if real_ctype.dim is not None:
                     dim = parse_constant_int(real_ctype.dim, typemap)
+                elif in_struct:
+                    # Mirror the logic in parse_struct_member.
+                    dim = 1
             except DecompFailure:
                 pass
             elem_type = Type.ctype(real_ctype.type, typemap, typepool)
@@ -1656,7 +1661,7 @@ class StructDeclaration:
             for field in fields:
                 if typepool.unk_inference and is_unk_type(field.type, typemap):
                     continue
-                field_type = Type.ctype(field.type, typemap, typepool)
+                field_type = Type.ctype(field.type, typemap, typepool, in_struct=True)
                 assert field.size == field_type.get_size_bytes(), (
                     field.size,
                     field_type.get_size_bytes(),
