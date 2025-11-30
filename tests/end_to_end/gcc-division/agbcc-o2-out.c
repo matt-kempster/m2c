@@ -117,24 +117,24 @@ void test_s32_div(s32 d) {
     foo((u32) (unksp0 / 360));
     foo((u32) (unksp0 / 1000));
     foo((u32) (unksp0 / 10000));
-    foo((u32) (unksp0 / (s32) .L13.unk4));
-    foo((u32) (unksp0 / (s32) .L13.unk8));
-    foo((u32) (unksp0 / (s32) .L13.unkC));
-    foo((u32) (unksp0 / (s32) .L13.unk10));
-    foo((u32) (unksp0 / (s32) .L13.unk14));
-    foo((u32) (unksp0 / (s32) .L13.unk18));
+    foo((u32) (unksp0 / 100000));
+    foo((u32) (unksp0 / 1000000));
+    foo((u32) (unksp0 / 10000000));
+    foo((u32) (unksp0 / 100000000));
+    foo((u32) (unksp0 / 1073741822));
+    foo((u32) (unksp0 / 1073741823));
     var_r0_5 = unksp0;
     if (var_r0_5 < 0) {
-        var_r0_5 += .L13.unk18;
+        var_r0_5 += 0x3FFFFFFF;
     }
     foo((u32) (var_r0_5 >> 0x1E));
-    foo((u32) (unksp0 / (s32) .L13.unk1C));
-    foo((u32) (unksp0 / (s32) .L13.unk20));
-    foo((u32) (unksp0 / (s32) .L13.unk24));
-    foo((u32) (unksp0 / (s32) .L13.unk28));
+    foo((u32) (unksp0 / 1073741825));
+    foo((u32) (unksp0 / 2147483645));
+    foo((u32) (unksp0 / 2147483646));
+    foo((u32) (unksp0 / 2147483647));
     foo(unksp0 >> 0x1F);
-    foo((u32) (unksp0 / (s32) .L13.unk2C));
-    foo((u32) (unksp0 / (s32) .L13.unk30));
+    foo((u32) (unksp0 / 2147483649));
+    foo((u32) (unksp0 / 2147483650));
     foo((u32) (unksp0 / -10));
     foo((u32) (unksp0 / -7));
     foo((u32) (unksp0 / -5));
@@ -149,8 +149,6 @@ void test_s32_div(s32 d) {
 }
 
 void test_s32_mod(s32 d) {
-    s32 temp_r4;
-    s32 temp_r5;
     s32 var_r0;
     s32 var_r0_2;
     s32 var_r0_3;
@@ -213,26 +211,24 @@ void test_s32_mod(s32 d) {
     foo((u32) (unksp0 % 360));
     foo((u32) (unksp0 % 1000));
     foo((u32) (unksp0 % 10000));
-    foo((u32) (unksp0 % (s32) .L22.unk4));
-    foo((u32) (unksp0 % (s32) .L22.unk8));
-    foo((u32) (unksp0 % (s32) .L22.unkC));
-    foo((u32) (unksp0 % (s32) .L22.unk10));
-    foo((u32) (unksp0 % (s32) .L22.unk14));
-    foo((u32) (unksp0 % (s32) .L22.unk18));
+    foo((u32) (unksp0 % 100000));
+    foo((u32) (unksp0 % 1000000));
+    foo((u32) (unksp0 % 10000000));
+    foo((u32) (unksp0 % 100000000));
+    foo((u32) (unksp0 % 1073741822));
+    foo((u32) (unksp0 % 1073741823));
     var_r0_5 = unksp0;
     if (unksp0 < 0) {
-        var_r0_5 = unksp0 + .L22.unk18;
+        var_r0_5 = unksp0 + 0x3FFFFFFF;
     }
     foo(unksp0 - ((var_r0_5 >> 0x1E) << 0x1E));
-    foo((u32) (unksp0 % (s32) .L22.unk1C));
-    foo((u32) (unksp0 % (s32) .L22.unk20));
-    temp_r5 = .L22.unk24;
-    foo((u32) (unksp0 % temp_r5));
-    temp_r4 = .L22.unk28;
-    foo((u32) (unksp0 % temp_r4));
-    foo(unksp0 & temp_r4);
-    foo((u32) (unksp0 % temp_r4));
-    foo((u32) (unksp0 % temp_r5));
+    foo((u32) (unksp0 % 1073741825));
+    foo((u32) (unksp0 % 2147483645));
+    foo((u32) (unksp0 % 2147483646));
+    foo((u32) (unksp0 % 2147483647));
+    foo(unksp0 & 0x7FFFFFFF);
+    foo((u32) (unksp0 % 2147483647));
+    foo((u32) (unksp0 % 2147483646));
     foo((u32) (unksp0 % 10));
     foo((u32) (unksp0 % 7));
     foo((u32) (unksp0 % 5));
@@ -286,23 +282,21 @@ void test_u32_div(u32 u) {
     foo(u / 360U);
     foo(u / 1000U);
     foo(u / 10000U);
-    foo(u / (u32) .L25.unk4);
-    foo(u / (u32) .L25.unk8);
-    foo(u / (u32) .L25.unkC);
-    foo(u / (u32) .L25.unk10);
+    foo(u / 100000U);
+    foo(u / 1000000U);
+    foo(u / 10000000U);
+    foo(u / 100000000U);
     foo(u >> 0x1E);
-    foo(u / (u32) .L25.unk14);
-    foo(u / (u32) .L25.unk18);
-    foo(u / (u32) .L25.unk1C);
+    foo(u / 1073741825U);
+    foo(u / 2147483646U);
+    foo(u / 2147483647U);
     foo(u >> 0x1F);
-    foo(u / (u32) .L25.unk20);
+    foo(u / 2147483649U);
     foo(u / -2U);
     foo(u / -1U);
 }
 
 void test_u32_mod(u32 u) {
-    u32 temp_r4;
-
     unksp0 = u;
     foo(0U);
     foo(u & 1);
@@ -342,17 +336,16 @@ void test_u32_mod(u32 u) {
     foo(u % 360U);
     foo(u % 1000U);
     foo(u % 10000U);
-    foo(u % (u32) .L28.unk4);
-    foo(u % (u32) .L28.unk8);
-    foo(u % (u32) .L28.unkC);
-    foo(u % (u32) .L28.unk10);
-    foo(u & .L28.unk14);
-    foo(u % (u32) .L28.unk18);
-    foo(u % (u32) .L28.unk1C);
-    temp_r4 = .L28.unk20;
-    foo(u % temp_r4);
-    foo(u & temp_r4);
-    foo(u % (u32) .L28.unk24);
+    foo(u % 100000U);
+    foo(u % 1000000U);
+    foo(u % 10000000U);
+    foo(u % 100000000U);
+    foo(u & 0x3FFFFFFF);
+    foo(u % 1073741825U);
+    foo(u % 2147483646U);
+    foo(u % 2147483647U);
+    foo(u & 0x7FFFFFFF);
+    foo(u % 2147483649U);
     foo(u % -2U);
     foo(u % -1U);
 }

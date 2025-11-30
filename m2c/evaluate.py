@@ -451,15 +451,17 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
 
     def load_rodata_constant() -> Optional[Expression]:
-        if not isinstance(expr, StructAccess) or expr.offset != 0:
+        if not isinstance(expr, StructAccess):
             return None
 
         is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
         if is_arm and isinstance(args.raw_arg(1), AsmAddressMode):
-            # For ARM, only allow constants loaded through `ldr pool`
+            # For ARM, only allow constants loaded through `ldr pool`.
+            # Do allow non-zero offsets: they occur in raw agbcc output which
+            # we use for tests.
             return None
-        if not is_arm and not type.is_likely_float():
-            # For non-ARM, only allow float constants
+        if not is_arm and (not type.is_likely_float() or expr.offset != 0):
+            # For non-ARM, only allow float constants and offset 0.
             return None
 
         target = early_unwrap(expr.struct_var)
@@ -470,23 +472,21 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
 
         sym_name = target.expr.symbol_name
         ent = args.stack_info.global_info.asm_data_value(sym_name)
-        if ent is None or not ent.data or not ent.is_readonly:
+        if ent is None or not ent.is_readonly:
             return None
 
-        data = ent.data[0]
-        if isinstance(data, bytes) and len(data) >= size and size in (4, 8):
+        data = ent.data_at_offset(expr.offset, size)
+        if data is None:
+            return None
+
+        if isinstance(data, bytes) and size in (4, 8):
             ent.used_as_literal = True
             endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
             fmt = "I" if size == 4 else "Q"
-            val: int = struct.unpack(endian + fmt, data[:size])[0]
+            val: int = struct.unpack(endian + fmt, data)[0]
             return Literal(value=val, type=type)
 
-        if (
-            is_arm
-            and ent.is_text
-            and isinstance(data, AsmSymbolicData)
-            and data.size == size
-        ):
+        if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
             sym = data.data
             addend = 0
             if (

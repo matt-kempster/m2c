@@ -4,10 +4,10 @@ s32 __extendsfdf2(s32);                             /* extern */
 s32 __fixsfsi();                                    /* extern */
 s32 __floatsisf(s32);                               /* extern */
 s32 __truncdfsf2();                                 /* extern */
+extern s32 globalf;
 extern s32 globali;
 
 void test(s32 arg1, s32 arg2, s32 arg3) {
-    s32 *temp_r4;
     s32 temp_r0;
     s32 temp_r6;
     s32 temp_r7;
@@ -17,11 +17,10 @@ void test(s32 arg1, s32 arg2, s32 arg3) {
     s32 var_r0;
 
     globali = __fixsfsi();
-    temp_r4 = .L6.unk4;
-    *temp_r4 = __floatsisf(arg1);
+    globalf = __floatsisf(arg1);
     temp_r7 = arg3 + 3;
     temp_ret = __extendsfdf2(arg2);
-    __adddf3(temp_ret, SECOND_REG(temp_ret), .L6.unk8, .L6.unkC);
+    __adddf3(temp_ret, SECOND_REG(temp_ret), 0, .L6.unkC);
     __truncdfsf2();
     temp_ret_2 = __extendsfdf2();
     __adddf3(temp_ret_2, SECOND_REG(temp_ret_2), .L6.unk10, .L6.unk14);

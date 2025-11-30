@@ -133,6 +133,25 @@ class AsmDataEntry:
             return 1, max_size
         return max_size - padding_size, max_size
 
+    def data_at_offset(
+        self, offset: int, size: int
+    ) -> Optional[Union[bytes, AsmSymbolicData]]:
+        for data in self.data:
+            subsize = len(data) if isinstance(data, bytes) else data.size
+            if offset >= subsize:
+                offset -= subsize
+                continue
+            if isinstance(data, bytes):
+                data = data[offset : offset + size]
+                if len(data) != size:
+                    return None
+                return data
+            else:
+                if data.size != size:
+                    return None
+                return data
+        return None
+
 
 @dataclass
 class AsmData:

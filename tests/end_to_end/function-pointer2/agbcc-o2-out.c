@@ -1,6 +1,9 @@
+s32 bar(f32 x);                                     /* static */
+extern s32 (*glob2)(f32);
+
 void test(void) {
-    glob = .L3.unk4;
-    glob = .L3.unk8;
-    *.L3.unkC = .L3.unk4;
-    *.L3.unkC = .L3.unk8;
+    glob = foo;
+    glob = bar;
+    glob2 = foo;
+    glob2 = bar;
 }

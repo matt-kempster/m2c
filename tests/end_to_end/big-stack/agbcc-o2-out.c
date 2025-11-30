@@ -5,7 +5,7 @@ s32 test(? arg0, s32 arg1) {
     s32 temp_r0;
     u8 *temp_r1;
 
-    temp_r0 = read(arg0, &unksp0, .L7.unk4);
+    temp_r0 = read(arg0, &unksp0, 0x123456);
     if (temp_r0 >= 0) {
         unksp0 = (u8) (unksp0 ^ 0x55);
         temp_r1 = &unksp0 + (temp_r0 - 1);
