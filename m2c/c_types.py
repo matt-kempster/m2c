@@ -269,32 +269,6 @@ def primitive_range(type: Union[ca.Enum, ca.IdentifierType]) -> Optional[range]:
         return range(0, 2**bits)
 
 
-def function_arg_size_align(type: CType, typemap: TypeMap) -> Tuple[int, int]:
-    type, align_override = resolve_typedefs(type, typemap)
-    if isinstance(type, PtrDecl) or isinstance(type, ArrayDecl):
-        return 4, align_override or 4
-    assert not isinstance(type, FuncDecl), "Function argument can not be a function"
-    inner_type = type.type
-    if isinstance(inner_type, (ca.Struct, ca.Union)):
-        struct = get_struct(inner_type, typemap)
-        assert (
-            struct is not None
-        ), "Function argument can not be of an incomplete struct"
-        return struct.size, align_override or struct.align
-    assert not isinstance(inner_type, ca.Typeof), "handled by resolve_typedefs"
-    size = primitive_size(inner_type)
-    if size == 0:
-        raise DecompFailure("Function parameter has void type")
-    return size, align_override or size
-
-
-def is_struct_type(type: CType, typemap: TypeMap) -> bool:
-    type, _ = resolve_typedefs(type, typemap)
-    if not isinstance(type, TypeDecl):
-        return False
-    return isinstance(type.type, (ca.Struct, ca.Union))
-
-
 def is_unk_type(type: CType, typemap: TypeMap) -> bool:
     """Return True if `type` represents an unknown type, or undetermined struct padding."""
     # Check for types matching "char unk_N[...];" or "char padN[...];"
