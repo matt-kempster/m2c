@@ -2,6 +2,7 @@
 based on a C AST. Based on the pycparser library."""
 
 from __future__ import annotations
+import abc
 import copy
 import functools
 import hashlib
@@ -34,6 +35,12 @@ CType = Union[PtrDecl, ArrayDecl, TypeDecl, FuncDecl]
 StructUnion = Union[ca.Struct, ca.Union]
 SimpleType = Union[PtrDecl, TypeDecl]
 CParserScope = Dict[str, bool]
+
+
+class ArchC(abc.ABC):
+    """Arch-specific information needed to extract types from C."""
+
+    base_struct_align: int = 1
 
 
 @dataclass
@@ -93,10 +100,12 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 9
+    VERSION: ClassVar[int] = 10
+
+    source_hash: str
+    base_struct_align: int
 
     cparser_scope: CParserScope = field(default_factory=dict)
-    source_hash: Optional[str] = None
 
     typedefs: Dict[str, Tuple[CType, int]] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
@@ -534,7 +543,7 @@ def do_parse_struct(struct: Union[ca.Struct, ca.Union], typemap: TypeMap) -> Str
     offset = 0
     bit_offset = 0
     has_bitfields = False
-    align = get_align_override(struct, typemap) or 1
+    align = get_align_override(struct, typemap) or typemap.base_struct_align
     pack_struct = any(attr.name == "packed" for attr in struct.gcc_attributes)
     pragma_pack = typemap.pragma_packs.get(struct, 0)
 
@@ -779,14 +788,19 @@ def parse_c(
     return ast, c_parser._scope_stack[0].copy()
 
 
-def build_typemap(source_paths: List[Path], use_cache: bool) -> TypeMap:
+def build_typemap(source_paths: List[Path], arch: ArchC, use_cache: bool) -> TypeMap:
     # Wrapper to convert `source_paths` into a hashable type
-    return _build_typemap(tuple(source_paths), use_cache)
+    return _build_typemap(tuple(source_paths), arch, use_cache)
 
 
 @functools.lru_cache(maxsize=16)
-def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
-    typemap = TypeMap()
+def _build_typemap(
+    source_paths: Tuple[Path, ...], arch: ArchC, use_cache: bool
+) -> TypeMap:
+    typemap = TypeMap(
+        source_hash=f"root:{TypeMap.VERSION},{arch.base_struct_align}",
+        base_struct_align=arch.base_struct_align,
+    )
 
     for source_path in source_paths:
         source = source_path.read_text(encoding="utf-8-sig")
@@ -796,7 +810,6 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
         # secure, caching should only be enabled in trusted environments. (Unpickling files
         # can lead to arbitrary code execution.)
         hasher = hashlib.sha256()
-        hasher.update(f"version={TypeMap.VERSION}\n".encode("utf-8"))
         hasher.update(f"parent={typemap.source_hash}\n".encode("utf-8"))
         hasher.update(source.encode("utf-8"))
         source_hash = hasher.hexdigest()
@@ -862,9 +875,9 @@ def _build_typemap(source_paths: Tuple[Path, ...], use_cache: bool) -> TypeMap:
         class Visitor(ca.NodeVisitor):
             def visit_Pragma(self, pragma: ca.Pragma) -> None:
                 nonlocal cur_pack
-                # This only covers top-level structs, but we don't care enough
-                # about nested ones to pay the performance cost of doing another
-                # visitor traversal.
+                # Handle "#pragma pack". This only covers top-level structs, but
+                # we don't care enough about nested ones to pay the performance
+                # cost of doing another visitor traversal.
                 parts = pragma.string.split("(")
                 if len(parts) >= 2 and parts[0].strip() == "pack":
                     args = parts[1].split(")")[0].split(",")

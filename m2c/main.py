@@ -21,7 +21,7 @@ from .translate import (
     narrow_func_call_outputs,
 )
 from .types import TypePool
-from .arch_arm import ArmArch
+from .arch_arm import ArmArch, ArmGbaArch
 from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 
@@ -81,7 +81,10 @@ def run(options: Options) -> int:
     elif options.target.arch == Target.ArchEnum.PPC:
         arch = PpcArch()
     elif options.target.arch == Target.ArchEnum.ARM:
-        arch = ArmArch()
+        if options.target.platform == Target.PlatformEnum.GBA:
+            arch = ArmGbaArch()
+        else:
+            arch = ArmArch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")
 
@@ -99,7 +102,7 @@ def run(options: Options) -> int:
 
         if options.heuristic_strings:
             asm_data.detect_heuristic_strings()
-        typemap = build_typemap(options.c_contexts, use_cache=options.use_cache)
+        typemap = build_typemap(options.c_contexts, arch, use_cache=options.use_cache)
     except Exception as e:
         print_exception_as_comment(e, options, context=None)
         return 1
@@ -503,7 +506,7 @@ def parse_flags(flags: List[str]) -> Options:
         type=Target.parse,
         default="mips-ido-c",
         help="Target platform, compiler, and language triple. "
-        "Supported platforms: [mips, mipsel, mipsee, ppc, arm]. "
+        "Supported platforms: [mips, mipsel, mipsee, ppc, arm, gba]. "
         "Supported compilers: [ido, gcc, mwcc]. "
         "Supported languages: [c, c++]. "
         "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, and `arm` for arm-gcc-c.",

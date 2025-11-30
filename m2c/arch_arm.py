@@ -2016,3 +2016,9 @@ class ArmArch(Arch):
             Register("r0"): as_type(expr, Type.intptr(), silent=True, unify=False),
             Register("r1"): fn_op("SECOND_REG", [expr], Type.reg32(likely_float=False)),
         }
+
+
+class ArmGbaArch(ArmArch):
+    """Arch variant that follows the APCS ABI used on Gameboy Advance."""
+
+    base_struct_align = 4

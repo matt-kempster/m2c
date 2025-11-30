@@ -41,6 +41,7 @@ class Target:
         MIPSEE = "mipsee"
         PPC = "ppc"
         ARM = "arm"
+        GBA = "gba"
 
         @property
         def arch(self) -> Target.ArchEnum:
@@ -53,6 +54,8 @@ class Target:
             elif self == Target.PlatformEnum.PPC:
                 return Target.ArchEnum.PPC
             elif self == Target.PlatformEnum.ARM:
+                return Target.ArchEnum.ARM
+            elif self == Target.PlatformEnum.GBA:
                 return Target.ArchEnum.ARM
             else:
                 static_assert_unreachable(self)
@@ -100,6 +103,7 @@ class Target:
                 Target.PlatformEnum.MIPSEL,
                 Target.PlatformEnum.MIPSEE,
                 Target.PlatformEnum.ARM,
+                Target.PlatformEnum.GBA,
             ):
                 endian = Target.EndianEnum.LITTLE
             arch = platform.arch

@@ -38,6 +38,7 @@ The following platforms are supported:
 - `mipsee`: MIPS (with eabi64, little endian)
 - `ppc`: PowerPC (big endian)
 - `arm`: ARM (little endian)
+- `gba`: ARM (with APCS, little endian)
 
 The following compilers are supported:
 - `ido`: Integrated Development Option (MIPS compiler from SGI)

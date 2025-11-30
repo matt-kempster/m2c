@@ -23,7 +23,7 @@ from typing import (
     Union,
 )
 
-from .c_types import CType, TypeMap, is_unk_type
+from .c_types import ArchC, CType, TypeMap, is_unk_type
 from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
@@ -76,7 +76,7 @@ CmpInstrMap = Mapping[str, Callable[["InstrArgs"], "Condition"]]
 StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
 
 
-class Arch(ArchFlowGraph):
+class Arch(ArchFlowGraph, ArchC):
     """Arch-specific information that relates to the translation level.
     Extends ArchFlowGraph."""
 

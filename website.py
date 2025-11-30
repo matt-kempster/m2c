@@ -67,6 +67,7 @@ if "source" in form:
         value = form.getfirst("target")
         if value in (
             "ppc-mwcc-c++",
+            "gba-gcc-c",
             "arm-gcc-c",
             "arm-mwcc-c++",
             "mips-ido-c",
@@ -259,7 +260,8 @@ label {
     <option value="mipsel-gcc-c">MIPSEL, GCC</option>
     <option value="mipsee-gcc-c">MIPSEE, GCC</option>
     <option value="ppc-mwcc-c++">PPC, MWCC</option>
-    <option value="arm-gcc-c">ARM, agbcc</option>
+    <option value="gba-gcc-c">ARM, agbcc</option>
+    <option value="arm-gcc-c">ARM, GCC</option>
     <option value="arm-mwcc-c++">ARM, MWCC</option>
     </select>
     </label>
