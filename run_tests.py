@@ -85,6 +85,10 @@ def decompile_and_compare(
 
     test_flags = ["--sanitize-tracebacks", "--stop-on-error"]
     test_flags.extend(test_case.flags)
+    if "gba" in test_flags:
+        # Avoid repeated cache invalidations due to different struct alignment.
+        # This also helps test both with and without cache.
+        test_flags.append("--no-cache")
     if test_case.flags_path is not None:
         test_flags.extend(get_test_flags(test_case.flags_path))
     test_flags.append(str(test_case.asm_file))
