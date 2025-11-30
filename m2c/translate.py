@@ -4234,6 +4234,8 @@ class GlobalInfo:
             if not data[0]:
                 del data[0]
             value = 0
+            if not self.target.is_big_endian():
+                bs = bs[::-1]
             for b in bs:
                 value = (value << 8) | b
             return value

@@ -1,4 +1,4 @@
-enum my_enum array[4] = { 0x03000000, 0x02000000, 0x02000000, ZERO }; /* const */
+enum my_enum array[4] = { THREE, TWO_TOO, TWO_TOO, ZERO }; /* const */
 
 enum my_enum test(enum my_enum x) {
     switch (x) {                                    /* irregular */
