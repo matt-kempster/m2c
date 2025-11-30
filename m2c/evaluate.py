@@ -97,13 +97,13 @@ def deref(
         var = Literal(var.value + offset, type=var.type)
         offset = 0
 
-    # Handle large struct offsets.
+    # Handle large struct offsets or *(x + offset).
     uw_var = early_unwrap(var)
     if isinstance(uw_var, BinaryOp) and uw_var.op == "+":
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             arch = stack_info.global_info.arch
-            if isinstance(addend, Literal) and arch.is_likely_partial_offset(
-                addend.value
+            if isinstance(addend, Literal) and (
+                arch.is_likely_partial_offset(addend.value) or offset == 0
             ):
                 offset += addend.value
                 var = base
