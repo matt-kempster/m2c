@@ -2101,18 +2101,22 @@ class MipseeArch(MipsArch):
         *,
         for_call: bool,
     ) -> Abi:
+        known_slots: List[AbiArgSlot] = []
+        candidate_slots: List[AbiArgSlot] = []
+
         # $rX & $fX regs can be interspersed in function args, unlike in the MIPS O32 ABI
         intptr_regs = [r for r in self.argument_regs if r.register_name[0] != "f"]
         float_regs = [r for r in self.argument_regs if r.register_name[0] == "f"]
 
-        known_slots: List[AbiArgSlot] = []
-        candidate_slots: List[AbiArgSlot] = []
         if fn_sig.params_known:
             ind = 0
+            stack_offset = 0
             for param in fn_sig.params:
-                # TODO: Support passing parameters on the stack
+                # TODO: Support structs as parameters/return type, and 64-bit values
+                # passed on the stack.
                 param_type = param.type.decay()
-                reg: Optional[Register]
+                reg: Optional[Register] = None
+                offset: Optional[int] = None
                 try:
                     if param_type.is_float():
                         reg = float_regs.pop(0)
@@ -2120,9 +2124,10 @@ class MipseeArch(MipsArch):
                         reg = intptr_regs.pop(0)
                 except IndexError:
                     # Stack variable
-                    reg = None
+                    offset = stack_offset
+                    stack_offset += 4
                 known_slots.append(
-                    AbiArgSlot(ArgLoc(None, ind, reg), param_type, name=param.name)
+                    AbiArgSlot(ArgLoc(offset, ind, reg), param_type, name=param.name)
                 )
                 ind += 1
             if fn_sig.is_variadic:
@@ -2136,7 +2141,6 @@ class MipseeArch(MipsArch):
                         AbiArgSlot(ArgLoc(None, ind, reg), Type.floatish())
                     )
                     ind += 1
-
         else:
             candidate_slots = self.default_function_abi_candidate_slots()
 
