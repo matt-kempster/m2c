@@ -1895,6 +1895,8 @@ class MipsArch(Arch):
 class MipseeArch(MipsArch):
     stack_pointer_reg = Register("sp")
 
+    home_space_size = 0
+
     argument_regs = [
         Register(r)
         for r in [
