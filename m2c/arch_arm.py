@@ -881,7 +881,7 @@ class PopAndReturnPattern(SimpleAsmPattern):
         return Replacement([AsmInstruction("bx", [Register("lr")])], len(m.body))
 
 
-class TailCallPattern(SimpleAsmPattern):
+class IndirectTailCallPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bx $x",
     )
@@ -896,6 +896,30 @@ class TailCallPattern(SimpleAsmPattern):
             ],
             len(m.body),
         )
+
+
+class TailCallPattern(AsmPattern):
+    """
+    `return fn(...);` may be optimized to perform a `b fn` instead of
+    `bl fn; bx lr` (plus stack restores).
+    """
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if (
+            isinstance(instr, Instruction)
+            and instr.mnemonic == "b"
+            and isinstance(instr.args[0], AsmGlobalSymbol)
+            and not matcher.is_local_label(instr.args[0].symbol_name)
+        ):
+            return Replacement(
+                [
+                    AsmInstruction("bl", instr.args),
+                    AsmInstruction("bx", [Register("lr")]),
+                ],
+                1,
+            )
+        return None
 
 
 class BlBranchPattern(AsmPattern):
@@ -1701,6 +1725,7 @@ class ArmArch(Arch):
         AddrModeWritebackPattern(),
         RegRegAddrModePattern(),
         PopAndReturnPattern(),
+        IndirectTailCallPattern(),
         TailCallPattern(),
         BlBranchPattern(),
         MagicFuncPattern(),
