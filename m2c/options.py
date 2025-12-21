@@ -184,6 +184,7 @@ class Options:
     backwards_bss: bool
     disable_gc: bool
     union_field_overrides: Dict[str, str]
+    void_var_type_overrides: Dict[str, str]
 
     def formatter(self) -> Formatter:
         return Formatter(
