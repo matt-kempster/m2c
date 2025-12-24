@@ -1,7 +1,17 @@
 from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
-from typing import DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import (
+    Callable,
+    DefaultDict,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 from .flow_graph import (
     BasicNode,
@@ -40,12 +50,16 @@ class Context:
     options: Options
     is_void: bool = True
     switch_nodes: Dict[Node, int] = field(default_factory=dict)
-    case_nodes: DefaultDict[Node, List[Tuple[int, str]]] = field(
+    case_nodes: DefaultDict[Node, List[Tuple[SwitchIndex, str]]] = field(
         default_factory=lambda: defaultdict(list)
     )
     goto_nodes: Set[Node] = field(default_factory=set)
     emitted_nodes: Set[Node] = field(default_factory=set)
     has_warned: bool = False
+
+    def add_switch(self, node: Node) -> SwitchIndex:
+        self.switch_nodes[node] = 0
+        return SwitchIndex(self, node)
 
 
 @dataclass
@@ -89,10 +103,17 @@ class IfElseStatement:
         return if_str
 
 
-def comments_for_switch(index: int) -> List[str]:
-    if index == 0:
-        return []
-    return [f"switch {index}"]
+@dataclass
+class SwitchIndex:
+    context: Context
+    node: Node
+
+    def to_comment(self, fmt: Formatter) -> Optional[str]:
+        index = self.context.switch_nodes[self.node]
+        if len(self.context.switch_nodes) == 1:
+            # There is only one switch in this function, no need to label
+            return None
+        return f"switch {index + 1}"
 
 
 @dataclass
@@ -101,7 +122,7 @@ class SwitchStatement:
     body: Body
     # If there are multiple switch statements in a single function, each is given a
     # unique index starting at 1. This is used in comments to make control flow clear.
-    index: int
+    index: SwitchIndex
 
     def should_write(self) -> bool:
         return True
@@ -110,7 +131,9 @@ class SwitchStatement:
         lines = []
         comments = []
         body_is_empty = self.body.is_empty()
-        comments.extend(comments_for_switch(self.index))
+        comment = self.index.to_comment(fmt)
+        if comment:
+            comments.append(comment)
         if self.jump.is_irregular:
             comments.append("irregular")
         elif self.jump.num_cases is None:
@@ -135,7 +158,9 @@ class SwitchStatement:
 @dataclass
 class SimpleStatement:
     contents: Optional[Union[str, TrStatement]]
-    comments: List[str] = field(default_factory=list)
+    comments: Sequence[Union[str, Callable[[Formatter], Optional[str]]]] = field(
+        default_factory=list
+    )
     is_jump: bool = False
     indent: int = 0
 
@@ -150,7 +175,16 @@ class SimpleStatement:
         else:
             content = self.contents.format(fmt)
 
-        return fmt.with_comments(content, self.comments, indent=self.indent)
+        comments = []
+        for c in self.comments:
+            if isinstance(c, str):
+                comments.append(c)
+            else:
+                co = c(fmt)
+                if co is not None:
+                    comments.append(co)
+
+        return fmt.with_comments(content, comments, indent=self.indent)
 
     def clear(self) -> None:
         self.contents = None
@@ -170,8 +204,9 @@ class LabelStatement:
     def format(self, fmt: Formatter) -> str:
         lines = []
         if self.node in self.context.case_nodes:
-            for switch, case_label in self.context.case_nodes[self.node]:
-                comments = comments_for_switch(switch)
+            for index, case_label in self.context.case_nodes[self.node]:
+                comment = index.to_comment(fmt)
+                comments = [comment] if comment else []
                 lines.append(fmt.with_comments(f"{case_label}:", comments, indent=-1))
         if self.node in self.context.goto_nodes:
             lines.append(f"{label_for_node(self.context, self.node)}:")
@@ -422,9 +457,9 @@ def add_labels_for_switch(
     case_type: Type,
     cases: List[Tuple[int, Node]],
     default_node: Optional[Node],
-) -> int:
+) -> SwitchIndex:
     assert cases, "jtbl list must not be empty"
-    switch_index = context.switch_nodes[node]
+    switch_index = context.add_switch(node)
 
     # Force hex for case labels if the highest label is above 50, and there are no negative labels
     indexes = sorted([i for i, _ in cases])
@@ -433,7 +468,7 @@ def add_labels_for_switch(
     )
 
     # Keep track of which labels we skipped because they weren't required
-    skipped_labels: List[Tuple[Node, Tuple[int, str]]] = []
+    skipped_labels: List[Tuple[Node, Tuple[SwitchIndex, str]]] = []
     emitted_label_count = 0
 
     # Mark which labels we need to emit
@@ -926,17 +961,7 @@ def try_build_irregular_switch(
     ):
         return None
 
-    # If this new irregular switch uses all of the other switch nodes in the function,
-    # then we no longer need to add labelling comments with the switch_index
-    for n in nodes_to_mark_emitted:
-        context.switch_nodes.pop(n, None)
-    if context.switch_nodes:
-        switch_index = max(context.switch_nodes.values()) + 1
-    else:
-        switch_index = 0
-    context.switch_nodes[start] = switch_index
-
-    add_labels_for_switch(
+    switch_index = add_labels_for_switch(
         context,
         start,
         var_expr.type,
@@ -1054,7 +1079,7 @@ def build_switch_statement(
     context: Context,
     jump: SwitchControl,
     case_nodes: List[Node],
-    switch_index: int,
+    switch_index: SwitchIndex,
     end: Node,
 ) -> SwitchStatement:
     """
@@ -1070,7 +1095,7 @@ def build_switch_statement(
     remaining_labels = []
     for index, case_label in context.case_nodes[end]:
         if index == switch_index:
-            comments = comments_for_switch(switch_index)
+            comments = [lambda fmt: index.to_comment(fmt)]
             switch_body.add_statement(
                 SimpleStatement(f"{case_label}:", comments=comments, indent=-1)
             )
@@ -1371,15 +1396,6 @@ def build_body(context: Context, options: Options) -> Body:
     if options.debug:
         print("Here's the whole function!\n")
 
-    # Label switch nodes
-    switch_nodes = [n for n in context.flow_graph.nodes if isinstance(n, SwitchNode)]
-    if len(switch_nodes) == 1:
-        # There is only one switch in this function (no need to label)
-        context.switch_nodes[switch_nodes[0]] = 0
-    else:
-        for i, switch_node in enumerate(switch_nodes):
-            context.switch_nodes[switch_node] = i + 1
-
     body: Body
     if options.ifs and is_reducible:
         body = build_flowgraph_between(context, start_node, terminal_node)
@@ -1403,6 +1419,13 @@ def build_body(context: Context, options: Options) -> Body:
             f"bug: did not emit code for node #{node.name()}; contents below:"
         )
         emit_node(context, node, body)
+
+    # Label switch nodes
+    index = 0
+    for node in context.flow_graph.nodes:
+        if node in context.switch_nodes:
+            context.switch_nodes[node] = index
+            index += 1
 
     return body
 

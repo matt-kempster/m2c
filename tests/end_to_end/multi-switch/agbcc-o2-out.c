@@ -20,16 +20,16 @@ s32 test(s32 arg0) {
                 goto block_28;
             }
         } else {
-            switch (var_r2) { // irregular
-            case 0xC8:
-            case 0x65:
+            switch (var_r2) { // switch 2; irregular
+            case 0xC8: // switch 2
+            case 0x65: // switch 2
             case 3: // switch 1
 block_21:
                 return (var_r2 + 1) ^ var_r2;
-            case 0x6B:
+            case 0x6B: // switch 2
                 var_r2 = 0x0000006C;
                 goto block_28;
-            case 0x66:
+            case 0x66: // switch 2
 block_25:
                 if (glob == 0) {
                     var_r2 -= 1;

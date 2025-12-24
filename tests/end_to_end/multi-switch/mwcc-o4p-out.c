@@ -23,17 +23,17 @@ s32 test(s32 arg0) {
                 goto block_28;
             }
         } else {
-            switch (var_r3) { // irregular
-            case 0xC8:
-            case 0x65:
+            switch (var_r3) { // switch 2; irregular
+            case 0xC8: // switch 2
+            case 0x65: // switch 2
             case 3: // switch 1
                 return var_r3 ^ (var_r3 + 1);
-            case 0x6B:
+            case 0x6B: // switch 2
                 var_r3 += 1;
                 // Duplicate return node #31. Try simplifying control flow for better match
                 glob = var_r3;
                 return 2;
-            case 0x66:
+            case 0x66: // switch 2
 block_28:
                 if ((s32) glob == 0) {
                     var_r3 -= 1;
