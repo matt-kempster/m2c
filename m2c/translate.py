@@ -28,6 +28,7 @@ from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
 from .error import DecompFailure, static_assert_unreachable
 from .flow_graph import (
     ArchFlowGraph,
+    BasicNode,
     Block,
     ConditionalNode,
     FlowGraph,
@@ -2359,6 +2360,87 @@ class BlockInfo:
         return [st for st in self.to_write if st.should_write()]
 
 
+def visualize_flowgraph(
+    flow_graph: FlowGraph, viz_type: Options.VisualizeTypeEnum
+) -> str:
+    import graphviz as g
+
+    fmt = Formatter(debug=True)
+    dot = g.Digraph(
+        node_attr={
+            "shape": "rect",
+            "fontname": "Monospace",
+        },
+        edge_attr={
+            "fontname": "Monospace",
+        },
+    )
+
+    for node in flow_graph.nodes:
+        block_info = _get_optional_block_info(node)
+        asm_label = ""
+        c_label = ""
+
+        # In Graphviz, "\l" makes the preceeding text left-aligned, and inserts a newline
+        if block_info:
+            asm_label = "".join(
+                f"{'*' if i.meta.synthetic else '&nbsp;'} {i}\\l"
+                for i in node.block.instructions
+            )
+            c_label = "".join(
+                w.format(fmt) + "\\l" for w in block_info.to_write if w.should_write()
+            )
+
+        dot.node(node.name())
+        if isinstance(node, BasicNode):
+            dot.edge(node.name(), node.successor.name(), color="black")
+        elif isinstance(node, ConditionalNode):
+            if block_info:
+                assert block_info.branch_condition is not None
+                c_label += f"if ({block_info.branch_condition.format(fmt)})\\l"
+            dot.edge(node.name(), node.fallthrough_edge.name(), label="F", color="blue")
+            dot.edge(node.name(), node.conditional_edge.name(), label="T", color="red")
+        elif isinstance(node, ReturnNode):
+            if block_info is not None and block_info.return_value:
+                c_label += f"return ({block_info.return_value.format(fmt)});\\l"
+            else:
+                c_label += "return;\\l"
+            dot.edge(node.name(), node.terminal.name())
+        elif isinstance(node, SwitchNode):
+            assert block_info is not None
+            switch_control = block_info.switch_control
+            assert switch_control is not None
+            c_label += f"switch ({switch_control.control_expr.format(fmt)})\\l"
+            for i, case in enumerate(node.cases):
+                dot.edge(
+                    node.name(),
+                    case.name(),
+                    label=str(i + switch_control.offset),
+                    color="green",
+                )
+        else:
+            assert isinstance(node, TerminalNode)
+            asm_label += "// exit\\l"
+            c_label += "// exit\\l"
+
+        line_label = ""
+        first_instr = next(node.block.instructions, None)
+        if first_instr is not None and first_instr.meta.lineno > 0:
+            line_label = f" (line {first_instr.meta.lineno})"
+
+        label = f"// Node {node.name()}{line_label}\\l"
+        if viz_type == Options.VisualizeTypeEnum.ASM:
+            label += asm_label
+        elif viz_type == Options.VisualizeTypeEnum.C:
+            label += c_label
+        else:
+            raise ValueError("Invalid viz_type: {viz_type!r}")
+
+        dot.node(node.name(), label=label)
+    svg_bytes: bytes = dot.pipe("svg")
+    return svg_bytes.decode("utf-8", "replace")
+
+
 def get_block_info_for_block(block: Block) -> BlockInfo:
     ret = block.block_info
     assert isinstance(ret, BlockInfo)
@@ -2367,6 +2449,12 @@ def get_block_info_for_block(block: Block) -> BlockInfo:
 
 def get_block_info(node: Node) -> BlockInfo:
     return get_block_info_for_block(node.block)
+
+
+def _get_optional_block_info(node: Node) -> Optional[BlockInfo]:
+    if node.block.block_info is None:
+        return None
+    return get_block_info(node)
 
 
 @dataclass

@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Union
 
 from .c_types import build_typemap, dump_typemap
 from .error import DecompFailure
-from .flow_graph import FlowGraph, build_flowgraph, visualize_flowgraph
+from .flow_graph import FlowGraph, build_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options, Target
 from .asm_file import AsmData, Function, parse_file
@@ -19,6 +19,7 @@ from .translate import (
     GlobalInfo,
     translate_to_ast,
     narrow_func_call_outputs,
+    visualize_flowgraph,
 )
 from .types import TypePool
 from .arch_arm import ArmArch, ArmGbaArch
