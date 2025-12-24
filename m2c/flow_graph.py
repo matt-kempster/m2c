@@ -1,11 +1,11 @@
 from __future__ import annotations
 import abc
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
-    Counter,
+    Counter as CounterPy38,
     DefaultDict,
     Dict,
     ItemsView,
@@ -428,7 +428,7 @@ def build_blocks(
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
-    branch_likely_counts: Counter[str] = Counter()
+    branch_likely_counts: CounterPy38[str] = Counter()
     cond_return_target: Optional[str] = None
 
     def process_mips(item: Union[Instruction, Label]) -> None:
@@ -826,7 +826,7 @@ def build_graph_from_block(
             return node
 
     new_node: Node
-    dummy_node: Any = None
+    dummy_node: Node = None  # type: ignore
     terminal_node = nodes[0]
     assert isinstance(
         terminal_node, TerminalNode

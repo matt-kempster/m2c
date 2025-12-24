@@ -39,6 +39,12 @@ python = "^3.8"
 [tool.black]
 force-exclude = "/m2c_pycparser/"
 
+[tool.ty.environment]
+extra-paths = ["./stubs"]
+
+[tool.ty.src]
+include = ["./m2c.py", "./m2c", "./run_tests.py", "./tests/add_test.py", "./tests/unit"]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

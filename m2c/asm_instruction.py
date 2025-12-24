@@ -5,7 +5,7 @@ import abc
 from dataclasses import dataclass, field
 from enum import Enum
 import string
-from typing import Dict, Iterator, List, Optional, Union
+from typing import Dict, Iterator, List, Optional, Union, final
 
 from .error import DecompFailure, static_assert_unreachable
 
@@ -24,6 +24,7 @@ OP_PRECEDENCE = {
 MAX_PRECEDENCE = 6
 
 
+@final
 @dataclass(frozen=True)
 class Register:
     register_name: str
@@ -47,6 +48,7 @@ class Register:
         return f"${self.register_name}"
 
 
+@final
 @dataclass(frozen=True)
 class RegisterList:
     regs: List[Register]
@@ -63,6 +65,7 @@ class AsmGlobalSymbol:
         return self.symbol_name
 
 
+@final
 @dataclass(frozen=True)
 class AsmSectionGlobalSymbol(AsmGlobalSymbol):
     section_name: str
@@ -77,6 +80,7 @@ def asm_section_global_symbol(section_name: str, addend: int) -> AsmSectionGloba
     )
 
 
+@final
 @dataclass(frozen=True)
 class Macro:
     macro_name: str
@@ -89,6 +93,7 @@ class Macro:
             return f"%{self.macro_name}({self.argument})"
 
 
+@final
 @dataclass(frozen=True)
 class AsmLiteral:
     value: int
@@ -105,6 +110,7 @@ class Writeback(Enum):
     POST = "post"
 
 
+@final
 @dataclass(frozen=True)
 class AsmAddressMode:
     base: Register
@@ -128,6 +134,7 @@ class AsmAddressMode:
             return f"{self.addend}({self.base})"
 
 
+@final
 @dataclass(frozen=True)
 class BinOp:
     op: str
@@ -138,6 +145,7 @@ class BinOp:
         return f"{self.lhs} {self.op} {self.rhs}"
 
 
+@final
 @dataclass(frozen=True)
 class JumpTarget:
     target: str
@@ -151,6 +159,7 @@ Argument = Union[
 ]
 
 
+@final
 @dataclass(frozen=True)
 class AsmInstruction:
     mnemonic: str

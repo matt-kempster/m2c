@@ -411,8 +411,10 @@ def parse_constant_int(expr: "ca.Expression", typemap: TypeMap) -> int:
     if isinstance(expr, ca.TernaryOp):
         cond = parse_constant_int(expr.cond, typemap) != 0
         return parse_constant_int(expr.iftrue if cond else expr.iffalse, typemap)
-    if isinstance(expr, ca.ExprList) and not isinstance(expr.exprs[-1], ca.Typename):
-        return parse_constant_int(expr.exprs[-1], typemap)
+    if isinstance(expr, ca.ExprList):
+        last_expr = expr.exprs[-1]
+        if not isinstance(last_expr, ca.Typename):
+            return parse_constant_int(last_expr, typemap)
     if isinstance(expr, ca.UnaryOp) and not isinstance(expr.expr, ca.Typename):
         sub = parse_constant_int(expr.expr, typemap)
         if expr.op == "+":
@@ -873,12 +875,12 @@ def _build_typemap(
         pack_stack: List[int] = []
 
         class Visitor(ca.NodeVisitor):
-            def visit_Pragma(self, pragma: ca.Pragma) -> None:
+            def visit_Pragma(self, node: ca.Pragma) -> None:
                 nonlocal cur_pack
                 # Handle "#pragma pack". This only covers top-level structs, but
                 # we don't care enough about nested ones to pay the performance
                 # cost of doing another visitor traversal.
-                parts = pragma.string.split("(")
+                parts = node.string.split("(")
                 if len(parts) >= 2 and parts[0].strip() == "pack":
                     args = parts[1].split(")")[0].split(",")
                     arg = args[0].strip()
@@ -893,32 +895,32 @@ def _build_typemap(
                     else:
                         cur_pack = int(args[0], 0)
 
-            def visit_Struct(self, struct: ca.Struct) -> None:
+            def visit_Struct(self, node: ca.Struct) -> None:
                 if cur_pack:
-                    typemap.pragma_packs[struct] = cur_pack
-                if struct.decls is not None:
-                    parse_struct(struct, typemap)
+                    typemap.pragma_packs[node] = cur_pack
+                if node.decls is not None:
+                    parse_struct(node, typemap)
 
-            def visit_Union(self, union: ca.Union) -> None:
+            def visit_Union(self, node: ca.Union) -> None:
                 if cur_pack:
-                    typemap.pragma_packs[union] = cur_pack
-                if union.decls is not None:
-                    parse_struct(union, typemap)
+                    typemap.pragma_packs[node] = cur_pack
+                if node.decls is not None:
+                    parse_struct(node, typemap)
 
-            def visit_Decl(self, decl: ca.Decl) -> None:
-                if decl.name is not None:
-                    typemap.var_types[decl.name] = type_from_global_decl(decl)
-                    if decl.init is not None:
-                        typemap.vars_with_initializers.add(decl.name)
-                if not isinstance(decl.type, FuncDecl):
-                    self.visit(decl.type)
+            def visit_Decl(self, node: ca.Decl) -> None:
+                if node.name is not None:
+                    typemap.var_types[node.name] = type_from_global_decl(node)
+                    if node.init is not None:
+                        typemap.vars_with_initializers.add(node.name)
+                if not isinstance(node.type, FuncDecl):
+                    self.visit(node.type)
 
-            def visit_Enum(self, enum: ca.Enum) -> None:
-                parse_enum(enum, typemap)
+            def visit_Enum(self, node: ca.Enum) -> None:
+                parse_enum(node, typemap)
 
-            def visit_FuncDef(self, fn: ca.FuncDef) -> None:
-                if fn.decl.name is not None:
-                    typemap.var_types[fn.decl.name] = type_from_global_decl(fn.decl)
+            def visit_FuncDef(self, node: ca.FuncDef) -> None:
+                if node.decl.name is not None:
+                    typemap.var_types[node.decl.name] = type_from_global_decl(node.decl)
 
         Visitor().visit(ast)
 
