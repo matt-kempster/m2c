@@ -397,16 +397,8 @@ and on non-Windows, `WINE` set to point to wine or equivalent ([wibo](https://gi
 
 ### Installation as Python Package
 
-You can include `m2c` as a dependency in your project with [Poetry](https://python-poetry.org/)
-by adding the following to your `pyproject.toml`:
-
-```toml
-[tool.poetry.dependencies]
-m2c = {git="https://github.com/matt-kempster/m2c.git"}
-```
-
-If your project does not use `pyproject.toml` for dependencies, you can add the following
-to your `requirements.txt` file instead:
+You can include `m2c` as a dependency in your project by adding the following to your `requirements.txt`
+(or `project.dependencies` section of `pyproject.toml`):
 
 ```
 m2c @ git+https://github.com/matt-kempster/m2c.git
