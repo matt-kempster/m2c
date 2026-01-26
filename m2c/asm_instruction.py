@@ -234,14 +234,44 @@ class AsmState:
     is_unified: bool = False
 
 
-valid_word = string.ascii_letters + string.digits + "_$."
+valid_word = string.ascii_letters + string.digits + "_$.?"
 valid_number = "-xX" + string.hexdigits
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
+    """Parse a word token, with special handling for MSVC-mangled symbols.
+
+    MSVC-mangled C++ symbols (starting with '?') may contain '@' characters
+    that must be distinguished from PPC relocation suffixes (@h, @ha, @l, etc.).
+    """
     ret: str = ""
-    while elems and elems[0] in valid:
-        ret += elems.pop(0)
+    # MSVC-mangled symbols start with '?' and can contain '@' as part of the name
+    is_msvc = elems and elems[0] == "?"
+
+    while elems:
+        ch = elems[0]
+        if ch in valid:
+            ret += elems.pop(0)
+        elif ch == "@" and is_msvc:
+            # Check if this '@' starts a relocation suffix or is part of the symbol
+            # Look ahead at what follows the '@'
+            lookahead = "".join(elems[1:21])  # Peek at next 20 chars
+            is_reloc = False
+            # Check for relocation suffixes (longest first to avoid partial matches)
+            for suffix in ("sda21", "sda2", "ha", "h", "l"):
+                if lookahead.startswith(suffix):
+                    # Verify suffix ends at operand boundary
+                    remaining = lookahead[len(suffix):]
+                    if not remaining or remaining[0] not in valid + "@":
+                        is_reloc = True
+                        break
+            if is_reloc:
+                # This '@' is a relocation marker; stop here
+                break
+            # This '@' is part of the MSVC symbol name; include it
+            ret += elems.pop(0)
+        else:
+            break
     return ret
 
 
