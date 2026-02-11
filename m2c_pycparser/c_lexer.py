@@ -130,6 +130,8 @@ class CLexer(object):
     keyword_map['__const__'] = 'CONST'
     keyword_map['__restrict'] = 'RESTRICT'
     keyword_map['__restrict__'] = 'RESTRICT'
+    keyword_map['__signed'] = 'SIGNED'
+    keyword_map['__signed__'] = 'SIGNED'
     keyword_map['__inline'] = 'INLINE'
     keyword_map['__inline__'] = 'INLINE'
     keyword_map['__volatile'] = 'VOLATILE'
