@@ -312,8 +312,13 @@ def simplify_patterns(
             else:
                 matcher.output.append(matcher.input[matcher.index])
                 matcher.index += 1
+        if not matched_any:
+            continue
         body = matcher.output
-        if debug_patterns and matched_any:
+        labels = {
+            name for item in body if isinstance(item, Label) for name in item.names
+        }
+        if debug_patterns:
             print(f"Rewrote asm using {type(pattern).__name__}:")
             print()
             for part in body:
