@@ -4493,15 +4493,16 @@ class GlobalInfo:
                 comments = []
 
                 # Determine type qualifier: static, extern, or neither
-                if is_in_file and is_global:
-                    qualifier = ""
-                elif is_in_file:
-                    qualifier = "static"
-                else:
+                if not is_in_file:
                     qualifier = "extern"
+                elif is_in_file and is_global:
+                    qualifier = ""
+                elif not fmt.coding_style.no_qualifiers_hints:
+                    qualifier = "static"
 
                 if sym.type.is_function():
-                    comments.append(qualifier)
+                    if not fmt.coding_style.no_qualifiers_hints:
+                        comments.append(qualifier)
                     qualifier = ""
 
                 # Try to guess if the symbol is an array (and if it is, its dimension) if
