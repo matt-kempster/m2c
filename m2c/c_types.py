@@ -822,9 +822,10 @@ def _build_typemap(
                 with cache_path.open("rb") as f:
                     cache = cast(TypeMap, pickle.load(f))
             except Exception as e:
-                print(
-                    f"Warning: Unable to read cache file {cache_path}, skipping ({e})"
-                )
+                # Class structure changes generally cause cache invalidation via
+                # TypeMap.VERSION being different, but in some cases it can also
+                # cause unpickling to fail, e.g. if classes have been removed.
+                pass
             else:
                 if cache.source_hash == source_hash:
                     typemap = cache
