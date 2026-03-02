@@ -112,9 +112,12 @@ def deref(
     if isinstance(uw_var, AddressOf) and isinstance(uw_var.expr, StructAccess):
         base = uw_var.expr.struct_var
         iaddend = uw_var.expr.offset
-        offset += iaddend
-        var = base
-        uw_var = early_unwrap(var)
+        target = stack_info.global_info.target
+        arch = stack_info.global_info.arch
+        if target.compiler != Target.CompilerEnum.IDO or arch.is_likely_partial_offset(iaddend):
+            offset += iaddend
+            var = base
+            uw_var = early_unwrap(var)
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
