@@ -109,11 +109,15 @@ def deref(
                 var = base
                 uw_var = early_unwrap(var)
                 break
-    elif isinstance(uw_var, AddressOf) and isinstance(uw_var.expr, StructAccess):
+    if isinstance(uw_var, AddressOf) and isinstance(uw_var.expr, StructAccess):
         base = uw_var.expr.struct_var
         iaddend = uw_var.expr.offset
+        target = stack_info.global_info.target
         arch = stack_info.global_info.arch
-        if arch.is_likely_partial_offset(iaddend):
+        if (
+            arch.is_likely_partial_offset(iaddend)
+            or target.compiler != Target.CompilerEnum.IDO
+        ):
             offset += iaddend
             var = base
             uw_var = early_unwrap(var)
