@@ -114,7 +114,7 @@ def deref(
         iaddend = uw_var.expr.offset
         target = stack_info.global_info.target
         arch = stack_info.global_info.arch
-        if ( 
+        if (
             arch.is_likely_partial_offset(iaddend)
             or target.compiler != Target.CompilerEnum.IDO
         ):
