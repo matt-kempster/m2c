@@ -114,7 +114,10 @@ def deref(
         iaddend = uw_var.expr.offset
         target = stack_info.global_info.target
         arch = stack_info.global_info.arch
-        if target.compiler != Target.CompilerEnum.IDO or arch.is_likely_partial_offset(iaddend):
+        if ( 
+            arch.is_likely_partial_offset(iaddend)
+            or target.compiler != Target.CompilerEnum.IDO
+        ):
             offset += iaddend
             var = base
             uw_var = early_unwrap(var)
