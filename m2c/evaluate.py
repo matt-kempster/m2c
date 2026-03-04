@@ -302,6 +302,16 @@ def handle_sltiu(args: InstrArgs) -> Expression:
     return BinaryOp.ucmp(left, "<", right)
 
 
+def handle_xori(args: InstrArgs) -> Expression:
+    left = args.reg(1)
+    right = args.u16_imm(2)
+    if isinstance(right, Literal) and right.value == 1:
+        uw_left = early_unwrap(left)
+        if isinstance(uw_left, BinaryOp) and uw_left.is_comparison():
+            return uw_left.negated()
+    return BinaryOp.int(left=left, op="^", right=right)
+
+
 def handle_addi(args: InstrArgs, arm: bool = False) -> Expression:
     output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)

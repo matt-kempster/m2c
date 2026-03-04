@@ -299,9 +299,9 @@ void func_00401AA0(u32 arg0) {
     temp_hi_6 = arg0 / 1431655765;
     foo((u32) (temp_hi_6 + ((u32) (arg0 - temp_hi_6) >> 1)) >> 0x1E);
     foo(arg0 >> 0x1F);
-    foo((arg0 < 0x80000001U) ^ 1);
-    foo((arg0 < 0xFFFFFFFEU) ^ 1);
-    foo((arg0 < 0xFFFFFFFFU) ^ 1);
+    foo(arg0 >= 0x80000001U);
+    foo(arg0 >= 0xFFFFFFFEU);
+    foo(arg0 >= 0xFFFFFFFFU);
 }
 
 void func_00401FC4(u32 arg0) {
@@ -365,7 +365,7 @@ void func_00401FC4(u32 arg0) {
     temp_hi_6 = arg0 / 1431655765;
     foo((u32) (temp_hi_6 + ((u32) (arg0 - temp_hi_6) >> 1)) >> 0x1E);
     foo(arg0 >> 0x1F);
-    foo((arg0 < 0x80000001U) ^ 1);
-    foo((arg0 < 0xFFFFFFFEU) ^ 1);
-    foo((arg0 < 0xFFFFFFFFU) ^ 1);
+    foo(arg0 >= 0x80000001U);
+    foo(arg0 >= 0xFFFFFFFEU);
+    foo(arg0 >= 0xFFFFFFFFU);
 }
