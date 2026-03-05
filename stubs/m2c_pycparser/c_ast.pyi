@@ -82,6 +82,10 @@ AnyNode = Union_[
     "NamedInitializer",
     "ParamList",
     "Typename",
+    "AsmOperand",
+    "Range",
+    "GccAttribute",
+    "GccAttributeStatement",
 ]
 
 class NodeVisitor:

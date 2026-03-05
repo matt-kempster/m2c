@@ -8,6 +8,7 @@
 # ------------------------------------------------------------------------------
 
 from . import c_ast
+from .plyparser import ParseError as ParseError
 from typing import Any, Dict, List, Optional
 
 class CParser:
