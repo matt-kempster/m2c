@@ -762,6 +762,37 @@ def strip_macro_defs(text: str) -> str:
     return re.sub(pattern, lambda m: m.group(0).count("\n") * "\n", text)
 
 
+def remove_backslashes_at_eol(text: str) -> str:
+    string_pat = re.compile(r'\'(?:\\.|[^\\\'])*\'?|"(?:\\.|[^\\"])*"?')
+    continued_string_start_ind = -1
+    continued_string_delim = ""
+
+    def replacer(match: Match[str]) -> str:
+        # Check if the backslash appeared within a string. If so, we need to
+        # end the string and restart it at the next line.
+        nonlocal continued_string_start_ind
+        nonlocal continued_string_delim
+        ind = match.start()
+        line_start = text.rfind("\n", 0, ind) + 1
+        prev_line = text[line_start:ind]
+        if line_start == continued_string_start_ind:
+            prev_line = continued_string_delim + prev_line
+
+        strings: List[str] = string_pat.findall(prev_line + "$")
+        if strings and strings[-1][-1] == "$":
+            delim = strings[-1][0]
+            continued_string_start_ind = ind + 2
+            continued_string_delim = delim
+            if delim == "'":
+                return ""
+            return delim + "\n" + delim
+        else:
+            continued_string_start_ind = -1
+            return "\n"
+
+    return re.sub(r"\\\n", replacer, text, flags=re.MULTILINE)
+
+
 def parse_c(
     source: str, initial_scope: CParserScope
 ) -> Tuple[ca.FileAST, CParserScope]:
@@ -836,6 +867,7 @@ def _build_typemap(
         source = strip_comments(source)
         source = process_ifdef(source)
         source = strip_macro_defs(source)
+        source = remove_backslashes_at_eol(source)
 
         ast, result_scope = parse_c(source, typemap.cparser_scope)
         typemap.cparser_scope = result_scope

@@ -159,7 +159,9 @@ short test(struct SomeStruct *arg, unsigned char should, union SomeUnion union_a
 // GNU extensions, etc.
 
 extern int fixed_addr_sym : 0x1000000;
-int asm_sym asm("label");
+int asm_sym asm("label" "glued string" "with \
+		backslash" \
+		"another backslash");
 
 __const__ __const __volatile__ __volatile int arr[] = { [1 ... 2] = 1 };
 
