@@ -64,9 +64,7 @@ Statement = Union_[
     "Pragma",
 ]
 Type = Union_["PtrDecl", "ArrayDecl", "FuncDecl", "TypeDecl"]
-InnerType = Union_[
-    "IdentifierType", "Struct", "Union", "Enum", "Typeof",
-]
+InnerType = Union_["IdentifierType", "Struct", "Union", "Enum", "Typeof"]
 ExternalDeclaration = Union_["Asm", "FuncDef", "Decl", "Typedef", "Pragma"]
 AnyNode = Union_[
     Statement,
@@ -236,7 +234,10 @@ class Case(Node):
     stmts: List[Statement]
 
     def __init__(
-        self, expr: Union_[Expression, Range], stmts: List[Statement], coord: Optional[Coord] = None
+        self,
+        expr: Union_[Expression, Range],
+        stmts: List[Statement],
+        coord: Optional[Coord] = None,
     ): ...
 
 class Cast(Node):

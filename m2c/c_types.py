@@ -34,7 +34,7 @@ from .error import DecompFailure
 CType = Union[PtrDecl, ArrayDecl, TypeDecl, FuncDecl]
 StructUnion = Union[ca.Struct, ca.Union]
 SimpleType = Union[PtrDecl, TypeDecl]
-CParserScope = Dict[str, bool]
+CParserScope = Optional[Dict[str, bool]]
 
 
 class ArchC(abc.ABC):
@@ -105,7 +105,7 @@ class TypeMap:
     source_hash: str
     base_struct_align: int
 
-    cparser_scope: CParserScope = field(default_factory=dict)
+    cparser_scope: CParserScope = None
 
     typedefs: Dict[str, Tuple[CType, int]] = field(default_factory=dict)
     var_types: Dict[str, CType] = field(default_factory=dict)
@@ -771,7 +771,8 @@ def parse_c(
     c_parser = CParser()
     c_parser.clex.filename = "<source>"
     c_parser.clex.reset_lineno()
-    c_parser._scope_stack = [initial_scope.copy()]
+    if initial_scope is not None:
+        c_parser._scope_stack = [initial_scope.copy()]
     c_parser._last_yielded_token = None
     try:
         ast = c_parser.cparser.parse(input=source, lexer=c_parser.clex)

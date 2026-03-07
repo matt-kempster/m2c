@@ -129,7 +129,7 @@ class CParser(PLYParser):
         # saw: int name;
         # If 'name' is not a key in _scope_stack[n] then 'name' was not defined
         # in this scope at all.
-        self._scope_stack = [dict()]
+        self._scope_stack = [self._make_initial_scope()]
 
         # Keeps track of the last token given to yacc (the lookahead token)
         self._last_yielded_token = None
@@ -149,7 +149,7 @@ class CParser(PLYParser):
         """
         self.clex.filename = filename
         self.clex.reset_lineno()
-        self._scope_stack = [dict()]
+        self._scope_stack = [self._make_initial_scope()]
         self._last_yielded_token = None
         return self.cparser.parse(
                 input=text,
@@ -157,6 +157,11 @@ class CParser(PLYParser):
                 debug=debug)
 
     ######################--   PRIVATE   --######################
+
+    def _make_initial_scope(self):
+        return {
+            "__builtin_va_list": True,
+        }
 
     def _push_scope(self):
         self._scope_stack.append(dict())
