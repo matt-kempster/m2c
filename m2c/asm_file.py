@@ -1,5 +1,6 @@
 from __future__ import annotations
 import csv
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 import re
@@ -230,7 +231,7 @@ class AsmFile:
             if isinstance(subexpr, AsmGlobalSymbol):
                 self.asm_data.mentioned_labels.add(subexpr.symbol_name)
 
-    def new_data_bytes(self, data: bytes, *, is_string: bool = False) -> None:
+    def new_data_bytes(self, data: bytes, *, is_string: bool) -> None:
         if self.current_data is None:
             return
         if not self.current_data.data and is_string:
@@ -470,6 +471,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     reg_formatter = RegFormatter()
     asm_file: AsmFile = AsmFile(filename, reg_formatter)
     curr_section = ".text"
+    section_sizes: Dict[str, int] = defaultdict(int)
     warnings: List[str] = []
     asm_state = AsmState(
         defines={
@@ -529,6 +531,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         endian = ">" if options.target.is_big_endian() else "<"
         return struct.pack(endian + fmt, val)
 
+    def emit_bytes(data: bytes, *, is_string: bool = False) -> None:
+        asm_file.new_data_bytes(data, is_string=is_string)
+        section_sizes[curr_section] += len(data)
+
     def emit_word(w: str, size: int) -> None:
         value = try_parse(lambda: parse_arg(w, arch, asm_state))
         if isinstance(value, AsmLiteral):
@@ -537,9 +543,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 data = ival.to_bytes(size, "big")
             else:
                 data = ival.to_bytes(size, "little")
-            asm_file.new_data_bytes(data)
+            emit_bytes(data)
         else:
             asm_file.new_symbolic_data(value, size)
+            section_sizes[curr_section] += size
 
     re_comment_or_string = re.compile(arch.re_comment + r'|/\*.*?\*/|"(?:\\.|[^\\"])*"')
     for lineno, line in enumerate(f, 1):
@@ -755,12 +762,12 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         args = split_arg_list(args_str)
                         for w in args:
                             fval = try_parse(lambda: float(w))
-                            asm_file.new_data_bytes(pack("f", fval))
+                            emit_bytes(pack("f", fval))
                     elif directive == ".double":
                         args = split_arg_list(args_str)
                         for w in args:
                             fval = try_parse(lambda: float(w))
-                            asm_file.new_data_bytes(pack("d", fval))
+                            emit_bytes(pack("d", fval))
                     elif directive in (
                         ".asci",
                         ".asciz",
@@ -769,10 +776,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         ".string",
                     ):
                         z = directive.endswith("z") or directive == ".string"
-                        asm_file.new_data_bytes(
-                            parse_ascii_directive(line, z), is_string=True
-                        )
-                    elif directive in (".space", ".skip"):
+                        emit_bytes(parse_ascii_directive(line, z), is_string=True)
+                    elif directive in (
+                        ".space",
+                        ".skip",
+                        ".align",
+                        ".balign",
+                        ".p2align",
+                    ):
                         args = split_arg_list(args_str)
                         if len(args) == 2:
                             fill = parse_int(args[1]) & 0xFF
@@ -783,12 +794,16 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                                 f"Could not parse asm_data {directive} in {curr_section}: {line}"
                             )
                         size = parse_int(args[0])
-                        asm_file.new_data_bytes(bytes([fill] * size))
-                    elif line.startswith(".incbin"):
+                        if directive == ".balign":
+                            size = -section_sizes[curr_section] % size
+                        elif directive in (".align", ".p2align"):
+                            size = -section_sizes[curr_section] % 2**size
+                        emit_bytes(bytes([fill] * size))
+                    elif directive == ".incbin":
                         args = split_quotable_arg_list(args_str)
                         data = parse_incbin(args, options, warnings)
                         if data is not None:
-                            asm_file.new_data_bytes(data)
+                            emit_bytes(data)
 
         elif ifdef_level == 0:
             if directive in ("jlabel", "alabel", "ehlabel"):
