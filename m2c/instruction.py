@@ -2,6 +2,7 @@ from __future__ import annotations
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+import re
 from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
@@ -17,6 +18,39 @@ from .asm_instruction import (
     Register,
     parse_asm_instruction,
 )
+
+
+# PPC relocation suffixes that conflict with MSVC symbol '@' characters
+_PPC_RELOC_SUFFIXES = r"(?:sda21|sda2|ha|h|l)"
+
+# Pattern to match unquoted MSVC symbols followed by PPC relocation suffixes.
+# MSVC-mangled C++ symbols start with '?' and may contain '@' as scope separators.
+# This pattern captures:
+#   Group 1: The MSVC symbol (e.g., "?TheDebug@@3VDebug@@A")
+#   Group 2: The relocation suffix (e.g., "@ha")
+# The negative lookahead ensures we only stop at '@' when it's followed by a valid
+# relocation suffix at an operand boundary (whitespace, comma, paren, or end).
+# Note: '@' is NOT included in the inner boundary check, so `?foo@h@l` correctly
+# treats `@h` as part of the symbol and `@l` as the relocation.
+_MSVC_SYMBOL_PATTERN = re.compile(
+    r"(\?(?:[A-Za-z0-9_$]|@(?!" + _PPC_RELOC_SUFFIXES + r"(?:[\s,()]|$)))+)"
+    r"(@" + _PPC_RELOC_SUFFIXES + r")"
+    r"(?=[\s,()]|$)"
+)
+
+
+def _normalize_msvc_symbols(line: str) -> str:
+    """Auto-quote MSVC-mangled symbols that conflict with PPC relocation suffixes.
+
+    MSVC symbols start with '?' and may contain '@' characters as scope separators.
+    When such symbols are followed by PPC relocation suffixes (@ha, @l, etc.),
+    the '@' in the symbol conflicts with the relocation marker. This function
+    quotes the symbol portion to disambiguate.
+
+    Example: `lis r11, ?TheDebug@@3VDebug@@A@ha`
+          -> `lis r11, "?TheDebug@@3VDebug@@A"@ha`
+    """
+    return _MSVC_SYMBOL_PATTERN.sub(r'"\1"\2', line)
 
 
 @dataclass(frozen=True)
@@ -190,6 +224,10 @@ def parse_instruction(
     asm_state: AsmState,
 ) -> Instruction:
     try:
+        # For PPC, normalize MSVC-mangled symbols before parsing.
+        # MSVC symbols contain '@' which conflicts with PPC relocation suffixes.
+        if arch.arch == Target.ArchEnum.PPC:
+            line = _normalize_msvc_symbols(line)
         base = parse_asm_instruction(line, arch, asm_state)
         return arch.parse(base.mnemonic, base.args, meta)
     except Exception as e:
