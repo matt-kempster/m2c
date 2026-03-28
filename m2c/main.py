@@ -138,6 +138,7 @@ def run(options: Options) -> int:
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
         union_field_overrides=options.union_field_overrides,
+        void_var_type_overrides=options.void_var_type_overrides,
     )
     global_info = GlobalInfo(
         asm_data,
@@ -625,6 +626,17 @@ def parse_flags(flags: List[str]) -> Options:
         "Format: STRUCT_NAME:FIELD_NAME (e.g., MyUnion:int_value). "
         "Can be specified multiple times for different unions.",
     )
+    group.add_argument(
+        "--void-var-type",
+        metavar="VAR:TYPE",
+        dest="void_var_types",
+        action="append",
+        default=[],
+        help="Specify the type for a void* variable. "
+        "Format: VAR_NAME:TYPE_NAME (e.g., ptr:s32). "
+        "The pointer * is implicit; use ** for double pointers. "
+        "Can be specified multiple times for different variables.",
+    )
 
     args = parser.parse_args(flags)
     reg_vars = args.reg_vars.split(",") if args.reg_vars else []
@@ -665,6 +677,23 @@ def parse_flags(flags: List[str]) -> Options:
             sys.exit(1)
         struct_name, field_name = parts
         union_field_overrides[struct_name] = field_name
+
+    # Parse void variable type overrides
+    void_var_type_overrides: Dict[str, str] = {}
+    for override in args.void_var_types:
+        parts = override.split(":", 1)
+        if len(parts) != 2:
+            print(
+                f"Error: Invalid void variable type override '{override}'. "
+                "Expected format: VAR_NAME:TYPE_NAME",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        var_name, type_name = parts
+        # Add implicit * if not already present (unless it's already a pointer type)
+        if not type_name.endswith("*"):
+            type_name = type_name + "*"
+        void_var_type_overrides[var_name] = type_name
 
     # The debug output interferes with the visualize output
     if args.visualize_flowgraph is not None:
@@ -710,6 +739,7 @@ def parse_flags(flags: List[str]) -> Options:
         backwards_bss=args.backwards_bss,
         disable_gc=args.disable_gc,
         union_field_overrides=union_field_overrides,
+        void_var_type_overrides=void_var_type_overrides,
     )
 
 
