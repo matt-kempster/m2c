@@ -252,7 +252,7 @@ class ModP2Pattern2(SimpleAsmPattern):
         return Replacement([mod], len(m.body) - 1)
 
 
-class DivP2Pattern1(SimpleAsmPattern):
+class DivP2Pattern1(AsmPattern):
     """Division by power of two where input reg != output reg."""
 
     pattern = make_pattern(
@@ -263,12 +263,35 @@ class DivP2Pattern1(SimpleAsmPattern):
         ".A:",
     )
 
+    @staticmethod
+    def register_read_before_write(
+        body: List[BodyPart], start_index: int, reg: Register
+    ) -> bool:
+        for part in body[start_index:]:
+            if not isinstance(part, Instruction):
+                continue
+            if reg in part.inputs:
+                return True
+            if reg in part.outputs or reg in part.clobbers:
+                return False
+        return False
+
     def replace(self, m: AsmMatch) -> Replacement:
         shift = m.literals["N"] & 0x1F
         div = AsmInstruction(
             "div.fictive", [m.regs["o"], m.regs["i"], AsmLiteral(2**shift)]
         )
         return Replacement([div], len(m.body) - 1)
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        m = matcher.try_match(self.pattern)
+        if not m:
+            return None
+        if self.register_read_before_write(
+            matcher.input, matcher.index + len(m.body), Register("at")
+        ):
+            return None
+        return self.replace(m)
 
 
 class DivP2Pattern2(SimpleAsmPattern):
@@ -402,6 +425,8 @@ class IdoDivP2LargeAddendPattern(AsmPattern):
         low_addend = cls.low_16_value(addiu.args[2])
         if low_addend != ((1 << shift) - 1):
             return None
+        if DivP2Pattern1.register_read_before_write(body, branch_index + 5, bias_reg):
+            return None
 
         div = AsmInstruction(
             "div.fictive",
@@ -423,6 +448,7 @@ class IdoDivP2LargeAddendPattern(AsmPattern):
                 div,
             ],
             branch_index + 4 - start,
+            clobbers=[bias_reg],
         )
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
