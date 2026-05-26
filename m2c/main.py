@@ -88,6 +88,7 @@ def run(options: Options) -> int:
             arch = ArmArch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")
+    arch.target = options.target
 
     all_functions: Dict[str, Function] = {}
     asm_data = AsmData()

@@ -161,6 +161,7 @@ class ArchAsm(ArchAsmParsing):
     """Arch-specific information that relates to the asm level. Extends ArchAsmParsing."""
 
     arch: Target.ArchEnum
+    target: Optional[Target] = None
 
     re_comment: str
 

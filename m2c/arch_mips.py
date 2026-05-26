@@ -34,6 +34,7 @@ from .asm_pattern import (
     AsmMatch,
     AsmMatcher,
     AsmPattern,
+    BodyPart,
     Pattern,
     Replacement,
     SimpleAsmPattern,
@@ -287,6 +288,208 @@ class DivP2Pattern2(SimpleAsmPattern):
             "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2**shift)]
         )
         return Replacement([div], len(m.body))
+
+
+class IdoDivP2LargeAddendPattern(AsmPattern):
+    """IDO signed division by power of two with a large constant addend."""
+
+    @staticmethod
+    def sign_extend_32(value: int) -> int:
+        return ((value + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+
+    @classmethod
+    def loaded_high_addend(cls, instr: Instruction) -> Optional[int]:
+        if instr.mnemonic == "li" and len(instr.args) == 2:
+            arg = instr.args[1]
+            if isinstance(arg, AsmLiteral):
+                return cls.sign_extend_32(arg.value)
+        if instr.mnemonic == "lui" and len(instr.args) == 2:
+            arg = instr.args[1]
+            if isinstance(arg, AsmLiteral):
+                return cls.sign_extend_32((arg.value & 0xFFFF) << 16)
+        return None
+
+    @staticmethod
+    def low_16_value(arg: Argument) -> Optional[int]:
+        if isinstance(arg, AsmLiteral):
+            return arg.value & 0xFFFF
+        return None
+
+    @staticmethod
+    def scheduled_without_clobber(instr: Instruction, protected_reg: Register) -> bool:
+        return (
+            not instr.is_jump()
+            and instr.function_target is None
+            and protected_reg not in instr.outputs
+            and protected_reg not in instr.clobbers
+        )
+
+    @staticmethod
+    def addu_with_addend(
+        instr: Instruction, addend_reg: Register
+    ) -> Optional[Tuple[Register, Register]]:
+        if instr.mnemonic != "addu" or len(instr.args) != 3:
+            return None
+        if not all(isinstance(arg, Register) for arg in instr.args):
+            return None
+        if instr.args[2] == addend_reg:
+            return instr.args[0], instr.args[1]
+        return None
+
+    @staticmethod
+    def branch_targets_label(branch: Instruction, label: Label) -> bool:
+        target = branch.jump_target
+        return isinstance(target, JumpTarget) and target.target in label.names
+
+    @classmethod
+    def replacement_for_tail(
+        cls,
+        body: List[BodyPart],
+        start: int,
+        addu_index: int,
+        addend_reg: Register,
+        input_reg: Register,
+        high_addend: int,
+        scheduled_before_addu: List[BodyPart],
+        scheduled_after_addu: List[Instruction],
+        addu: Instruction,
+        branch_index: int,
+    ) -> Optional[Replacement]:
+        branch, sra_positive, addiu, sra_negative, label = body[
+            branch_index : branch_index + 5
+        ]
+        if not (
+            isinstance(branch, Instruction)
+            and isinstance(sra_positive, Instruction)
+            and isinstance(addiu, Instruction)
+            and isinstance(sra_negative, Instruction)
+            and isinstance(label, Label)
+        ):
+            return None
+
+        if branch.mnemonic != "bgez" or branch.args[0] != input_reg:
+            return None
+        if not cls.branch_targets_label(branch, label):
+            return None
+
+        if sra_positive.mnemonic != "sra" or len(sra_positive.args) != 3:
+            return None
+        if sra_positive.args[1] != input_reg:
+            return None
+        shift_arg = sra_positive.args[2]
+        if not isinstance(shift_arg, AsmLiteral):
+            return None
+
+        if (
+            addiu.mnemonic != "addiu"
+            or len(addiu.args) != 3
+            or not isinstance(addiu.args[0], Register)
+            or addiu.args[1] != input_reg
+        ):
+            return None
+        bias_reg = addiu.args[0]
+
+        if not (
+            sra_negative.mnemonic == "sra"
+            and len(sra_negative.args) == 3
+            and sra_negative.args[0] == sra_positive.args[0]
+            and sra_negative.args[1] == bias_reg
+            and sra_negative.args[2] == shift_arg
+        ):
+            return None
+
+        shift = shift_arg.value & 0x1F
+        low_addend = cls.low_16_value(addiu.args[2])
+        if low_addend != ((1 << shift) - 1):
+            return None
+
+        div = AsmInstruction(
+            "div.fictive",
+            [
+                sra_positive.args[0],
+                input_reg,
+                AsmLiteral(1 << shift),
+            ],
+        )
+        return Replacement(
+            [
+                AsmInstruction(
+                    "li",
+                    [addend_reg, AsmLiteral(high_addend)],
+                ),
+                *scheduled_before_addu,
+                addu,
+                *scheduled_after_addu,
+                div,
+            ],
+            branch_index + 4 - start,
+        )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        if (
+            matcher.arch.target is None
+            or matcher.arch.target.compiler != Target.CompilerEnum.IDO
+        ):
+            return None
+
+        body = matcher.input
+        start = matcher.index
+        if start + 6 >= len(body):
+            return None
+
+        load = body[start]
+        if not isinstance(load, Instruction) or load.mnemonic not in ("li", "lui"):
+            return None
+        if not isinstance(load.args[0], Register):
+            return None
+
+        addend_reg = load.args[0]
+        high_addend = self.loaded_high_addend(load)
+        if high_addend is None:
+            return None
+
+        scheduled_before_addu: List[BodyPart] = []
+        for addu_index in range(start + 1, len(body) - 5):
+            addu = body[addu_index]
+            if isinstance(addu, Label):
+                scheduled_before_addu.append(addu)
+                continue
+            if not isinstance(addu, Instruction):
+                return None
+
+            addu_match = self.addu_with_addend(addu, addend_reg)
+            if addu_match is not None:
+                input_reg, _ = addu_match
+                scheduled_after_addu: List[Instruction] = []
+                for branch_index in range(addu_index + 1, len(body) - 4):
+                    branch = body[branch_index]
+                    if not isinstance(branch, Instruction):
+                        return None
+
+                    replacement = self.replacement_for_tail(
+                        body,
+                        start,
+                        addu_index,
+                        addend_reg,
+                        input_reg,
+                        high_addend,
+                        scheduled_before_addu,
+                        scheduled_after_addu,
+                        addu,
+                        branch_index,
+                    )
+                    if replacement is not None:
+                        return replacement
+
+                    if not self.scheduled_without_clobber(branch, input_reg):
+                        return None
+                    scheduled_after_addu.append(branch)
+
+            if not self.scheduled_without_clobber(addu, addend_reg):
+                return None
+            scheduled_before_addu.append(addu)
+
+        return None
 
 
 class Div2S16Pattern(SimpleAsmPattern):
@@ -1321,6 +1524,7 @@ class MipsArch(Arch):
     asm_patterns = [
         DivPattern(),
         DivuPattern(),
+        IdoDivP2LargeAddendPattern(),
         DivP2Pattern1(),
         DivP2Pattern2(),
         Div2S16Pattern(),
