@@ -174,7 +174,9 @@ SUFFIXABLE_INSTRUCTIONS: Set[str] = {
     "umlal",
     "umull",
     "vldm",
+    "vldr",
     "vstm",
+    "vstr",
 }
 
 LENGTH_THREE: Set[str] = {
@@ -449,6 +451,18 @@ def get_ldm_stm_offset(i: int, num_regs: int, direction: str) -> int:
 def other_f64_reg(reg: Register) -> Register:
     num = int(reg.register_name[1:])
     return Register(f"r{num ^ 1}")
+
+
+def vreg_type(reg: Register) -> Type:
+    tp, _ = reg.arm_regtype_index()
+    if tp == "s":
+        return Type.reg32(likely_float=True)
+    elif tp == "d":
+        return Type.reg64(likely_float=True)
+    elif tp == "q":
+        return Type.reg128()
+    else:
+        assert False, f"invalid vldr target {reg}"
 
 
 class AddPcPcPattern(AsmPattern):
@@ -1286,7 +1300,7 @@ class ArmArch(Arch):
             outputs = [args[0]]
             inputs = get_inputs(1)
             is_effectful = False
-            is_load = base.startswith("ldr")
+            is_load = base.startswith("ldr") or base == "vldr"
 
             if base.startswith("cvt."):
                 assert len(args) == 2 and isinstance(args[1], Register)
@@ -1762,6 +1776,7 @@ class ArmArch(Arch):
         "ldrsb": lambda a: handle_load(a, type=Type.s8()),
         "ldrh": lambda a: handle_load(a, type=Type.u16()),
         "ldrsh": lambda a: handle_load(a, type=Type.s16()),
+        "vldr": lambda a: handle_load(a, type=vreg_type(a.reg_ref(0))),
         # Arithmetic
         "smulbb": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(2)),
         "smlabb": lambda a: handle_add_real(
@@ -1862,6 +1877,7 @@ class ArmArch(Arch):
         "str": lambda a: make_store(a, type=Type.reg32(likely_float=False)),
         "strb": lambda a: make_store(a, type=Type.int_of_size(8)),
         "strh": lambda a: make_store(a, type=Type.int_of_size(16)),
+        "vstr": lambda a: make_store(a, type=vreg_type(a.reg_ref(0))),
     }
 
     instrs_add: InstrMap = {
