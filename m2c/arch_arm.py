@@ -1019,20 +1019,13 @@ class ArmArch(Arch):
     simple_temp_regs = [Register("r12")]
     flag_regs = [Register(r) for r in ["n", "z", "c", "v", "hi", "ge", "gt"]]
     temp_regs = argument_regs + simple_temp_regs + flag_regs
-    saved_regs = [
-        Register(r)
-        for r in [
-            "r4",
-            "r5",
-            "r6",
-            "r7",
-            "r8",
-            "r9",
-            "r10",
-            "r11",
-            "lr",
-        ]
-    ]
+    saved_regs = (
+        [Register("lr")]
+        + [Register(f"r{i}") for i in range(4, 12)]
+        + [Register(f"s{i}") for i in range(16, 32)]
+        + [Register(f"d{i}") for i in range(8, 16)]
+        + [Register(f"q{i}") for i in range(4, 8)]
+    )
     all_regs = saved_regs + temp_regs + [stack_pointer_reg, Register("pc")]
 
     aliased_regs = {
@@ -1737,6 +1730,8 @@ class ArmArch(Arch):
 
     instrs_ignore: Set[str] = {
         "push",
+        "vpush",
+        "vpop",
         "nop",
     }
 

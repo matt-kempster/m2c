@@ -624,12 +624,16 @@ def get_stack_info(
             assert isinstance(inst.args[1], AsmAddressMode)
             assert isinstance(inst.args[1].addend, AsmLiteral)
             info.allocated_stack_size = abs(inst.args[1].addend.value)
-        elif arch_mnemonic == "arm:push":
+        elif arch_mnemonic in ("arm:push", "arm:vpush"):
             assert isinstance(inst.args[0], RegisterList)
             for reg in inst.args[0].regs[::-1]:
-                info.allocated_stack_size += 4
+                tp, _ = reg.arm_regtype_index()
+                num_words = {"r": 1, "s": 1, "d": 2, "q": 4}[tp]
+                for i in range(num_words):
+                    info.allocated_stack_size += 4
+                    if reg in arch.saved_regs:
+                        callee_saved_offsets.append(-info.allocated_stack_size)
                 if reg in arch.saved_regs:
-                    callee_saved_offsets.append(-info.allocated_stack_size)
                     info.callee_save_regs.add(reg)
                 if reg == Register("lr"):
                     info.is_leaf = False
