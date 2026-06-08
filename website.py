@@ -128,7 +128,7 @@ if "source" in form:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     input=source,
-                    timeout=15,
+                    timeout=25,
                 )
         else:
             res = subprocess.run(
@@ -136,7 +136,7 @@ if "source" in form:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 input=source,
-                timeout=15,
+                timeout=25,
             )
     except:
         # Set the headers for the cgitb traceback
