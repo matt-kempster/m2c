@@ -440,9 +440,8 @@ class Mips1DoubleLoadStorePattern(AsmPattern):
         ):
             return None
         # Store the even-numbered register (ra) into the low address (mb).
-        new_args = [ra, mb]
         new_mn = "ldc1" if a.mnemonic == "lwc1" else "sdc1"
-        new_instr = AsmInstruction(new_mn, new_args)
+        new_instr = AsmInstruction(new_mn, [ra, mb])
         return Replacement([new_instr], len(m.body))
 
 

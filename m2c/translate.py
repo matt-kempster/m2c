@@ -1561,7 +1561,7 @@ class StructAccess(Expression):
         if self.stack_info is not None:
             has_nonzero_access = self.stack_info.has_nonzero_access(var)
 
-        field_path = self.late_field_path()
+        field_path: Optional[AccessPath] = self.late_field_path()
 
         if field_path is not None and field_path != [0]:
             has_nonzero_access = True

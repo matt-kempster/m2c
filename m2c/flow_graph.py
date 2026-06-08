@@ -1455,8 +1455,8 @@ class FlowGraph:
         # Traverse the graph again, but starting at the terminal and following
         # all edges backwards, to ensure that it is possible to reach the exit
         # from every node. We don't need to look for loops this time.
-        seen: Set[Node] = set()
-        queue: Set[Node] = {self.terminal_node()}
+        seen = set()
+        queue = {self.terminal_node()}
         while queue:
             n = queue.pop()
             seen.add(n)
