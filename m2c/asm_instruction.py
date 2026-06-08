@@ -5,7 +5,7 @@ import abc
 from dataclasses import dataclass, field
 from enum import Enum
 import string
-from typing import Dict, Iterator, List, Optional, Union, final
+from typing import Dict, Iterator, List, Optional, Tuple, Union, final
 
 from .error import DecompFailure, static_assert_unreachable
 
@@ -33,12 +33,12 @@ class Register:
         name = self.register_name
         return bool(name) and name[0] == "f" and name != "fp"
 
-    def arm_index(self) -> int:
+    def arm_regtype_index(self) -> Tuple[str, int]:
         index = {"sp": 13, "lr": 14, "pc": 15}.get(self.register_name)
         if index is not None:
-            return index
-        assert self.register_name.startswith("r"), self.register_name
-        return int(self.register_name[1:])
+            return "r", index
+        assert self.register_name[0] in "rsdq", self.register_name
+        return self.register_name[0], int(self.register_name[1:])
 
     @staticmethod
     def fictive(name: str, suffix: str = "") -> Register:
@@ -376,13 +376,16 @@ def parse_arg_elems(
                 consume_ws()
                 word = parse_word(arg_elems)
                 reg2 = asm_state.reg_formatter.parse_and_store(word, arch)
-                for i in range(reg1.arm_index(), reg2.arm_index() + 1):
-                    li.append(asm_state.reg_formatter.parse(f"r{i}", arch))
+                tp1, ind1 = reg1.arm_regtype_index()
+                tp2, ind2 = reg2.arm_regtype_index()
+                assert tp1 == tp2
+                for i in range(ind1, ind2 + 1):
+                    li.append(asm_state.reg_formatter.parse(f"{tp1}{i}", arch))
             consume_ws()
             if arg_elems and arg_elems[0] == "^":
                 expect("^")
             if len(li) > 1:
-                li.sort(key=lambda r: r.arm_index())
+                li.sort(key=lambda r: r.arm_regtype_index())
             value = RegisterList(li)
         elif tok == ".":
             # Either a jump target (i.e. a label), or a section reference.
