@@ -1149,6 +1149,9 @@ def compute_relations(nodes: List[Node]) -> None:
         for child in node.children():
             child.parents.append(node)
 
+    nnodes = len(nodes)
+    i_to_node = {i: n for i, n in enumerate(nodes)}
+
     def compute_dominators(
         entry: Node,
         parents: Callable[[Node], List[Node]],
@@ -1159,27 +1162,42 @@ def compute_relations(nodes: List[Node]) -> None:
         # See https://en.wikipedia.org/wiki/Dominator_(graph_theory)#Algorithms
         # Note: if `n` is unreachable from `entry`, then *every* node will
         # vacuously belong to `n`'s dominator set.
-        for n in nodes:
-            dominators(n).clear()
+        #
+        # As an optimization, we represent sets of nodes as integers `x`, where
+        # `(x >> i & 1)` is 1 if `i_to_node[i]` is included in the set.
+        # On a large function with 2000 basic blocks, this improved performance
+        # of this phase by about a factor 25.
+        doms = {n: 0 for n in nodes}
+
+        for i, n in i_to_node.items():
             if n == entry:
-                dominators(n).add(n)
+                doms[n] = 1 << i
             else:
-                dominators(n).update(nodes)
+                doms[n] = (1 << nnodes) - 1
 
         changes = True
         while changes:
             changes = False
-            for node in nodes:
+            for i, node in i_to_node.items():
                 if node == entry:
                     continue
-                nset = dominators(node)
+                nset = doms[node]
                 for parent in parents(node):
-                    nset = nset.intersection(dominators(parent))
-                nset.add(node)
-                if len(nset) < len(dominators(node)):
-                    assert nset.issubset(dominators(node))
-                    dominators(node).intersection_update(nset)
+                    nset = nset & doms[parent]
+                nset |= 1 << i
+                if nset != doms[node]:
+                    assert nset & doms[node] == nset
+                    doms[node] = nset
                     changes = True
+
+        for n in nodes:
+            bitset = doms[n]
+            nodeset = dominators(n)
+            nodeset.clear()
+            while bitset:
+                p2 = bitset & -bitset
+                bitset &= ~p2
+                nodeset.add(i_to_node[p2.bit_length() - 1])
 
         # Compute immediate dominator, and the inverse relation
         for node in nodes:
