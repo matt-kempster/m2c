@@ -173,6 +173,8 @@ SUFFIXABLE_INSTRUCTIONS: Set[str] = {
     "udiv",
     "umlal",
     "umull",
+    "vldm",
+    "vstm",
 }
 
 LENGTH_THREE: Set[str] = {
@@ -349,8 +351,8 @@ def factor_cond(cc: Cc) -> Tuple[Cc, bool]:
 
 
 def parse_suffix(mnemonic: str) -> Tuple[str, Optional[Cc], str, str]:
-    ldm = mnemonic.startswith("ldm")
-    stm = mnemonic.startswith("stm")
+    ldm = mnemonic.startswith("ldm") or mnemonic.startswith("vldm")
+    stm = mnemonic.startswith("stm") or mnemonic.startswith("vstm")
 
     def strip_cc(mnemonic: str) -> Tuple[str, Optional[Cc]]:
         for suffix in [cond.value for cond in Cc] + ["hs", "lo"]:
@@ -1139,15 +1141,17 @@ class ArmArch(Arch):
                 return AsmInstruction(
                     "mov" + suffix, [args[0], BinOp(base, args[1], AsmLiteral(1))]
                 )
-            if base in ("stm", "ldm") and not direction:
+            if base in ("stm", "ldm", "vstm", "vldm") and not direction:
                 return cls.normalize_instruction_real(
                     AsmInstruction(instr.mnemonic + "ia", args)
                 )
             sp_excl = AsmAddressMode(Register("sp"), AsmLiteral(0), Writeback.PRE)
-            if base == "stm" and direction == "db" and args[0] == sp_excl:
-                return AsmInstruction("push" + cc_str, [args[1]])
-            if base == "ldm" and direction == "ia" and args[0] == sp_excl:
-                return AsmInstruction("pop" + cc_str, [args[1]])
+            if base in ("stm", "vstm") and direction == "db" and args[0] == sp_excl:
+                v = "v" if base == "vstm" else ""
+                return AsmInstruction(v + "push" + cc_str, [args[1]])
+            if base in ("ldm", "vldm") and direction == "ia" and args[0] == sp_excl:
+                v = "v" if base == "vldm" else ""
+                return AsmInstruction(v + "pop" + cc_str, [args[1]])
             if base in LENGTH_THREE:
                 return cls.normalize_instruction_real(
                     AsmInstruction(instr.mnemonic, [args[0]] + args)
