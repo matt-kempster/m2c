@@ -1016,19 +1016,19 @@ def is_trivial_return_block(block: Block, arch: ArchFlowGraph) -> bool:
     return True
 
 
-def reachable_without(start: Node, end: Node, without: Node) -> bool:
-    """Return whether `end` is reachable from `start` with `without` removed."""
+def inv_reachable_without(end: Node, without: Node) -> Set[Node]:
+    """Return the set of nodes that can reach `end` with `without` removed."""
     reachable: Set[Node] = set()
-    stack: List[Node] = [start]
+    stack: List[Node] = [end]
 
     while stack:
         node = stack.pop()
         if node == without or node in reachable:
             continue
         reachable.add(node)
-        stack.extend(node.children())
+        stack.extend(node.parents)
 
-    return end in reachable
+    return reachable
 
 
 def build_nodes(
@@ -1239,9 +1239,8 @@ def compute_relations(nodes: List[Node]) -> None:
                 child.loop = NaturalLoop(child)
             child.loop.nodes |= {child, node}
             child.loop.backedges.add(node)
-            for parent in nodes:
-                if reachable_without(parent, node, child):
-                    child.loop.nodes.add(parent)
+            for parent in inv_reachable_without(node, child):
+                child.loop.nodes.add(parent)
 
 
 def terminate_infinite_loops(nodes: List[Node]) -> None:
