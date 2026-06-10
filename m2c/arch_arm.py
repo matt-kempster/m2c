@@ -1030,7 +1030,12 @@ class ArmArch(Arch):
     base_return_regs = [(Register("r0"), False)]
     all_return_regs = [Register("r0"), Register("r1")]
     argument_regs = [Register(r) for r in ["r0", "r1", "r2", "r3"]]
-    simple_temp_regs = [Register("r12")]
+    simple_temp_regs = (
+        [Register("r12")]
+        + [Register(f"s{i}") for i in range(16)]
+        + [Register(f"d{i}") for i in range(8)]
+        + [Register(f"q{i}") for i in range(4)]
+    )
     flag_regs = [Register(r) for r in ["n", "z", "c", "v", "hi", "ge", "gt"]]
     temp_regs = argument_regs + simple_temp_regs + flag_regs
     saved_regs = (
