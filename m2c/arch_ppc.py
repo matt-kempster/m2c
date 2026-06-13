@@ -245,6 +245,24 @@ class CmpnezPattern2(IrPattern):
     ]
 
 
+class CmplezPattern(IrPattern):
+    replacement = "cmplez.fictive $o, $i"
+    parts = [
+        "cntlzw $a, $i",
+        "li $b, 1",
+        "rlwnm $o, $b, $a, 31, 31",
+    ]
+
+
+class CmpgtzPattern(IrPattern):
+    replacement = "cmpgtz.fictive $o, $i"
+    parts = [
+        "neg $a, $i",
+        "andc $b, $a, $i",
+        "srwi $o, $b, 31",
+    ]
+
+
 class CmpnePattern(IrPattern):
     replacement = "cmpne.fictive $o, $x, $y"
     parts = [
@@ -1254,6 +1272,8 @@ class PpcArch(Arch):
         UintToFloatIrPattern(),
         CmpnezPattern1(),
         CmpnezPattern2(),
+        CmplezPattern(),
+        CmpgtzPattern(),
         CmpnePattern(),
         CmplePattern(),
         CmpltPattern1(),
@@ -1425,7 +1445,9 @@ class PpcArch(Arch):
         "cmpnez.fictive": lambda a: handle_cmpnez(a.reg(1)),
         "cmpne.fictive": lambda a: BinaryOp.icmp(a.reg(1), "!=", a.reg(2)),
         "cmple.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<=", a.reg(2)),
+        "cmplez.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<=", Literal(0)),
         "cmplt.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
+        "cmpgtz.fictive": lambda a: BinaryOp.scmp(a.reg(1), ">", Literal(0)),
         "cmpleu.fictive": lambda a: BinaryOp.ucmp(a.reg(1), "<=", a.reg(2)),
         "cmpltu.fictive": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.reg(2)),
         "rlwimi": lambda a: handle_rlwimi(
