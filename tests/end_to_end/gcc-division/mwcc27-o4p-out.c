@@ -141,7 +141,7 @@ void test_s32_div(s32 d) {
     temp_r0_12 = (s32) ((sp8 / 3) - sp8) >> 1;
     foo(temp_r0_12 + ((u32) temp_r0_12 >> 0x1FU));
     foo((u32) -((s32) (((u32) d >> 0x1FU) + d) >> 1));
-    foo((u32) (d / -65537));
+    foo((u32) (d / -1));
 }
 
 void test_s32_mod(s32 d) {
@@ -256,7 +256,7 @@ void test_s32_mod(s32 d) {
     foo(sp8 - ((temp_r0_10 + ((u32) temp_r0_10 >> 0x1FU)) * -3));
     temp_r0_11 = (sp8 / 2) - sp8;
     foo(sp8 - ((temp_r0_11 + (temp_r0_11 >> 0x1FU)) * -2));
-    foo(sp8 % -65537);
+    foo(sp8 % -1);
 }
 
 void test_u32_div(u32 u) {
@@ -328,13 +328,13 @@ void test_u32_div(u32 u) {
     foo(sp8 / 10000000);
     foo(sp8 / 100000000);
     foo(sp8 >> 0x1EU);
-    foo((u32) MULTU_HI(-0x10003, sp8) >> 0x1EU);
+    foo((u32) MULTU_HI(-3, sp8) >> 0x1EU);
     temp_r3_10 = sp8 / 858993459;
     foo((u32) (((u32) (sp8 - temp_r3_10) >> 1U) + temp_r3_10) >> 0x1EU);
     temp_r3_11 = sp8 / 1431655765;
     foo((u32) (((u32) (sp8 - temp_r3_11) >> 1U) + temp_r3_11) >> 0x1EU);
     foo(sp8 / 2147483648);
-    temp_r3_12 = MULTU_HI(-0x10003, sp8);
+    temp_r3_12 = MULTU_HI(-3, sp8);
     foo((u32) (((u32) (sp8 - temp_r3_12) >> 1U) + temp_r3_12) >> 0x1FU);
     temp_r3_13 = sp8 / 1431655765;
     foo((u32) (((u32) (sp8 - temp_r3_13) >> 1U) + temp_r3_13) >> 0x1FU);
@@ -410,15 +410,15 @@ void test_u32_mod(u32 u) {
     foo(sp8 % 10000000);
     foo(sp8 % 100000000);
     foo(sp8 & 0x3FFFFFFF);
-    foo(sp8 - (((u32) MULTU_HI(-0x10003, sp8) >> 0x1EU) * 0x40000001));
+    foo(sp8 - (((u32) MULTU_HI(-3, sp8) >> 0x1EU) * 0x40000001));
     temp_r4_2 = sp8 / 858993459;
     foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_2) >> 1U) + temp_r4_2) >> 0x1EU) * 0x7FFFFFFE));
     temp_r4_3 = sp8 / 1431655765;
     foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_3) >> 1U) + temp_r4_3) >> 0x1EU) * 0x7FFFFFFF));
     foo(sp8 % 2147483648);
-    temp_r4_4 = MULTU_HI(-0x10003, sp8);
+    temp_r4_4 = MULTU_HI(-3, sp8);
     foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_4) >> 1U) + temp_r4_4) >> 0x1FU) * 0x80000001));
     temp_r4_5 = sp8 / 1431655765;
-    foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_5) >> 1U) + temp_r4_5) >> 0x1FU) * -0x10002));
-    foo(sp8 % -65537);
+    foo(sp8 - (((u32) (((u32) (sp8 - temp_r4_5) >> 1U) + temp_r4_5) >> 0x1FU) * -2));
+    foo(sp8 % -1);
 }

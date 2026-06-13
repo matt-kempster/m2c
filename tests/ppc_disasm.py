@@ -246,7 +246,7 @@ def instruction_to_text(
             insn.mnemonic,
             insn.reg_name(insn.operands[0].reg),
             insn.reg_name(insn.operands[1].value.reg),
-            insn.operands[2].imm - 0x10000,
+            (insn.operands[2].imm & 0xFFFF) - 0x10000,
         )
     elif (insn.id == cs.ppc.PPC_INS_LI or insn.id == cs.ppc.PPC_INS_CMPWI) and (
         insn.operands[1].imm & 0x8000
@@ -254,7 +254,7 @@ def instruction_to_text(
         return "%s %s, %i" % (
             insn.mnemonic,
             insn.reg_name(insn.operands[0].reg),
-            insn.operands[1].imm - 0x10000,
+            (insn.operands[1].imm & 0xFFFF) - 0x10000,
         )
     # cntlz -> cntlzw
     elif insn.id == cs.ppc.PPC_INS_CNTLZW:
