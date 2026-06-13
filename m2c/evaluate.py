@@ -943,14 +943,14 @@ def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
     ):
         return expr
 
-    # If the inner `x` is `(a - b)`, return `a == b`
+    # If the inner `x` is `(a - b)`, return `b == a`
     sub_expr = early_unwrap(left_expr.expr)
     if (
         isinstance(sub_expr, BinaryOp)
         and not sub_expr.is_floating()
         and sub_expr.op == "-"
     ):
-        return BinaryOp.icmp(sub_expr.left, "==", sub_expr.right)
+        return BinaryOp.icmp(sub_expr.right, "==", sub_expr.left)
 
     return BinaryOp.icmp(left_expr.expr, "==", Literal(0, type=left_expr.expr.type))
 
