@@ -224,23 +224,15 @@ class SaveRestoreRegsFnPattern(AsmPattern):
         return Replacement(new_instrs, 1)
 
 
-class BoolCastPattern(SimpleAsmPattern):
+class BoolCastPattern(IrPattern):
     """Cast to bool (a 1 bit type in MWCC), which also can be emitted from `!!x`."""
 
-    pattern = make_pattern(
-        "neg $a, $x",
-        "addic $r0, $a, -1",
-        "subfe $r0, $r0, $a",
-    )
-
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        boolcast = AsmInstruction("boolcast.fictive", [Register("r0"), m.regs["x"]])
-        if m.regs["a"] == Register("r0"):
-            return None
-        elif m.regs["x"] == m.regs["a"]:
-            return Replacement([boolcast, m.body[0]], len(m.body))
-        else:
-            return Replacement([m.body[0], boolcast], len(m.body))
+    replacement = "boolcast.fictive $o, $i"
+    parts = [
+        "neg $x, $i",
+        "addic $r0, $x, -1",
+        "subfe $o, $r0, $x",
+    ]
 
 
 class BranchCtrPattern(AsmPattern):
@@ -1162,6 +1154,7 @@ class PpcArch(Arch):
         UintToDoubleIrPattern(),
         SintToFloatIrPattern(),
         UintToFloatIrPattern(),
+        BoolCastPattern(),
     ]
 
     asm_patterns = [
@@ -1169,7 +1162,6 @@ class PpcArch(Arch):
         MfcrPattern(),
         TailCallPattern(),
         SaveRestoreRegsFnPattern(),
-        BoolCastPattern(),
         BranchCtrPattern(),
         FloatishToUintPattern(),
         StructCopyPattern(),
