@@ -225,13 +225,25 @@ class SaveRestoreRegsFnPattern(AsmPattern):
         return Replacement(new_instrs, 1)
 
 
-class BoolCastPattern(IrPattern):
-    """Cast to bool (a 1 bit type in MWCC), which also can be emitted from `!!x`."""
+class BoolCastPattern1(IrPattern):
+    """Comparison against 0. Sometimes a "neg" instruction gets added in front
+    of this, for unclear reasons; handle_boolcast takes care of removing it."""
 
     replacement = "boolcast.fictive $o, $i"
     parts = [
         "addic $r0, $i, -1",
         "subfe $o, $r0, $i",
+    ]
+
+
+class BoolCastPattern2(IrPattern):
+    """Comparison against 0."""
+
+    replacement = "boolcast.fictive $o, $i"
+    parts = [
+        "neg $r0, $i",
+        "or $r0, $r0, $i",
+        "srwi $o, $r0, 31",
     ]
 
 
@@ -1154,7 +1166,8 @@ class PpcArch(Arch):
         UintToDoubleIrPattern(),
         SintToFloatIrPattern(),
         UintToFloatIrPattern(),
-        BoolCastPattern(),
+        BoolCastPattern1(),
+        BoolCastPattern2(),
     ]
 
     asm_patterns = [
