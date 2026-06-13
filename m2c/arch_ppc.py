@@ -247,6 +247,18 @@ class BoolCastPattern2(IrPattern):
     ]
 
 
+class CmpnePattern(IrPattern):
+    """x != y."""
+
+    replacement = "cmpne.fictive $o, $x, $y"
+    parts = [
+        "subf $a, $x, $y",
+        "subf $b, $y, $x",
+        "or $c, $a, $b",
+        "srwi $o, $c, 31",
+    ]
+
+
 class BranchCtrPattern(AsmPattern):
     """Split decrement-$ctr-and-branch instructions into a pair of instructions."""
 
@@ -1168,6 +1180,7 @@ class PpcArch(Arch):
         UintToFloatIrPattern(),
         BoolCastPattern1(),
         BoolCastPattern2(),
+        CmpnePattern(),
     ]
 
     asm_patterns = [
@@ -1329,6 +1342,7 @@ class PpcArch(Arch):
         "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
         "xoris": lambda a: BinaryOp.int(a.reg(1), "^", a.shifted_u16_imm(2)),
         "boolcast.fictive": lambda a: handle_boolcast(a.reg(1)),
+        "cmpne.fictive": lambda a: BinaryOp.icmp(a.reg(1), "!=", a.reg(2)),
         "rlwimi": lambda a: handle_rlwimi(
             a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
