@@ -208,10 +208,16 @@ def run(options: Options) -> int:
     return_code = 0
     try:
         if options.visualize_flowgraph is not None:
+            import graphviz
+
             fn_info = function_infos[0]
             if isinstance(fn_info, Exception):
                 raise fn_info
-            print(visualize_flowgraph(fn_info.flow_graph, options.visualize_flowgraph))
+            dot_source = visualize_flowgraph(
+                fn_info.flow_graph, options.visualize_flowgraph
+            )
+            svg_bytes: bytes = graphviz.Source(dot_source).pipe("svg")
+            sys.stdout.buffer.write(svg_bytes)
             return 0
 
         type_decls = typepool.format_type_declarations(
