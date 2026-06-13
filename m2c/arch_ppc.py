@@ -259,6 +259,18 @@ class CmpnePattern(IrPattern):
     ]
 
 
+class CmplePattern(IrPattern):
+    """Signed x <= y."""
+
+    replacement = "cmple.fictive $o, $x, $y"
+    parts = [
+        "srawi $a, $y, 31",
+        "srwi $b, $x, 31",
+        "subfc $c, $x, $y",
+        "adde $o, $a, $b",  # borrow($y - $x) + [-1 if $y < 0] + [1 if $x < 0]
+    ]
+
+
 class BranchCtrPattern(AsmPattern):
     """Split decrement-$ctr-and-branch instructions into a pair of instructions."""
 
@@ -1072,14 +1084,20 @@ class PpcArch(Arch):
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
+            if mnemonic.rstrip(".") in ("adde", "addme", "addze", "subfe", "subfze"):
+                inputs.append(Register("carry"))
+            if mnemonic.rstrip(".") in ("addc", "addic", "subfc", "subfic"):
+                outputs.append(Register("carry"))
             if mnemonic.endswith("."):
                 # Instructions ending in `.` update the condition reg
                 outputs.extend(cr0_bits)
 
-                def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                    target = a.reg_ref(0)
-                    val = cls.instrs_destination_first[mnemonic.rstrip(".")](a)
-                    target_val = s.set_reg(target, val)
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                target = a.reg_ref(0)
+                val = cls.instrs_destination_first[mnemonic.rstrip(".")](a)
+                target_val = s.set_reg(target, val)
+                # Instructions ending in `.` update the condition reg
+                if mnemonic.endswith("."):
                     s.set_reg(
                         Register("cr0_eq"),
                         BinaryOp.icmp(
@@ -1103,11 +1121,12 @@ class PpcArch(Arch):
                         Register("cr0_so"),
                         fn_op("M2C_OVERFLOW", [target_val], type=Type.s32()),
                     )
+                if Register("carry") in outputs:
+                    s.set_reg(
+                        Register("carry"),
+                        fn_op("M2C_CARRY", [target_val], type=Type.s32()),
+                    )
 
-            else:
-                eval_fn = lambda s, a: s.set_reg(
-                    a.reg_ref(0), cls.instrs_destination_first[mnemonic](a)
-                )
         elif mnemonic in ("mtctr", "mtlr"):
             assert len(args) == 1 and isinstance(args[0], Register)
             dest_reg = Register(mnemonic[2:])
@@ -1181,6 +1200,7 @@ class PpcArch(Arch):
         BoolCastPattern1(),
         BoolCastPattern2(),
         CmpnePattern(),
+        CmplePattern(),
     ]
 
     asm_patterns = [
@@ -1343,6 +1363,7 @@ class PpcArch(Arch):
         "xoris": lambda a: BinaryOp.int(a.reg(1), "^", a.shifted_u16_imm(2)),
         "boolcast.fictive": lambda a: handle_boolcast(a.reg(1)),
         "cmpne.fictive": lambda a: BinaryOp.icmp(a.reg(1), "!=", a.reg(2)),
+        "cmple.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<=", a.reg(2)),
         "rlwimi": lambda a: handle_rlwimi(
             a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
