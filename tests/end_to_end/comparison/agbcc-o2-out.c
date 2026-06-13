@@ -6,6 +6,8 @@ void test(s32 arg0, s32 arg1, s32 arg2) {
     u32 var_r0_2;
     u32 var_r0_3;
     u32 var_r0_4;
+    u32 var_r0_5;
+    u32 var_r0_6;
 
     var_r0 = 0;
     if (arg0 == arg1) {
@@ -30,4 +32,14 @@ void test(s32 arg0, s32 arg1, s32 arg2) {
     }
     global = var_r0_4;
     global = (u32) ((0 - arg1) | arg1) >> 0x1F;
+    var_r0_5 = 0;
+    if (arg1 > 0) {
+        var_r0_5 = 1;
+    }
+    global = var_r0_5;
+    var_r0_6 = 0;
+    if (arg1 <= 0) {
+        var_r0_6 = 1;
+    }
+    global = var_r0_6;
 }

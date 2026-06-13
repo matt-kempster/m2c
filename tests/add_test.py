@@ -121,6 +121,7 @@ def get_mwcc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
             )
             return [
                 ("mwcc-o4p", mwcc.with_cc_flags(["-O4,p"])),
+                # ("mwcc-o4s", mwcc.with_cc_flags(["-O4,s"])),
                 # ("mwcc-o4p-s0", mwcc.with_cc_flags(["-O4,p", "-sdata", "0", "-sdata2", "0"]))
             ]
     logger.warning("MWCC tools not found; skipping PPC compilers")

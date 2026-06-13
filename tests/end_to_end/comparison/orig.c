@@ -8,4 +8,6 @@ void test(int a, int b, int c) {
     global = (a <= b);
     global = (a == 0);
     global = (b != 0);
+    global = (b > 0);
+    global = (b <= 0);
 }

@@ -8,47 +8,60 @@
 	.thumb_func
 test:
 	push	{r4, r5, lr}
-	add	r3, r0, #0
-	add	r4, r1, #0
-	ldr	r5, .L9
+	add	r4, r0, #0
+	add	r3, r1, #0
+	add	r5, r2, #0
+	ldr	r2, .L11
 	mov	r0, #0
-	cmp	r3, r4
+	cmp	r4, r3
 	bne	.L3	@cond_branch
 	mov	r0, #1
 .L3:
-	str	r0, [r5]
-	add	r1, r3, #0
-	eor	r1, r1, r2
+	str	r0, [r2]
+	add	r1, r4, #0
+	eor	r1, r1, r5
 	neg	r0, r1
 	orr	r0, r0, r1
 	lsr	r0, r0, #31
-	str	r0, [r5]
+	str	r0, [r2]
 	mov	r0, #0
-	cmp	r3, r4
+	cmp	r4, r3
 	bge	.L5	@cond_branch
 	mov	r0, #1
 .L5:
-	str	r0, [r5]
+	str	r0, [r2]
 	mov	r0, #0
-	cmp	r3, r4
+	cmp	r4, r3
 	bgt	.L6	@cond_branch
 	mov	r0, #1
 .L6:
-	str	r0, [r5]
+	str	r0, [r2]
 	mov	r0, #0
-	cmp	r3, #0
+	cmp	r4, #0
 	bne	.L7	@cond_branch
 	mov	r0, #1
 .L7:
-	str	r0, [r5]
-	neg	r0, r4
-	orr	r0, r0, r4
+	str	r0, [r2]
+	neg	r0, r3
+	orr	r0, r0, r3
 	lsr	r0, r0, #31
-	str	r0, [r5]
-	pop	{r4, r5, pc}
-.L10:
-	.align	2, 0
+	str	r0, [r2]
+	mov	r0, #0
+	cmp	r3, #0
+	ble	.L9	@cond_branch
+	mov	r0, #1
 .L9:
+	str	r0, [r2]
+	mov	r0, #0
+	cmp	r3, #0
+	bgt	.L10	@cond_branch
+	mov	r0, #1
+.L10:
+	str	r0, [r2]
+	pop	{r4, r5, pc}
+.L12:
+	.align	2, 0
+.L11:
 	.word	global
 .Lfe1:
 	.size	 test,.Lfe1-test
