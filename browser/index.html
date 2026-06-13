@@ -1,0 +1,100 @@
+<!DOCTYPE html><html>
+<head>
+<meta charset="utf-8">
+<title>m2c</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<form>
+<div class="main">
+  <div>
+    Assembly:
+  </div>
+  <div style="flex: 20;">
+    <textarea id="source" name="source" spellcheck="false"></textarea>
+  </div>
+  <div style="margin-top: 10px;">
+    Existing C source, preprocessed (optional):
+  </div>
+  <div style="flex: 11;">
+    <textarea id="context" name="context" spellcheck="false"></textarea>
+  </div>
+  <div style="margin-top: 10px;" id="options">
+    <input id="decompile" type="submit" value="Decompile" disabled>
+    <input id="visualize" type="submit" name="visualize" value="Visualize" disabled>
+    <label>Function: <select id="function" name="functionselect"></select></label>
+    <label>Global declarations:
+    <select id="globals" name="globals">
+    <option value="used">used</option>
+    <option value="all">all</option>
+    <option value="none">none</option>
+    </select>
+    </label>
+    <label>Target platform &amp; compiler:
+    <select id="target" name="target">
+    <option value="mips-ido-c">MIPS, IDO</option>
+    <option value="mips-gcc-c">MIPS, GCC</option>
+    <option value="mipsel-gcc-c">MIPSEL, GCC</option>
+    <option value="mipsee-gcc-c">MIPSEE, GCC</option>
+    <option value="ppc-mwcc-c++">PPC, MWCC</option>
+    <option value="gba-gcc-c">ARM, agbcc</option>
+    <option value="arm-gcc-c">ARM, GCC</option>
+    <option value="arm-mwcc-c++">ARM, MWCC</option>
+    </select>
+    </label>
+    <label>Comment style:
+    <select id="comment-style" name="comment_style">
+    <option value="multiline">/* ... */, aligned</option>
+    <option value="multiline_unaligned">/* ... */, unaligned</option>
+    <option value="oneline">// ..., aligned</option>
+    <option value="oneline_unaligned">// ..., unaligned</option>
+    <option value="none">no comments</option>
+    </select>
+    </label>
+    <label>Use single var for:
+    <select id="regvars-select" name="regvarsselect">
+    <option value="none">none</option>
+    <option value="saved">saved regs</option>
+    <option value="all">all regs</option>
+    <option value="custom">custom</option>
+    </select>
+    </label>
+    <input id="regvars" name="regvars" value="">
+    <label><input id="void" type="checkbox" name="void">Force void return type</label>
+    <label><input id="debug" type="checkbox" name="debug">Debug info</label>
+    <label><input id="noandor" type="checkbox" name="noandor">Disable &amp;&amp;/||</label>
+    <label><input id="nocasts" type="checkbox" name="nocasts">Hide type casts</label>
+    <label><input id="allman" type="checkbox" name="allman">Allman braces</label>
+    <label><input id="knr" type="checkbox" name="knr">K&amp;R braces</label>
+    <label><input id="extraswitchindent" type="checkbox" name="extraswitchindent">Indent switch contents an extra level</label>
+    <label><input id="leftptr" type="checkbox" name="leftptr">* to the left</label>
+    <label><input id="zfillconstants" type="checkbox" name="zfillconstants">0-fill constants</label>
+    <label><input id="noifs" type="checkbox" name="noifs">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
+    <label><input id="noswitches" type="checkbox" name="noswitches">Disable irregular switch detection</label>
+    <label><input id="nounkinference" type="checkbox" name="nounkinference">Disable unknown struct/type inference</label>
+    <label><input id="stackstructs" type="checkbox" name="stackstructs">Stack struct templates</label>
+    <label><input id="nostackspill" type="checkbox" name="nostackspill">Disable stack spilling detection</label>
+    <label><input id="descendingregs" type="checkbox" name="descendingregs">Sort variables in descending order</label>
+    <label><input id="backwardsbss" type="checkbox" name="backwardsbss">Sort bss in descending order</label>
+    <label><input id="dark" type="checkbox" name="dark">Dark mode</label>
+  </div>
+</div>
+<div class="sidebar">
+  <div>
+    Output:
+  </div>
+  <div class="output-pane">
+    <textarea id="output" name="outputframe" spellcheck="false" readonly></textarea>
+    <div id="output-graph"></div>
+  </div>
+</div>
+<script type="module">
+import { instance } from "https://cdn.jsdelivr.net/npm/@viz-js/viz@3.28.0/+esm";
+window.m2cVizReady = instance();
+</script>
+<script src="https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide.js"></script>
+<script src="m2c.generated.js"></script>
+<script src="app.js"></script>
+</form>
+</body>
+</html>

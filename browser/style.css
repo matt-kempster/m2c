@@ -1,0 +1,64 @@
+* {
+    box-sizing: border-box;
+}
+html, body, form, .main, .sidebar {
+    margin: 0;
+    height: 100%;
+}
+form {
+    display: flex;
+    flex-direction: row;
+    overflow: hidden;
+}
+textarea, .sidebar iframe, #output-graph {
+    width: 100%;
+    height: 100%;
+    border: 1px solid #bbb;
+    margin: 1px 0;
+}
+label {
+    white-space: nowrap;
+}
+[data-regvars]:not([data-regvars=custom]) [name=regvars] {
+    display: none;
+}
+[name=regvars] {
+    width: 150px;
+}
+.main, .sidebar {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    padding: 10px;
+}
+.output-pane {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+.dark-theme {
+    background-color: #2d2d2d;
+    color: #c0c0c0;
+}
+.dark-theme div,
+.dark-theme body,
+.dark-theme form,
+.dark-theme textarea {
+    background-color: rgba(255, 255, 255, 0.0225);
+    color: #c0c0c0;
+    box-shadow: 1px 1px 10px 0px black;
+}
+#output-graph {
+    display: none;
+    overflow: auto;
+    max-width: 100%;
+    max-height: 100%;
+}
+#output-graph svg {
+    display: block;
+    max-width: none;
+    max-height: none;
+}
