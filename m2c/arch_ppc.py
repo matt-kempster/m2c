@@ -231,25 +231,21 @@ class BoolCastPattern1(IrPattern):
 
     replacement = "boolcast.fictive $o, $i"
     parts = [
-        "addic $r0, $i, -1",
-        "subfe $o, $r0, $i",
+        "addic $a, $i, -1",
+        "subfe $o, $a, $i",
     ]
 
 
 class BoolCastPattern2(IrPattern):
-    """Comparison against 0."""
-
     replacement = "boolcast.fictive $o, $i"
     parts = [
-        "neg $r0, $i",
-        "or $r0, $r0, $i",
-        "srwi $o, $r0, 31",
+        "neg $a, $i",
+        "or $b, $a, $i",
+        "srwi $o, $b, 31",
     ]
 
 
 class CmpnePattern(IrPattern):
-    """x != y."""
-
     replacement = "cmpne.fictive $o, $x, $y"
     parts = [
         "subf $a, $x, $y",
@@ -260,14 +256,73 @@ class CmpnePattern(IrPattern):
 
 
 class CmplePattern(IrPattern):
-    """Signed x <= y."""
-
     replacement = "cmple.fictive $o, $x, $y"
     parts = [
         "srawi $a, $y, 31",
         "srwi $b, $x, 31",
         "subfc $c, $x, $y",
-        "adde $o, $a, $b",  # borrow($y - $x) + [-1 if $y < 0] + [1 if $x < 0]
+        "adde $o, $a, $b",
+    ]
+
+
+class CmpltPattern1(IrPattern):
+    replacement = "cmplt.fictive $o, $x, $y"
+    parts = [
+        "eqv $a, $y, $x",
+        "subfc $b, $y, $x",
+        "srwi $c, $a, 31",
+        "addze $d, $c",
+        "clrlwi $o, $d, 31",
+    ]
+
+
+class CmpltPattern2(IrPattern):
+    replacement = "cmplt.fictive $o, $x, $y"
+    parts = [
+        "xor $a, $y, $x",
+        "srawi $b, $a, 1",
+        "and $c, $a, $y",
+        "subf $d, $c, $b",
+        "srwi $o, $d, 31",
+    ]
+
+
+class CmpleuPattern1(IrPattern):
+    replacement = "cmpleu.fictive $o, $x, $y"
+    parts = [
+        "subf $a, $x, $y",
+        "orc $b, $y, $x",
+        "srwi $c, $a, 1",
+        "subf $d, $c, $b",
+        "srwi $o, $d, 31",
+    ]
+
+
+class CmpleuPattern2(IrPattern):
+    replacement = "cmpleu.fictive $o, $x, $y"
+    parts = [
+        "li $a, -1",
+        "subfc $b, $x, $y",
+        "subfze $o, $a",
+    ]
+
+
+class CmpltuPattern1(IrPattern):
+    replacement = "cmpltu.fictive $o, $x, $y"
+    parts = [
+        "subfc $a, $y, $x",
+        "subfe $b, $a, $a",
+        "neg $o, $b",
+    ]
+
+
+class CmpltuPattern2(IrPattern):
+    replacement = "cmpltu.fictive $o, $x, $y"
+    parts = [
+        "xor $a, $y, $x",
+        "cntlzw $b, $a",
+        "slw $c, $y, $b",
+        "srwi $o, $c, 31",
     ]
 
 
@@ -1201,6 +1256,12 @@ class PpcArch(Arch):
         BoolCastPattern2(),
         CmpnePattern(),
         CmplePattern(),
+        CmpltPattern1(),
+        CmpltPattern2(),
+        CmpleuPattern1(),
+        CmpleuPattern2(),
+        CmpltuPattern1(),
+        CmpltuPattern2(),
     ]
 
     asm_patterns = [
@@ -1364,6 +1425,9 @@ class PpcArch(Arch):
         "boolcast.fictive": lambda a: handle_boolcast(a.reg(1)),
         "cmpne.fictive": lambda a: BinaryOp.icmp(a.reg(1), "!=", a.reg(2)),
         "cmple.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<=", a.reg(2)),
+        "cmplt.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),
+        "cmpleu.fictive": lambda a: BinaryOp.ucmp(a.reg(1), "<=", a.reg(2)),
+        "cmpltu.fictive": lambda a: BinaryOp.ucmp(a.reg(1), "<", a.reg(2)),
         "rlwimi": lambda a: handle_rlwimi(
             a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
