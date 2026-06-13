@@ -1398,7 +1398,7 @@ def handle_boolcast(source: Expression) -> Expression:
         uw_source = early_unwrap(source)
     if isinstance(uw_source, BinaryOp) and uw_source.op in ("-", "^"):
         return BinaryOp.icmp(uw_source.left, "!=", uw_source.right)
-    return UnaryOp("!!", source, type=Type.intish())
+    return BinaryOp.icmp(source, "!=", Literal(0))
 
 
 def handle_loadx(args: InstrArgs, type: Type) -> Expression:
