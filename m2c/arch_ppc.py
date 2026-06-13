@@ -79,6 +79,7 @@ from .evaluate import (
     handle_add_float,
     handle_addi,
     handle_addis,
+    handle_boolcast,
     handle_convert,
     handle_load,
     handle_loadx,
@@ -229,9 +230,8 @@ class BoolCastPattern(IrPattern):
 
     replacement = "boolcast.fictive $o, $i"
     parts = [
-        "neg $x, $i",
-        "addic $r0, $x, -1",
-        "subfe $o, $r0, $x",
+        "addic $r0, $i, -1",
+        "subfe $o, $r0, $i",
     ]
 
 
@@ -1315,7 +1315,7 @@ class PpcArch(Arch):
         "andis": lambda a: BinaryOp.int(a.reg(1), "&", a.shifted_u16_imm(2)),
         "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
         "xoris": lambda a: BinaryOp.int(a.reg(1), "^", a.shifted_u16_imm(2)),
-        "boolcast.fictive": lambda a: UnaryOp("!!", a.reg(1), type=Type.intish()),
+        "boolcast.fictive": lambda a: handle_boolcast(a.reg(1)),
         "rlwimi": lambda a: handle_rlwimi(
             a.reg(0), a.reg(1), a.imm_value(2), a.imm_value(3), a.imm_value(4)
         ),
