@@ -84,7 +84,7 @@ def print_exception_as_comment(
         print("*/")
 
 
-def run(options: Options) -> int:
+def run(options: Options, *, visualize_as_dot: bool = False) -> int:
     arch: Arch
     if options.target.arch == Target.ArchEnum.MIPS:
         if options.target.platform == Target.PlatformEnum.MIPSEE:
@@ -236,13 +236,16 @@ def run(options: Options) -> int:
             dot_source = visualize_flowgraph(
                 decomp.state.flow_graph, options.visualize_flowgraph
             )
-            if options.visualize_format == Options.VisualizeFormatEnum.SVG:
+            if (
+                visualize_as_dot
+                or options.visualize_format == Options.VisualizeFormatEnum.DOT
+            ):
+                sys.stdout.write(dot_source)
+            else:
                 import graphviz
 
                 svg_bytes: bytes = graphviz.Source(dot_source).pipe("svg")
                 sys.stdout.buffer.write(svg_bytes)
-            else:
-                sys.stdout.write(dot_source)
             return 0
         except Exception as e:
             print_exception_as_comment(e, options, context=None)
