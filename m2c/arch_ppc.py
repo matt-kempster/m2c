@@ -79,7 +79,7 @@ from .evaluate import (
     handle_add_float,
     handle_addi,
     handle_addis,
-    handle_boolcast,
+    handle_cmpnez,
     handle_convert,
     handle_load,
     handle_loadx,
@@ -225,19 +225,19 @@ class SaveRestoreRegsFnPattern(AsmPattern):
         return Replacement(new_instrs, 1)
 
 
-class BoolCastPattern1(IrPattern):
+class CmpnezPattern1(IrPattern):
     """Comparison against 0. Sometimes a "neg" instruction gets added in front
-    of this, for unclear reasons; handle_boolcast takes care of removing it."""
+    of this, for unclear reasons; handle_cmpnez takes care of removing it."""
 
-    replacement = "boolcast.fictive $o, $i"
+    replacement = "cmpnez.fictive $o, $i"
     parts = [
         "addic $a, $i, -1",
         "subfe $o, $a, $i",
     ]
 
 
-class BoolCastPattern2(IrPattern):
-    replacement = "boolcast.fictive $o, $i"
+class CmpnezPattern2(IrPattern):
+    replacement = "cmpnez.fictive $o, $i"
     parts = [
         "neg $a, $i",
         "or $b, $a, $i",
@@ -808,7 +808,7 @@ class PpcArch(Arch):
                     value += 0x10000
                 val = lit(value & 0xFFFF0000)
                 return AsmInstruction("li", [args[0], val])
-            if instr.mnemonic.startswith("cmp"):
+            if instr.mnemonic.startswith("cmp") and "fictive" not in instr.mnemonic:
                 # For the two-argument form of cmpw, the insert an implicit CR0 as the first arg
                 cr0: Argument = Register("cr0")
                 return AsmInstruction(instr.mnemonic, [cr0] + instr.args)
@@ -1252,8 +1252,8 @@ class PpcArch(Arch):
         UintToDoubleIrPattern(),
         SintToFloatIrPattern(),
         UintToFloatIrPattern(),
-        BoolCastPattern1(),
-        BoolCastPattern2(),
+        CmpnezPattern1(),
+        CmpnezPattern2(),
         CmpnePattern(),
         CmplePattern(),
         CmpltPattern1(),
@@ -1422,7 +1422,7 @@ class PpcArch(Arch):
         "andis": lambda a: BinaryOp.int(a.reg(1), "&", a.shifted_u16_imm(2)),
         "xori": lambda a: BinaryOp.int(a.reg(1), "^", a.u16_imm(2)),
         "xoris": lambda a: BinaryOp.int(a.reg(1), "^", a.shifted_u16_imm(2)),
-        "boolcast.fictive": lambda a: handle_boolcast(a.reg(1)),
+        "cmpnez.fictive": lambda a: handle_cmpnez(a.reg(1)),
         "cmpne.fictive": lambda a: BinaryOp.icmp(a.reg(1), "!=", a.reg(2)),
         "cmple.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<=", a.reg(2)),
         "cmplt.fictive": lambda a: BinaryOp.scmp(a.reg(1), "<", a.reg(2)),

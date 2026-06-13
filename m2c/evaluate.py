@@ -1391,7 +1391,7 @@ def handle_rlwnm(
     return BinaryOp.int(upper_bits, "|", lower_bits)
 
 
-def handle_boolcast(source: Expression) -> Expression:
+def handle_cmpnez(source: Expression) -> Expression:
     uw_source = early_unwrap(source)
     if isinstance(uw_source, UnaryOp) and uw_source.op == "-":
         source = uw_source.expr
