@@ -283,7 +283,7 @@ class TryIrMatch(IrMatch):
         return True
 
     def rename_reg(self, pat: Register, new_reg: Register) -> None:
-        assert pat.register_name in self.symbolic_registers
+        assert pat.register_name in self.symbolic_registers, pat.register_name
         self.symbolic_registers[pat.register_name] = new_reg
 
 
@@ -333,11 +333,10 @@ def simplify_ir_patterns(
             isinstance(inp, Register) for inp in pattern.replacement_instr.inputs
         )
 
-        # For now, patterns can only have 1 output register (which must be set by the
-        # final instruction in the pattern). This simplifies the replacement step because
-        # we can replace the final instruction and know that all the pattern inputs have
-        # been assigned by there, and the output has not yet been used.
-        assert len(pattern.replacement_instr.outputs) == 1
+        # For now, all outputs of the pattern must come from the final instruction.
+        # This simplifies the replacement step because we can replace the final
+        # instruction and know that all the pattern inputs have been assigned
+        # by there, and the output has not yet been used.
         assert pattern.replacement_instr.outputs == tail_ref.instruction.outputs
 
         # Start matches with a mnemonic match for the last instruction in the pattern

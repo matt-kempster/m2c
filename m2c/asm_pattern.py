@@ -213,9 +213,24 @@ class TryMatchState:
         return True
 
     def match_meta(self, ins: AsmInstruction) -> bool:
-        assert ins.mnemonic == ".eq"
-        res = self.eval_math(ins.args[1])
-        return self.match_arg(AsmLiteral(res), ins.args[0])
+        if ins.mnemonic == ".eq":
+            res = self.eval_math(ins.args[1])
+            return self.match_arg(AsmLiteral(res), ins.args[0])
+        elif ins.mnemonic == ".set":
+            sym = ins.args[0]
+            assert isinstance(sym, AsmGlobalSymbol)
+            assert sym.symbol_name.isupper()
+            self.symbolic_literals[sym.symbol_name] = self.eval_math(ins.args[1])
+            return True
+        elif ins.mnemonic == ".forget":
+            arg = ins.args[0]
+            if isinstance(arg, Register):
+                del self.symbolic_registers[arg.register_name]
+            else:
+                assert False, ".forget arg of unsupported type"
+            return True
+        else:
+            assert False, ins.mnemonic
 
 
 @dataclass

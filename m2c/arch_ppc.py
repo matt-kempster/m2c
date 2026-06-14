@@ -77,6 +77,7 @@ from .evaluate import (
     handle_add,
     handle_add_double,
     handle_add_float,
+    handle_add_real,
     handle_addi,
     handle_addis,
     handle_cmpnez,
@@ -372,9 +373,177 @@ class FloatishToUintPattern(SimpleAsmPattern):
         )
 
 
+class LoopStructCopyPattern(AsmPattern):
+    loop_patterns = [
+        # 4-aligned
+        make_pattern(
+            ".loop:",
+            ".set W, 8",
+            ".set B, 4",
+            "lwz $a, 4($x)",
+            "lwzu $b, 8($x)",
+            "stw $a, 4($y)",
+            "stwu $b, 8($y)",
+            "bdnz .loop",
+        ),
+        make_pattern(
+            ".loop:",
+            ".set W, 8",
+            ".set B, 8",
+            "lwzu $a, 8($x)",
+            "lwz $b, 4($x)",
+            "stwu $a, 8($y)",
+            "stw $b, 4($y)",
+            "bdnz .loop",
+        ),
+        # 2-aligned
+        make_pattern(
+            ".loop:",
+            ".set W, 4",
+            ".set B, 2",
+            "lhz $a, 2($x)",
+            "lhzu $b, 4($x)",
+            "sth $a, 2($y)",
+            "sthu $b, 4($y)",
+            "bdnz .loop",
+        ),
+        make_pattern(
+            ".loop:",
+            ".set W, 4",
+            ".set B, 4",
+            "lhzu $a, 4($x)",
+            "lhz $b, 2($x)",
+            "sthu $a, 4($y)",
+            "sth $b, 2($y)",
+            "bdnz .loop",
+        ),
+        # 1-aligned
+        make_pattern(
+            ".loop:",
+            ".set W, 2",
+            ".set B, 1",
+            "lbz $a, 1($x)",
+            "lbzu $b, 2($x)",
+            "stb $a, 1($y)",
+            "stbu $b, 2($y)",
+            "bdnz .loop",
+        ),
+        make_pattern(
+            ".loop:",
+            ".set W, 2",
+            ".set B, 2",
+            "lbzu $a, 2($x)",
+            "lbz $b, 1($x)",
+            "stbu $a, 2($y)",
+            "stb $b, 1($y)",
+            "bdnz .loop",
+        ),
+    ]
+
+    tail_start = make_pattern(".set I, B")
+
+    tail_patterns = [
+        make_pattern(
+            "lbz $c, I($x)",
+            "stb $c, I($y)",
+            ".set I, I+1",
+            ".forget $c",
+        ),
+        make_pattern(
+            "lhz $c, I($x)",
+            "sth $c, I($y)",
+            ".set I, I+2",
+            ".forget $c",
+        ),
+        make_pattern(
+            "lhz $c, I($x)",
+            "lbz $d, (I+2)($x)",
+            "sth $c, I($y)",
+            "stb $d, (I+2)($y)",
+            ".set I, I+3",
+            ".forget $c",
+            ".forget $d",
+        ),
+        make_pattern(
+            "lwz $c, I($x)",
+            "stw $c, I($y)",
+            ".set I, I+4",
+            ".forget $c",
+        ),
+        make_pattern(
+            "lwz $c, I($x)",
+            "lbz $d, (I+4)($x)",
+            "stw $c, I($y)",
+            "stb $d, (I+4)($y)",
+            ".set I, I+5",
+            ".forget $c",
+            ".forget $d",
+        ),
+        make_pattern(
+            "lwz $c, I($x)",
+            "lhz $d, (I+4)($x)",
+            "stw $c, I($y)",
+            "sth $d, (I+4)($y)",
+            ".set I, I+6",
+            ".forget $c",
+            ".forget $d",
+        ),
+        make_pattern(
+            "lwz $c, I($x)",
+            "lhz $d, (I+4)($x)",
+            "stw $c, I($y)",
+            "lbz $e, (I+6)($x)",
+            "sth $d, (I+4)($y)",
+            "stb $e, (I+6)($y)",
+            ".set I, I+7",
+            ".forget $c",
+            ".forget $d",
+            ".forget $e",
+        ),
+    ]
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        for pattern in self.loop_patterns:
+            m = matcher.try_match(pattern)
+            if m is not None:
+                break
+        else:
+            return None
+
+        pattern += self.tail_start
+        m = matcher.try_match(pattern)
+        assert m is not None
+
+        while True:
+            for tail in self.tail_patterns:
+                m2 = matcher.try_match(pattern + tail)
+                if m2 is not None:
+                    m = m2
+                    pattern += tail
+                    break
+            else:
+                break
+
+        new_instr = AsmInstruction(
+            "loopstructcopy.fictive",
+            [
+                m.regs["y"],
+                m.regs["x"],
+                m.regs["y"],
+                m.regs["x"],
+                Register("ctr"),
+                AsmLiteral(m.literals["W"]),
+                AsmLiteral(m.literals["B"]),
+                AsmLiteral(0),
+                AsmLiteral(m.literals["I"] - m.literals["B"]),
+            ],
+        )
+        return Replacement([m.body[0], new_instr], len(m.body))
+
+
 class StructCopyPattern(AsmPattern):
     """Recognizing struct copy when it starts with lwz lwz stw stw. Others
-    would cause false positves. Maybe we can find another way for those using
+    would cause false positives. Maybe we can find another way for those using
     context?
     This pattern appears on almost every GC and Wii MW compiler version when using C
     and GC MW 1.0-1.2.5n when using C++.
@@ -408,36 +577,36 @@ class StructCopyPattern(AsmPattern):
                 i += 8
                 pattern_ext.extend(pattern2)
             else:
-                # Unaligned struct
-                pattern_end_4b = make_pattern(
-                    f"lwz $b, (I+{i})($s)",
-                    f"stw $b, (I+{i})($d)",
-                )
-                m_end = matcher.try_match(pattern_ext + pattern_end_4b)
-                if m_end:
-                    m = m_end
-                    i += 4
-                    pattern_ext.extend(pattern_end_4b)
-
-                pattern_end_2b = make_pattern(
-                    f"lhz $b, (I+{i})($s)",
-                    f"sth $b, (I+{i})($d)",
-                )
-                m_end = matcher.try_match(pattern_ext + pattern_end_2b)
-                if m_end:
-                    m = m_end
-                    i += 2
-                    pattern_ext.extend(pattern_end_2b)
-
-                pattern_end_1b = make_pattern(
-                    f"lbz $b, (I+{i})($s)",
-                    f"stb $b, (I+{i})($d)",
-                )
-                m_end = matcher.try_match(pattern_ext + pattern_end_1b)
-                if m_end:
-                    m = m_end
-                    i += 1
                 break
+
+        pattern_end_4b = make_pattern(
+            f"lwz $b, (I+{i})($s)",
+            f"stw $b, (I+{i})($d)",
+        )
+        m_end = matcher.try_match(pattern_ext + pattern_end_4b)
+        if m_end:
+            m = m_end
+            i += 4
+            pattern_ext.extend(pattern_end_4b)
+
+        pattern_end_2b = make_pattern(
+            f"lhz $b, (I+{i})($s)",
+            f"sth $b, (I+{i})($d)",
+        )
+        m_end = matcher.try_match(pattern_ext + pattern_end_2b)
+        if m_end:
+            m = m_end
+            i += 2
+            pattern_ext.extend(pattern_end_2b)
+
+        pattern_end_1b = make_pattern(
+            f"lbz $b, (I+{i})($s)",
+            f"stb $b, (I+{i})($d)",
+        )
+        m_end = matcher.try_match(pattern_ext + pattern_end_1b)
+        if m_end:
+            m = m_end
+            i += 1
 
         return Replacement(
             [
@@ -517,6 +686,15 @@ class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
         "lfd $d, N($r1)",
         "lfd $c, K($k)",
         "fsubs $f, $d, $c",
+    ]
+
+
+class LoopStructCopySetupPattern(IrPattern):
+    replacement = "loopstructcopy.fictive $a, $b, $x, $y, $z, W, 0, N, T"
+    parts = [
+        "addi $a, $x, -N",
+        "addi $b, $y, -N",
+        "loopstructcopy.fictive $a, $b, $a, $b, $z, W, N, 0, T",
     ]
 
 
@@ -1207,6 +1385,47 @@ class PpcArch(Arch):
             inputs = [args[0]]
             outputs = [dest_reg]
             eval_fn = lambda s, a: s.set_reg(dest_reg, a.reg(0))
+        elif mnemonic == "loopstructcopy.fictive":
+            assert len(args) == 9
+            assert isinstance(args[0], Register)
+            assert isinstance(args[1], Register)
+            assert isinstance(args[2], Register)
+            assert isinstance(args[3], Register)
+            assert isinstance(args[4], Register)
+            width = args[5]
+            bias = args[6]
+            adj = args[7]
+            tail_size = args[8]
+            inputs = [args[2], args[3], args[4]]
+            outputs = [args[0], args[1]]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                assert isinstance(width, AsmLiteral)
+                assert isinstance(bias, AsmLiteral)
+                assert isinstance(adj, AsmLiteral)
+                assert isinstance(tail_size, AsmLiteral)
+                tail = tail_size.value
+                dst = dst_out = a.reg(2)
+                src = src_out = a.reg(3)
+                if bias.value != 0:
+                    dst = BinaryOp.int(dst, "+", Literal(bias.value))
+                    src = BinaryOp.int(src, "+", Literal(bias.value))
+                if adj.value != 0:
+                    dst_out = BinaryOp.int(dst_out, "-", Literal(adj.value))
+                    src_out = BinaryOp.int(src_out, "-", Literal(adj.value))
+                count = a.reg(4)
+                if isinstance(count, Literal):
+                    count = Literal(count.value * width.value + tail)
+                else:
+                    count = BinaryOp.int(count, "*", Literal(width.value))
+                    if tail != 0:
+                        count = BinaryOp.int(count, "+", Literal(tail))
+                s.write_statement(void_fn_op("M2C_STRUCT_COPY", [dst, src, count]))
+                dst_out = handle_add_real(dst_out, count, a)
+                src_out = handle_add_real(src_out, count, a)
+                s.set_reg_real(a.reg_ref(0), dst_out, function_return=True)
+                s.set_reg_real(a.reg_ref(1), src_out, function_return=True)
+
         elif mnemonic in cls.instrs_ppc_compare:
             assert len(args) == 3 and isinstance(args[1], Register)
             inputs = [r for r in args[1:] if isinstance(r, Register)]
@@ -1266,6 +1485,7 @@ class PpcArch(Arch):
         )
 
     ir_patterns = [
+        LoopStructCopySetupPattern(),
         FloatishToSintIrPattern(),
         SintToDoubleIrPattern(),
         UintToDoubleIrPattern(),
@@ -1290,6 +1510,7 @@ class PpcArch(Arch):
         MfcrPattern(),
         TailCallPattern(),
         SaveRestoreRegsFnPattern(),
+        LoopStructCopyPattern(),
         BranchCtrPattern(),
         FloatishToUintPattern(),
         StructCopyPattern(),
