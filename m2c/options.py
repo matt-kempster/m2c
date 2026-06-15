@@ -146,6 +146,10 @@ class Options:
         ASM = "asm"
         C = "c"
 
+    class VisualizeFormatEnum(ChoicesEnum):
+        DOT = "dot"
+        SVG = "svg"
+
     filenames: List[str]
     function_indexes_or_names: List[Union[int, str]]
     debug: bool
@@ -164,6 +168,7 @@ class Options:
     stop_on_error: bool
     print_assembly: bool
     visualize_flowgraph: Optional[VisualizeTypeEnum]
+    visualize_format: VisualizeFormatEnum
     c_contexts: List[Path]
     use_cache: bool
     dump_typemap: bool

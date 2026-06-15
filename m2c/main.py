@@ -208,16 +208,19 @@ def run(options: Options) -> int:
     return_code = 0
     try:
         if options.visualize_flowgraph is not None:
-            import graphviz
-
             fn_info = function_infos[0]
             if isinstance(fn_info, Exception):
                 raise fn_info
             dot_source = visualize_flowgraph(
                 fn_info.flow_graph, options.visualize_flowgraph
             )
-            svg_bytes: bytes = graphviz.Source(dot_source).pipe("svg")
-            sys.stdout.buffer.write(svg_bytes)
+            if options.visualize_format == Options.VisualizeFormatEnum.SVG:
+                import graphviz
+
+                svg_bytes: bytes = graphviz.Source(dot_source).pipe("svg")
+                sys.stdout.buffer.write(svg_bytes)
+            else:
+                sys.stdout.write(dot_source)
             return 0
 
         type_decls = typepool.format_type_declarations(
@@ -390,6 +393,14 @@ def parse_flags(flags: List[str]) -> Options:
         type=Options.VisualizeTypeEnum,
         choices=list(Options.VisualizeTypeEnum),
         help="Print an SVG visualization of the control flow graph using graphviz",
+    )
+    group.add_argument(
+        "--visualize-format",
+        dest="visualize_format",
+        default=Options.VisualizeFormatEnum.SVG,
+        type=Options.VisualizeFormatEnum,
+        choices=list(Options.VisualizeFormatEnum),
+        help="Visualization output format (default: %(default)s)",
     )
     group.add_argument(
         "--sanitize-tracebacks",
@@ -696,6 +707,7 @@ def parse_flags(flags: List[str]) -> Options:
         stop_on_error=args.stop_on_error,
         print_assembly=args.print_assembly,
         visualize_flowgraph=args.visualize_flowgraph,
+        visualize_format=args.visualize_format,
         c_contexts=args.c_contexts,
         use_cache=args.use_cache,
         dump_typemap=args.dump_typemap,
