@@ -95,6 +95,7 @@ from .evaluate import (
     make_storex,
     void_fn_op,
 )
+from .flow_graph import ArchFlowGraph, FlowGraph, InstrRef, RefSet
 from .types import FunctionSignature, Type
 
 
@@ -440,68 +441,6 @@ class LoopStructCopyPattern(AsmPattern):
         ),
     ]
 
-    tail_start = make_pattern(".set I, B")
-
-    tail_patterns = [
-        make_pattern(
-            "lbz $c, I($x)",
-            "stb $c, I($y)",
-            ".set I, I+1",
-            ".forget $c",
-        ),
-        make_pattern(
-            "lhz $c, I($x)",
-            "sth $c, I($y)",
-            ".set I, I+2",
-            ".forget $c",
-        ),
-        make_pattern(
-            "lhz $c, I($x)",
-            "lbz $d, (I+2)($x)",
-            "sth $c, I($y)",
-            "stb $d, (I+2)($y)",
-            ".set I, I+3",
-            ".forget $c",
-            ".forget $d",
-        ),
-        make_pattern(
-            "lwz $c, I($x)",
-            "stw $c, I($y)",
-            ".set I, I+4",
-            ".forget $c",
-        ),
-        make_pattern(
-            "lwz $c, I($x)",
-            "lbz $d, (I+4)($x)",
-            "stw $c, I($y)",
-            "stb $d, (I+4)($y)",
-            ".set I, I+5",
-            ".forget $c",
-            ".forget $d",
-        ),
-        make_pattern(
-            "lwz $c, I($x)",
-            "lhz $d, (I+4)($x)",
-            "stw $c, I($y)",
-            "sth $d, (I+4)($y)",
-            ".set I, I+6",
-            ".forget $c",
-            ".forget $d",
-        ),
-        make_pattern(
-            "lwz $c, I($x)",
-            "lhz $d, (I+4)($x)",
-            "stw $c, I($y)",
-            "lbz $e, (I+6)($x)",
-            "sth $d, (I+4)($y)",
-            "stb $e, (I+6)($y)",
-            ".set I, I+7",
-            ".forget $c",
-            ".forget $d",
-            ".forget $e",
-        ),
-    ]
-
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         for pattern in self.loop_patterns:
             m = matcher.try_match(pattern)
@@ -509,20 +448,6 @@ class LoopStructCopyPattern(AsmPattern):
                 break
         else:
             return None
-
-        pattern += self.tail_start
-        m = matcher.try_match(pattern)
-        assert m is not None
-
-        while True:
-            for tail in self.tail_patterns:
-                m2 = matcher.try_match(pattern + tail)
-                if m2 is not None:
-                    m = m2
-                    pattern += tail
-                    break
-            else:
-                break
 
         new_instr = AsmInstruction(
             "loopstructcopy.fictive",
@@ -535,7 +460,7 @@ class LoopStructCopyPattern(AsmPattern):
                 AsmLiteral(m.literals["W"]),
                 AsmLiteral(m.literals["B"]),
                 AsmLiteral(0),
-                AsmLiteral(m.literals["I"] - m.literals["B"]),
+                AsmLiteral(0),
             ],
         )
         return Replacement([m.body[0], new_instr], len(m.body))
@@ -631,7 +556,7 @@ class FloatishToSintIrPattern(IrPattern):
 
 
 class CheckConstantMixin:
-    def check(self, m: IrMatch) -> bool:
+    def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
         # TODO: Also validate that `K($k)` is the expected constant in rodata
         return m.symbolic_registers["k"] in (Register("r2"), Register("r13"))
 
@@ -690,12 +615,74 @@ class UintToFloatIrPattern(IrPattern, CheckConstantMixin):
 
 
 class LoopStructCopySetupPattern(IrPattern):
-    replacement = "loopstructcopy.fictive $a, $b, $x, $y, $z, W, 0, N, T"
+    replacement = "loopstructcopy.fictive $a, $b, $x, $y, $z, W, B, B, T"
     parts = [
-        "addi $a, $x, -N",
-        "addi $b, $y, -N",
-        "loopstructcopy.fictive $a, $b, $a, $b, $z, W, N, 0, T",
+        "addi $a, $x, -B",
+        "addi $b, $y, -B",
+        "loopstructcopy.fictive $a, $b, $a, $b, $z, W, B, 0, 0",
     ]
+
+    @staticmethod
+    def _by_offset(refs: RefSet) -> Dict[int, InstrRef]:
+        ret = {}
+        for ref in refs:
+            if not isinstance(ref, InstrRef):
+                continue
+            ins = ref.instruction
+            if len(ins.args) != 2:
+                continue
+            arg = ins.args[1]
+            if not isinstance(arg, AsmAddressMode):
+                continue
+            if not isinstance(arg.addend, AsmLiteral):
+                continue
+            ret[arg.addend.value] = ref
+        return ret
+
+    def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
+        # Extend the pattern with an optional lwz+stw/lhz+sth/lbz+stb tail part,
+        # marking those instructions as consumed and not to be emitted.
+        offset = m.symbolic_args["B"]
+        assert isinstance(offset, AsmLiteral)
+        offset = offset.value
+        tail_size = 0
+
+        for src in m.ref_map:
+            if (
+                isinstance(src, InstrRef)
+                and src.instruction.mnemonic == "loopstructcopy.fictive"
+            ):
+                ref = m.map_ref(src)
+                break
+        else:
+            assert False, "failed to find mapping for loopstructcopy.fictive"
+
+        dst = m.symbolic_registers["a"]
+        src = m.symbolic_registers["b"]
+        dst_refs_by_offset = self._by_offset(flow_graph.instr_uses[ref].get(dst))
+        src_refs_by_offset = self._by_offset(flow_graph.instr_uses[ref].get(src))
+
+        tails = [("lwz", "stw", 4), ("lhz", "sth", 2), ("lbz", "stb", 1)]
+        for load_mn, store_mn, width in tails:
+            load = src_refs_by_offset.get(offset + tail_size)
+            store = dst_refs_by_offset.get(offset + tail_size)
+            if (
+                load is None
+                or store is None
+                or load.instruction.mnemonic != load_mn
+                or store.instruction.mnemonic != store_mn
+            ):
+                continue
+            temp_reg = load.instruction.args[0]
+            assert isinstance(temp_reg, Register)
+            if store not in flow_graph.instr_uses[load].get(temp_reg):
+                continue
+            tail_size += width
+            load.instruction = replace(load.instruction, in_pattern=True)
+            store.replace_instruction(AsmInstruction("nop", []), arch)
+
+        m.symbolic_args["T"] = AsmLiteral(tail_size)
+        return True
 
 
 class PpcArch(Arch):
@@ -1405,24 +1392,27 @@ class PpcArch(Arch):
                 assert isinstance(adj, AsmLiteral)
                 assert isinstance(tail_size, AsmLiteral)
                 tail = tail_size.value
+                offset = bias.value - adj.value
                 dst = dst_out = a.reg(2)
                 src = src_out = a.reg(3)
-                if bias.value != 0:
-                    dst = BinaryOp.int(dst, "+", Literal(bias.value))
-                    src = BinaryOp.int(src, "+", Literal(bias.value))
+                if offset != 0:
+                    dst = BinaryOp.int(dst, "+", Literal(offset))
+                    src = BinaryOp.int(src, "+", Literal(offset))
                 if adj.value != 0:
                     dst_out = BinaryOp.int(dst_out, "-", Literal(adj.value))
                     src_out = BinaryOp.int(src_out, "-", Literal(adj.value))
                 count = a.reg(4)
                 if isinstance(count, Literal):
-                    count = Literal(count.value * width.value + tail)
+                    incr_size = Literal(count.value * width.value)
+                    copy_size = Literal(count.value * width.value + tail)
                 else:
-                    count = BinaryOp.int(count, "*", Literal(width.value))
+                    incr_size = BinaryOp.int(count, "*", Literal(width.value))
+                    copy_size = incr_size
                     if tail != 0:
-                        count = BinaryOp.int(count, "+", Literal(tail))
-                s.write_statement(void_fn_op("M2C_STRUCT_COPY", [dst, src, count]))
-                dst_out = handle_add_real(dst_out, count, a)
-                src_out = handle_add_real(src_out, count, a)
+                        copy_size = BinaryOp.int(copy_size, "+", Literal(tail))
+                s.write_statement(void_fn_op("M2C_STRUCT_COPY", [dst, src, copy_size]))
+                dst_out = handle_add_real(dst_out, incr_size, a)
+                src_out = handle_add_real(src_out, incr_size, a)
                 s.set_reg_real(a.reg_ref(0), dst_out, function_return=True)
                 s.set_reg_real(a.reg_ref(1), src_out, function_return=True)
 

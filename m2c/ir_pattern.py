@@ -56,7 +56,7 @@ class IrPattern(abc.ABC):
     parts: ClassVar[List[str]]
     replacement: ClassVar[str]
 
-    def check(self, m: IrMatch) -> bool:
+    def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
         """Override to perform additional checks before replacement."""
         return True
 
@@ -337,7 +337,10 @@ def simplify_ir_patterns(
         # This simplifies the replacement step because we can replace the final
         # instruction and know that all the pattern inputs have been assigned
         # by there, and the output has not yet been used.
-        assert pattern.replacement_instr.outputs == tail_ref.instruction.outputs
+        assert pattern.replacement_instr.outputs == tail_ref.instruction.outputs, (
+            pattern.replacement_instr.outputs,
+            tail_ref.instruction.outputs,
+        )
 
         # Start matches with a mnemonic match for the last instruction in the pattern
         for cand_tail_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
@@ -362,7 +365,7 @@ def simplify_ir_patterns(
                     break
 
             # Perform any additional pattern-specific validation
-            if not is_match or not pattern.source.check(state):
+            if not is_match or not pattern.source.check(state, arch, flow_graph):
                 continue
 
             # Create temporary registers for the inputs to the replacement_instr.

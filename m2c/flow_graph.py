@@ -86,7 +86,7 @@ class InstrRef(Reference):
 
     def replace_instruction(self, new_asm: AsmInstruction, arch: ArchFlowGraph) -> None:
         """Replace the existing instruciton with `new_asm`.
-        Previous ouputs & clobbers are added to the new Instruction's clobbers list."""
+        Previous outputs & clobbers are added to the new Instruction's clobbers list."""
         old_instr = self.instruction
         new_instr = arch.parse(new_asm.mnemonic, new_asm.args, old_instr.meta.derived())
 

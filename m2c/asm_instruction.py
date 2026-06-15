@@ -235,7 +235,6 @@ class AsmState:
 
 
 valid_word = string.ascii_letters + string.digits + "_$."
-valid_number = "-xX" + string.hexdigits
 
 
 def parse_word(elems: List[str], valid: str = valid_word) -> str:
@@ -428,7 +427,7 @@ def parse_arg_elems(
             consume_ws()
             word = parse_word(arg_elems, valid_word)
             assert word
-            if word[0] in valid_number:
+            if word[0] in string.digits:
                 value = AsmLiteral(-parse_number(word))
             else:
                 val = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
