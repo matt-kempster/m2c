@@ -72,11 +72,13 @@ def decompile(
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 options = parse_flags(argv)
                 is_visualize = options.visualize_flowgraph is not None
+                if is_visualize:
+                    options.visualize_format = main_module.Options.VisualizeFormatEnum.DOT
                 _ensure_recursion_limit()
                 if options.disable_gc:
                     gc.disable()
                     gc.set_threshold(0)
-                returncode = main_module.run(options, visualize_as_dot=True)
+                returncode = main_module.run(options)
     except SystemExit as exc:
         is_visualize = False
         returncode = int(exc.code) if isinstance(exc.code, int) else 1

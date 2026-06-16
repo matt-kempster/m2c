@@ -84,7 +84,7 @@ def print_exception_as_comment(
         print("*/")
 
 
-def run(options: Options, *, visualize_as_dot: bool = False) -> int:
+def run(options: Options) -> int:
     arch: Arch
     if options.target.arch == Target.ArchEnum.MIPS:
         if options.target.platform == Target.PlatformEnum.MIPSEE:
@@ -236,10 +236,7 @@ def run(options: Options, *, visualize_as_dot: bool = False) -> int:
             dot_source = visualize_flowgraph(
                 decomp.state.flow_graph, options.visualize_flowgraph
             )
-            if (
-                visualize_as_dot
-                or options.visualize_format == Options.VisualizeFormatEnum.DOT
-            ):
+            if options.visualize_format == Options.VisualizeFormatEnum.DOT:
                 sys.stdout.write(dot_source)
             else:
                 import graphviz
