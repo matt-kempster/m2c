@@ -73,7 +73,9 @@ def decompile(
                 options = parse_flags(argv)
                 is_visualize = options.visualize_flowgraph is not None
                 if is_visualize:
-                    options.visualize_format = main_module.Options.VisualizeFormatEnum.DOT
+                    options.visualize_format = (
+                        main_module.Options.VisualizeFormatEnum.DOT
+                    )
                 _ensure_recursion_limit()
                 if options.disable_gc:
                     gc.disable()
