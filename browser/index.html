@@ -88,9 +88,15 @@
     <div id="output-graph"></div>
   </div>
 </div>
+<script>
+window.m2cVizReady = new Promise(function (resolve, reject) {
+  window.m2cResolveViz = resolve;
+  window.m2cRejectViz = reject;
+});
+</script>
 <script type="module">
 import { instance } from "https://cdn.jsdelivr.net/npm/@viz-js/viz@3.28.0/+esm";
-window.m2cVizReady = instance();
+instance().then(window.m2cResolveViz, window.m2cRejectViz);
 </script>
 <script src="https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide.js"></script>
 <script src="m2c.generated.js"></script>
