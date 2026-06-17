@@ -19,6 +19,9 @@ textarea, .sidebar iframe, #output-graph {
 label {
     white-space: nowrap;
 }
+#decompile, #visualize {
+    min-width: 112px;
+}
 [data-regvars]:not([data-regvars=custom]) [name=regvars] {
     display: none;
 }

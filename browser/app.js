@@ -14,6 +14,112 @@
   var regvarsEl = document.getElementById("regvars");
   var formEl = document.getElementsByTagName("form")[0];
   var darkModeCheckbox = document.getElementById("dark");
+  var browserPython = String.raw`
+from __future__ import annotations
+
+import contextlib
+import gc
+import io
+import json
+import tempfile
+from pathlib import Path
+from typing import List, TypedDict
+
+from .main import parse_flags, run
+
+
+class BrowserResult(TypedDict):
+    returncode: int
+    output: str
+
+
+def decompile(source: str, context: str, flags: List[str]) -> BrowserResult:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    is_visualize = False
+    gc_thresholds = gc.get_threshold()
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="m2c-browser-") as tmpdir:
+            base_path = Path(tmpdir)
+            asm_path = base_path / "input.s"
+            asm_path.write_text(source, encoding="utf-8")
+
+            argv = list(flags)
+            argv.append("--no-cache")
+            argv.append("--visualize-format=dot")
+
+            if context:
+                context_path = base_path / "context.c"
+                context_path.write_text(context, encoding="utf-8")
+                argv.extend(["--context", str(context_path)])
+
+            argv.append(str(asm_path))
+
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                options = parse_flags(argv)
+                is_visualize = options.visualize_flowgraph is not None
+                if options.disable_gc:
+                    gc.disable()
+                    gc.set_threshold(0)
+                returncode = run(options)
+    except SystemExit as exc:
+        is_visualize = False
+        returncode = int(exc.code) if isinstance(exc.code, int) else 1
+    except Exception as exc:
+        is_visualize = False
+        returncode = 1
+        stdout.write(f"Internal browser wrapper error:\n{exc}\n")
+    finally:
+        gc.set_threshold(*gc_thresholds)
+        gc.enable()
+    err = stderr.getvalue()
+    if err and (not is_visualize or returncode != 0):
+        stdout.write(err)
+    output = stdout.getvalue()
+    if is_visualize and returncode == 0:
+        dot_start = output.find("digraph {")
+        if dot_start != -1:
+            output = output[dot_start:]
+
+    return {
+        "returncode": returncode,
+        "output": output,
+    }
+
+
+def decompile_from_json(options_json: str) -> BrowserResult:
+    options = json.loads(options_json)
+    if not isinstance(options, dict):
+        return {
+            "returncode": 1,
+            "output": "Expected browser options JSON to decode to an object.\n",
+        }
+
+    source = options.get("source")
+    context = options.get("context")
+    flags = options.get("flags")
+    if not isinstance(source, str) or not isinstance(context, str) or not isinstance(
+        flags, list
+    ):
+        return {
+            "returncode": 1,
+            "output": "Expected browser options to contain source, context, and flags.\n",
+        }
+    return decompile(source, context, [str(flag) for flag in flags])
+`;
+  var functionStartDirectives = [
+    "glabel",
+    ".global",
+    "arm_func_start",
+    "thumb_func_start",
+    "non_word_aligned_thumb_func_start",
+    "ARM_FUNC_START",
+    "THUMB_FUNC_START",
+    "NON_WORD_ALIGNED_THUMB_FUNC_START",
+    ".fn"
+  ];
+  var localLabelRe = /^(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|_[0-9A-Fa-f]{7,8}(?:_.*)?$)/;
 
   var optionIds = [
     "globals",
@@ -55,20 +161,54 @@
   }
 
   function formatError(err) {
+    var message;
     if (err && err.stack) {
-      return err.stack;
-    }
-    if (err && err.message) {
-      return err.message;
-    }
-    if (err && typeof err === "object") {
+      message = err.stack;
+    } else if (err && err.message) {
+      message = err.message;
+    } else if (err && typeof err === "object") {
       try {
-        return JSON.stringify(err);
+        message = JSON.stringify(err);
       } catch (jsonErr) {
-        return String(err);
+        message = String(err);
       }
+    } else {
+      message = String(err);
     }
-    return String(err);
+    return message.indexOf("Error") === -1 && message.indexOf("error") === -1 ? "Error: " + message : message;
+  }
+
+  function stripLineComment(line) {
+    return line.replace(/[#;@].*$/, "").replace(/\/\/.*$/, "").trim();
+  }
+
+  function parseFunctionName(line) {
+    var stripped = stripLineComment(line);
+    var parts = stripped.split(/\s+/);
+    var directive = parts[0];
+    if (functionStartDirectives.indexOf(directive) !== -1 && parts[1]) {
+      return parts[1].replace(/,$/, "");
+    }
+
+    var labelMatch = stripped.match(/^([a-zA-Z0-9_.$]+|"[a-zA-Z0-9_.$<>@,-]+"):/);
+    if (!labelMatch) {
+      return "";
+    }
+    var label = labelMatch[1].replace(/^"|"$/g, "");
+    if (label.charAt(0) === "." || localLabelRe.test(label)) {
+      return "";
+    }
+    return label;
+  }
+
+  function hasFunctionStart(source) {
+    return source.split(/\r?\n/).some(function (line) {
+      return parseFunctionName(line) !== "";
+    });
+  }
+
+  function sourceWithDefaultFunction() {
+    return hasFunctionStart(sourceEl.value) ? sourceEl.value : "glabel foo\n" + sourceEl.value;
   }
 
   function updateFunctions() {
@@ -80,9 +220,11 @@
     allOption.textContent = "all functions";
     functionEl.appendChild(allOption);
 
-    var matches = sourceEl.value.matchAll(/^\s*(?:(?:glabel|dlabel|arm_func_start|thumb_func_start|non_word_aligned_thumb_func_start|ARM_FUNC_START|THUMB_FUNC_START|NON_WORD_ALIGNED_THUMB_FUNC_START)\s+(\S+)|\.fn\s+(\S+)|([A-Za-z_.$][\w.$]*):)/gm);
-    for (var match of matches) {
-      var name = match[1] || match[2] || match[3];
+    for (var line of sourceEl.value.split(/\r?\n/)) {
+      var name = parseFunctionName(line);
+      if (!name) {
+        continue;
+      }
       var option = document.createElement("option");
       option.value = name;
       option.textContent = name;
@@ -153,6 +295,14 @@
     outputEl.style.display = "";
     graphEl.replaceChildren();
     outputEl.value = value;
+    outputEl.focus();
+  }
+
+  function clearOutput() {
+    graphEl.style.display = "none";
+    outputEl.style.display = "";
+    graphEl.replaceChildren();
+    outputEl.value = "";
   }
 
   function showGraphOutput(svgElement) {
@@ -165,10 +315,10 @@
   function normalizeDotForBrowser(dotSource) {
     return dotSource
       .replace(
-        'node [shape="rect", fontname="Monospace"];',
+        /node \[shape="rect", fontname="Monospace"\];/g,
         'node [shape="rect", fontname="Courier", margin="0.12,0.08"];'
       )
-      .replace('edge [fontname="Monospace"];', 'edge [fontname="Courier"];');
+      .replace(/edge \[fontname="Monospace"\];/g, 'edge [fontname="Courier"];');
   }
 
   function buildFlags() {
@@ -255,6 +405,8 @@
       mkdirp(dirPath);
       pyodide.FS.writeFile(fullPath, files[path], { encoding: "utf8" });
     }
+
+    pyodide.FS.writeFile(appRoot + "/m2c/browser.py", browserPython, { encoding: "utf8" });
   }
 
   async function initPyodide() {
@@ -267,14 +419,14 @@
       pyodide = await loadPyodide();
       setBusyButton("decompile", "Installing...");
       writeBrowserFiles(window.M2C_PYTHON_FILES);
-      await pyodide.runPythonAsync("import sys\nsys.path.insert(0, '/tmp/m2c-browser-root')\nfrom m2c.browser import decompile_from_json\n");
+      await pyodide.runPythonAsync("import json\nimport sys\nsys.path.insert(0, '/tmp/m2c-browser-root')\nsys.setrecursionlimit(min(2**31 - 1, 10 * sys.getrecursionlimit()))\nfrom m2c.browser import decompile_from_json\n");
       ready = true;
       buttonEl.disabled = false;
       visualizeEl.disabled = false;
       resetButtonLabels();
       var autorun = new URLSearchParams(window.location.search).get("autorun");
       if (autorun !== null) {
-        runM2c(autorun === "visualize" ? "visualize" : "decompile");
+        runM2c(autorun === "visualize");
       }
     } catch (err) {
       console.error(err);
@@ -284,7 +436,7 @@
     }
   }
 
-  async function runM2c(action) {
+  async function runM2c(visualize) {
     if (!ready) {
       return;
     }
@@ -292,41 +444,27 @@
     saveState();
     buttonEl.disabled = true;
     visualizeEl.disabled = true;
-    showTextOutput("");
-    setBusyButton(action, action === "visualize" ? "Visualizing..." : "Decompiling...");
+    clearOutput();
+    setBusyButton(visualize ? "visualize" : "decompile", visualize ? "Visualizing..." : "Decompiling...");
 
     try {
       var flags = buildFlags();
-      if (action === "visualize") {
+      if (visualize) {
         flags.push("--visualize");
       }
 
       pyodide.globals.set("m2c_options_json", JSON.stringify({
-        source: sourceEl.value,
+        source: sourceWithDefaultFunction(),
         context: contextEl.value,
         flags: flags
       }));
-      var result = null;
-      var returncode;
-      var output;
-      var outputType;
-      try {
-        result = await pyodide.runPythonAsync("decompile_from_json(m2c_options_json).copy()");
-        returncode = result.get("returncode");
-        output = result.get("output");
-        outputType = result.get("output_type");
-      } finally {
-        if (result) {
-          result.destroy();
-        }
-      }
+      var result = JSON.parse(await pyodide.runPythonAsync("json.dumps(decompile_from_json(m2c_options_json))"));
+      var returncode = result.returncode;
+      var output = result.output;
       document.body.dataset.m2cReturncode = String(returncode);
       document.body.dataset.m2cOutput = output;
 
-      if (returncode === 0 && outputType === "dot") {
-        if (!window.m2cVizReady) {
-          throw new Error("Viz.js was not loaded");
-        }
+      if (returncode === 0 && visualize) {
         setBusyButton("visualize", "Rendering...");
         var viz = await window.m2cVizReady;
         showGraphOutput(viz.renderSVGElement(normalizeDotForBrowser(output)));
@@ -344,6 +482,7 @@
   }
 
   restoreState();
+  clearOutput();
   if (!localStorage.mips_to_c_saved_options || localStorage.mips_to_c_saved_options.indexOf("\"dark\"") === -1) {
     darkModeCheckbox.checked = window.matchMedia("prefers-color-scheme: dark").matches;
   }
@@ -364,7 +503,7 @@
   });
   formEl.addEventListener("submit", function (event) {
     event.preventDefault();
-    runM2c(event.submitter && event.submitter.id === "visualize" ? "visualize" : "decompile");
+    runM2c(event.submitter && event.submitter.id === "visualize");
   });
 
   initPyodide();
