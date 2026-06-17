@@ -38,7 +38,7 @@ jobs:
           cp browser/index.html _site/
           cp browser/style.css _site/
           cp browser/app.js _site/
-          cp browser/m2c.generated.js _site/
+          cp -R browser/dist _site/
           touch _site/.nojekyll
 
       - name: Configure Pages
