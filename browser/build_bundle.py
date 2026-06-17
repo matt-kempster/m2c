@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 from pathlib import Path
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "browser" / "m2c.generated.js"
+DIST_DIR = ROOT / "browser" / "dist"
+LOCKFILE = ROOT / "browser" / "vendor-lock.json"
+M2C_JS = DIST_DIR / "m2c.js"
 
 INCLUDE_DIRS = (
     ROOT / "m2c",
@@ -21,15 +26,95 @@ def iter_python_files() -> list[Path]:
     return files
 
 
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def download_file(url: str) -> bytes:
+    with urlopen(url, timeout=60) as response:
+        return response.read()
+
+
+def read_vendor_lock() -> dict[str, object]:
+    return json.loads(LOCKFILE.read_text(encoding="utf-8"))
+
+
+def write_vendor_lock(lock: dict[str, object]) -> None:
+    LOCKFILE.write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def update_vendor_lock() -> None:
+    lock = read_vendor_lock()
+
+    for relative_path, metadata in sorted(lock["files"].items()):
+        output_path = DIST_DIR / relative_path
+
+        print(f"Downloading {metadata['url']}...")
+        data = download_file(metadata["url"])
+        metadata["sha256"] = sha256(data)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(data)
+
+    write_vendor_lock(lock)
+
+
+def update_vendor_files() -> None:
+    lock = read_vendor_lock()
+
+    for relative_path, metadata in sorted(lock["files"].items()):
+        output_path = DIST_DIR / relative_path
+        expected_hash = metadata["sha256"]
+
+        if output_path.exists():
+            data = output_path.read_bytes()
+            actual_hash = sha256(data)
+            if actual_hash == expected_hash:
+                continue
+            print(f"Hash mismatch for {output_path}, re-downloading...")
+
+        print(f"Downloading {metadata['url']}...")
+        data = download_file(metadata["url"])
+        actual_hash = sha256(data)
+        if actual_hash != expected_hash:
+            raise RuntimeError(
+                f"Hash mismatch for {metadata['url']}: "
+                f"expected {expected_hash}, got {actual_hash}"
+            )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(data)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--update-vendor-lock",
+        action="store_true",
+        help="download locked vendor URLs and rewrite their SHA-256 hashes",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
+    if args.update_vendor_lock:
+        update_vendor_lock()
+
+    update_vendor_files()
+
     bundle = {
         str(path.relative_to(ROOT)): path.read_text(encoding="utf-8")
         for path in iter_python_files()
     }
 
-    print(f"Writing to {OUTPUT}...")
+    print(f"Writing to {M2C_JS}...")
 
-    OUTPUT.write_text(
+    M2C_JS.parent.mkdir(parents=True, exist_ok=True)
+    M2C_JS.write_text(
         "window.M2C_PYTHON_FILES = "
         + json.dumps(bundle, ensure_ascii=False, sort_keys=True)
         + ";\n",

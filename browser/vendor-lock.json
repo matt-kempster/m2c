@@ -1,0 +1,28 @@
+{
+  "files": {
+    "vendor/viz/3.28.0/viz.mjs": {
+      "url": "https://cdn.jsdelivr.net/npm/@viz-js/viz@3.28.0/+esm",
+      "sha256": "ddd4d9b045481552ff268d88b75f0150b883cc0266d9b6653f4e4e2b25645761"
+    },
+    "vendor/pyodide/v314.0.0/pyodide.js": {
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide.js",
+      "sha256": "bb1105d77fde118fb0a8b05d688cb8c3a86c7cb0a2ff01d3e289744a5eed33f9"
+    },
+    "vendor/pyodide/v314.0.0/pyodide.asm.mjs": {
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide.asm.mjs",
+      "sha256": "7808c4d7a9fee23a02b0c8b7bbd51b1358e8d41bbe89e5c0ee9c0c4db7b9328f"
+    },
+    "vendor/pyodide/v314.0.0/pyodide.asm.wasm": {
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide.asm.wasm",
+      "sha256": "4d23bd074cc536a96660c9168e223e3aaf01944096ad829737a9c87fec4b28eb"
+    },
+    "vendor/pyodide/v314.0.0/python_stdlib.zip": {
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.0/full/python_stdlib.zip",
+      "sha256": "1215cd239a270c13a3ecb1a84c84b7b3241baf7ea7f54615f00d79ff69c82787"
+    },
+    "vendor/pyodide/v314.0.0/pyodide-lock.json": {
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide-lock.json",
+      "sha256": "f545248ab161ead36adf7110a358334974e97b08f40c7219e97077d380f7247b"
+    }
+  }
+}

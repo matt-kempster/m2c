@@ -416,7 +416,9 @@ def decompile_from_json(options_json: str) -> BrowserResult:
       }
 
       setBusyButton("decompile", "Loading...");
-      pyodide = await loadPyodide();
+      pyodide = await loadPyodide({
+        indexURL: "./dist/vendor/pyodide/v314.0.0/"
+      });
       setBusyButton("decompile", "Installing...");
       writeBrowserFiles(window.M2C_PYTHON_FILES);
       await pyodide.runPythonAsync("import json\nimport sys\nsys.path.insert(0, '/tmp/m2c-browser-root')\nsys.setrecursionlimit(min(2**31 - 1, 10 * sys.getrecursionlimit()))\nfrom m2c.browser import decompile_from_json\n");

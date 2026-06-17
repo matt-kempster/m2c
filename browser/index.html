@@ -95,11 +95,11 @@ window.m2cVizReady = new Promise(function (resolve, reject) {
 });
 </script>
 <script type="module">
-import { instance } from "https://cdn.jsdelivr.net/npm/@viz-js/viz@3.28.0/+esm";
+import { instance } from "./dist/vendor/viz/3.28.0/viz.mjs";
 instance().then(window.m2cResolveViz, window.m2cRejectViz);
 </script>
-<script src="https://cdn.jsdelivr.net/pyodide/v314.0.0/full/pyodide.js"></script>
-<script src="m2c.generated.js"></script>
+<script src="./dist/vendor/pyodide/v314.0.0/pyodide.js"></script>
+<script src="dist/m2c.js"></script>
 <script src="app.js"></script>
 </form>
 </body>
