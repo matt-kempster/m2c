@@ -25,7 +25,7 @@ from typing import (
 
 from .c_types import ArchC, CType, TypeMap, is_unk_type
 from .demangle_codewarrior import parse as demangle_codewarrior_parse, CxxSymbol
-from .error import DecompFailure, static_assert_unreachable
+from .error import DecompFailure, assert_never
 from .flow_graph import (
     ArchFlowGraph,
     BasicNode,
@@ -1510,7 +1510,7 @@ class StructAccess(Expression):
             elif isinstance(p, int):
                 output += f"[{fmt.format_int(p)}]"
             else:
-                static_assert_unreachable(p)
+                assert_never(p)
         return output
 
     def dependencies(self) -> List[Expression]:
@@ -3521,7 +3521,7 @@ class NodeState:
             if not data.meta.force and uses_expr(expr, expr_filter):
                 # Mark the register as "if used, emit the expression's once var".
                 if not isinstance(expr, EvalOnceExpr):
-                    static_assert_unreachable(expr)
+                    assert_never(expr)
 
                 self.regs.update_meta(r, replace(data.meta, force=True))
 
@@ -4047,7 +4047,7 @@ def create_dominated_node_state(
             elif isinstance(dom_expr, (EvalOnceExpr, PlannedPhiExpr, NaivePhiExpr)):
                 sources.extend(dom_expr.sources)
             else:
-                static_assert_unreachable(dom_expr)
+                assert_never(dom_expr)
 
         if sources:
             # For each source of this phi, there will be an associated EvalOnceExpr.

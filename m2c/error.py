@@ -11,5 +11,5 @@ class DecompFailure(Exception):
         return self.message
 
 
-def static_assert_unreachable(x: NoReturn) -> NoReturn:
+def assert_never(x: NoReturn) -> NoReturn:
     raise Exception(f"Unreachable: {repr(x)}")

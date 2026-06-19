@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from typing import ClassVar, Dict, List, Optional, TypeVar
 
-from .error import static_assert_unreachable
+from .error import assert_never
 from .flow_graph import (
     ArchFlowGraph,
     BaseNode,
@@ -206,7 +206,7 @@ class IrMatch:
             loc = StackLocation.from_offset(self.map_arg(key.offset_as_arg()))
             assert loc is not None
             return loc
-        static_assert_unreachable(key)
+        assert_never(key)
 
     def map_asm(self, key: Instruction) -> AsmInstruction:
         return AsmInstruction(key.mnemonic, [self.map_arg(a) for a in key.args])

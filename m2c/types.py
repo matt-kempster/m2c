@@ -20,7 +20,7 @@ from .c_types import (
     to_c,
 )
 from .demangle_codewarrior import CxxName, CxxSymbol, CxxTerm, CxxType
-from .error import DecompFailure, static_assert_unreachable
+from .error import DecompFailure, assert_never
 from .options import Formatter
 
 # AccessPath represents a struct/array path, with ints for array access, and
@@ -1083,7 +1083,7 @@ class Type:
             assert size_bits > 0
             sign = TypeData.UNSIGNED if "unsigned" in names else TypeData.SIGNED
             return Type(TypeData(kind=TypeData.K_INT, size_bits=size_bits, sign=sign))
-        static_assert_unreachable(real_ctype)
+        assert_never(real_ctype)
 
     @staticmethod
     def demangled_symbol(typemap: TypeMap, typepool: TypePool, sym: CxxSymbol) -> Type:

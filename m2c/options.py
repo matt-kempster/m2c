@@ -5,7 +5,7 @@ import enum
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Union
 
-from .error import static_assert_unreachable
+from .error import assert_never
 
 
 class ChoicesEnum(enum.Enum):
@@ -58,7 +58,7 @@ class Target:
             elif self == Target.PlatformEnum.GBA:
                 return Target.ArchEnum.ARM
             else:
-                static_assert_unreachable(self)
+                assert_never(self)
 
     class ArchEnum(ChoicesEnum):
         MIPS = "mips"

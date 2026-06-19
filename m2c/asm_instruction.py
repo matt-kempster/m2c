@@ -7,7 +7,7 @@ from enum import Enum
 import string
 from typing import Dict, Iterator, List, Optional, Tuple, Union, final
 
-from .error import DecompFailure, static_assert_unreachable
+from .error import DecompFailure, assert_never
 
 
 ARM_BARREL_SHIFTER_OPS = ("lsl", "lsr", "asr", "ror", "rrx")
@@ -672,4 +672,4 @@ def traverse_arg(arg: Argument) -> Iterator[Argument]:
         yield from traverse_arg(arg.lhs)
         yield from traverse_arg(arg.rhs)
     else:
-        static_assert_unreachable(arg)
+        assert_never(arg)
