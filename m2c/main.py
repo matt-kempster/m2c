@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+from dataclasses import dataclass
 import gc
 import sys
 import traceback
@@ -25,6 +26,17 @@ from .types import TypePool
 from .arch_arm import ArmArch, ArmGbaArch
 from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
+
+
+@dataclass
+class DecompilationState:
+    @dataclass
+    class Inner:
+        flow_graph: FlowGraph
+        info: Optional[FunctionInfo] = None
+
+    function: Function
+    state: Union[Inner, Exception]
 
 
 def print_exception(exc: Exception, sanitize: bool) -> None:
@@ -150,11 +162,12 @@ def run(options: Options) -> int:
         stack_spill_detection=options.stack_spill_detection,
     )
 
-    flow_graphs: List[Union[FlowGraph, Exception]] = []
+    decompilations: List[DecompilationState] = []
     for function in functions:
+        state: Union[DecompilationState.Inner, Exception]
         try:
             narrow_func_call_outputs(function, global_info)
-            graph = build_flowgraph(
+            flow_graph = build_flowgraph(
                 function,
                 global_info.asm_data,
                 arch,
@@ -162,57 +175,66 @@ def run(options: Options) -> int:
                 print_warnings=options.debug,
                 debug_patterns=options.debug_patterns,
             )
-            flow_graphs.append(graph)
+            state = DecompilationState.Inner(flow_graph)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
-            flow_graphs.append(e)
+            state = e
+        decompilations.append(DecompilationState(function, state))
 
-    # Perform the preliminary passes to improve type resolution, but discard the results/exceptions
+    # Perform the preliminary passes to improve type resolution, but discard the results
+    global_decls_exc: Optional[Exception] = None
     for i in range(options.passes - 1):
-        preliminary_infos = []
-        for function, flow_graph in zip(functions, flow_graphs):
+        for decomp in decompilations:
+            if isinstance(decomp.state, Exception):
+                continue
+            flow_graph = decomp.state.flow_graph
             try:
-                if isinstance(flow_graph, Exception):
-                    raise flow_graph
                 flow_graph.reset_block_info()
-                info = translate_to_ast(function, flow_graph, options, global_info)
-                preliminary_infos.append(info)
-            except Exception:
-                pass
-        try:
-            global_info.global_decls(fmt, options.global_decls, [])
-        except Exception:
-            pass
-        for info in preliminary_infos:
+                decomp.state.info = translate_to_ast(
+                    decomp.function, flow_graph, options, global_info
+                )
+            except Exception as e:
+                decomp.state = e
+
+        if global_decls_exc is None:
+            try:
+                global_info.global_decls(fmt, options.global_decls, [])
+            except Exception as e:
+                global_decls_exc = e
+
+        for decomp in decompilations:
+            if isinstance(decomp.state, Exception):
+                continue
+            info = decomp.state.info
+            assert info is not None
             try:
                 get_function_text(info, options)
-            except Exception:
-                pass
+            except Exception as e:
+                decomp.state = e
 
         # This operation can change struct field paths, so it is only performed
         # after discarding all of the translated Expressions.
         typepool.prune_structs()
 
-    function_infos: List[Union[FunctionInfo, Exception]] = []
-    for function, flow_graph in zip(functions, flow_graphs):
+    for decomp in decompilations:
+        if isinstance(decomp.state, Exception):
+            continue
+        flow_graph = decomp.state.flow_graph
         try:
-            if isinstance(flow_graph, Exception):
-                raise flow_graph
             flow_graph.reset_block_info()
-            info = translate_to_ast(function, flow_graph, options, global_info)
-            function_infos.append(info)
+            decomp.state.info = translate_to_ast(
+                decomp.function, flow_graph, options, global_info
+            )
         except Exception as e:
-            # Store the exception for later, to preserve the order in the output
-            function_infos.append(e)
+            decomp.state = e
 
-    return_code = 0
-    try:
-        if options.visualize_flowgraph is not None:
-            fn_info = function_infos[0]
-            if isinstance(fn_info, Exception):
-                raise fn_info
+    if options.visualize_flowgraph is not None:
+        decomp = decompilations[0]
+        try:
+            if isinstance(decomp.state, Exception):
+                raise decomp.state from None
             dot_source = visualize_flowgraph(
-                fn_info.flow_graph, options.visualize_flowgraph
+                decomp.state.flow_graph, options.visualize_flowgraph
             )
             if options.visualize_format == Options.VisualizeFormatEnum.SVG:
                 import graphviz
@@ -222,36 +244,47 @@ def run(options: Options) -> int:
             else:
                 sys.stdout.write(dot_source)
             return 0
+        except Exception as e:
+            print_exception_as_comment(e, options, context=None)
+            return 1
 
+    return_code = 0
+    try:
         type_decls = typepool.format_type_declarations(
             fmt, stack_structs=options.print_stack_structs
         )
         if type_decls:
             print(type_decls)
 
-        global_decls = global_info.global_decls(
-            fmt,
-            options.global_decls,
-            [fn for fn in function_infos if isinstance(fn, FunctionInfo)],
-        )
+        if global_decls_exc is not None:
+            raise global_decls_exc from None
+
+        infos = [
+            d.state.info
+            for d in decompilations
+            if not isinstance(d.state, Exception) and d.state.info is not None
+        ]
+        global_decls = global_info.global_decls(fmt, options.global_decls, infos)
         if global_decls:
             print(global_decls)
     except Exception as e:
         print_exception_as_comment(e, options, context=None)
         return_code = 1
 
-    for index, (function, function_info) in enumerate(zip(functions, function_infos)):
+    for index, decomp in enumerate(decompilations):
         if index != 0:
             print()
+        function = decomp.function
         try:
             if options.print_assembly:
                 print(function)
                 print()
 
-            if isinstance(function_info, Exception):
-                raise function_info
+            if isinstance(decomp.state, Exception):
+                raise decomp.state from None
 
-            function_text = get_function_text(function_info, options)
+            assert decomp.state.info is not None
+            function_text = get_function_text(decomp.state.info, options)
             print(function_text)
 
         except Exception as e:
