@@ -163,7 +163,7 @@ body {
             )
         print("<body><pre><plaintext>", end="")
         print(res.stdout.decode("utf-8", "replace"))
-elif "?go" in os.environ.get("REQUEST_URI", ""):
+elif "?" in os.environ.get("REQUEST_URI", ""):
     print_headers(content_type="text/html")
 else:
     print_headers(content_type="text/html")
@@ -227,7 +227,7 @@ label {
 </style>
 </head>
 <body>
-<form action="?go" method="post">
+<form action="?" method="post">
 <div class="main">
   <div>
     Assembly:
