@@ -94,7 +94,7 @@ window.m2cVizReady = new Promise(function (resolve, reject) {
   window.m2cRejectViz = reject;
 });
 </script>
-<script type="module">
+<script type="module" onerror="window.m2cRejectViz()">
 import { instance } from "./dist/vendor/viz/3.28.0/viz.mjs";
 instance().then(window.m2cResolveViz, window.m2cRejectViz);
 </script>
