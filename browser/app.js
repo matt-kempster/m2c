@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import contextlib
-import gc
 import io
 import json
 import tempfile
@@ -37,7 +36,6 @@ def decompile(source: str, context: str, flags: List[str]) -> BrowserResult:
     stdout = io.StringIO()
     stderr = io.StringIO()
     is_visualize = False
-    gc_thresholds = gc.get_threshold()
 
     try:
         with tempfile.TemporaryDirectory(prefix="m2c-browser-") as tmpdir:
@@ -59,9 +57,6 @@ def decompile(source: str, context: str, flags: List[str]) -> BrowserResult:
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 options = parse_flags(argv)
                 is_visualize = options.visualize_flowgraph is not None
-                if options.disable_gc:
-                    gc.disable()
-                    gc.set_threshold(0)
                 returncode = run(options)
     except SystemExit as exc:
         is_visualize = False
@@ -70,9 +65,7 @@ def decompile(source: str, context: str, flags: List[str]) -> BrowserResult:
         is_visualize = False
         returncode = 1
         stdout.write(f"Internal browser wrapper error:\n{exc}\n")
-    finally:
-        gc.set_threshold(*gc_thresholds)
-        gc.enable()
+
     err = stderr.getvalue()
     if err and (not is_visualize or returncode != 0):
         stdout.write(err)
@@ -110,7 +103,6 @@ def decompile_from_json(options_json: str) -> BrowserResult:
 `;
   var functionStartDirectives = [
     "glabel",
-    ".global",
     "arm_func_start",
     "thumb_func_start",
     "non_word_aligned_thumb_func_start",
@@ -252,21 +244,21 @@ def decompile_from_json(options_json: str) -> BrowserResult:
       options[el.name || id] = el.type === "checkbox" ? (el.checked ? "yes" : "no") : el.value;
     }
 
-    localStorage.mips_to_c_saved_source = sourceEl.value;
-    localStorage.mips_to_c_saved_context = contextEl.value;
-    localStorage.mips_to_c_saved_options = JSON.stringify(options);
+    localStorage.m2c_saved_source = sourceEl.value;
+    localStorage.m2c_saved_context = contextEl.value;
+    localStorage.m2c_saved_options = JSON.stringify(options);
   }
 
   function restoreState() {
-    var savedSource = localStorage.mips_to_c_saved_source;
-    var savedContext = localStorage.mips_to_c_saved_context;
-    var savedOptions = localStorage.mips_to_c_saved_options;
+    var savedSource = localStorage.m2c_saved_source;
+    var savedContext = localStorage.m2c_saved_context;
+    var savedOptions = localStorage.m2c_saved_options;
 
     if (savedSource) sourceEl.value = savedSource;
     if (savedContext) contextEl.value = savedContext;
 
     if (!savedOptions) {
-      return;
+      return {};
     }
     try {
       var options = JSON.parse(savedOptions);
@@ -281,8 +273,10 @@ def decompile_from_json(options_json: str) -> BrowserResult:
           el.value = options[key];
         }
       }
+      return options;
     } catch (err) {
       console.warn("Unable to restore saved m2c browser state", err);
+      return {};
     }
   }
 
@@ -313,12 +307,12 @@ def decompile_from_json(options_json: str) -> BrowserResult:
   }
 
   function normalizeDotForBrowser(dotSource) {
+    // Force font to ensure boxes are drawn large enough for contents
     return dotSource
       .replace(
-        /node \[shape="rect", fontname="Monospace"\];/g,
-        'node [shape="rect", fontname="Courier", margin="0.12,0.08"];'
+        /fontname="Monospace"/g,
+        'fontname="Courier"'
       )
-      .replace(/edge \[fontname="Monospace"\];/g, 'edge [fontname="Courier"];');
   }
 
   function buildFlags() {
@@ -409,15 +403,29 @@ def decompile_from_json(options_json: str) -> BrowserResult:
     pyodide.FS.writeFile(appRoot + "/m2c/browser.py", browserPython, { encoding: "utf8" });
   }
 
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
   async function initPyodide() {
     try {
+      if (!window.M2C_VENDOR_PATHS) {
+        throw new Error("vendor-paths.js was not loaded");
+      }
       if (!window.M2C_PYTHON_FILES) {
         throw new Error("m2c.generated.js was not loaded");
       }
 
       setBusyButton("decompile", "Loading...");
+      await loadScript(window.M2C_VENDOR_PATHS.pyodideScript);
       pyodide = await loadPyodide({
-        indexURL: "./dist/vendor/pyodide/v314.0.0/"
+        indexURL: window.M2C_VENDOR_PATHS.pyodideIndexURL
       });
       setBusyButton("decompile", "Installing...");
       writeBrowserFiles(window.M2C_PYTHON_FILES);
@@ -463,8 +471,6 @@ def decompile_from_json(options_json: str) -> BrowserResult:
       var result = JSON.parse(await pyodide.runPythonAsync("json.dumps(decompile_from_json(m2c_options_json))"));
       var returncode = result.returncode;
       var output = result.output;
-      document.body.dataset.m2cReturncode = String(returncode);
-      document.body.dataset.m2cOutput = output;
 
       if (returncode === 0 && visualize) {
         setBusyButton("visualize", "Rendering...");
@@ -483,9 +489,9 @@ def decompile_from_json(options_json: str) -> BrowserResult:
     }
   }
 
-  restoreState();
+  var restoredOptions = restoreState();
   clearOutput();
-  if (!localStorage.mips_to_c_saved_options || localStorage.mips_to_c_saved_options.indexOf("\"dark\"") === -1) {
+  if (!("dark" in restoredOptions)) {
     darkModeCheckbox.checked = window.matchMedia("prefers-color-scheme: dark").matches;
   }
   updateFunctions();

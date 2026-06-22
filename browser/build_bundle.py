@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = ROOT / "browser" / "dist"
 LOCKFILE = ROOT / "browser" / "vendor-lock.json"
 M2C_JS = DIST_DIR / "m2c.js"
+VENDOR_PATHS_JS = DIST_DIR / "vendor-paths.js"
 
 INCLUDE_DIRS = (
     ROOT / "m2c",
@@ -37,6 +38,39 @@ def download_file(url: str) -> bytes:
 
 def read_vendor_lock() -> dict[str, object]:
     return json.loads(LOCKFILE.read_text(encoding="utf-8"))
+
+
+def browser_dist_path(relative_path: str) -> str:
+    return "./dist/" + relative_path
+
+
+def vendor_path(lock: dict[str, object], suffix: str) -> str:
+    matches = [
+        relative_path
+        for relative_path in lock["files"]
+        if relative_path.endswith(suffix)
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected exactly one locked vendor path ending in {suffix}")
+    return matches[0]
+
+
+def write_vendor_paths(lock: dict[str, object]) -> None:
+    pyodide_script = vendor_path(lock, "/pyodide.js")
+    pyodide_root = pyodide_script.rsplit("/", 1)[0] + "/"
+    paths = {
+        "pyodideIndexURL": browser_dist_path(pyodide_root),
+        "pyodideScript": browser_dist_path(pyodide_script),
+        "vizModule": browser_dist_path(vendor_path(lock, "/viz.mjs")),
+    }
+
+    print(f"Writing to {VENDOR_PATHS_JS}...")
+    VENDOR_PATHS_JS.write_text(
+        "window.M2C_VENDOR_PATHS = "
+        + json.dumps(paths, ensure_ascii=False, sort_keys=True)
+        + ";\n",
+        encoding="utf-8",
+    )
 
 
 def write_vendor_lock(lock: dict[str, object]) -> None:
@@ -105,6 +139,8 @@ def main() -> None:
         update_vendor_lock()
 
     update_vendor_files()
+    lock = read_vendor_lock()
+    write_vendor_paths(lock)
 
     bundle = {
         str(path.relative_to(ROOT)): path.read_text(encoding="utf-8")
