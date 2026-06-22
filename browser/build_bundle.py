@@ -51,7 +51,9 @@ def vendor_path(lock: dict[str, object], suffix: str) -> str:
         if relative_path.endswith(suffix)
     ]
     if len(matches) != 1:
-        raise RuntimeError(f"Expected exactly one locked vendor path ending in {suffix}")
+        raise RuntimeError(
+            f"Expected exactly one locked vendor path ending in {suffix}"
+        )
     return matches[0]
 
 
