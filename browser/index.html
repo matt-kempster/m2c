@@ -88,17 +88,13 @@
     <div id="output-graph"></div>
   </div>
 </div>
-<script>
-window.m2cVizReady = new Promise(function (resolve, reject) {
-  window.m2cResolveViz = resolve;
-  window.m2cRejectViz = reject;
-});
+<script src="dist/vendor-paths.js"></script>
+<script type="module">
+window.m2cVizReady = (async function () {
+  var viz = await import(window.M2C_VENDOR_PATHS.vizModule);
+  return await viz.instance();
+})();
 </script>
-<script type="module" onerror="window.m2cRejectViz()">
-import { instance } from "./dist/vendor/viz/3.28.0/viz.mjs";
-instance().then(window.m2cResolveViz, window.m2cRejectViz);
-</script>
-<script src="./dist/vendor/pyodide/v314.0.0/pyodide.js"></script>
 <script src="dist/m2c.js"></script>
 <script src="app.js"></script>
 </form>
