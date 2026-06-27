@@ -1,0 +1,2 @@
+glabel test
+ret

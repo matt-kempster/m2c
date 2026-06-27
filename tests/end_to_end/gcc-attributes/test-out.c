@@ -36,6 +36,9 @@ Alignas: size 0x20, align 16
 Packed: size 0x6, align 2
   0x0: x (char)
   0x1: y (int)
+Packed2: size 0x5, align 1
+  0x0: x (char)
+  0x1: y (int)
 PackedMember: size 0x5, align 1
   0x0: x (char)
   0x1: y (int)

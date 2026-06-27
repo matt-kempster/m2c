@@ -139,6 +139,8 @@ def get_align_override(
 ) -> int:
     aligns = []
     for attr in decl.gcc_attributes:
+        if attr.name == "packed":
+            aligns.append(1)
         if attr.name == "aligned":
             if not attr.args:
                 align_to = 0x10

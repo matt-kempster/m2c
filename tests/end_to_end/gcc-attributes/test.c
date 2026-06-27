@@ -54,6 +54,11 @@ struct __attribute__((packed, aligned(2))) Packed {
 	int y;
 };
 
+struct __attribute__((packed)) Packed2 {
+	char x;
+	int y;
+};
+
 struct PackedMember {
 	char x;
 	__attribute__((packed))
