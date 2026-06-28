@@ -2455,7 +2455,7 @@ def visualize_flowgraph(
         attr_text = f" [{', '.join(attr_strs)}]" if attr_strs else ""
         lines.append(f"  {quote(source)} -> {quote(target)}{attr_text};")
     lines.append("}")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 def get_block_info_for_block(block: Block) -> BlockInfo:
