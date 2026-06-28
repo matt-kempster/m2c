@@ -926,7 +926,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
 def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
     """
     Simplify an expression matching `CLZ(x) >> 5` into `x == 0`,
-    and further simplify `(a - b) == 0` into `a == b`.
+    and further simplify `(a - b) == 0` into `b == a`.
     """
     # Check that the outer expression is `>>`
     if expr.is_floating() or expr.op != ">>":
