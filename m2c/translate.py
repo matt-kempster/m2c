@@ -2509,6 +2509,11 @@ class InstrArgs:
         """Extract a double from a register. This may involve reading both the
         mentioned register and the next."""
         reg = self.reg_ref(index)
+        if self.stack_info.global_info.arch.arch == Target.ArchEnum.X86:
+            raise DecompFailure(
+                "x86 does not use paired registers for doubles; "
+                "x87 FPU support is not implemented yet"
+            )
         if (
             self.stack_info.global_info.arch.arch != Target.ArchEnum.ARM
             and not reg.is_float()

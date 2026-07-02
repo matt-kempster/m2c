@@ -21,7 +21,7 @@ from typing import (
 )
 
 from .error import DecompFailure
-from .options import CodingStyle, Options
+from .options import CodingStyle, Options, Target
 from .asm_instruction import (
     Argument,
     AsmGlobalSymbol,
@@ -498,8 +498,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
+    # The optional leading underscore accounts for Ghidra exports on platforms
+    # with a symbol prefix (e.g. x86), where local labels look like
+    # _LAB_00401234 or _switchD_0040100d_caseD_1.
     re_local_label = re.compile(
-        "loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
+        "_?(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_)|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
     )
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
@@ -708,7 +711,16 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        asm_state.defines[args[0]] = parse_int(args[1])
+                        try:
+                            asm_state.defines[args[0]] = parse_int(args[1])
+                        except DecompFailure:
+                            # Ghidra emits .set directives with non-integer
+                            # values (e.g. equating a label with an expression
+                            # like "table[4]+3"); ignore them.
+                            add_warning(
+                                warnings,
+                                f"Ignoring non-integer .set directive: {line}",
+                            )
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
@@ -732,7 +744,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif args_str.strip() == "32":
                         asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
-                    if directive in (".word", ".gpword", ".4byte"):
+                    # GNU as treats .long as a 4-byte word, and Ghidra's x86
+                    # exports emit jump tables with it. Other arches have
+                    # historically ignored .long, and handling it would change
+                    # existing outputs, so keep it x86-only for now.
+                    word_directives: Tuple[str, ...] = (".word", ".gpword", ".4byte")
+                    if arch.arch == Target.ArchEnum.X86:
+                        word_directives += (".long",)
+                    if directive in word_directives:
                         args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 4)
