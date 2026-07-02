@@ -113,7 +113,10 @@ class Writeback(Enum):
 @final
 @dataclass(frozen=True)
 class AsmAddressMode:
-    base: Register
+    # `base` is None for absolute memory operands without a base register,
+    # e.g. x86's `[symbol]` or `[eax*4 + symbol]` (where the scaled index
+    # is part of `addend`). MIPS/PPC/ARM address modes always have a base.
+    base: Optional[Register]
     addend: Argument
     writeback: Optional[Writeback]
 
@@ -122,6 +125,8 @@ class AsmAddressMode:
         return self.addend.value
 
     def __str__(self) -> str:
+        if self.base is None:
+            return f"[{self.addend}]"
         if self.writeback is not None:
             add_str = ", {self.addend}" if self.addend != AsmLiteral(0) else ""
             if self.writeback == Writeback.PRE:
@@ -178,6 +183,18 @@ class ArchAsmParsing(abc.ABC):
     all_regs: List[Register]
     aliased_regs: Dict[str, Register]
     supports_dollar_regs: bool
+
+    # Capability hook: when True, `[...]` operands are parsed as Intel-syntax
+    # memory operands (`[base + index*scale + disp]`, `[symbol]`) instead of
+    # ARM address modes. Only x86 sets this.
+    supports_intel_addressing: bool = False
+
+    def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
+        """Hook that allows an arch to rewrite an instruction line before its
+        arguments are parsed. `mnemonic` is already lowercased. Used by x86 to
+        strip syntactic sugar (`dword ptr`, `offset`) that the generic argument
+        parser should not see, folding it into the mnemonic where needed."""
+        return mnemonic, args
 
     @abc.abstractmethod
     def normalize_instruction(
@@ -308,6 +325,47 @@ def replace_bare_reg(
 def get_jump_target(label: Argument) -> JumpTarget:
     assert isinstance(label, AsmGlobalSymbol), "invalid branch target"
     return JumpTarget(label.symbol_name)
+
+
+def parse_intel_address_mode(
+    val: Argument, arch: ArchAsmParsing, asm_state: AsmState
+) -> AsmAddressMode:
+    """Decompose the inner expression of an Intel-syntax memory operand
+    (`[base + index*scale + disp]`, `[symbol]`, `[index*scale + symbol]`, ...)
+    into an AsmAddressMode. The first bare register term of the top-level `+`
+    chain becomes the base; everything else (scaled index terms, displacements,
+    symbols) is kept in the addend. Absolute operands get a None base."""
+
+    def replace_regs(arg: Argument) -> Argument:
+        if isinstance(arg, AsmGlobalSymbol):
+            return replace_bare_reg(arg, arch, asm_state)
+        if isinstance(arg, BinOp):
+            return BinOp(arg.op, replace_regs(arg.lhs), replace_regs(arg.rhs))
+        return arg
+
+    terms: List[Argument] = []
+
+    def flatten(arg: Argument) -> None:
+        if isinstance(arg, BinOp) and arg.op == "+":
+            flatten(arg.lhs)
+            flatten(arg.rhs)
+        else:
+            terms.append(arg)
+
+    flatten(replace_regs(val))
+
+    base: Optional[Register] = None
+    addend: Optional[Argument] = None
+    for term in terms:
+        if isinstance(term, Register) and base is None:
+            base = term
+        elif addend is None:
+            addend = term
+        else:
+            addend = BinOp("+", addend, term)
+    if addend is None:
+        addend = AsmLiteral(0)
+    return AsmAddressMode(base, constant_fold(addend, asm_state), None)
 
 
 # Main parser.
@@ -465,6 +523,19 @@ def parse_arg_elems(
                     assert isinstance(rhs, Register)
                     value = constant_fold(value or AsmLiteral(0), asm_state)
                     value = AsmAddressMode(rhs, value, None)
+        elif tok == "[" and arch.supports_intel_addressing:
+            # Intel (x86) memory operand
+            assert value is None
+            expect("[")
+            val = parse_arg_elems(
+                arg_elems,
+                arch,
+                asm_state,
+                top_level=False,
+                do_replace_bare_reg=False,
+            )
+            expect("]")
+            value = parse_intel_address_mode(val, arch, asm_state)
         elif tok == "[":
             # ARM address mode
             assert value is None
@@ -650,9 +721,10 @@ def parse_asm_instruction(
     # First token is instruction name, rest is args.
     line = line.strip()
     mnemonic, _, args_str = line.partition(" ")
+    mnemonic, args_str = arch.preprocess_instruction(mnemonic.lower(), args_str)
     # Parse arguments.
     args = parse_args(args_str, arch, asm_state)
-    instr = AsmInstruction(mnemonic.lower(), args)
+    instr = AsmInstruction(mnemonic, args)
     return arch.normalize_instruction(instr, asm_state)
 
 
@@ -664,7 +736,8 @@ def traverse_arg(arg: Argument) -> Iterator[Argument]:
         for reg in arg.regs:
             yield reg
     elif isinstance(arg, AsmAddressMode):
-        yield arg.base
+        if arg.base is not None:
+            yield arg.base
         yield from traverse_arg(arg.addend)
     elif isinstance(arg, Macro):
         yield from traverse_arg(arg.argument)
