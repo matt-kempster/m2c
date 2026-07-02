@@ -124,6 +124,14 @@ class AsmAddressMode:
         assert isinstance(self.addend, AsmLiteral)
         return self.addend.value
 
+    @property
+    def base_reg(self) -> Register:
+        """The base register, for architectures/paths where address modes
+        always have one (MIPS/PPC/ARM). x86 absolute address modes
+        (`[symbol]`) have `base=None` and must be handled explicitly."""
+        assert self.base is not None, "address mode has no base register"
+        return self.base
+
     def __str__(self) -> str:
         if self.base is None:
             return f"[{self.addend}]"

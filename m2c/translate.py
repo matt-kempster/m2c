@@ -734,6 +734,9 @@ def get_stack_info(
                         or arch_mnemonic.startswith("arm:ldr")
                     )
                     and isinstance(inst.args[1], AsmAddressMode)
+                    # Absolute address modes (base=None) are never stack
+                    # references.
+                    and inst.args[1].base is not None
                     and info.is_stack_reg(inst.args[1].base)
                 ):
                     offset = inst.args[1].addend_as_literal()
@@ -2645,6 +2648,8 @@ class InstrArgs:
                 f"Unable to parse offset for instruction argument {ret}. "
                 "Expected a constant or a %lo macro."
             )
+        if ret.base is None:
+            raise DecompFailure(f"Absolute memory operand {ret} is not supported here")
         return AddressMode(offset=ret.addend.value, base=ret.base)
 
     def count(self) -> int:
@@ -3435,7 +3440,7 @@ class NodeState:
     subroutine_args: Dict[int, Expression] = field(default_factory=dict)
     in_pattern: bool = False
 
-    to_write: List[Union[Statement]] = field(default_factory=list)
+    to_write: List[Statement] = field(default_factory=list)
     branch_condition: Optional[Condition] = None
     switch_control: Optional[SwitchControl] = None
     has_function_call: bool = False

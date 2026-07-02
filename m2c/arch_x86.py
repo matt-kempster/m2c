@@ -150,18 +150,13 @@ class X86Arch(Arch):
     # widths survive until normalize_instruction, which rewrites them into
     # full registers plus a width-suffixed mnemonic.
     all_regs = (
-        saved_regs
-        + temp_regs
-        + [stack_pointer_reg]
-        + fpu_regs
-        + list(SUB_REGS.keys())
+        saved_regs + temp_regs + [stack_pointer_reg] + fpu_regs + list(SUB_REGS.keys())
     )
 
     aliased_regs: Dict[str, Register] = {}
 
-    @classmethod
-    def missing_return(cls) -> List[Instruction]:
-        return [cls.parse("ret", [], InstructionMeta.missing())]
+    def missing_return(self) -> List[Instruction]:
+        return [self.parse("ret", [], InstructionMeta.missing())]
 
     def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
         # Fold "<size> ptr" memory operand prefixes into the mnemonic as a
@@ -187,9 +182,8 @@ class X86Arch(Arch):
             mnemonic += WIDTH_SUFFIXES[min(widths)]
         return mnemonic, args
 
-    @classmethod
     def normalize_instruction(
-        cls, instr: AsmInstruction, asm_state: AsmState
+        self, instr: AsmInstruction, asm_state: AsmState
     ) -> AsmInstruction:
         # rep/repne/repe prefixes: fold the string instruction into the
         # mnemonic ("rep movsd" -> "rep.movsd").
@@ -349,10 +343,10 @@ class X86Arch(Arch):
         value itself is not read)."""
         return [sub for sub in traverse_arg(arg) if isinstance(sub, Register)]
 
-    @classmethod
     def parse(
-        cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
+        self, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
+        cls = type(self)
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
@@ -394,9 +388,7 @@ class X86Arch(Arch):
                     if also_read and stack_loc not in inputs:
                         inputs.append(stack_loc)
             else:
-                raise DecompFailure(
-                    f"Invalid x86 destination operand in `{instr_str}`"
-                )
+                raise DecompFailure(f"Invalid x86 destination operand in `{instr_str}`")
 
         def src_operand(arg: Argument) -> None:
             nonlocal is_load
@@ -500,7 +492,7 @@ class X86Arch(Arch):
             dest_operand(args[0], also_read=True)
             if isinstance(args[0], AsmAddressMode):
                 is_load = True
-            elif args[0] not in inputs:
+            elif isinstance(args[0], Register) and args[0] not in inputs:
                 inputs.append(args[0])
             if base not in ("not", "bswap"):
                 outputs.extend(cls.flag_regs)
@@ -527,7 +519,7 @@ class X86Arch(Arch):
             inputs = [EAX] if base in ("mul", "imul") else [EAX, EDX]
             if args:
                 src_operand(args[0])
-            outputs = [EAX, EDX] + list(cls.flag_regs)
+            outputs = [EAX, EDX, *cls.flag_regs]
             is_effectful = False
         elif base == "imul":
             # Two/three-operand forms only write the destination register.
@@ -535,7 +527,7 @@ class X86Arch(Arch):
             inputs = [args[0]] if len(args) == 2 else []
             for src in args[1:]:
                 src_operand(src)
-            outputs = [args[0]] + list(cls.flag_regs)
+            outputs = [args[0], *cls.flag_regs]
             is_effectful = False
         elif base == "xchg":
             assert len(args) == 2
@@ -622,8 +614,7 @@ class X86Arch(Arch):
                 )
         return Abi(arg_slots=known_slots, possible_slots=candidate_slots)
 
-    @staticmethod
-    def function_return(expr: Expression) -> Dict[Register, Expression]:
+    def function_return(self, expr: Expression) -> Dict[Register, Expression]:
         # Return values are in eax, with edx holding the high half of u64's.
         return {
             EAX: as_type(expr, Type.intptr(), silent=True, unify=False),

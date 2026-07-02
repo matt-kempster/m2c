@@ -1139,7 +1139,7 @@ class PpcArch(Arch):
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
                 outputs = make_memory_access(args[1], size)
                 inputs = [args[0]] * (len(outputs) or 1)
-                inputs.append(args[1].base)
+                inputs.append(args[1].base_reg)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
@@ -1171,8 +1171,8 @@ class PpcArch(Arch):
 
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = [args[0], args[1].base]
-                outputs = make_memory_access(args[1], size) + [args[1].base]
+                inputs = [args[0], args[1].base_reg]
+                outputs = make_memory_access(args[1], size) + [args[1].base_reg]
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
                     store = cls.instrs_store_update[mnemonic](a)
@@ -1205,7 +1205,7 @@ class PpcArch(Arch):
             else:
                 assert len(args) == 2 + psq_imms
                 if isinstance(args[1], AsmAddressMode):
-                    inputs = make_memory_access(args[1], size) + [args[1].base]
+                    inputs = make_memory_access(args[1], size) + [args[1].base_reg]
             outputs = [args[0]]
             eval_fn = lambda s, a: s.set_reg(a.reg_ref(0), cls.instrs_load[mnemonic](a))
         elif mnemonic in cls.instrs_load_update:
@@ -1236,8 +1236,8 @@ class PpcArch(Arch):
 
             else:
                 assert len(args) == 2 + psq_imms and isinstance(args[1], AsmAddressMode)
-                inputs = make_memory_access(args[1], size) + [args[1].base]
-                outputs = [args[0], args[1].base]
+                inputs = make_memory_access(args[1], size) + [args[1].base_reg]
+                outputs = [args[0], args[1].base_reg]
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
                     target = a.reg_ref(0)
@@ -1287,7 +1287,7 @@ class PpcArch(Arch):
                     inputs.extend(mem)
                 index += 1
                 offset += 4
-            inputs.append(args[1].base)
+            inputs.append(args[1].base_reg)
             # TODO: These are only supported in function prologues/epilogues
             eval_fn = None
         elif mnemonic in cls.instrs_no_dest:
@@ -1319,7 +1319,10 @@ class PpcArch(Arch):
                 else:
                     assert isinstance(args[2], AsmAddressMode)
                     size = 8
-                    inputs = make_memory_access(args[2], size) + [args[1], args[2].base]
+                    inputs = make_memory_access(args[2], size) + [
+                        args[1],
+                        args[2].base_reg,
+                    ]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]

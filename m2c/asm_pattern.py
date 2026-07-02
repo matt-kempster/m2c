@@ -163,6 +163,8 @@ class TryMatchState:
         if isinstance(e, AsmAddressMode):
             return (
                 isinstance(a, AsmAddressMode)
+                and a.base is not None
+                and e.base is not None
                 and self.match_reg(a.base, e.base)
                 and self.match_arg(a.addend, e.addend)
                 and a.writeback == e.writeback

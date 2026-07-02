@@ -8,6 +8,7 @@ from m2c.arch_x86 import X86Arch
 from m2c.asm_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
+    AsmInstruction,
     AsmLiteral,
     AsmState,
     BinOp,
@@ -27,7 +28,7 @@ class TestX86Parsing(unittest.TestCase):
     def setUp(self) -> None:
         self.arch = X86Arch()
 
-    def parse_asm(self, line: str) -> Tuple[Instruction, AsmState]:
+    def parse_asm(self, line: str) -> Tuple[AsmInstruction, AsmState]:
         asm_state = AsmState(reg_formatter=RegFormatter())
         asm = parse_asm_instruction(line, self.arch, asm_state)
         return asm, asm_state
@@ -96,7 +97,9 @@ class TestX86Parsing(unittest.TestCase):
         )
 
     def test_scaled_index_symbol_address_mode(self) -> None:
-        asm, _ = self.parse_asm("JMP dword ptr [EAX*0x4 + _switchD_0040100d_switchdataD_00401058]")
+        asm, _ = self.parse_asm(
+            "JMP dword ptr [EAX*0x4 + _switchD_0040100d_switchdataD_00401058]"
+        )
         self.assertEqual(asm.mnemonic, "jmp")
         addr = asm.args[0]
         assert isinstance(addr, AsmAddressMode)
@@ -515,7 +518,7 @@ _switchD_0040100d_switchdataD_00401058:
     def test_parse_file_with_long_jump_table(self) -> None:
         import io
 
-        from m2c.asm_file import parse_file
+        from m2c.asm_file import AsmSymbolicData, parse_file
         from m2c.main import parse_flags
 
         options = parse_flags(["--target", "x86-gcc-c", "irrelevant.s"])
@@ -528,7 +531,10 @@ _switchD_0040100d_switchdataD_00401058:
 
         # The .long directive produced 4-byte symbolic jump table entries.
         entry = asm_file.asm_data.values["_switchD_0040100d_switchdataD_00401058"]
-        symbols = [d.as_symbol_without_addend() for d in entry.data]
+        symbols = [
+            d.as_symbol_without_addend() if isinstance(d, AsmSymbolicData) else None
+            for d in entry.data
+        ]
         self.assertEqual(
             symbols,
             ["_switchD_0040100d_caseD_1", "_switchD_0040100d_caseD_2"],

@@ -179,7 +179,7 @@ class IrMatch:
             return key
         if isinstance(key, AsmAddressMode):
             return AsmAddressMode(
-                base=self.map_reg(key.base),
+                base=self.map_reg(key.base_reg),
                 addend=self.map_arg(key.addend),
                 writeback=key.writeback,
             )
@@ -247,6 +247,8 @@ class TryIrMatch(IrMatch):
         if isinstance(pat, AsmAddressMode):
             return (
                 isinstance(cand, AsmAddressMode)
+                and pat.base is not None
+                and cand.base is not None
                 and self.match_arg(pat.base, cand.base)
                 and self.match_arg(pat.addend, cand.addend)
                 and pat.writeback == cand.writeback
