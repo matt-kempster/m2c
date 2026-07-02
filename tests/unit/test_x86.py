@@ -258,8 +258,30 @@ class TestX86Parsing(unittest.TestCase):
         self.assertIn(Register("eax"), instr.outputs)
         self.assertIn(Register("eax"), instr.inputs)
         # sbb reads the carry pseudo-flag
+        self.assertIn(Register("c"), instr.inputs)
         for flag in self.arch.flag_regs:
             self.assertIn(flag, instr.outputs)
+
+    def test_adc_reads_carry(self) -> None:
+        instr = self.parse_instruction("ADC EAX, ECX")
+        self.assertIn(Register("c"), instr.inputs)
+        for flag in self.arch.flag_regs:
+            self.assertIn(flag, instr.outputs)
+
+    def test_inc_dec_preserve_carry(self) -> None:
+        # inc/dec set all flags except the carry flag (real x86 semantics).
+        for mn in ("INC", "DEC"):
+            instr = self.parse_instruction(f"{mn} EAX")
+            self.assertNotIn(Register("c"), instr.outputs, mn)
+            self.assertNotIn(Register("c"), instr.clobbers, mn)
+            self.assertIn(Register("z"), instr.outputs, mn)
+            self.assertIn(Register("gt"), instr.outputs, mn)
+
+    def test_rotates_clobber_flags(self) -> None:
+        for mn in ("ROL", "ROR"):
+            instr = self.parse_instruction(f"{mn} EAX, 0x4")
+            self.assertNotIn(Register("z"), instr.outputs, mn)
+            self.assertIn(Register("z"), instr.clobbers, mn)
 
     def test_shifts(self) -> None:
         for mn in ("SHL", "SAL", "SHR", "SAR", "ROL", "ROR"):
@@ -288,6 +310,9 @@ class TestX86Parsing(unittest.TestCase):
         self.assertIn(Register("eax"), instr.outputs)
         self.assertIn(Register("edx"), instr.outputs)
         self.assertCountEqual(instr.inputs, [Register("eax"), Register("ecx")])
+        # mul/div leave the flags in an unusable state; they are clobbered
+        # rather than given symbolic values.
+        self.assertCountEqual(instr.clobbers, self.arch.flag_regs)
 
     def test_imul_single_operand(self) -> None:
         instr = self.parse_instruction("IMUL ECX")

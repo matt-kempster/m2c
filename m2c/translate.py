@@ -619,6 +619,14 @@ def get_stack_info(
             # same way that `addiu $sp, $sp, N` is ignored in handle_addi_real
             assert isinstance(inst.args[2], Register)
             info.allocated_stack_size = temp_reg_values[inst.args[2]]
+        elif (
+            arch_mnemonic == "x86:sub"
+            and inst.args[0] == arch.stack_pointer_reg
+            and isinstance(inst.args[1], AsmLiteral)
+        ):
+            # Moving the stack pointer on x86 (`sub esp, N`). The matching
+            # epilogue `add esp, N` is ignored during translation.
+            info.allocated_stack_size += inst.args[1].value
         elif arch_mnemonic == "ppc:stwu" and inst.args[0] == arch.stack_pointer_reg:
             # Moving the stack pointer on PPC
             assert isinstance(inst.args[1], AsmAddressMode)

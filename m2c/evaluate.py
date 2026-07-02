@@ -664,6 +664,10 @@ def handle_shift_right(
 ) -> Expression:
     lhs = args.reg(1)
     shift = args.reg_or_imm(2) if arm else args.s16_imm(2)
+    return shift_right_expr(lhs, shift, signed=signed)
+
+
+def shift_right_expr(lhs: Expression, shift: Expression, *, signed: bool) -> Expression:
     if isinstance(shift, Literal) and shift.value in [16, 24]:
         expr = early_unwrap(lhs)
         pow2 = 1 << shift.value
@@ -1462,6 +1466,67 @@ def set_arm_flags_from_add(s: NodeState, val: Expression) -> None:
     s64val = as_type(val, Type.s64(), silent=False, unify=False)
     s.set_reg(Register("ge"), BinaryOp.scmp(s64val, ">=", Literal(0)))
     s.set_reg(Register("gt"), BinaryOp.scmp(s64val, ">", Literal(0)))
+
+
+def x86_flag_types(width: int) -> Tuple[Type, Type]:
+    """(unsigned, signed) types for an x86 operand width in bytes."""
+    if width == 1:
+        return Type.u8(), Type.s8()
+    if width == 2:
+        return Type.u16(), Type.s16()
+    return Type.u32(), Type.s32()
+
+
+def eval_x86_cmp(
+    s: NodeState, lhs: Expression, rhs: Expression, width: int = 4
+) -> None:
+    """Set the x86 flag pseudo-registers for `cmp lhs, rhs` (also used by
+    sub/neg, which compute the same flags).
+
+    This mirrors eval_arm_cmp, with one crucial difference: on x86 the carry
+    flag after cmp/sub is a *borrow*, i.e. c = (u32)lhs < (u32)rhs. This is
+    the INVERSE of ARM's carry, which is set when there is *no* borrow
+    ((u32)lhs >= (u32)rhs). Consumers map jb/jc directly to c, and jae/jnc to
+    its negation (see X86Arch.condition_flags)."""
+    utype, stype = x86_flag_types(width)
+    s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
+    sub = BinaryOp.intptr(lhs, "-", rhs)
+    sval = as_type(sub, stype, silent=True, unify=False)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    v = fn_op("M2C_OVERFLOW", [sval], Type.boolean())
+    s.set_reg(Register("v"), v)
+    ulhs = as_type(lhs, utype, silent=True, unify=False)
+    slhs = as_type(lhs, stype, silent=True, unify=False)
+    urhs = as_type(rhs, utype, silent=True, unify=False)
+    srhs = as_type(rhs, stype, silent=True, unify=False)
+    # x86 carry flag = borrow (see above).
+    s.set_reg(Register("c"), BinaryOp.ucmp(ulhs, "<", urhs))
+    s.set_reg(Register("hi"), BinaryOp.ucmp(ulhs, ">", urhs))
+    s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
+    s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
+
+
+def set_x86_flags_from_result(
+    s: NodeState, val: Expression, width: int = 4, *, set_c_v: bool = True
+) -> None:
+    """Set the x86 flag pseudo-registers based on an ALU result, comparing it
+    against zero. Used for logic ops (and/or/xor/test/shifts), for which the
+    real x86 semantics are CF = OF = 0 (making e.g. `ja` equivalent to
+    "result != 0"), and for inc/dec with set_c_v=False (inc/dec preserve the
+    carry flag; their overflow flag is set separately)."""
+    _, stype = x86_flag_types(width)
+    nez = handle_cmpnez(val)
+    assert isinstance(nez, BinaryOp)
+    s.set_reg(Register("z"), nez.negated())
+    sval = as_type(val, stype, silent=True, unify=False)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    # With CF = 0, unsigned-above means "result != 0".
+    s.set_reg(Register("hi"), nez)
+    s.set_reg(Register("ge"), BinaryOp.scmp(sval, ">=", Literal(0)))
+    s.set_reg(Register("gt"), BinaryOp.scmp(sval, ">", Literal(0)))
+    if set_c_v:
+        s.set_reg(Register("c"), Literal(0))
+        s.set_reg(Register("v"), Literal(0))
 
 
 def carry_add_to(expr: Expression) -> BinaryOp:
