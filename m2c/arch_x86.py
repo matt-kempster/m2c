@@ -990,10 +990,17 @@ class X86PushAllocPattern(AsmPattern):
     holds no live value, so the bracket is exactly a frame allocate/deallocate.
     Left as a `push`, it reads as storing an uninitialized register into the
     local slot -- a spurious M2C_ERROR. Rewrite the bracket into
-    `sub esp, 4` / `add esp, 4` so nothing is stored. Requiring the matching
-    trailing `pop <same reg>` before every `ret` distinguishes it from a real
-    value push (a __fastcall/__thiscall argument spill is not restored by a
-    trailing `pop`)."""
+    `sub esp, 4` / `add esp, 4` so nothing is stored.
+
+    The dealloc before each `ret` is either the matching `pop <same reg>`, or --
+    when MSVC batches the local's release into the caller-side cleanup of
+    deferred stack arguments -- a plain `add esp, N` (N >= 4) whose N includes
+    the local's 4 bytes. Only these two forms count: a real value push (a
+    __fastcall/__thiscall argument spill) is not paired with either. For the
+    `pop` form the pop becomes `add esp, 4`; for the `add esp, N` form the add
+    already releases the local, so it is left untouched and only the entry
+    `push` is rewritten to `sub esp, 4` (its delta is unchanged, so the ESP
+    dataflow stays balanced and the N-4 argument bytes are attributed correctly)."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
@@ -1014,9 +1021,11 @@ class X86PushAllocPattern(AsmPattern):
             return None
         reg = push.args[0]
 
-        # Every `ret` must be immediately preceded (skipping labels) by
-        # `pop <reg>`, and there must be at least one such deallocation.
+        # Every `ret` must be immediately preceded (skipping labels) by a
+        # deallocation of the local: `pop <reg>` (rewritten to `add esp, 4`) or
+        # `add esp, N` with N >= 4 (left as-is). There must be at least one.
         dealloc_pops: Set[int] = set()
+        found_dealloc = False
         prev_idx: Optional[int] = None
         for i, part in enumerate(body):
             if isinstance(part, Label):
@@ -1026,16 +1035,27 @@ class X86PushAllocPattern(AsmPattern):
                 if prev_idx is None:
                     return None
                 prev = body[prev_idx]
-                if not (
-                    isinstance(prev, Instruction)
-                    and prev.mnemonic == "pop"
+                if not isinstance(prev, Instruction):
+                    return None
+                is_pop = (
+                    prev.mnemonic == "pop"
                     and len(prev.args) == 1
                     and prev.args[0] == reg
-                ):
+                )
+                is_add = (
+                    prev.mnemonic == "add"
+                    and len(prev.args) == 2
+                    and prev.args[0] == ESP
+                    and isinstance(prev.args[1], AsmLiteral)
+                    and prev.args[1].value >= 4
+                )
+                if not (is_pop or is_add):
                     return None
-                dealloc_pops.add(prev_idx)
+                if is_pop:
+                    dealloc_pops.add(prev_idx)
+                found_dealloc = True
             prev_idx = i
-        if not dealloc_pops:
+        if not found_dealloc:
             return None
 
         new_body: List[ReplacementPart] = []
@@ -3069,6 +3089,27 @@ class X86Arch(Arch):
                     zero = s.set_reg(args[0], Literal(0))
                     set_x86_flags_from_result(s, zero, w)
                     return
+                if (
+                    w == 4
+                    and isinstance(args[0], Register)
+                    and isinstance(args[1], AsmLiteral)
+                ):
+                    # `or reg, -1` / `and reg, 0`: constant-result idioms whose
+                    # value does not depend on reg's prior contents (MSVC emits
+                    # `or reg, -1` as a compact 3-byte `mov reg, -1`). Modeling
+                    # them as `reg | -1` / `reg & 0` would spuriously read reg,
+                    # which is often dead here (e.g. cleared by a preceding call),
+                    # yielding a bogus M2C_ERROR(unset register).
+                    imm = args[1].value & 0xFFFFFFFF
+                    const: Optional[int] = None
+                    if base == "or" and imm == 0xFFFFFFFF:
+                        const = -1
+                    elif base == "and" and imm == 0:
+                        const = 0
+                    if const is not None:
+                        val = s.set_reg(args[0], Literal(const))
+                        set_x86_flags_from_result(s, val, w)
+                        return
                 lhs = op_value(a, 0, w)
                 sign_ext = base not in cls.instrs_shift
                 srcs = [
