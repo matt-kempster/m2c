@@ -10,9 +10,12 @@ computes esp's offset from function entry at every instruction and rewrites
 push/pop/call-argument/ebp-frame accesses into fixed frame offsets, so the
 rest of m2c (which assumes a constant post-prologue stack pointer) works
 unchanged. This recovers call arguments (cdecl and stdcall), tail calls, and
-jump-table switches, plus rep string ops, loop, and rdtsc. x87 FPU is out of
-scope; those instructions parse structurally but raise DecompFailure during
-translation.
+jump-table switches, plus rep string ops, loop, and rdtsc. Phase 3 adds x87
+FPU support via a second whole-body prepass (X86FpuRewritePattern in
+m2c/x86_fpu.py) that eliminates the FPU register stack into flat virtual
+registers f0..f7, with the per-instruction semantics in X86Arch._parse_fpu
+(float arithmetic/compares/conversions, the fnstsw/test-ah compare idiom, and
+the float call ABI: returns, per-callee stack deltas, and float arguments).
 
 The ESP-delta design: a linear dataflow pass over the flow graph tracks
 (esp_delta, ebp_delta) per instruction (push/pop = ∓4, sub/add esp = ∓N,

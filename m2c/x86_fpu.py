@@ -304,7 +304,7 @@ def rewrite_fpu_ops(
     labels: Set[str],
     call_deltas: Optional[Dict[str, int]] = None,
 ) -> List[BodyPart]:
-    from .arch_x86 import call_target_symbol, split_width_suffix, switch_jump_table_labels
+    from .arch_x86 import split_width_suffix, switch_jump_table_labels
 
     call_deltas = call_deltas or {}
 
