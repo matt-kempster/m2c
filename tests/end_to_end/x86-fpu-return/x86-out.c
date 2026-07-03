@@ -1,0 +1,3 @@
+f32 test(f32 arg0, f32 arg1, f32 arg2) {
+    return ((arg1 - arg0) * arg2) + arg0;
+}

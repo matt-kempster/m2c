@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from typing import List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+from m2c.asm_pattern import BodyPart
 
 from m2c.arch_x86 import X86Arch
 from m2c.error import DecompFailure
@@ -574,12 +576,8 @@ class TestX86FpuRewrite(unittest.TestCase):
     def setUp(self) -> None:
         self.arch = X86Arch()
 
-    def rewrite(self, lines: str) -> List[str]:
-        """Parse a small body (labels end with ':') and run the FPU prepass,
-        returning the rewritten Instructions as strings."""
-        from m2c.asm_file import AsmData, Label
-        from m2c.asm_pattern import BodyPart
-        from m2c.x86_fpu import rewrite_fpu_ops
+    def _build_body(self, lines: str) -> Tuple[List[BodyPart], Set[str]]:
+        from m2c.asm_file import Label
 
         asm_state = AsmState(reg_formatter=RegFormatter())
         body: List[BodyPart] = []
@@ -596,8 +594,31 @@ class TestX86FpuRewrite(unittest.TestCase):
             body.append(
                 self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
             )
-        out = rewrite_fpu_ops(body, self.arch, AsmData(), labels)
+        return body, labels
+
+    def rewrite(
+        self, lines: str, call_deltas: Optional[Dict[str, int]] = None
+    ) -> List[str]:
+        """Parse a small body (labels end with ':') and run the FPU prepass,
+        returning the rewritten Instructions as strings."""
+        from m2c.asm_file import AsmData
+        from m2c.x86_fpu import rewrite_fpu_ops
+
+        body, labels = self._build_body(lines)
+        out = rewrite_fpu_ops(body, self.arch, AsmData(), labels, call_deltas or {})
         return [str(p) for p in out if isinstance(p, Instruction)]
+
+    def infer(self, lines: str) -> List[str]:
+        """Run the whole FPU pattern (with structural call-delta inference)."""
+        from m2c.asm_file import AsmData
+        from m2c.asm_pattern import AsmMatcher
+        from m2c.x86_fpu import X86FpuRewritePattern
+
+        body, labels = self._build_body(lines)
+        matcher = AsmMatcher(self.arch, AsmData(), body, labels)
+        repl = X86FpuRewritePattern().match(matcher)
+        assert repl is not None
+        return [str(p) for p in repl.new_body if isinstance(p, Instruction)]
 
     def test_straight_line_depth(self) -> None:
         # A push defines f{depth}; arithmetic keeps the top's name.
@@ -736,6 +757,65 @@ class TestX86FpuRewrite(unittest.TestCase):
                 """
             )
         self.assertIn("underflow", str(cm.exception))
+
+    def test_call_delta_plus_one_annotation(self) -> None:
+        # A float-returning callee (delta +1) pushes a new top; the call is
+        # annotated with the pushed virtual register (here f0) and the
+        # following fadd operates at depth 1.
+        out = self.rewrite(
+            """
+            CALL _foo, 0x0, 0x0
+            FADD dword ptr [ESP + 0x4]
+            FSTP dword ptr [_g]
+            RET
+            """,
+            call_deltas={"_foo": 1},
+        )
+        self.assertEqual(out[0], "call _foo, 0x0, 0x0, 0x0, -0x1")
+        self.assertEqual(out[1], "fadd $f0, 0x4($esp)")
+
+    def test_infer_float_return_call(self) -> None:
+        # Without a seed, the underflow at `fadd` (depth 0) is attributed to
+        # the preceding call, whose delta is inferred as +1.
+        out = self.infer(
+            """
+            CALL _foo, 0x0, 0x0
+            FADD dword ptr [ESP + 0x4]
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[0], "call _foo, 0x0, 0x0, 0x0, -0x1")
+
+    def test_infer_stack_consuming_helper(self) -> None:
+        # A loop that fld+call each iteration grows the stack unless the call
+        # consumes st0; inference finds delta -1 for the helper.
+        out = self.infer(
+            """
+            L:
+            FLD dword ptr [ESP + 0x4]
+            CALL _ftol, 0x0, 0x0
+            MOV EAX, dword ptr [ESP + 0x8]
+            TEST EAX, EAX
+            JNZ L
+            RET
+            """
+        )
+        self.assertEqual(out[1], "call _ftol, 0x0, 0x0, -0x1, 0x0")
+
+    def test_float_argument_store(self) -> None:
+        # `fstp [esp]` into a call's argument window becomes a subroutine-arg
+        # store, not a plain memory store.
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            PUSH ECX
+            FSTP dword ptr [ESP]
+            CALL _foo, 0x0, 0x4
+            RET
+            """
+        )
+        self.assertEqual(out[2], "fstparg 0x0, $f0")
 
     def test_unsupported_instruction_raises(self) -> None:
         with self.assertRaises(DecompFailure) as cm:

@@ -25,11 +25,13 @@ arguments (e.g. `fadd $f1, $f0`, `fstp.s [m], $f2`); their semantics live in
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 from .asm_file import AsmData
 from .asm_instruction import (
     Argument,
+    AsmAddressMode,
+    AsmLiteral,
     JumpTarget,
     Register,
 )
@@ -150,13 +152,72 @@ def _st_index(arg: Argument) -> Optional[int]:
     return None
 
 
+class X87StackError(DecompFailure):
+    """A dataflow inconsistency that per-callee depth-delta inference can try
+    to repair (see §4.3). Carries the faulting body index and the failure kind
+    so the retry loop can attribute it to a call."""
+
+    def __init__(self, message: str, index: int, kind: str) -> None:
+        super().__init__(message)
+        self.index = index
+        self.kind = kind  # "underflow" | "overflow" | "conflict"
+
+
+# Bound on the number of candidate delta-assignments explored per function.
+MAX_FPU_INFER_STATES = 200
+# How many of the calls nearest a fault to branch on when exploring.
+FPU_INFER_FANOUT = 5
+
+
+def _call_symbol(body: List[BodyPart], index: int) -> Optional[str]:
+    """The target symbol of the (rewritten) call at `index`, or None."""
+    from .arch_x86 import call_target_symbol, split_width_suffix
+
+    part = body[index]
+    if (
+        isinstance(part, Instruction)
+        and part.function_target is not None
+        and split_width_suffix(part.mnemonic)[0] == "call"
+    ):
+        return call_target_symbol(part.args[0])
+    return None
+
+
+def _candidate_moves(
+    body: List[BodyPart], err: X87StackError, call_deltas: Dict[str, int]
+) -> List[Tuple[str, int]]:
+    """Delta adjustments worth exploring to repair a dataflow failure: the
+    calls nearest the fault, each toward the failure-appropriate sign first
+    (underflow -> a float-returning callee, +1; overflow -> a stack-consuming
+    ftol-style helper, -1; a conflict is ambiguous, so try both). Feeds a BFS,
+    so a wrong guess is explored in parallel with the right one rather than
+    committed to."""
+    call_indices = [i for i in range(len(body)) if _call_symbol(body, i) is not None]
+    call_indices.sort(key=lambda i: (abs(i - err.index), i))
+    if err.kind == "underflow":
+        signs = [1, -1]
+    elif err.kind == "overflow":
+        signs = [-1, 1]
+    else:
+        signs = [1, -1]
+    moves: List[Tuple[str, int]] = []
+    for delta in signs:
+        for i in call_indices[:FPU_INFER_FANOUT]:
+            sym = _call_symbol(body, i)
+            assert sym is not None
+            if call_deltas.get(sym, 0) != delta and (sym, delta) not in moves:
+                moves.append((sym, delta))
+    return moves
+
+
 class X86FpuRewritePattern(AsmPattern):
     """Whole-body rewrite eliminating the x87 register stack (see module doc).
 
-    Mirrors `X86StackRewritePattern`: matches only at index 0, computes the
-    entire rewritten body, and (in the presence of float-returning or
-    stack-consuming callees) retries the dataflow with per-callee depth deltas
-    inferred structurally, keeping the result only if it becomes consistent."""
+    Mirrors `X86StackRewritePattern`: matches only at index 0 and computes the
+    entire rewritten body. In the presence of float-returning or
+    stack-consuming callees, it searches (breadth-first, minimal changes first)
+    for a per-callee depth-delta assignment that makes the dataflow consistent,
+    keyed per-symbol so all call sites of a callee agree."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
@@ -170,10 +231,39 @@ class X86FpuRewritePattern(AsmPattern):
             for part in matcher.input
         ):
             return None
-        new_body = rewrite_fpu_ops(
-            matcher.input, matcher.arch, matcher.asm_data, matcher.labels
+        # Seed per-callee deltas from the user context (float/double-returning
+        # functions leave their result on the FPU stack), then infer the rest
+        # structurally by BFS over delta assignments.
+        seed: Dict[str, int] = dict(
+            getattr(matcher.arch, "context_fpu_call_deltas", {})
         )
-        return Replacement(new_body, len(matcher.input), clobbers=[])
+        queue: List[Dict[str, int]] = [seed]
+        visited: Set[FrozenSet[Tuple[str, int]]] = {frozenset(seed.items())}
+        last_err: Optional[X87StackError] = None
+        states_tried = 0
+        while queue and states_tried < MAX_FPU_INFER_STATES:
+            call_deltas = queue.pop(0)
+            states_tried += 1
+            try:
+                new_body = rewrite_fpu_ops(
+                    matcher.input,
+                    matcher.arch,
+                    matcher.asm_data,
+                    matcher.labels,
+                    call_deltas,
+                )
+                return Replacement(new_body, len(matcher.input), clobbers=[])
+            except X87StackError as e:
+                last_err = e
+                for sym, delta in _candidate_moves(matcher.input, e, call_deltas):
+                    nxt = dict(call_deltas)
+                    nxt[sym] = delta
+                    key = frozenset(nxt.items())
+                    if key not in visited:
+                        visited.add(key)
+                        queue.append(nxt)
+        assert last_err is not None
+        raise last_err
 
 
 def rewrite_fpu_ops(
@@ -181,8 +271,11 @@ def rewrite_fpu_ops(
     arch: ArchAsm,
     asm_data: AsmData,
     labels: Set[str],
+    call_deltas: Optional[Dict[str, int]] = None,
 ) -> List[BodyPart]:
-    from .arch_x86 import split_width_suffix, switch_jump_table_labels
+    from .arch_x86 import call_target_symbol, split_width_suffix, switch_jump_table_labels
+
+    call_deltas = call_deltas or {}
 
     label_pos: Dict[str, int] = {}
     for i, part in enumerate(body):
@@ -192,6 +285,15 @@ def rewrite_fpu_ops(
 
     def instr_str(item: Instruction) -> str:
         return f"`{item}` {item.meta.loc_str()}"
+
+    def call_delta(item: Instruction, base: str) -> int:
+        """The FPU stack effect of a call: +1 if the callee returns a float in
+        st(0), -1 if it consumes st(0) (a hand-written ftol-style helper), else
+        0. Inferred per-symbol; see _suggest_call_delta / the retry loop."""
+        if item.function_target is None or base != "call":
+            return 0
+        sym = call_target_symbol(item.args[0])
+        return call_deltas.get(sym, 0) if sym is not None else 0
 
     def depth_delta(item: Instruction, base: str) -> int:
         if base in FPU_UNSUPPORTED:
@@ -204,7 +306,7 @@ def rewrite_fpu_ops(
             return -1
         if base in FPU_POP2:
             return -2
-        return 0
+        return call_delta(item, base)
 
     # Pass 1: dataflow computing the x87 stack depth at entry to every
     # reachable instruction. State is a single small int; merges require
@@ -228,8 +330,10 @@ def rewrite_fpu_ops(
                     if isinstance(part, Instruction)
                     else f"label {part}"
                 )
-                raise DecompFailure(
-                    f"x87 stack depth mismatch ({prev} vs {depth}) at {loc}"
+                raise X87StackError(
+                    f"x87 stack depth mismatch ({prev} vs {depth}) at {loc}",
+                    index,
+                    "conflict",
                 )
             continue
         states[index] = depth
@@ -241,12 +345,16 @@ def rewrite_fpu_ops(
         base, _ = split_width_suffix(part.mnemonic)
         out = depth + depth_delta(part, base)
         if out < 0:
-            raise DecompFailure(
-                f"x87 stack underflow (depth {depth}) at {instr_str(part)}"
+            raise X87StackError(
+                f"x87 stack underflow (depth {depth}) at {instr_str(part)}",
+                index,
+                "underflow",
             )
         if out > 8:
-            raise DecompFailure(
-                f"x87 stack overflow (depth {out}) at {instr_str(part)}"
+            raise X87StackError(
+                f"x87 stack overflow (depth {out}) at {instr_str(part)}",
+                index,
+                "overflow",
             )
         jt = part.jump_target
         if isinstance(jt, JumpTarget):
@@ -268,6 +376,46 @@ def rewrite_fpu_ops(
             continue
         push(index + 1, out)
 
+    def arg_window_offset(store_index: int, addr: Argument) -> Optional[int]:
+        """If a store to `addr` at `store_index` targets an esp-relative slot
+        inside the very next call's outgoing-argument window, the frame offset
+        of that slot; else None. This is how float arguments reach a call: a
+        `push`/`sub esp` allocates the slot and `fstp [esp+k]` fills it (§4.5).
+        Only stores with no intervening esp change / barrier qualify, so the
+        offset shares the call's frame coordinate."""
+        if not (
+            isinstance(addr, AsmAddressMode)
+            and addr.base is not None
+            and addr.base.register_name == "esp"
+            and isinstance(addr.addend, AsmLiteral)
+        ):
+            return None
+        offset = addr.addend.value
+        for j in range(store_index + 1, len(body)):
+            nxt = body[j]
+            if not isinstance(nxt, Instruction):
+                return None  # a label / merge: give up
+            nbase, _ = split_width_suffix(nxt.mnemonic)
+            if nbase == "call" and nxt.function_target is not None:
+                if len(nxt.args) < 3 or not isinstance(nxt.args[1], AsmLiteral):
+                    return None
+                win_base = nxt.args[1].value
+                assert isinstance(nxt.args[2], AsmLiteral)
+                win_bytes = nxt.args[2].value
+                in_window = offset >= win_base and (
+                    win_bytes < 0 or offset < win_base + win_bytes
+                )
+                return offset if in_window else None
+            # Any other store to a different slot is fine to skip over, but a
+            # branch or esp change means this store is not a pending argument.
+            if (
+                nxt.jump_target is not None
+                or nxt.is_return
+                or nbase in ("push", "pop", "add", "sub", "call")
+            ):
+                return None
+        return None
+
     # Pass 2: emit the rewritten body.
     new_body: List[BodyPart] = []
 
@@ -280,6 +428,26 @@ def rewrite_fpu_ops(
             continue
         depth = states[i]
         base, _ = split_width_suffix(part.mnemonic)
+        # Annotate a call that pushes (delta +1) or consumes (delta -1) a
+        # float: append the pushed virtual register index (fpret) and the
+        # consumed one (or -1). parse() turns these into call outputs/inputs.
+        if (
+            depth is not None
+            and base == "call"
+            and part.function_target is not None
+            and len(part.args) == 3
+        ):
+            delta = call_delta(part, base)
+            if delta != 0:
+                fpret_out = depth if delta == 1 else -1
+                fconsume_in = depth - 1 if delta == -1 else -1
+                emit(
+                    "call",
+                    list(part.args)
+                    + [AsmLiteral(fpret_out), AsmLiteral(fconsume_in)],
+                    part.meta,
+                )
+                continue
         if depth is None or not is_fpu_mnemonic(base):
             # Unreachable code, or a non-x87 instruction: pass through.
             new_body.append(part)
@@ -290,13 +458,15 @@ def rewrite_fpu_ops(
         meta = part.meta
         mnemonic = part.mnemonic
 
-        def flat(st_i: int, *, at: int = depth) -> Register:
+        def flat(st_i: int, *, at: int = depth, fault: int = i) -> Register:
             """The virtual register for physical `st(st_i)` at depth `at`."""
             idx = at - 1 - st_i
             if idx < 0 or idx > 7:
-                raise DecompFailure(
+                raise X87StackError(
                     f"x87 stack underflow reading st({st_i}) at depth {at}: "
-                    f"{instr_str(part)}"
+                    f"{instr_str(part)}",
+                    fault,
+                    "underflow",
                 )
             return Register(f"f{idx}")
 
@@ -319,6 +489,11 @@ def rewrite_fpu_ops(
         # --- Stores from the top of stack. ---
         elif base in ("fst", "fstp", "fistp"):
             st_i = _st_index(args[0])
+            win_off = (
+                arg_window_offset(i, args[0])
+                if base in ("fst", "fstp") and st_i is None
+                else None
+            )
             if st_i is not None:
                 # Register store form (`fst st(i)` / `fstp st(i)`).
                 if base == "fstp" and st_i == 0:
@@ -327,6 +502,12 @@ def rewrite_fpu_ops(
                     emit("fmovpop", [flat(st_i), flat(0)], meta)
                 else:
                     emit("fmov", [flat(st_i), flat(0)], meta)
+            elif win_off is not None:
+                # A float stored into the next call's argument window (§4.5).
+                _, w = split_width_suffix(mnemonic)
+                stem = "fstparg" if base == "fstp" else "fstarg"
+                mn = stem if w == 4 else stem + ".q"
+                emit(mn, [AsmLiteral(win_off), flat(0)], meta)
             else:
                 emit(mnemonic, [args[0], flat(0)], meta)
 

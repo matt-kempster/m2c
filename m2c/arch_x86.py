@@ -1715,7 +1715,12 @@ class X86Arch(Arch):
     frame_pointer_regs = [EBP]
     return_address_reg = EIP
 
-    base_return_regs = [(EAX, False)]
+    # f0 (the bottom x87 slot) holds a float/double return, disambiguated from
+    # eax the same way MIPS disambiguates v0/f0. f0 is deliberately *not* in
+    # all_return_regs: that list drives the default call-output set, and x87
+    # values must survive calls uncleared (a call only pushes its own float
+    # return via the per-call `fpret` annotation, §4.3).
+    base_return_regs = [(EAX, False), (Register("f0"), True)]
     all_return_regs = [EAX, EDX]
     argument_regs: List[Register] = []
     simple_temp_regs = [ECX, EDX]
@@ -1986,6 +1991,7 @@ class X86Arch(Arch):
     instrs_fpu: Set[str] = {
         "fld", "fild", "fld1", "fldz", "fldpi", "fldl2e", "fldl2t", "fldlg2",
         "fldln2", "fmov", "fmovpop", "fpop", "fst", "fstp", "fistp",
+        "fstparg", "fstarg",
         "fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr",
         "faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp",
         "fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr",
@@ -2213,21 +2219,42 @@ class X86Arch(Arch):
         elif base == "call":
             # The stack rewrite pass appends two literals: the frame location
             # of [esp] at call time (the base of this call's stack argument
-            # region) and the number of argument bytes (-1 if unknown).
-            assert len(args) in (1, 3)
+            # region) and the number of argument bytes (-1 if unknown). The FPU
+            # prepass may append two more: the x87 virtual register the callee
+            # pushes as a float return (fpret, or -1), and the one it consumes
+            # off the stack as an argument (fconsume, or -1).
+            assert len(args) in (1, 3, 5)
             target = args[0]
             arg_base: Optional[int] = None
             arg_bytes = -1
-            if len(args) == 3:
+            fpret = -1
+            fconsume = -1
+            if len(args) >= 3:
                 assert isinstance(args[1], AsmLiteral) and isinstance(
                     args[2], AsmLiteral
                 )
                 arg_base = args[1].value
                 arg_bytes = args[2].value
+            if len(args) == 5:
+                assert isinstance(args[3], AsmLiteral) and isinstance(
+                    args[4], AsmLiteral
+                )
+                fpret = args[3].value
+                fconsume = args[4].value
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             function_target = target
+            if fpret >= 0:
+                # The callee leaves a float on the FPU stack; it becomes a new
+                # virtual register the call defines.
+                outputs.append(Register(f"f{fpret}"))
+            if fconsume >= 0:
+                # The callee consumes st(0) as an argument; it is live into the
+                # call (passed as an argument) and killed by it.
+                consumed = Register(f"f{fconsume}")
+                inputs.append(consumed)
+                clobbers.append(consumed)
             if isinstance(target, Register):
                 inputs.append(target)
             elif isinstance(target, AsmAddressMode):
@@ -2242,6 +2269,14 @@ class X86Arch(Arch):
                     fn = mem_load(a, 0, Type.reg32(likely_float=False))
                 else:
                     fn = a.sym_imm(0)
+                if fconsume >= 0 and arg_base is not None:
+                    # Pass the consumed st(0) value as this call's argument (an
+                    # ftol-style helper takes exactly one float in st0).
+                    consumed = Register(f"f{fconsume}")
+                    s.subroutine_args[arg_base] = as_type(
+                        a.regs[consumed], Type.floatish(), silent=True
+                    )
+                    del s.regs[consumed]
                 if arg_base is None:
                     s.make_function_call(fn, outputs)
                     return
@@ -2890,6 +2925,27 @@ class X86Arch(Arch):
 
             eval_fn = eval_fmov
 
+        # --- Float call arguments: fstp/fst into the next call's argument
+        # window, routed to subroutine_args like a rewritten push (§4.5). ---
+        elif base in ("fstparg", "fstarg"):
+            assert isinstance(args[0], AsmLiteral) and isinstance(args[1], Register)
+            arg_loc = args[0].value
+            src = args[1]
+            inputs = [src]
+            outputs = [StackLocation(offset=arg_loc, symbolic_offset=None)]
+            is_store = True
+            pop = base == "fstparg"
+            if pop:
+                clobbers = [src]
+            ftype = fpu_float_type(width)
+
+            def eval_fstparg(s: NodeState, a: InstrArgs) -> None:
+                s.subroutine_args[arg_loc] = as_type(a.regs[src], ftype, silent=True)
+                if pop:
+                    del s.regs[src]
+
+            eval_fn = eval_fstparg
+
         # --- Pop-discard (fstp st(0)) ---
         elif base == "fpop":
             reg = args[0]
@@ -3205,8 +3261,17 @@ class X86Arch(Arch):
         return Abi(arg_slots=known_slots, possible_slots=candidate_slots)
 
     def function_return(self, expr: Expression) -> Dict[Register, Expression]:
-        # Return values are in eax, with edx holding the high half of u64's.
-        return {
+        # Return values are in eax (edx holds the high half of u64's) or, for
+        # float/double returns, in x87 st(0). A call that returns a float
+        # pushes it onto the FPU stack; the FPU prepass annotates the call with
+        # exactly which virtual register that is (fpret), so every f0..f7 needs
+        # an entry here even though only one is ever an output of a given call.
+        result = {
             EAX: as_type(expr, Type.intptr(), silent=True, unify=False),
             EDX: fn_op("SECOND_REG", [expr], Type.reg32(likely_float=False)),
         }
+        for i in range(8):
+            result[Register(f"f{i}")] = Cast(
+                expr, reinterpret=True, silent=True, type=Type.floatish()
+            )
+        return result
