@@ -1624,6 +1624,19 @@ def f32_literal(value: float) -> Literal:
     return Literal(bits, type=Type.f32())
 
 
+# x87 constant loads. 0/1 render as numeric literals; the transcendental
+# constants stay named so matching source can #define them to the exact bits.
+FPU_CONSTANTS: Dict[str, Callable[[], Expression]] = {
+    "fld1": lambda: f32_literal(1.0),
+    "fldz": lambda: f32_literal(0.0),
+    "fldpi": lambda: fn_op("M2C_PI", [], Type.f32()),
+    "fldl2e": lambda: fn_op("M2C_LOG2E", [], Type.f32()),
+    "fldl2t": lambda: fn_op("M2C_LOG2T", [], Type.f32()),
+    "fldlg2": lambda: fn_op("M2C_LOG10_2", [], Type.f32()),
+    "fldln2": lambda: fn_op("M2C_LN2", [], Type.f32()),
+}
+
+
 # Name of the symbolic x87 status-word marker (fn_op) threaded from an
 # fcom-family compare through fnstsw ax to the test-ah idiom (see §3 of the
 # design spec). Carries the compare's two operands as its arguments.
@@ -1691,13 +1704,52 @@ FPU_ARITH_OPS: Dict[str, Tuple[str, bool]] = {
     "fidivr": ("/", True),
 }
 
-# x87 unary op -> builder (value -> new value).
+# x87 unary op -> builder (value -> new value). frndint stays a visible
+# intrinsic (its result depends on the rounding-control word, not modeled);
+# f2xm1 renders as its libm identity exp2f(x)-1 (its |x|<=1 domain is elided).
 FPU_UNARY_OPS: Dict[str, Callable[[Expression], Expression]] = {
     "fchs": lambda v: UnaryOp("-", v, type=Type.floatish()),
     "fabs": lambda v: fn_op("fabsf", [v], Type.f32()),
     "fsqrt": lambda v: fn_op("sqrtf", [v], Type.f32()),
     "fsin": lambda v: fn_op("sinf", [v], Type.f32()),
     "fcos": lambda v: fn_op("cosf", [v], Type.f32()),
+    "frndint": lambda v: fn_op("M2C_RNDINT", [v], Type.f32()),
+    "f2xm1": lambda v: BinaryOp.f32(fn_op("exp2f", [v], Type.f32()), "-", f32_literal(1.0)),
+}
+
+# x87 two-operand transcendentals. Each is `builder(st0, st1) -> value`,
+# written into `dst` (0 = st0/top, 1 = st1); `pop` also kills the top. The
+# rewrite passes [st0, st1] as the fictive operands.
+FPU_BINARY_OPS: Dict[str, Tuple[Callable[[Expression, Expression], Expression], int, bool]] = {
+    # fpatan: st1 = atan2(st1, st0), pop.
+    "fpatan": (lambda st0, st1: fn_op("atan2f", [st1, st0], Type.f32()), 1, True),
+    # fyl2x: st1 = st1 * log2(st0), pop.
+    "fyl2x": (
+        lambda st0, st1: BinaryOp.f32(st1, "*", fn_op("log2f", [st0], Type.f32())),
+        1,
+        True,
+    ),
+    # fyl2xp1: st1 = st1 * log2(st0 + 1), pop.
+    "fyl2xp1": (
+        lambda st0, st1: BinaryOp.f32(
+            st1,
+            "*",
+            fn_op("log2f", [BinaryOp.f32(st0, "+", f32_literal(1.0))], Type.f32()),
+        ),
+        1,
+        True,
+    ),
+    # fscale: st0 = st0 * 2**trunc(st1) = ldexpf(st0, (int)st1).
+    "fscale": (
+        lambda st0, st1: fn_op(
+            "ldexpf", [st0, handle_convert(st1, Type.s32(), Type.floatish())], Type.f32()
+        ),
+        0,
+        False,
+    ),
+    # fprem/fprem1: st0 = fmod(st0, st1).
+    "fprem": (lambda st0, st1: fn_op("fmodf", [st0, st1], Type.f32()), 0, False),
+    "fprem1": (lambda st0, st1: fn_op("fmodf", [st0, st1], Type.f32()), 0, False),
 }
 
 
@@ -2896,15 +2948,16 @@ class X86Arch(Arch):
 
                 eval_fn = eval_fild
 
-        # --- Constants (fld1/fldz) ---
-        elif base in ("fld1", "fldz"):
+        # --- Constants: 0/1 as numeric literals, pi/log constants as named
+        # macros so matching source can #define them (spec Q5). ---
+        elif base in FPU_CONSTANTS:
             dst = args[0]
             assert isinstance(dst, Register)
             outputs = [dst]
-            value = 1.0 if base == "fld1" else 0.0
+            make_const = FPU_CONSTANTS[base]
 
             def eval_fconst(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(dst, f32_literal(value))
+                s.set_reg(dst, make_const())
 
             eval_fn = eval_fconst
 
@@ -3188,9 +3241,28 @@ class X86Arch(Arch):
 
             eval_fn = eval_fstcw
 
-        # --- Not yet implemented: fail cleanly (never crash, never wrong). ---
+        # --- Two-operand transcendentals (fpatan/fyl2x/fscale/fprem/...) ---
+        elif base in FPU_BINARY_OPS:
+            st0, st1 = args
+            assert isinstance(st0, Register) and isinstance(st1, Register)
+            builder, dst_idx, pop = FPU_BINARY_OPS[base]
+            dst = st1 if dst_idx == 1 else st0
+            inputs = [st0, st1] if st0 != st1 else [st0]
+            outputs = [dst]
+            if pop:
+                clobbers = [st0]  # the top is consumed
+
+            def eval_binary_fpu(s: NodeState, a: InstrArgs) -> None:
+                val = builder(a.regs[st0], a.regs[st1])
+                s.set_reg(dst, val)
+                if pop:
+                    del s.regs[st0]
+
+            eval_fn = eval_binary_fpu
+
+        # --- Anything left really is unhandled: fail cleanly. ---
         else:
-            eval_fn = not_implemented("x87 transcendental")
+            eval_fn = not_implemented("x87 op")
 
         return Instruction(
             mnemonic=base if width == 4 else base + WIDTH_SUFFIXES[width],

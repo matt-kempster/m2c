@@ -817,6 +817,32 @@ class TestX86FpuRewrite(unittest.TestCase):
         )
         self.assertEqual(out[2], "fstparg 0x0, $f0")
 
+    def test_transcendental_pop(self) -> None:
+        # fpatan consumes st0 (depth 2 -> 1); operands are passed as (st0, st1).
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            FLD dword ptr [ESP + 0x8]
+            FPATAN
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[2], "fpatan $f1, $f0")
+        # After the pop the result lives in f0 and is stored.
+        self.assertEqual(out[3], "fstp [_g], $f0")
+
+    def test_constant_load(self) -> None:
+        out = self.rewrite(
+            """
+            FLD1
+            FADD dword ptr [ESP + 0x4]
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[0], "fld1 $f0")
+
     def test_unsupported_instruction_raises(self) -> None:
         with self.assertRaises(DecompFailure) as cm:
             self.rewrite(

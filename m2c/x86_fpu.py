@@ -169,18 +169,46 @@ MAX_FPU_INFER_STATES = 200
 FPU_INFER_FANOUT = 5
 
 
-def _call_symbol(body: List[BodyPart], index: int) -> Optional[str]:
-    """The target symbol of the (rewritten) call at `index`, or None."""
+def _call_key(body: List[BodyPart], index: int) -> Optional[str]:
+    """A stable key for the callee's depth delta: its symbol for a direct call
+    (so all sites of a callee agree), or a per-site `@index` for an indirect
+    call through a register/pointer (a float-returning function-pointer
+    argument, which has no symbol to share). None if not a call."""
     from .arch_x86 import call_target_symbol, split_width_suffix
 
     part = body[index]
-    if (
+    if not (
         isinstance(part, Instruction)
         and part.function_target is not None
         and split_width_suffix(part.mnemonic)[0] == "call"
     ):
-        return call_target_symbol(part.args[0])
-    return None
+        return None
+    sym = call_target_symbol(part.args[0])
+    return sym if sym is not None else f"@{index}"
+
+
+def _is_ftol_shaped(body: List[BodyPart], index: int) -> bool:
+    """Whether the call at `index` looks like an ftol-style helper that
+    consumes st(0): a value-producing FPU op (arith/load, not a store or
+    compare) sits just before it with no barrier between. Such a call leaves
+    the FPU stack imbalanced unless its delta is -1, but the resulting conflict
+    can surface far away, so these are always offered to the search."""
+    from .arch_x86 import split_width_suffix
+
+    for j in range(index - 1, max(index - 8, -1), -1):
+        part = body[j]
+        if not isinstance(part, Instruction):
+            return False
+        base, _ = split_width_suffix(part.mnemonic)
+        if is_fpu_mnemonic(base):
+            return base not in (
+                "fst", "fstp", "fistp", "fcom", "fcomp", "fcompp", "fucom",
+                "fucomp", "fucompp", "ftst", "ficom", "ficomp", "fnstsw",
+                "fstsw", "fldcw", "fstcw", "fnstcw", "fxam",
+            )
+        if part.function_target is not None or part.jump_target is not None or part.is_return:
+            return False
+    return False
 
 
 def _candidate_moves(
@@ -189,24 +217,27 @@ def _candidate_moves(
     """Delta adjustments worth exploring to repair a dataflow failure: the
     calls nearest the fault, each toward the failure-appropriate sign first
     (underflow -> a float-returning callee, +1; overflow -> a stack-consuming
-    ftol-style helper, -1; a conflict is ambiguous, so try both). Feeds a BFS,
-    so a wrong guess is explored in parallel with the right one rather than
-    committed to."""
-    call_indices = [i for i in range(len(body)) if _call_symbol(body, i) is not None]
-    call_indices.sort(key=lambda i: (abs(i - err.index), i))
-    if err.kind == "underflow":
-        signs = [1, -1]
-    elif err.kind == "overflow":
-        signs = [-1, 1]
-    else:
-        signs = [1, -1]
+    ftol-style helper, -1; a conflict is ambiguous, so try both), plus any
+    ftol-shaped call anywhere in the body toward -1. Feeds a BFS, so a wrong
+    guess is explored in parallel with the right one rather than committed."""
+    keyed = [
+        (i, _call_key(body, i)) for i in range(len(body)) if _call_key(body, i)
+    ]
+    keyed.sort(key=lambda p: (abs(p[0] - err.index), p[0]))
+    signs = [-1, 1] if err.kind == "overflow" else [1, -1]
     moves: List[Tuple[str, int]] = []
+
+    def offer(key: str, delta: int) -> None:
+        if call_deltas.get(key, 0) != delta and (key, delta) not in moves:
+            moves.append((key, delta))
+
     for delta in signs:
-        for i in call_indices[:FPU_INFER_FANOUT]:
-            sym = _call_symbol(body, i)
-            assert sym is not None
-            if call_deltas.get(sym, 0) != delta and (sym, delta) not in moves:
-                moves.append((sym, delta))
+        for _, key in keyed[:FPU_INFER_FANOUT]:
+            assert key is not None
+            offer(key, delta)
+    for i, key in keyed:
+        if key is not None and _is_ftol_shaped(body, i):
+            offer(key, -1)
     return moves
 
 
@@ -286,16 +317,17 @@ def rewrite_fpu_ops(
     def instr_str(item: Instruction) -> str:
         return f"`{item}` {item.meta.loc_str()}"
 
-    def call_delta(item: Instruction, base: str) -> int:
+    def call_delta(index: int, item: Instruction, base: str) -> int:
         """The FPU stack effect of a call: +1 if the callee returns a float in
         st(0), -1 if it consumes st(0) (a hand-written ftol-style helper), else
-        0. Inferred per-symbol; see _suggest_call_delta / the retry loop."""
+        0. Inferred per callee (direct calls) or per site (indirect calls);
+        see _call_key / _candidate_moves / the BFS."""
         if item.function_target is None or base != "call":
             return 0
-        sym = call_target_symbol(item.args[0])
-        return call_deltas.get(sym, 0) if sym is not None else 0
+        key = _call_key(body, index)
+        return call_deltas.get(key, 0) if key is not None else 0
 
-    def depth_delta(item: Instruction, base: str) -> int:
+    def depth_delta(index: int, item: Instruction, base: str) -> int:
         if base in FPU_UNSUPPORTED:
             raise DecompFailure(
                 f"unsupported x87 instruction {base}: {instr_str(item)}"
@@ -306,7 +338,7 @@ def rewrite_fpu_ops(
             return -1
         if base in FPU_POP2:
             return -2
-        return call_delta(item, base)
+        return call_delta(index, item, base)
 
     # Pass 1: dataflow computing the x87 stack depth at entry to every
     # reachable instruction. State is a single small int; merges require
@@ -343,7 +375,7 @@ def rewrite_fpu_ops(
         if part.is_return:
             continue
         base, _ = split_width_suffix(part.mnemonic)
-        out = depth + depth_delta(part, base)
+        out = depth + depth_delta(index, part, base)
         if out < 0:
             raise X87StackError(
                 f"x87 stack underflow (depth {depth}) at {instr_str(part)}",
@@ -437,7 +469,7 @@ def rewrite_fpu_ops(
             and part.function_target is not None
             and len(part.args) == 3
         ):
-            delta = call_delta(part, base)
+            delta = call_delta(i, part, base)
             if delta != 0:
                 fpret_out = depth if delta == 1 else -1
                 fconsume_in = depth - 1 if delta == -1 else -1
