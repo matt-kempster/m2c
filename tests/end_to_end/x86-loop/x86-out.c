@@ -1,10 +1,12 @@
-void test(s32 arg0, s32 arg1) {
+extern s32 _arr_ptr;
+
+void test(s32 arg0) {
     s32 var_eax;
 
+    var_eax = 0;
     if (arg0 > 0) {
-        var_eax = 0;
         do {
-            *(arg1 + (var_eax * 4)) = var_eax;
+            *(_arr_ptr + (var_eax * 4)) = var_eax;
             var_eax += 1;
         } while (var_eax < arg0);
     }
