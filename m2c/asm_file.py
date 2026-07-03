@@ -914,13 +914,20 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         print("\n".join(warnings))
         print("*/")
 
-    merge_functions_with_cross_jumps(asm_file)
+    # This normalization is specific to Ghidra-style x86 exports, where a named
+    # code address in the middle of a function is indistinguishable from a new
+    # function's entry. Other architectures' inputs may legitimately contain
+    # conditional branches to another symbol (hand-authored asm, linker labels,
+    # tail-call-like control flow), which must not be silently fused (M2).
+    if arch.arch == Target.ArchEnum.X86:
+        merge_functions_with_cross_jumps(asm_file)
 
     return asm_file
 
 
 def merge_functions_with_cross_jumps(asm_file: AsmFile) -> None:
     """Rejoin functions that were split apart by mid-function global labels.
+    x86/Ghidra-only; see the gated call site in parse_file.
 
     Disassemblers let users name arbitrary code addresses, and an exported
     label in the middle of a function is indistinguishable by name from the
