@@ -137,6 +137,17 @@ ALL_FPU: Set[str] = (
     FPU_PUSH | FPU_POP1 | FPU_POP2 | FPU_NEUTRAL | FPU_DROP | FPU_UNSUPPORTED
 )
 
+# CRT helpers that consume st(0) as their single argument (x87 stack delta -1)
+# and return an integer in eax/edx, so they must be seeded unconditionally: an
+# `fld; call __ftol` pair stays depth-balanced with delta 0, so no dataflow
+# fault would ever trigger the structural ftol-shaped repair, and the pushed
+# value would be silently dropped. MSVC6 emits `__ftol` for float/double->long
+# (and __int64) casts when /QIfist is off; `__ftol2` is the later CRT spelling.
+X86_FPU_HELPER_DELTAS: Dict[str, int] = {
+    "__ftol": -1,
+    "__ftol2": -1,
+}
+
 
 def is_fpu_mnemonic(base: str) -> bool:
     return base in ALL_FPU
@@ -255,12 +266,12 @@ class X86FpuRewritePattern(AsmPattern):
             return None
         from .arch_x86 import split_width_suffix
 
-        # Seed per-callee deltas from the user context (float/double-returning
-        # functions leave their result on the FPU stack), then infer the rest
-        # structurally by BFS over delta assignments.
-        seed: Dict[str, int] = dict(
-            getattr(matcher.arch, "context_fpu_call_deltas", {})
-        )
+        # Seed per-callee deltas from the known stack-consuming CRT helpers and
+        # the user context (float/double-returning functions leave their result
+        # on the FPU stack), then infer the rest structurally by BFS over delta
+        # assignments. Context deltas win on conflict.
+        seed: Dict[str, int] = dict(X86_FPU_HELPER_DELTAS)
+        seed.update(getattr(matcher.arch, "context_fpu_call_deltas", {}))
         # Cheap early-out: the ~3100 functions with no x87 pay only this scan.
         # A function still needs the pass, though, if it calls a context-known
         # float/double-returning function -- even with no x87 instruction of
