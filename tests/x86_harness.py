@@ -21,6 +21,7 @@ from m2c.arch_x86 import X86Arch
 from m2c.asm_file import AsmData, parse_file
 from m2c.c_types import build_typemap
 from m2c.flow_graph import build_flowgraph
+from m2c.instruction import Instruction
 from m2c.main import parse_flags
 from m2c.translate import (
     GlobalInfo,
@@ -32,9 +33,15 @@ from m2c.types import TypePool
 DEFAULT_ASM_ROOT = Path.home() / "Projects/legoland/port2/project/asm"
 
 RE_HEX = re.compile(r"0x[0-9a-fA-F]+|\b-?\d+\b")
+RE_LABEL = re.compile(r"_(?:LAB|LLS|FUN|DAT|PTR|switchD)_?\w*")
 RE_UNIMPLEMENTED = re.compile(
     r"x86 instruction evaluation is not implemented yet \(([^)]*)\): (\S+)"
 )
+
+
+def normalize(message: str) -> str:
+    """Strip numbers and label/symbol names so messages bucket together."""
+    return RE_HEX.sub("N", RE_LABEL.sub("L", message))
 
 
 def classify(exc: Exception) -> str:
@@ -49,13 +56,13 @@ def classify(exc: Exception) -> str:
         m = RE_UNIMPLEMENTED.search(str(exc))
         if m:
             return f"unimplemented ({m.group(1)}): {mnemonic}"
-        return f"{mnemonic}: " + RE_HEX.sub("N", str(exc).splitlines()[0])
+        return f"{mnemonic}: " + normalize(str(exc).splitlines()[0])
     message = str(exc) or type(exc).__name__
     # Use the first interesting line, with numbers stripped.
     for line in message.splitlines():
         line = line.strip()
         if line:
-            return RE_HEX.sub("N", line)
+            return normalize(line)
     return "<empty>"
 
 
@@ -83,6 +90,7 @@ def main() -> None:
     parse_failures: List[Tuple[str, str]] = []
     num_functions = 0
     num_ok = 0
+    num_data_skipped = 0
     failure_counts: Counter[str] = Counter()
 
     for path in asm_files:
@@ -114,6 +122,13 @@ def main() -> None:
         )
 
         for function in asm_file.functions:
+            if not any(isinstance(part, Instruction) for part in function.body):
+                # A label in the .text section followed by data only (e.g. a
+                # partially-labeled jump table exported by Ghidra): not a
+                # function at all. Skip it rather than counting it as a
+                # decompilation failure.
+                num_data_skipped += 1
+                continue
             num_functions += 1
             try:
                 narrow_func_call_outputs(function, global_info)
@@ -140,6 +155,8 @@ def main() -> None:
         f"Functions: {num_ok}/{num_functions} decompiled without failure "
         f"({100 * num_ok / max(num_functions, 1):.1f}%)"
     )
+    if num_data_skipped:
+        print(f"Skipped {num_data_skipped} instruction-less data labels")
     print(f"\nTop {cli_args.top} failure buckets:")
     for label, count in failure_counts.most_common(cli_args.top):
         print(f"  {count:>6}  {label}")
