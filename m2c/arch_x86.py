@@ -633,6 +633,81 @@ def switch_jump_table_labels(
 EspState = Tuple[int, Optional[int]]
 
 
+# Callee-saved registers, whose push/pop pairs are register saves (never call
+# arguments). The cdecl scratch registers eax/ecx/edx are deliberately excluded
+# (an `add esp`/`pop ecx` cleanup after a call restores them, and they are the
+# regs actually pushed as arguments), so they never spoof a save/restore pair.
+SAVED_PUSH_REGS = {EBX, ESI, EDI, EBP}
+
+
+def compute_save_pushes(body: List[BodyPart]) -> Set[int]:
+    """Indices of prologue `push` instructions that save a register or the
+    frame pointer, rather than pushing an outgoing call argument. Computed
+    purely structurally (before the ESP dataflow runs), so the stdcall/indirect
+    cleanup inference does not miscount prologue and callee-save pushes as call
+    arguments (H3).
+
+    Register saves live in the prologue: the initial run of frame setup
+    (`sub esp`, `push ebp; mov ebp, esp`, callee-saved pushes) before the first
+    call/branch/return or non-save push. Only callee-saved registers that are
+    restored later, and each at most once, count -- so that a callee-saved
+    register pushed again as a call argument (a real pattern, e.g. `push edi`
+    to pass a pointer while edi is also a saved register) is left as an
+    argument, and an entry `push esi` that is passed as an argument to the very
+    first call (never restored) is not mistaken for a save."""
+    restored: Set[Register] = set()
+    for part in body:
+        if isinstance(part, Instruction):
+            base, _ = split_width_suffix(part.mnemonic)
+            if base == "pop" and part.args and part.args[0] in SAVED_PUSH_REGS:
+                assert isinstance(part.args[0], Register)
+                restored.add(part.args[0])
+
+    def is_frame_ptr_save(index: int) -> bool:
+        nxt = next(
+            (p for p in body[index + 1 :] if isinstance(p, Instruction)), None
+        )
+        return (
+            nxt is not None
+            and split_width_suffix(nxt.mnemonic)[0] == "mov"
+            and len(nxt.args) == 2
+            and nxt.args[0] == EBP
+            and nxt.args[1] == ESP
+        )
+
+    saves: Set[int] = set()
+    saved_regs: Set[Register] = set()
+    for i, part in enumerate(body):
+        if not isinstance(part, Instruction):
+            continue  # labels are transparent within the prologue
+        base, _ = split_width_suffix(part.mnemonic)
+        arg0 = part.args[0] if part.args else None
+        if part.mnemonic == "push":
+            if arg0 == EBP and is_frame_ptr_save(i):
+                # The frame-pointer save; its restore is `leave`'s implicit pop
+                # (no explicit `pop ebp`), so it is not in `restored`.
+                saves.add(i)
+                continue
+            if (
+                isinstance(arg0, Register)
+                and arg0 in SAVED_PUSH_REGS
+                and arg0 in restored
+                and arg0 not in saved_regs
+            ):
+                saves.add(i)
+                saved_regs.add(arg0)
+                continue
+            break  # a non-save push: the prologue's argument region begins.
+        if (
+            part.function_target is not None
+            or part.jump_target is not None
+            or part.is_return
+            or part.is_conditional
+        ):
+            break  # the first call/branch/return ends the prologue.
+    return saves
+
+
 def is_fs_zero_operand(arg: Argument) -> bool:
     """Whether a (fs-segment) memory operand is exactly [0x0], the head of
     the SEH exception handler chain."""
@@ -955,12 +1030,22 @@ def rewrite_stack_ops(
         "tailcall.fictive",
     }
 
+    # Register saves/frame setup, identified structurally (independent of the
+    # ESP dataflow, which is not available yet). A backward argument scan must
+    # not mistake these for outgoing call arguments -- otherwise a call right
+    # after the prologue or after a callee-save push (common for early indirect
+    # / undecorated stdcall calls) gets a phantom cleanup byte count that can
+    # make the dataflow look internally consistent while corrupting the stack
+    # model. See H3.
+    save_pushes = compute_save_pushes(body)
+
     def call_arg_bytes(call_index: int) -> int:
         """Bytes pushed as outgoing arguments for the call at `call_index`,
         found by scanning back over the contiguous run of arg-building
         instructions (pushes interleaved with esp-neutral setup). Labels are
         transparent: an argument may be pushed just before a merge label whose
-        incoming paths each push it (e.g. `push x; jmp L` / `push y; L: call`)."""
+        incoming paths each push it (e.g. `push x; jmp L` / `push y; L: call`).
+        Register-save / frame pushes are not arguments and stop the scan."""
         total = 0
         j = call_index - 1
         while j >= 0:
@@ -970,9 +1055,13 @@ def rewrite_stack_ops(
                 continue
             base, _ = split_width_suffix(part.mnemonic)
             if part.mnemonic == "push":
+                if j in save_pushes:
+                    break  # a callee-save / frame-pointer save, not an argument.
                 total += 4
             elif base == "push":
                 break  # sub-word push; give up.
+            elif base == "mov" and len(part.args) == 2 and part.args[0] == EBP and part.args[1] == ESP:
+                break  # `mov ebp, esp` frame setup: nothing before it is an arg.
             elif (
                 base in ESP_NEUTRAL_STOP
                 or part.function_target is not None

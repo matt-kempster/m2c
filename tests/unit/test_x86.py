@@ -635,6 +635,111 @@ class TestX86FunctionAbi(unittest.TestCase):
         )
 
 
+class TestX86StackRewrite(unittest.TestCase):
+    """The ESP-delta stack-rewrite prepass, focused on stdcall/indirect
+    cleanup inference not miscounting prologue/callee-save pushes as call
+    arguments (H3)."""
+
+    def setUp(self) -> None:
+        self.arch = X86Arch()
+
+    def _build_body(self, lines: str) -> Tuple[List[BodyPart], Set[str]]:
+        from m2c.asm_file import Label
+
+        asm_state = AsmState(reg_formatter=RegFormatter())
+        body: List[BodyPart] = []
+        labels: Set[str] = set()
+        for raw in lines.strip().splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.endswith(":"):
+                body.append(Label([line[:-1]]))
+                labels.add(line[:-1])
+                continue
+            asm = parse_asm_instruction(line, self.arch, asm_state)
+            body.append(
+                self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+            )
+        return body, labels
+
+    def rewrite(self, lines: str) -> List[Instruction]:
+        from m2c.arch_x86 import rewrite_stack_ops
+        from m2c.asm_file import AsmData
+
+        body, labels = self._build_body(lines)
+        out = rewrite_stack_ops(body, self.arch, AsmData(), labels)
+        return [p for p in out if isinstance(p, Instruction)]
+
+    def call_cleanup_bytes(self, instrs: List[Instruction]) -> int:
+        """The inferred callee-cleanup byte count on the (single) rewritten
+        call: the third literal argument, negative when cdecl/unknown."""
+        calls = [p for p in instrs if p.mnemonic == "call"]
+        self.assertEqual(len(calls), 1)
+        consume = calls[0].args[2]
+        assert isinstance(consume, AsmLiteral)
+        return consume.value
+
+    def test_indirect_call_after_prologue(self) -> None:
+        # A `call eax` right after `push ebp; mov ebp, esp; push esi` must not
+        # count the frame-pointer save or the callee-save push as arguments.
+        instrs = self.rewrite(
+            """
+            PUSH EBP
+            MOV EBP, ESP
+            PUSH ESI
+            CALL EAX
+            POP ESI
+            LEAVE
+            RET
+            """
+        )
+        # Cdecl/unknown (negative), NOT 8 (the two save pushes).
+        self.assertTrue(self.call_cleanup_bytes(instrs) < 0)
+
+    def test_indirect_call_after_callee_save(self) -> None:
+        # Callee-save pushes (esi/edi) before an indirect call, restored in the
+        # epilogue, are saves and not outgoing arguments.
+        instrs = self.rewrite(
+            """
+            PUSH ESI
+            PUSH EDI
+            CALL EAX
+            POP EDI
+            POP ESI
+            RET
+            """
+        )
+        self.assertTrue(self.call_cleanup_bytes(instrs) < 0)
+
+    def test_indirect_call_no_stack_args(self) -> None:
+        # A register-indirect call with no outgoing arguments at all.
+        instrs = self.rewrite(
+            """
+            PUSH EBP
+            MOV EBP, ESP
+            SUB ESP, 0x8
+            CALL EAX
+            LEAVE
+            RET
+            """
+        )
+        self.assertTrue(self.call_cleanup_bytes(instrs) < 0)
+
+    def test_indirect_call_real_args_still_counted(self) -> None:
+        # Control: genuine argument pushes (scratch registers, not saves) are
+        # still counted, so a stdcall-like indirect callee's cleanup is inferred.
+        instrs = self.rewrite(
+            """
+            PUSH EAX
+            PUSH ECX
+            CALL EDX
+            RET
+            """
+        )
+        self.assertEqual(self.call_cleanup_bytes(instrs), 8)
+
+
 class TestX86FpuRewrite(unittest.TestCase):
     """The x87 stack-elimination prepass: depth dataflow and the rewrite of
     stack-relative st(i) names into flat virtual registers f0..f7."""
