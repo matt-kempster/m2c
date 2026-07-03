@@ -21,8 +21,14 @@ if str(REPO_ROOT) not in sys.path:
 from m2c.arch_x86 import X86Arch
 from m2c.asm_file import AsmData, parse_file
 from m2c.c_types import build_typemap
+from m2c.flow_graph import build_flowgraph
 from m2c.instruction import Instruction
-from m2c.main import build_global_info, decompile_function, parse_flags
+from m2c.main import parse_flags
+from m2c.translate import (
+    GlobalInfo,
+    narrow_func_call_outputs,
+    translate_to_ast,
+)
 from m2c.types import TypePool
 
 RE_HEX = re.compile(r"0x[0-9a-fA-F]+|\b-?\d+\b")
@@ -88,6 +94,10 @@ def main() -> None:
     # into `/* Error */` comments, so they can be tallied.
     options = parse_flags(["-t", "x86", "--stop-on-error", "dummy.asm"])
     typemap = build_typemap([], arch, use_cache=False)
+    # Context prototypes drive callee ABI attribution in the x86 prepasses.
+    # The corpus ships no context, but keep this in step with main.run() so the
+    # harness and the real pipeline don't drift.
+    arch.load_context(typemap)
 
     files_parsed = 0
     parse_failures: List[Tuple[str, str]] = []
@@ -113,8 +123,15 @@ def main() -> None:
             unk_inference=False,
             union_field_overrides={},
         )
-        global_info = build_global_info(
-            asm_data, arch, options, function_names, typemap, typepool
+        global_info = GlobalInfo(
+            asm_data,
+            arch,
+            options.target,
+            function_names,
+            typemap,
+            typepool,
+            deterministic_vars=False,
+            stack_spill_detection=options.stack_spill_detection,
         )
 
         for function in asm_file.functions:
@@ -127,7 +144,15 @@ def main() -> None:
                 continue
             num_functions += 1
             try:
-                decompile_function(function, options, global_info, print_warnings=False)
+                narrow_func_call_outputs(function, global_info)
+                flow_graph = build_flowgraph(
+                    function,
+                    global_info.asm_data,
+                    arch,
+                    fragment=False,
+                    print_warnings=False,
+                )
+                translate_to_ast(function, flow_graph, options, global_info)
                 num_ok += 1
             except Exception as e:
                 failure_counts[classify(e)] += 1
