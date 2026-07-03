@@ -43,7 +43,7 @@ force-exclude = "/m2c_pycparser/"
 extra-paths = ["./stubs"]
 
 [tool.ty.src]
-include = ["./m2c.py", "./m2c", "./run_tests.py", "./tests/add_test.py", "./tests/unit"]
+include = ["./m2c.py", "./m2c", "./run_tests.py", "./tests/add_test.py", "./tests/x86_harness.py", "./tests/unit"]
 
 [build-system]
 requires = ["poetry-core"]

@@ -7,11 +7,12 @@ with a histogram of the remaining failure messages."""
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -23,8 +24,6 @@ from m2c.c_types import build_typemap
 from m2c.instruction import Instruction
 from m2c.main import build_global_info, decompile_function, parse_flags
 from m2c.types import TypePool
-
-DEFAULT_ASM_ROOT = Path.home() / "Projects/legoland/port2/project/asm"
 
 RE_HEX = re.compile(r"0x[0-9a-fA-F]+|\b-?\d+\b")
 RE_LABEL = re.compile(r"_(?:LAB|LLS|FUN|DAT|PTR|switchD)_?\w*")
@@ -58,18 +57,30 @@ def classify(exc: Exception) -> str:
     return "<empty>"
 
 
+def resolve_asm_root(parser: argparse.ArgumentParser, cli_root: Optional[Path]) -> Path:
+    if cli_root is not None:
+        return cli_root
+
+    env_root = os.environ.get("M2C_X86_CORPUS")
+    if env_root is not None:
+        return Path(env_root)
+
+    parser.error("--asm-root is required unless M2C_X86_CORPUS is set")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--asm-root", type=Path, default=DEFAULT_ASM_ROOT)
+    parser.add_argument("--asm-root", type=Path, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--top", type=int, default=25)
     cli_args = parser.parse_args()
 
-    asm_files = sorted(cli_args.asm_root.glob("*.asm"))
+    asm_root = resolve_asm_root(parser, cli_args.asm_root)
+    asm_files = sorted(asm_root.glob("*.asm"))
     if cli_args.limit is not None:
         asm_files = asm_files[: cli_args.limit]
     if not asm_files:
-        print(f"No .asm files found under {cli_args.asm_root}")
+        print(f"No .asm files found under {asm_root}")
         return
 
     arch = X86Arch()
