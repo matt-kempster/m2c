@@ -116,7 +116,10 @@ from .translate import (
     Arch,
     BinaryOp,
     Cast,
+    Condition,
     Expression,
+    FuncCall,
+    GlobalSymbol,
     InstrArgs,
     Literal,
     NodeState,
@@ -1621,6 +1624,51 @@ def f32_literal(value: float) -> Literal:
     return Literal(bits, type=Type.f32())
 
 
+# Name of the symbolic x87 status-word marker (fn_op) threaded from an
+# fcom-family compare through fnstsw ax to the test-ah idiom (see §3 of the
+# design spec). Carries the compare's two operands as its arguments.
+FNSTSW_MARKER = "M2C_FNSTSW"
+
+
+def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expression]]:
+    """If `expr` is an x87 compare status-word marker, its (lhs, rhs) operands;
+    otherwise None."""
+    uw = early_unwrap(expr)
+    if (
+        isinstance(uw, FuncCall)
+        and isinstance(uw.function, GlobalSymbol)
+        and uw.function.symbol_name == FNSTSW_MARKER
+        and len(uw.args) == 2
+    ):
+        return uw.args[0], uw.args[1]
+    return None
+
+
+def fpu_compare_condition(
+    lhs: Expression, rhs: Expression, op: str
+) -> Condition:
+    """A float comparison `lhs op rhs`, as f64 when either operand is
+    known-f64 (matching the arithmetic width rule) else f32."""
+    if is_f64_expr(lhs) or is_f64_expr(rhs):
+        return BinaryOp.dcmp(lhs, op, rhs)
+    return BinaryOp.fcmp(lhs, op, rhs)
+
+
+# TEST AH, mask after FNSTSW AX: the relational operator that is true exactly
+# when the x87 compare's ZF would be 1 (i.e. what `jz`/`setz` should read).
+# C0 (AH 0x01) = "st0 < src", C3 (AH 0x40) = "st0 == src"; ZF = ((AH & mask)
+# == 0). See §3.2. Unordered (NaN) outcomes are folded into the signed
+# direction, as MSVC's mask choice implies.
+FNSTSW_MASK_OPS: Dict[int, str] = {
+    0x01: ">=",  # ZF=1 <=> not(st0 < src)
+    0x40: "!=",  # ZF=1 <=> not(st0 == src)
+    0x41: ">",   # ZF=1 <=> not(st0 < src) and not(st0 == src)
+    0x05: ">=",  # C0|C2: unordered folded in
+    0x45: ">",   # C0|C2|C3
+    0x44: "!=",  # C2|C3
+}
+
+
 # x87 arithmetic op -> (C operator, reverse-operands flag).
 FPU_ARITH_OPS: Dict[str, Tuple[str, bool]] = {
     "fadd": ("+", False),
@@ -1672,7 +1720,12 @@ class X86Arch(Arch):
     argument_regs: List[Register] = []
     simple_temp_regs = [ECX, EDX]
     flag_regs = [Register(r) for r in ["n", "z", "c", "v", "hi", "ge", "gt"]]
-    temp_regs = [EAX] + simple_temp_regs + flag_regs
+    # `fsw` carries the symbolic x87 status word between an fcom-family compare
+    # and the fnstsw/test-ah idiom that consumes it (see _parse_fpu / eval_cmp).
+    # A temp reg so calls clobber it; not a flag reg so it is not swept by the
+    # integer-flag machinery.
+    fsw_reg = Register("fsw")
+    temp_regs = [EAX] + simple_temp_regs + flag_regs + [fsw_reg]
     saved_regs = [EBX, ESI, EDI, EBP, EIP]
     # Raw x87 stack-register names (`st(0)`..`st(7)`, spelled `st0`..`st7`).
     # These reach `parse` only during initial parsing; X86FpuRewritePattern
@@ -1938,7 +1991,7 @@ class X86Arch(Arch):
         "fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr",
         "fchs", "fabs", "fsqrt", "fsin", "fcos", "fxch",
         "fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp", "ftst",
-        "ficom", "frndint", "fscale", "f2xm1", "fprem", "fprem1", "fpatan",
+        "ficom", "ficomp", "frndint", "fscale", "f2xm1", "fprem", "fprem1", "fpatan",
         "fyl2x", "fyl2xp1", "fxam",
     }
     # Non-rep string instructions (single element): mnemonic -> (inputs,
@@ -2407,6 +2460,24 @@ class X86Arch(Arch):
             is_effectful = False
 
             def eval_cmp(s: NodeState, a: InstrArgs) -> None:
+                if (
+                    base == "test"
+                    and width == 1
+                    and args[0] == EAX
+                    and isinstance(args[1], AsmLiteral)
+                    and EAX in s.regs
+                ):
+                    # `test ah, mask` after `fnstsw ax`: if eax still holds the
+                    # x87 status-word marker, translate the compare directly to
+                    # a float condition instead of materializing bit arithmetic
+                    # on the status word (see §3.2).
+                    operands = fnstsw_marker_operands(a.regs[EAX])
+                    op = FNSTSW_MASK_OPS.get(args[1].value & 0xFF)
+                    if operands is not None and op is not None:
+                        cond = fpu_compare_condition(operands[0], operands[1], op)
+                        for flag in cls.flag_regs:
+                            s.set_reg(flag, cond)
+                        return
                 lhs = op_value(a, 0, width)
                 if base == "test":
                     # CF = OF = 0; other flags are based on lhs & rhs. The
@@ -2691,11 +2762,14 @@ class X86Arch(Arch):
         elif base in cls.instrs_ignore:
             is_effectful = False
             eval_fn = None
-        elif base in cls.instrs_fpu and any(
-            isinstance(a, Register) and a.is_float() for a in args
+        elif base in ("fnstsw", "fstsw") or (
+            base in cls.instrs_fpu
+            and any(isinstance(a, Register) and a.is_float() for a in args)
         ):
             # A fictive x87 instruction emitted by X86FpuRewritePattern (raw
-            # x87 forms name st(i), never f0..f7, so this gate excludes them).
+            # x87 forms name st(i), never f0..f7, so the f-register gate
+            # excludes them). fnstsw has no f-register operand, so it is
+            # dispatched by name.
             return self._parse_fpu(base, width, args, meta, instr_str)
         else:
             # Unknown instruction (x87 FPU, etc.). Guess a structural shape
@@ -2924,10 +2998,65 @@ class X86Arch(Arch):
 
             eval_fn = eval_fxch
 
+        # --- Compares: store a symbolic status-word marker into `fsw`, killing
+        # any popped operands. The fnstsw/test-ah idiom below consumes it. ---
+        elif base in ("fcom", "fcomp", "fucom", "fucomp", "fcompp", "fucompp",
+                      "ftst", "ficom", "ficomp"):
+            top = args[0]
+            assert isinstance(top, Register)
+            inputs = [top]
+            popped: List[Register] = []
+            if base in ("fcomp", "fucomp", "ficomp"):
+                popped = [top]
+            elif base in ("fcompp", "fucompp"):
+                assert isinstance(args[1], Register)
+                popped = [top, args[1]]
+            clobbers = list(popped)
+            outputs = [cls.fsw_reg]
+            rhs_arg = args[1] if len(args) > 1 else None
+            if isinstance(rhs_arg, Register):
+                if rhs_arg not in inputs:
+                    inputs.append(rhs_arg)
+            elif rhs_arg is not None:
+                add_operand_inputs(rhs_arg)
+                is_load = True
+            is_int_cmp = base in ("ficom", "ficomp")
+            itype = fpu_int_type(width) if is_int_cmp else None
+
+            def eval_fcom(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.regs[top]
+                if base == "ftst":
+                    rhs: Expression = f32_literal(0.0)
+                elif is_int_cmp:
+                    assert itype is not None
+                    rhs = handle_convert(mem_load(a, 1, itype), Type.floatish(), itype)
+                elif isinstance(rhs_arg, Register):
+                    rhs = a.regs[rhs_arg]
+                else:
+                    rhs = mem_load(a, 1, fpu_float_type(width))
+                s.set_reg(cls.fsw_reg, fn_op(FNSTSW_MARKER, [lhs, rhs], Type.u16()))
+                for reg in popped:
+                    del s.regs[reg]
+
+            eval_fn = eval_fcom
+
+        # --- fnstsw ax: move the status-word marker into eax for the test. ---
+        elif base in ("fnstsw", "fstsw"):
+            assert isinstance(args[0], Register)
+            eax = args[0]
+            inputs = [cls.fsw_reg]
+            outputs = [eax]
+
+            def eval_fnstsw(s: NodeState, a: InstrArgs) -> None:
+                if cls.fsw_reg in s.regs:
+                    s.set_reg(eax, s.regs[cls.fsw_reg])
+                else:
+                    # A stray fnstsw with no preceding compare: surface it.
+                    s.set_reg(eax, fn_op(FNSTSW_MARKER, [], Type.u16()))
+
+            eval_fn = eval_fnstsw
+
         # --- Not yet implemented: fail cleanly (never crash, never wrong). ---
-        elif base in ("fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp",
-                      "ftst", "ficom"):
-            eval_fn = not_implemented("x87 compare")
         elif base in ("fistp", "fiadd", "fisub", "fisubr", "fimul", "fidiv",
                       "fidivr"):
             eval_fn = not_implemented("x87 int conversion")

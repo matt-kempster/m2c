@@ -709,6 +709,24 @@ class TestX86FpuRewrite(unittest.TestCase):
         self.assertEqual(out[0], "fldz $f0")
         self.assertIn("fadd $f0, 0x4($esp)", out)
 
+    def test_compare_pops(self) -> None:
+        # fcompp pops both compared slots (depth 2 -> 0); the following push
+        # therefore lands back in f0.
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            FLD dword ptr [ESP + 0x8]
+            FCOMPP
+            FLD dword ptr [ESP + 0xc]
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        # fcompp compares st0 (f1) with st1 (f0).
+        self.assertEqual(out[2], "fcompp $f1, $f0")
+        # The next fld reuses f0 (stack was fully popped).
+        self.assertEqual(out[3], "fld $f0, 0xc($esp)")
+
     def test_underflow_raises(self) -> None:
         with self.assertRaises(DecompFailure) as cm:
             self.rewrite(

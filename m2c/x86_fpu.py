@@ -56,6 +56,7 @@ FPU_POP1: Set[str] = {
     "fistp",
     "fcomp",
     "fucomp",
+    "ficomp",
     "faddp",
     "fsubp",
     "fsubrp",
@@ -372,7 +373,7 @@ def rewrite_fpu_ops(
             emit(base, [flat(0), flat(1)], meta)
         elif base == "ftst":
             emit(base, [flat(0)], meta)
-        elif base == "ficom":
+        elif base in ("ficom", "ficomp"):
             emit(base, [flat(0), args[0]], meta)
         elif base in ("fnstsw", "fstsw"):
             emit("fnstsw", list(args), meta)
