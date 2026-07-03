@@ -27,6 +27,7 @@ from .asm_instruction import (
     AsmGlobalSymbol,
     AsmLiteral,
     AsmState,
+    JumpTarget,
     RegFormatter,
     parse_arg,
     traverse_arg,
@@ -158,12 +159,17 @@ class AsmDataEntry:
 class AsmData:
     values: Dict[str, AsmDataEntry] = field(default_factory=dict)
     mentioned_labels: Set[str] = field(default_factory=set)
+    # Symbol -> number of argument bytes the symbol pops on return (stdcall).
+    # Populated from Ghidra-exported `.set sym, "name@N"` decorations; used by
+    # the x86 backend to attribute callee stack cleanup.
+    stdcall_arg_bytes: Dict[str, int] = field(default_factory=dict)
 
     def merge_into(self, other: AsmData) -> None:
         for sym, value in self.values.items():
             other.values[sym] = value
         for label in self.mentioned_labels:
             other.mentioned_labels.add(label)
+        other.stdcall_arg_bytes.update(self.stdcall_arg_bytes)
 
     def is_likely_char(self, c: int) -> bool:
         return 0x20 <= c < 0x7F or c in (0, 7, 8, 9, 10, 13, 27)
@@ -534,11 +540,26 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         endian = ">" if options.target.is_big_endian() else "<"
         return struct.pack(endian + fmt, val)
 
+    def ensure_data_label() -> None:
+        # Ghidra's x86 exports can place data (jump tables in particular)
+        # directly after code with no label of its own; without one the data
+        # would be dropped. Attach it to a synthetic label so that jump table
+        # recovery can find it.
+        if (
+            asm_file.current_data is None
+            and curr_section == ".text"
+            and arch.arch == Target.ArchEnum.X86
+        ):
+            name = f"__m2c_textdata_{len(asm_file.asm_data.values)}"
+            asm_file.new_data_label(name, is_readonly=True, is_text=True)
+
     def emit_bytes(data: bytes, *, is_string: bool = False) -> None:
+        ensure_data_label()
         asm_file.new_data_bytes(data, is_string=is_string)
         section_sizes[curr_section] += len(data)
 
     def emit_word(w: str, size: int) -> None:
+        ensure_data_label()
         value = try_parse(lambda: parse_arg(w, arch, asm_state))
         if isinstance(value, AsmLiteral):
             ival = value.value & ((1 << (size * 8)) - 1)
@@ -711,16 +732,33 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        try:
-                            asm_state.defines[args[0]] = parse_int(args[1])
-                        except DecompFailure:
-                            # Ghidra emits .set directives with non-integer
-                            # values (e.g. equating a label with an expression
-                            # like "table[4]+3"); ignore them.
-                            add_warning(
-                                warnings,
-                                f"Ignoring non-integer .set directive: {line}",
-                            )
+                        # Ghidra exports symbol-name decorations as
+                        # `.set mangled, "original"`. When the original name
+                        # carries an `@N` stdcall suffix (`_exit@4`,
+                        # `__imp__MessageBoxA@16`), N is the number of argument
+                        # bytes the symbol pops on return; record it so the
+                        # x86 backend can attribute callee stack cleanup.
+                        decorated = re.fullmatch(r"(.*)@(\d+)", args[1])
+                        if decorated is not None:
+                            arg_bytes = int(decorated.group(2))
+                            stdcall_map = asm_file.asm_data.stdcall_arg_bytes
+                            stdcall_map[args[0]] = arg_bytes
+                            if decorated.group(1).startswith("__imp_"):
+                                # `__imp__Foo@N` is the import slot for the
+                                # thunk `_Foo`, which pops the same N bytes.
+                                thunk = decorated.group(1)[len("__imp_") :]
+                                stdcall_map[thunk] = arg_bytes
+                        else:
+                            try:
+                                asm_state.defines[args[0]] = parse_int(args[1])
+                            except DecompFailure:
+                                # Ghidra emits .set directives with non-integer
+                                # values (e.g. equating a label with an
+                                # expression like "table[4]+3"); ignore them.
+                                add_warning(
+                                    warnings,
+                                    f"Ignoring non-integer .set directive: {line}",
+                                )
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
@@ -876,4 +914,70 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         print("\n".join(warnings))
         print("*/")
 
+    merge_functions_with_cross_jumps(asm_file)
+
     return asm_file
+
+
+def merge_functions_with_cross_jumps(asm_file: AsmFile) -> None:
+    """Rejoin functions that were split apart by mid-function global labels.
+
+    Disassemblers let users name arbitrary code addresses, and an exported
+    label in the middle of a function is indistinguishable by name from the
+    start of a new one, so parsing splits the function at that point. The
+    split becomes evident when one chunk branches into another: a branch to a
+    label inside a different chunk, or a conditional branch to another chunk's
+    entry (compilers do not emit conditional tail calls), can only happen if
+    the chunks are really one function. Merge the whole range of chunks
+    between such branches back together, turning the intermediate entry names
+    into plain labels."""
+    functions = asm_file.functions
+
+    def build_label_owner() -> Dict[str, int]:
+        return {
+            name: idx
+            for idx, fn in enumerate(functions)
+            for part in fn.body
+            if isinstance(part, Label)
+            for name in part.names
+        }
+
+    while len(functions) > 1:
+        label_owner = build_label_owner()
+        entry_index = {fn.name: idx for idx, fn in enumerate(functions)}
+        merge_range: Optional[Tuple[int, int]] = None
+        for i, fn in enumerate(functions):
+            lo = hi = i
+            for part in fn.body:
+                if not isinstance(part, Instruction) or not isinstance(
+                    part.jump_target, JumpTarget
+                ):
+                    continue
+                target = part.jump_target.target
+                j = label_owner.get(target)
+                if j is None and part.is_conditional:
+                    j = entry_index.get(target)
+                if j is not None and j != i:
+                    lo = min(lo, j)
+                    hi = max(hi, j)
+            if (lo, hi) != (i, i):
+                merge_range = (lo, hi)
+                break
+        if merge_range is None:
+            return
+        lo, hi = merge_range
+        base = functions[lo]
+        for fn in functions[lo + 1 : hi + 1]:
+            # The absorbed chunk's entry name becomes a plain label. Avoid
+            # creating consecutive Labels: fold the name into the chunk's
+            # leading label if it has one.
+            body = fn.body
+            if body and isinstance(body[0], Label):
+                body = [Label([fn.name] + body[0].names)] + body[1:]
+            else:
+                body = [Label([fn.name])] + body
+            if base.body and isinstance(base.body[-1], Label) and isinstance(body[0], Label):
+                base.body[-1:] = [Label(base.body[-1].names + body[0].names)]
+                body = body[1:]
+            base.body.extend(body)
+        del functions[lo + 1 : hi + 1]
