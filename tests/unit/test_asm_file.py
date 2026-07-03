@@ -96,5 +96,33 @@ func_a:
         self.assertEqual([fn.name for fn in asm_file.functions], ["func_a"])
 
 
+class TestAddressModeTraversal(unittest.TestCase):
+    """The shared AsmAddressMode gained an Optional base register for x86's
+    base-less operands. A non-x86 address mode (which always has a base) must
+    still traverse that base -- e.g. a MIPS load reads its base register."""
+
+    def test_mips_load_base_register_is_input(self) -> None:
+        from m2c.asm_instruction import (
+            AsmAddressMode,
+            AsmState,
+            RegFormatter,
+            Register,
+            parse_asm_instruction,
+            traverse_arg,
+        )
+        from m2c.instruction import InstructionMeta
+
+        arch = MipsArch()
+        state = AsmState(reg_formatter=RegFormatter())
+        asm = parse_asm_instruction("lw $t0, 4($a0)", arch, state)
+        mem = asm.args[1]
+        assert isinstance(mem, AsmAddressMode)
+        self.assertEqual(mem.base, Register("a0"))
+        # The shared traversal yields the (non-None) base register.
+        self.assertIn(Register("a0"), list(traverse_arg(mem)))
+        instr = arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+        self.assertIn(Register("a0"), instr.inputs)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -207,6 +207,30 @@ class TestX86Parsing(unittest.TestCase):
         self.assertTrue(instr.is_load)
         self.assertEqual(instr.inputs, [])
 
+    def test_base_less_memory_not_stack_access(self) -> None:
+        # A base-less Intel memory operand -- an absolute [symbol] or a
+        # scaled-index expression with no plain base register (base=None) --
+        # must not be modeled as a stack access: no StackLocation should appear
+        # among its inputs/outputs (only esp-relative operands are stack).
+        load = self.parse_instruction("MOV EAX, [_DAT_00401000]")
+        self.assertFalse(
+            any(isinstance(loc, StackLocation) for loc in load.inputs + load.outputs)
+        )
+        store = self.parse_instruction("MOV dword ptr [ESI*0x4 + _table], EAX")
+        self.assertTrue(store.is_store)
+        self.assertIn(Register("esi"), store.inputs)
+        self.assertFalse(
+            any(
+                isinstance(loc, StackLocation)
+                for loc in store.inputs + store.outputs
+            )
+        )
+        # Contrast: a genuine esp-relative store does produce a stack location.
+        stack = self.parse_instruction("MOV dword ptr [ESP + 0x8], EAX")
+        self.assertTrue(
+            any(isinstance(loc, StackLocation) for loc in stack.outputs)
+        )
+
     def test_mov_scaled_index_store(self) -> None:
         instr = self.parse_instruction("MOV dword ptr [ESI + EBX*0x8 + 0x30], ECX")
         self.assertTrue(instr.is_store)
