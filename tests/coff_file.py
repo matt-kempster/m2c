@@ -41,7 +41,10 @@ class CoffSection:
 
 @dataclass
 class CoffFile:
-    sections: Dict[str, CoffSection] = field(default_factory=dict)
+    # In file order. Section names are not unique: MSVC /Gy-style COMDATs
+    # emit one `.text` section per function, so sections must be tracked by
+    # index rather than name.
+    sections: List[CoffSection] = field(default_factory=list)
     symbols: Dict[str, CoffSymbol] = field(default_factory=dict)
 
     @staticmethod
@@ -122,18 +125,22 @@ class CoffFile:
                     characteristics=characteristics,
                 )
             )
-            section_data = data[
-                pointer_to_raw_data : pointer_to_raw_data + size_of_raw_data
-            ]
-            coff.sections[name] = CoffSection(
-                address=virtual_address, name=name, data=section_data
+            if pointer_to_raw_data == 0:
+                # Uninitialized sections (.bss) have no raw data in the file.
+                section_data = b""
+            else:
+                section_data = data[
+                    pointer_to_raw_data : pointer_to_raw_data + size_of_raw_data
+                ]
+            coff.sections.append(
+                CoffSection(address=virtual_address, name=name, data=section_data)
             )
 
+        # COFF section numbers are 1-based.
         sections_by_index: Dict[int, CoffSection] = {
-            i + 1: coff.sections[header.name]
-            for i, header in enumerate(section_headers)
-            if header.name in coff.sections
+            i + 1: section for i, section in enumerate(coff.sections)
         }
+        section_names = {header.name for header in section_headers}
 
         symbols_by_index: List[CoffSymbol] = []
         i = 0
@@ -161,13 +168,12 @@ class CoffFile:
             if (
                 section is not None
                 and name
-                and name not in coff.sections
+                and name not in section_names
                 and value not in section.symbols
             ):
                 section.symbols[value] = symbol
 
-        for header in section_headers:
-            section = coff.sections[header.name]
+        for header, section in zip(section_headers, coff.sections):
             for j in range(header.number_of_relocations):
                 offset = header.pointer_to_relocations + j * 10
                 virtual_address, symbol_index, relocation_type = struct.unpack(
