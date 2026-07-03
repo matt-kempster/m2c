@@ -737,8 +737,15 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # carries an `@N` stdcall suffix (`_exit@4`,
                         # `__imp__MessageBoxA@16`), N is the number of argument
                         # bytes the symbol pops on return; record it so the
-                        # x86 backend can attribute callee stack cleanup.
-                        decorated = re.fullmatch(r"(.*)@(\d+)", args[1])
+                        # x86 backend can attribute callee stack cleanup. These
+                        # Ghidra/x86-isms (the `@N` decoration and the tolerance
+                        # of non-integer values below) are gated to x86, so that
+                        # other architectures keep the strict parse failure for
+                        # an unsupported `.set` (L1).
+                        is_x86 = arch.arch == Target.ArchEnum.X86
+                        decorated = (
+                            re.fullmatch(r"(.*)@(\d+)", args[1]) if is_x86 else None
+                        )
                         if decorated is not None:
                             arg_bytes = int(decorated.group(2))
                             stdcall_map = asm_file.asm_data.stdcall_arg_bytes
@@ -752,6 +759,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             try:
                                 asm_state.defines[args[0]] = parse_int(args[1])
                             except DecompFailure:
+                                if not is_x86:
+                                    # Other architectures keep the hard failure.
+                                    raise
                                 # Ghidra emits .set directives with non-integer
                                 # values (e.g. equating a label with an
                                 # expression like "table[4]+3"); ignore them.

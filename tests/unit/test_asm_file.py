@@ -63,5 +63,38 @@ func_b:
         self.assertEqual(names, ["func_a"])
 
 
+class TestSetDirectiveLeniency(unittest.TestCase):
+    """Non-integer `.set` values are warned-and-ignored only for x86/Ghidra
+    inputs; other architectures keep the strict parse failure (L1)."""
+
+    SET_ASM = """
+.set noat
+.set noreorder
+.set some_symbol, table_base + 3
+
+glabel func_a
+/* 00 00 03E00008 */  jr    $ra
+/* 04 04 00000000 */   nop
+"""
+
+    def test_non_x86_non_integer_set_raises(self) -> None:
+        from m2c.error import DecompFailure
+
+        with self.assertRaises(DecompFailure):
+            _parse(self.SET_ASM, "mips-ido-c", MipsArch())
+
+    X86_SET_ASM = """
+.set some_symbol, table_base + 3
+func_a:
+    RET
+"""
+
+    def test_x86_non_integer_set_ignored(self) -> None:
+        # x86 tolerates the non-integer .set (Ghidra emits label-equate
+        # expressions) instead of failing.
+        asm_file = _parse(self.X86_SET_ASM, "x86-gcc-c", X86Arch())
+        self.assertEqual([fn.name for fn in asm_file.functions], ["func_a"])
+
+
 if __name__ == "__main__":
     unittest.main()
