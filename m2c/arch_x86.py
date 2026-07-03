@@ -334,9 +334,36 @@ def adc_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressio
 def sbb_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expression:
     if a.raw_arg(0) == a.raw_arg(1):
         # sbb r, r: idiom for materializing the carry (borrow) flag as
-        # 0 / -1 without branching.
+        # 0 / -1 without branching. After `cmp a, b` the carry is the unsigned
+        # borrow (a < b), so this is -(a < b); `neg`/`inc` of it (below)
+        # recover the plain (in)equality.
         return UnaryOp("-", carry_in(a), type=Type.intish())
     return BinaryOp.intptr(handle_sub(lhs, srcs[0]), "-", carry_in(a))
+
+
+def neg_expr(v: Expression) -> Expression:
+    """`neg`: arithmetic negation, collapsing a double negation. Applied to the
+    `sbb r,r` idiom (which materializes a compare's borrow as -(cond)), this
+    recovers the plain boolean, so `cmp a,b; sbb r,r; neg r` reads as `a < b`
+    rather than `--(a < b)`. -(-x) == x holds for every two's-complement
+    integer, so the fold is always valid, not only for the 0/-1 boolean."""
+    uw = early_unwrap(v)
+    if isinstance(uw, UnaryOp) and uw.op == "-" and not uw.expr.type.is_float():
+        return uw.expr
+    return UnaryOp.sint("-", v)
+
+
+def inc_expr(a: InstrArgs, v: Expression) -> Expression:
+    """`inc`. Applied to the negated boolean from `sbb r,r` (-(cond)), inc
+    computes 1 + -(cond) = !cond (cond is 0 or 1), so `cmp a,b; sbb r,r; inc r`
+    reads as the negated comparison (e.g. `a >= b`) instead of `-(a < b) + 1`.
+    Only fires for a negated comparison, where 1 - cond == !cond holds."""
+    uw = early_unwrap(v)
+    if isinstance(uw, UnaryOp) and uw.op == "-":
+        inner = early_unwrap(uw.expr)
+        if isinstance(inner, BinaryOp) and inner.is_comparison():
+            return inner.negated()
+    return handle_add_real(v, Literal(1), a)
 
 
 def shrd_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expression:
@@ -2171,11 +2198,11 @@ class X86Arch(Arch):
 
     # single operand, read and written.
     instrs_unary: Dict[str, Tuple[str, UnaryBuilder]] = {
-        "inc": (FLAGS_KEEP_C, lambda a, v: handle_add_real(v, Literal(1), a)),
+        "inc": (FLAGS_KEEP_C, inc_expr),
         "dec": (FLAGS_KEEP_C, lambda a, v: sub_expr(v, Literal(1))),
         # neg's flags are those of `cmp 0, v`, computed in the eval fn (in
         # particular c = (v != 0), matching x86's CF after neg).
-        "neg": (FLAGS_CMP, lambda a, v: UnaryOp.sint("-", v)),
+        "neg": (FLAGS_CMP, lambda a, v: neg_expr(v)),
         "not": (FLAGS_NONE, lambda a, v: handle_bitinv(v)),
         "bswap": (FLAGS_NONE, lambda a, v: fn_op("BSWAP32", [v], Type.intish())),
     }
@@ -2654,6 +2681,15 @@ class X86Arch(Arch):
                     op_value(a, i, w, sign_extend_imm=sign_ext)
                     for i in range(1, len(args))
                 ]
+                # Build the new value before touching the flags: sbb (and adc)
+                # read the incoming carry flag for their value, and the
+                # FLAGS_SBB flag write below overwrites `c` with sbb's own
+                # borrow. Computing the value only reads registers (no state
+                # change), so ordering it first is safe for every op and is
+                # what lets sbb see the pre-instruction carry rather than the
+                # borrow it is about to produce.
+                val = alu_builder(a, lhs, srcs)
+
                 if flags_kind == FLAGS_CMP:
                     # Compare-style flags are based on the values *before*
                     # the destination is overwritten.
@@ -2672,7 +2708,6 @@ class X86Arch(Arch):
                     elif flags_kind == FLAGS_LOGIC:
                         set_x86_flags_from_result(s, result, w)
 
-                val = alu_builder(a, lhs, srcs)
                 if isinstance(args[0], Register):
                     val = s.set_reg(args[0], val)
                     set_alu_flags(val)
