@@ -103,7 +103,7 @@ from .asm_instruction import (
     get_jump_target,
     traverse_arg,
 )
-from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement
+from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement, ReplacementPart
 from .instruction import (
     ArchAsm,
     Instruction,
@@ -929,6 +929,79 @@ class X86ChkstkPattern(AsmPattern):
             sub = AsmInstruction("sub", [ESP, AsmLiteral(mov.args[1].value)])
             return Replacement([sub], 2, clobbers=[EAX])
         return None
+
+
+class X86PushAllocPattern(AsmPattern):
+    """MSVC allocates a single 4-byte local with `push <scratch>` (one byte)
+    rather than `sub esp, 4` (three bytes), and restores esp with a matching
+    `pop <scratch>` right before `ret`:
+
+        push ecx          # allocate one dword local ([esp] is now that slot)
+        ...               # [esp] used as a scratch local
+        pop ecx           # deallocate
+        ret
+
+    At a __cdecl/__stdcall entry the pushed scratch register (eax/ecx/edx)
+    holds no live value, so the bracket is exactly a frame allocate/deallocate.
+    Left as a `push`, it reads as storing an uninitialized register into the
+    local slot -- a spurious M2C_ERROR. Rewrite the bracket into
+    `sub esp, 4` / `add esp, 4` so nothing is stored. Requiring the matching
+    trailing `pop <same reg>` before every `ret` distinguishes it from a real
+    value push (a __fastcall/__thiscall argument spill is not restored by a
+    trailing `pop`)."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        if matcher.index != 0:
+            return None
+        body = matcher.input
+        push_idx = next(
+            (i for i, p in enumerate(body) if isinstance(p, Instruction)), None
+        )
+        if push_idx is None:
+            return None
+        push = body[push_idx]
+        assert isinstance(push, Instruction)
+        if not (
+            push.mnemonic == "push"
+            and len(push.args) == 1
+            and push.args[0] in (EAX, ECX, EDX)
+        ):
+            return None
+        reg = push.args[0]
+
+        # Every `ret` must be immediately preceded (skipping labels) by
+        # `pop <reg>`, and there must be at least one such deallocation.
+        dealloc_pops: Set[int] = set()
+        prev_idx: Optional[int] = None
+        for i, part in enumerate(body):
+            if isinstance(part, Label):
+                continue
+            assert isinstance(part, Instruction)
+            if part.is_return:
+                if prev_idx is None:
+                    return None
+                prev = body[prev_idx]
+                if not (
+                    isinstance(prev, Instruction)
+                    and prev.mnemonic == "pop"
+                    and len(prev.args) == 1
+                    and prev.args[0] == reg
+                ):
+                    return None
+                dealloc_pops.add(prev_idx)
+            prev_idx = i
+        if not dealloc_pops:
+            return None
+
+        new_body: List[ReplacementPart] = []
+        for i, part in enumerate(body):
+            if i == push_idx:
+                new_body.append(AsmInstruction("sub", [ESP, AsmLiteral(4)]))
+            elif i in dealloc_pops:
+                new_body.append(AsmInstruction("add", [ESP, AsmLiteral(4)]))
+            else:
+                new_body.append(part)
+        return Replacement(new_body, len(body), clobbers=[reg])
 
 
 class X86SehPattern(AsmPattern):
@@ -2095,6 +2168,7 @@ class X86Arch(Arch):
 
     asm_patterns: List[AsmPattern] = [
         X86ChkstkPattern(),
+        X86PushAllocPattern(),
         X86SehPattern(),
         X86JumpTablePattern(),
         X86StackRewritePattern(),
