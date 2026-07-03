@@ -5,11 +5,10 @@ import logging
 import os
 import subprocess
 import sys
-from contextlib import ExitStack
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field, replace
+from typing import List, Optional, Tuple
+from dataclasses import dataclass, replace
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +251,7 @@ def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
 
 
 def add_test_from_file(
-    orig_file: Path, env_vars: PathsToBinaries, compilers: List[Tuple[str, Compiler]]
+    orig_file: Path, compilers: List[Tuple[str, Compiler]]
 ) -> None:
     test_dir = orig_file.parent
     for asm_filename, compiler in compilers:
@@ -313,7 +312,7 @@ def main() -> int:
                 f"`{orig_file}` does not have a path of the form `{expected_c_file}` or `{expected_cpp_file}`! Skipping."
             )
             continue
-        add_test_from_file(orig_file, env_vars, compilers)
+        add_test_from_file(orig_file, compilers)
 
     return 0
 
