@@ -299,10 +299,16 @@ class TestX86Parsing(unittest.TestCase):
         self.assertCountEqual(instr.inputs, [Register("edx"), Register("eax")])
 
     def test_unary_rmw(self) -> None:
-        for mn in ("NEG", "NOT", "INC", "DEC", "BSWAP"):
+        for mn in ("NEG", "NOT", "BSWAP"):
             instr = self.parse_instruction(f"{mn} EAX")
             self.assertIn(Register("eax"), instr.outputs)
             self.assertEqual(instr.inputs, [Register("eax")])
+        # inc/dec additionally read the carry flag: they preserve it, but fold
+        # it into the composite unsigned-above (ja/jbe) predicate.
+        for mn in ("INC", "DEC"):
+            instr = self.parse_instruction(f"{mn} EAX")
+            self.assertIn(Register("eax"), instr.outputs)
+            self.assertCountEqual(instr.inputs, [Register("eax"), Register("c")])
 
     def test_cdq(self) -> None:
         instr = self.parse_instruction("CDQ")

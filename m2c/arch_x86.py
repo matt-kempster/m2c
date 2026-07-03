@@ -151,7 +151,7 @@ from .evaluate import (
     handle_sub,
     make_store_real,
     replace_bitand,
-    set_arm_flags_from_add,
+    set_x86_flags_from_add,
     set_x86_flags_from_result,
     shift_right_expr,
     void_fn_op,
@@ -1656,17 +1656,22 @@ UnaryBuilder = Callable[[InstrArgs, Expression], Expression]
 # - "cmp": full compare-style flags of (dst, src), evaluated *before* the
 #   destination is overwritten (like eval_arm_cmp); used by sub and cmp.
 #   The c flag is a borrow; see eval_x86_cmp.
-# - "add": flags of an addition result, including c = carry-out.
+# - "add": width-aware flags of an addition result (add/adc), including
+#   c = carry-out and hi = (CF==0 && ZF==0).
+# - "sbb": subtract-with-borrow flags (sbb): the flags of lhs - (src + CF),
+#   computed like a compare so c is a borrow (not logic-op flags).
 # - "logic": z/n/hi/ge/gt from the result compared against zero, and
 #   c = v = 0 (real x86 semantics for and/or/xor/test; an acceptable
 #   approximation for shifts, whose carry-out is rarely consumed).
 # - "keep_c": like "logic" but preserving the previous carry flag and
-#   setting v from the result (inc/dec semantics).
+#   setting v from the result (inc/dec semantics); the composite hi predicate
+#   is recomputed from the preserved carry plus the new zero flag.
 # - "clobber": flags are structurally clobbered but no symbolic value is
 #   recorded (rotates, multiplications, divisions).
 # - "none": flags are untouched (not/bswap).
 FLAGS_CMP = "cmp"
 FLAGS_ADD = "add"
+FLAGS_SBB = "sbb"
 FLAGS_LOGIC = "logic"
 FLAGS_KEEP_C = "keep_c"
 FLAGS_CLOBBER = "clobber"
@@ -2102,7 +2107,7 @@ class X86Arch(Arch):
         "add": (FLAGS_ADD, lambda a, l, s: handle_add_real(l, s[0], a)),
         "adc": (FLAGS_ADD, adc_expr),
         "sub": (FLAGS_CMP, lambda a, l, s: sub_expr(l, s[0])),
-        "sbb": (FLAGS_LOGIC, sbb_expr),
+        "sbb": (FLAGS_SBB, sbb_expr),
         "and": (FLAGS_LOGIC, lambda a, l, s: replace_bitand(BinaryOp.int(l, "&", s[0]))),
         "or": (FLAGS_LOGIC, lambda a, l, s: handle_or(l, s[0])),
         "xor": (FLAGS_LOGIC, lambda a, l, s: BinaryOp.int(l, "^", s[0])),
@@ -2622,20 +2627,28 @@ class X86Arch(Arch):
                     # Compare-style flags are based on the values *before*
                     # the destination is overwritten.
                     eval_x86_cmp(s, lhs, srcs[0], w)
+                elif flags_kind == FLAGS_SBB:
+                    # sbb: subtract-with-borrow flags = flags of
+                    # lhs - (src + carry-in), a compare (c is a borrow), also
+                    # taken before the destination is overwritten.
+                    eval_x86_cmp(
+                        s, lhs, BinaryOp.intptr(srcs[0], "+", carry_in(a)), w
+                    )
+
+                def set_alu_flags(result: Expression) -> None:
+                    if flags_kind == FLAGS_ADD:
+                        set_x86_flags_from_add(s, lhs, result, w)
+                    elif flags_kind == FLAGS_LOGIC:
+                        set_x86_flags_from_result(s, result, w)
+
                 val = alu_builder(a, lhs, srcs)
                 if isinstance(args[0], Register):
                     val = s.set_reg(args[0], val)
-                    if flags_kind == FLAGS_ADD:
-                        set_arm_flags_from_add(s, val)
-                    elif flags_kind == FLAGS_LOGIC:
-                        set_x86_flags_from_result(s, val, w)
+                    set_alu_flags(val)
                 else:
                     # For memory destinations, set flags before the store so
                     # that flag expressions refer to pre-store values.
-                    if flags_kind == FLAGS_ADD:
-                        set_arm_flags_from_add(s, val)
-                    elif flags_kind == FLAGS_LOGIC:
-                        set_x86_flags_from_result(s, val, w)
+                    set_alu_flags(val)
                     write_dst(s, a, val, width_type(w))
 
             eval_fn = eval_alu
@@ -2647,6 +2660,10 @@ class X86Arch(Arch):
             elif isinstance(args[0], Register) and args[0] not in inputs:
                 inputs.append(args[0])
             flags_kind, unary_builder = cls.instrs_unary[base]
+            if flags_kind == FLAGS_KEEP_C:
+                # inc/dec preserve the carry flag but fold it into the composite
+                # unsigned-above predicate (ja/jbe), so they read it.
+                inputs.append(cls._flag_c)
             flag_outs, flag_clobbers = cls._flag_outputs(flags_kind)
             outputs.extend(flag_outs)
             clobbers.extend(flag_clobbers)
@@ -2657,16 +2674,26 @@ class X86Arch(Arch):
                 if flags_kind == FLAGS_CMP:
                     # neg: flags of `cmp 0, old` (c = borrow = (old != 0)).
                     eval_x86_cmp(s, Literal(0), old, width)
+                # inc/dec keep CF; fold the preserved carry into the composite
+                # unsigned-above predicate (read before it can be overwritten).
+                keep_carry = a.regs[cls._flag_c] if flags_kind == FLAGS_KEEP_C else None
+
+                def set_unary_flags(result: Expression) -> None:
+                    if flags_kind == FLAGS_KEEP_C:
+                        set_x86_flags_from_result(
+                            s, result, width, set_c_v=False, preserved_carry=keep_carry
+                        )
+                        s.set_reg(
+                            cls._flag_v,
+                            fn_op("M2C_OVERFLOW", [result], Type.boolean()),
+                        )
+
                 val = unary_builder(a, old)
                 if isinstance(args[0], Register):
                     val = s.set_reg(args[0], val)
-                    if flags_kind == FLAGS_KEEP_C:
-                        set_x86_flags_from_result(s, val, width, set_c_v=False)
-                        s.set_reg(cls._flag_v, fn_op("M2C_OVERFLOW", [val], Type.boolean()))
+                    set_unary_flags(val)
                 else:
-                    if flags_kind == FLAGS_KEEP_C:
-                        set_x86_flags_from_result(s, val, width, set_c_v=False)
-                        s.set_reg(cls._flag_v, fn_op("M2C_OVERFLOW", [val], Type.boolean()))
+                    set_unary_flags(val)
                     write_dst(s, a, val, width_type(width))
 
             eval_fn = eval_unary

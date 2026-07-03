@@ -1507,26 +1507,74 @@ def eval_x86_cmp(
 
 
 def set_x86_flags_from_result(
-    s: NodeState, val: Expression, width: int = 4, *, set_c_v: bool = True
+    s: NodeState,
+    val: Expression,
+    width: int = 4,
+    *,
+    set_c_v: bool = True,
+    preserved_carry: Optional[Expression] = None,
 ) -> None:
     """Set the x86 flag pseudo-registers based on an ALU result, comparing it
     against zero. Used for logic ops (and/or/xor/test/shifts), for which the
     real x86 semantics are CF = OF = 0 (making e.g. `ja` equivalent to
     "result != 0"), and for inc/dec with set_c_v=False (inc/dec preserve the
-    carry flag; their overflow flag is set separately)."""
+    carry flag; their overflow flag is set separately).
+
+    For inc/dec, `preserved_carry` supplies the carry flag that the operation
+    keeps unchanged, so the composite unsigned-above (ja/jbe) predicate is
+    computed as CF==0 && ZF==0 from that preserved carry rather than assuming
+    CF==0."""
     _, stype = x86_flag_types(width)
     nez = handle_cmpnez(val)
     assert isinstance(nez, BinaryOp)
     s.set_reg(Register("z"), nez.negated())
     sval = as_type(val, stype, silent=True, unify=False)
     s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
-    # With CF = 0, unsigned-above means "result != 0".
-    s.set_reg(Register("hi"), nez)
+    if preserved_carry is not None:
+        # Unsigned-above (ja) = CF==0 && ZF==0, with CF preserved from before.
+        not_carry = condition_from_expr(preserved_carry).negated()
+        s.set_reg(
+            Register("hi"),
+            BinaryOp(left=not_carry, op="&&", right=nez, type=Type.boolean()),
+        )
+    else:
+        # With CF = 0, unsigned-above means "result != 0".
+        s.set_reg(Register("hi"), nez)
     s.set_reg(Register("ge"), BinaryOp.scmp(sval, ">=", Literal(0)))
     s.set_reg(Register("gt"), BinaryOp.scmp(sval, ">", Literal(0)))
     if set_c_v:
         s.set_reg(Register("c"), Literal(0))
         s.set_reg(Register("v"), Literal(0))
+
+
+def set_x86_flags_from_add(
+    s: NodeState, lhs: Expression, val: Expression, width: int = 4
+) -> None:
+    """Set the x86 flag pseudo-registers for an addition (add/adc) whose result
+    is `val` and whose left operand is `lhs`, width-aware in `width` bytes.
+
+    Unlike the ARM helper, the carry-out and the composite unsigned predicate
+    respect the operand width, so a byte/word add does not get 32-bit carry
+    behaviour: CF is the carry-out (the truncated sum wrapped below the left
+    operand), and unsigned-above (ja/jbe) is CF==0 && ZF==0."""
+    utype, stype = x86_flag_types(width)
+    uval = as_type(val, utype, silent=True, unify=False)
+    sval = as_type(val, stype, silent=True, unify=False)
+    ulhs = as_type(lhs, utype, silent=True, unify=False)
+    z = BinaryOp.icmp(val, "==", Literal(0))
+    s.set_reg(Register("z"), z)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    # Carry-out: the width-truncated sum wrapped below the left operand.
+    carry = BinaryOp.ucmp(uval, "<", ulhs)
+    s.set_reg(Register("c"), carry)
+    s.set_reg(Register("v"), fn_op("M2C_OVERFLOW", [sval], Type.boolean()))
+    # Unsigned-above (ja/jbe): no carry-out and nonzero.
+    s.set_reg(
+        Register("hi"),
+        BinaryOp(left=carry.negated(), op="&&", right=z.negated(), type=Type.boolean()),
+    )
+    s.set_reg(Register("ge"), BinaryOp.scmp(sval, ">=", Literal(0)))
+    s.set_reg(Register("gt"), BinaryOp.scmp(sval, ">", Literal(0)))
 
 
 def carry_add_to(expr: Expression) -> BinaryOp:
