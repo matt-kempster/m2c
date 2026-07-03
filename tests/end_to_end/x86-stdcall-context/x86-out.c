@@ -1,6 +1,5 @@
-? _MyApiCall(s32, ? *, ?);                          /* extern */
-extern ? _caption;
+extern s8 _caption;
 
-void test(s32 arg0) {
-    _MyApiCall(arg0, &_caption, 0x30);
+void test(void *arg0) {
+    _MyApiCall(arg0, &_caption, 0x30U);
 }

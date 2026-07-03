@@ -4312,24 +4312,25 @@ class GlobalInfo:
             ):
                 sym.type.unify(self.vtable_type(sym_name, sym.asm_data_entry))
 
-            fn = self.typemap.functions.get(sym_name)
+            context_name = self.context_symbol_name(sym_name)
+            fn = self.typemap.functions.get(context_name)
             ctype: Optional[CType]
             if fn is not None:
                 ctype = fn.type
             else:
-                ctype = self.typemap.var_types.get(sym_name)
+                ctype = self.typemap.var_types.get(context_name)
 
             if ctype is not None:
                 sym.symbol_in_context = True
                 sym.initializer_in_typemap = (
-                    sym_name in self.typemap.vars_with_initializers
+                    context_name in self.typemap.vars_with_initializers
                 )
                 if self.typepool.unk_inference and is_unk_type(ctype, self.typemap):
                     type = Type.gsym_unk_ctype(ctype, self.typemap, self.typepool)
                 else:
                     type = Type.ctype(ctype, self.typemap, self.typepool)
                 sym.type.unify(type)
-                if sym_name not in self.typepool.unknown_decls:
+                if context_name not in self.typepool.unknown_decls:
                     sym.type_provided = True
             elif sym_name in self.local_functions:
                 sym.type.unify(Type.function())
@@ -4389,9 +4390,25 @@ class GlobalInfo:
                 offset += 4
         return Type.struct(struct)
 
+    def context_symbol_name(self, sym_name: str) -> str:
+        """The name under which `sym_name` appears in the context, if any.
+
+        x86 asm symbols carry a leading-underscore platform prefix (`_array`
+        for C `array`); when the decorated name is not itself declared in the
+        context, fall back to the undecorated one."""
+        if (
+            self.target.arch == Target.ArchEnum.X86
+            and sym_name.startswith("_")
+            and not sym_name.startswith("__")
+            and sym_name not in self.typemap.functions
+            and sym_name not in self.typemap.var_types
+        ):
+            return sym_name[1:]
+        return sym_name
+
     def is_function_known_void(self, sym_name: str) -> bool:
         """Return True if the function exists in the context, and has no return value"""
-        fn = self.typemap.functions.get(sym_name)
+        fn = self.typemap.functions.get(self.context_symbol_name(sym_name))
         if fn is None:
             return False
         return fn.ret_type is None
