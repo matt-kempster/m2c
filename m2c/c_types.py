@@ -89,6 +89,9 @@ class Function:
     ret_type: Optional[CType]
     params: Optional[List[Param]]
     is_variadic: bool
+    # Set by an `__attribute__((stdcall))` annotation on the declaration:
+    # the callee pops its own stack arguments on return (x86 stdcall).
+    is_stdcall: bool = False
 
 
 @dataclass(eq=False)
@@ -100,7 +103,7 @@ class Enum:
 @dataclass(eq=False)
 class TypeMap:
     # Change VERSION if TypeMap changes to invalidate all preexisting caches
-    VERSION: ClassVar[int] = 10
+    VERSION: ClassVar[int] = 11
 
     source_hash: str
     base_struct_align: int
@@ -167,6 +170,10 @@ def get_align_override(
             raise DecompFailure(f"Alignment {align_to} is not a power of two")
         align = max(align, align_to)
     return align
+
+
+def has_stdcall_attr(attrs: List[ca.GccAttribute]) -> bool:
+    return any(attr.name in ("stdcall", "__stdcall__") for attr in attrs)
 
 
 def has_128bit_attr(attrs: List[ca.GccAttribute]) -> bool:
@@ -900,11 +907,13 @@ def _build_typemap(
                 assert item.decl.name is not None, "cannot define anonymous function"
                 fn = parse_function(type_of_var_decl(item.decl))
                 assert fn is not None
+                fn.is_stdcall = has_stdcall_attr(item.decl.gcc_attributes)
                 typemap.functions[item.decl.name] = fn
             if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
                 assert item.name is not None, "cannot define anonymous function"
                 fn = parse_function(item.type)
                 assert fn is not None
+                fn.is_stdcall = has_stdcall_attr(item.gcc_attributes)
                 typemap.functions[item.name] = fn
 
         cur_pack = 0

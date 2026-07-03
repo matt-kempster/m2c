@@ -127,6 +127,11 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
+    if isinstance(arch, X86Arch):
+        # Context functions marked __attribute__((stdcall)) drive callee
+        # stack-cleanup attribution in the x86 stack rewrite.
+        arch.load_stdcall_context(typemap)
+
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())
     else:

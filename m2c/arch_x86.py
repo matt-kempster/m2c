@@ -84,7 +84,8 @@ from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from .error import DecompFailure
 from .options import Target
-from .asm_file import AsmData
+from .asm_file import AsmData, AsmDataEntry, AsmSymbolicData, Label
+from .c_types import TypeMap
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -357,24 +358,192 @@ def shld_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressi
 RE_STDCALL_IMPORT = re.compile(r"^__imp__.*_(\d+)$")
 
 
-# Undecorated stdcall imports appear as `_<LIB>_DLL_<Func>` (e.g.
-# `_USER32_DLL_ShowWindow`), Ghidra's naming for imports whose thunks it
-# resolved to a library.
-RE_DLL_IMPORT = re.compile(r"^_[A-Za-z0-9]+_DLL_")
+# Undecorated stdcall imports appear as `_<LIB>_DLL_<Func>` or
+# `_<LIB>_DRV_<Func>` (e.g. `_USER32_DLL_ShowWindow`), Ghidra's naming for
+# imports whose thunks it resolved to a library.
+RE_DLL_IMPORT = re.compile(r"^_[A-Za-z0-9]+_(?:DLL|DRV)_(\w+)$")
 
 
-def is_stdcall_import(target: Argument) -> bool:
-    """Whether a call target is an undecorated Win32-style DLL import, which
-    uses the stdcall convention (callee pops arguments)."""
+# Argument byte counts for well-known stdcall Win32/multimedia/DirectX APIs.
+# MSVC calls these through undecorated thunk symbols (`call _MessageBoxA`),
+# so the `@N` suffix that normally identifies callee cleanup is missing; this
+# table restores it. The values are the documented argument counts * 4 (all
+# arguments of these APIs are 4-byte). Names that are cdecl despite living in
+# system DLLs (e.g. the variadic wsprintfA) must not be listed here.
+STDCALL_API_ARG_BYTES: Dict[str, int] = {
+    "AddFontResourceA": 4,
+    "AdjustWindowRect": 12,
+    "ClientToScreen": 8,
+    "CloseHandle": 4,
+    "CoCreateInstance": 20,
+    "CoInitialize": 4,
+    "CoUninitialize": 0,
+    "CreateCompatibleDC": 4,
+    "CreateDCA": 16,
+    "CreateDIBitmap": 24,
+    "CreateEventA": 16,
+    "CreateFileA": 28,
+    "CreateFontIndirectA": 4,
+    "CreateMutexA": 12,
+    "CreatePen": 12,
+    "CreateRectRgn": 16,
+    "CreateRectRgnIndirect": 4,
+    "CreateSolidBrush": 4,
+    "CreateThread": 24,
+    "CreateWindowExA": 48,
+    "DefWindowProcA": 16,
+    "DeleteDC": 4,
+    "DeleteObject": 4,
+    "DestroyWindow": 4,
+    "DeviceIoControl": 32,
+    "DialogBoxParamA": 20,
+    "DispatchMessageA": 4,
+    "DrawTextA": 20,
+    "EndDialog": 8,
+    "EndDoc": 4,
+    "EndPage": 4,
+    "EnumPrintersA": 28,
+    "FileTimeToDosDateTime": 12,
+    "FileTimeToLocalFileTime": 8,
+    "FillRect": 12,
+    "FreeLibrary": 4,
+    "GetClientRect": 8,
+    "GetComputerNameA": 8,
+    "GetDesktopWindow": 0,
+    "GetDeviceCaps": 8,
+    "GetDlgItem": 8,
+    "GetDriveTypeA": 4,
+    "GetFileSize": 8,
+    "GetFileTime": 16,
+    "GetKeyState": 4,
+    "GetLastError": 0,
+    "GetLogicalDrives": 0,
+    "GetMessageA": 16,
+    "GetModuleFileNameA": 12,
+    "GetNearestColor": 8,
+    "GetStockObject": 4,
+    "GetSystemInfo": 4,
+    "GetSystemTimeAsFileTime": 4,
+    "GetTickCount": 0,
+    "GetUserNameA": 8,
+    "GetVolumeInformationA": 32,
+    "GetWindowLongA": 8,
+    "GlobalAlloc": 8,
+    "GlobalFree": 4,
+    "GlobalLock": 4,
+    "GlobalMemoryStatus": 4,
+    "GlobalUnlock": 4,
+    "IntersectRect": 12,
+    "IsBadReadPtr": 8,
+    "LineTo": 12,
+    "LoadCursorA": 8,
+    "LoadIconA": 8,
+    "LoadLibraryA": 4,
+    "LoadLibraryExA": 12,
+    "LocalAlloc": 8,
+    "LocalFree": 4,
+    "MessageBoxA": 16,
+    "MoveToEx": 16,
+    "MulDiv": 12,
+    "MultiByteToWideChar": 24,
+    "OffsetRect": 12,
+    "OutputDebugStringA": 4,
+    "PeekMessageA": 20,
+    "PostQuitMessage": 4,
+    "PtInRect": 12,
+    "QueryPerformanceCounter": 4,
+    "QueryPerformanceFrequency": 4,
+    "ReadFile": 20,
+    "RegisterClassExA": 4,
+    "RemoveFontResourceA": 4,
+    "ResetEvent": 4,
+    "ResumeThread": 4,
+    "SelectObject": 8,
+    "SendMessageA": 16,
+    "SetBkColor": 8,
+    "SetBkMode": 8,
+    "SetCurrentDirectoryA": 4,
+    "SetCursor": 4,
+    "SetEvent": 4,
+    "SetFilePointer": 16,
+    "SetTextAlign": 8,
+    "SetTextColor": 8,
+    "ShowCursor": 4,
+    "ShowWindow": 8,
+    "Sleep": 4,
+    "StartDocA": 8,
+    "StartPage": 4,
+    "StretchDIBits": 52,
+    "SuspendThread": 4,
+    "SystemParametersInfoA": 16,
+    "TerminateThread": 8,
+    "TextOutA": 20,
+    "TranslateMessage": 4,
+    "VirtualQuery": 12,
+    "WaitForMultipleObjects": 16,
+    "WaitForSingleObject": 8,
+    "WaitMessage": 0,
+    "WriteFile": 20,
+    "lstrcpyA": 8,
+    "lstrlenA": 4,
+    "wvsprintfA": 12,
+    # winmm
+    "midiOutClose": 4,
+    "midiOutOpen": 20,
+    "midiOutShortMsg": 8,
+    "timeKillEvent": 4,
+    "timeSetEvent": 20,
+    # DirectX / codec DLLs (called via `_<LIB>_DLL_<Func>` names)
+    "DirectDrawCreate": 12,
+    "DirectInputCreateA": 16,
+    "DirectSoundCreate": 12,
+    "GetFileVersionInfoA": 16,
+    "GetFileVersionInfoSizeA": 8,
+    "VerQueryValueA": 16,
+    "AVIFileExit": 0,
+    "AVIFileGetStream": 16,
+    "AVIFileInfoA": 12,
+    "AVIFileInit": 0,
+    "AVIFileOpenA": 16,
+    "AVIFileRelease": 4,
+    "AVIStreamAddRef": 4,
+    "AVIStreamGetFrame": 8,
+    "AVIStreamGetFrameClose": 4,
+    "AVIStreamGetFrameOpen": 8,
+    "AVIStreamInfoA": 12,
+    "AVIStreamLength": 4,
+    "AVIStreamRead": 28,
+    "AVIStreamReadFormat": 16,
+    "AVIStreamRelease": 4,
+    "AVIStreamStart": 4,
+    "acmStreamClose": 8,
+    "acmStreamConvert": 12,
+    "acmStreamOpen": 32,
+    "acmStreamPrepareHeader": 12,
+    "acmStreamSize": 16,
+    "acmStreamUnprepareHeader": 12,
+}
+
+
+def call_target_symbol(target: Argument) -> Optional[str]:
+    """The symbol a call goes through: the name of a direct call target, or
+    the absolute import slot of a `call [__imp__X]`-style indirect call."""
     if isinstance(target, AsmGlobalSymbol):
-        return bool(RE_DLL_IMPORT.match(target.symbol_name))
+        return target.symbol_name
     if (
         isinstance(target, AsmAddressMode)
         and target.base is None
         and isinstance(target.addend, AsmGlobalSymbol)
     ):
-        return bool(RE_DLL_IMPORT.match(target.addend.symbol_name))
-    return False
+        return target.addend.symbol_name
+    return None
+
+
+def is_stdcall_import(target: Argument) -> bool:
+    """Whether a call target is an undecorated Win32-style DLL import, which
+    uses the stdcall convention (callee pops arguments)."""
+    sym = call_target_symbol(target)
+    return sym is not None and bool(RE_DLL_IMPORT.match(sym))
 
 
 def is_register_indirect_call(target: Argument) -> bool:
@@ -388,22 +557,37 @@ def is_register_indirect_call(target: Argument) -> bool:
     return False
 
 
-def callee_cleanup_bytes(target: Argument) -> int:
-    """Number of stack bytes a call target pops itself (stdcall); 0 for cdecl."""
-    sym: Optional[str] = None
-    if isinstance(target, AsmGlobalSymbol):
-        sym = target.symbol_name
-    elif (
-        isinstance(target, AsmAddressMode)
-        and target.base is None
-        and isinstance(target.addend, AsmGlobalSymbol)
-    ):
-        sym = target.addend.symbol_name
-    if sym is not None:
-        m = RE_STDCALL_IMPORT.match(sym)
-        if m:
-            return int(m.group(1))
-    return 0
+def callee_cleanup_bytes(
+    target: Argument, stdcall_arg_bytes: Dict[str, int]
+) -> Optional[int]:
+    """Number of stack bytes a call target is known to pop itself: 0 for a
+    known-cdecl callee, None when the convention cannot be determined from
+    the name. Sources, most specific first: `__imp__X_N` name decoration,
+    the per-file/context `stdcall_arg_bytes` map (Ghidra `.set` decorations
+    and user context prototypes), and the built-in Win32 API table."""
+    sym = call_target_symbol(target)
+    if sym is None:
+        return None
+    m = RE_STDCALL_IMPORT.match(sym)
+    if m:
+        return int(m.group(1))
+    known = stdcall_arg_bytes.get(sym)
+    if known is not None:
+        return known
+    dll = RE_DLL_IMPORT.match(sym)
+    if dll is not None:
+        api = STDCALL_API_ARG_BYTES.get(dll.group(1))
+        if api is not None:
+            return api
+    elif sym.startswith("__imp__"):
+        api = STDCALL_API_ARG_BYTES.get(sym[len("__imp__") :])
+        if api is not None:
+            return api
+    elif sym.startswith("_"):
+        api = STDCALL_API_ARG_BYTES.get(sym[1:])
+        if api is not None:
+            return api
+    return None
 
 
 def switch_jump_table_labels(
@@ -440,6 +624,239 @@ def switch_jump_table_labels(
 EspState = Tuple[int, Optional[int]]
 
 
+def is_fs_zero_operand(arg: Argument) -> bool:
+    """Whether a (fs-segment) memory operand is exactly [0x0], the head of
+    the SEH exception handler chain."""
+    return (
+        isinstance(arg, AsmAddressMode)
+        and arg.base is None
+        and isinstance(arg.addend, AsmLiteral)
+        and arg.addend.value == 0
+    )
+
+
+CHKSTK_NAMES = {"__chkstk", "_chkstk", "__alloca_probe", "_alloca_probe"}
+
+
+class X86ChkstkPattern(AsmPattern):
+    """MSVC emits `mov eax, N; call __chkstk` instead of `sub esp, N` for
+    frames larger than a page (__chkstk touches each new stack page in order
+    to trigger guard-page growth). Semantically the pair is exactly a frame
+    allocation; rewrite it into the `sub` so the ESP-delta pass sees it."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        parts = matcher.input[matcher.index : matcher.index + 2]
+        if len(parts) < 2:
+            return None
+        mov, call = parts
+        if (
+            isinstance(mov, Instruction)
+            and isinstance(call, Instruction)
+            and mov.mnemonic == "mov"
+            and mov.args[0] == EAX
+            and isinstance(mov.args[1], AsmLiteral)
+            and call.mnemonic == "call"
+            and isinstance(call.args[0], AsmGlobalSymbol)
+            and call.args[0].symbol_name in CHKSTK_NAMES
+        ):
+            sub = AsmInstruction("sub", [ESP, AsmLiteral(mov.args[1].value)])
+            return Replacement([sub], 2, clobbers=[EAX])
+        return None
+
+
+class X86SehPattern(AsmPattern):
+    """MSVC's structured exception handling bookkeeping. After the
+    `push ebp; mov ebp, esp` frame setup, an SEH-using function pushes a
+    16-byte exception registration record and installs it at fs:[0]:
+
+        push -0x1                    # trylevel
+        push <scopetable>
+        push <handler>               # e.g. __except_handler3
+        mov eax, fs:[0]              # old head of the handler chain
+        push eax
+        mov fs:[0], esp              # install the record
+
+    and the epilogue stores the saved head back to fs:[0]. None of this is
+    visible in the function's C-level semantics (__except blocks are entered
+    only through the SEH dispatcher), so the prologue is replaced by a bare
+    16-byte frame allocation and the epilogue store is dropped. Nonstandard
+    fs: accesses are left alone and fail translation with a clear error."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        parts = matcher.input[matcher.index : matcher.index + 6]
+        if len(parts) == 6 and all(isinstance(p, Instruction) for p in parts):
+            p1, p2, p3, p4, p5, p6 = parts
+            assert isinstance(p1, Instruction) and isinstance(p2, Instruction)
+            assert isinstance(p3, Instruction) and isinstance(p4, Instruction)
+            assert isinstance(p5, Instruction) and isinstance(p6, Instruction)
+            if (
+                p1.mnemonic == "push"
+                and isinstance(p1.args[0], AsmLiteral)
+                and p1.args[0].value in (-1, 0xFFFFFFFF)
+                and p2.mnemonic == "push"
+                and isinstance(p2.args[0], AsmGlobalSymbol)
+                and p3.mnemonic == "push"
+                and isinstance(p3.args[0], AsmGlobalSymbol)
+                and "except_handler" in p3.args[0].symbol_name
+                and p4.mnemonic == "mov.fs"
+                and isinstance(p4.args[0], Register)
+                and is_fs_zero_operand(p4.args[1])
+                and p5.mnemonic == "push"
+                and p5.args[0] == p4.args[0]
+                and p6.mnemonic == "mov.fs"
+                and is_fs_zero_operand(p6.args[0])
+                and p6.args[1] == ESP
+            ):
+                sub = AsmInstruction("sub", [ESP, AsmLiteral(16)])
+                return Replacement([sub], 6, clobbers=[p4.args[0]])
+        # The epilogue store restoring the saved chain head, and the
+        # trylevel-management stores MSVC sometimes emits through fs:[0].
+        part = matcher.input[matcher.index]
+        if (
+            isinstance(part, Instruction)
+            and part.mnemonic == "mov.fs"
+            and len(part.args) == 2
+            and is_fs_zero_operand(part.args[0])
+            and isinstance(part.args[1], Register)
+            and part.args[1] != ESP
+        ):
+            return Replacement([], 1, clobbers=[])
+        return None
+
+
+RE_SWITCHD = re.compile(r"^_switchD_(\w+?)_switchD$")
+RE_SWITCHD_TARGET = re.compile(r"^_switchD_(\w+?)_(?:caseD_\w+|default)$")
+
+
+class X86JumpTablePattern(AsmPattern):
+    """Resolve Ghidra jump tables that are referenced by raw address.
+
+    Ghidra usually labels jump tables, in which case the indirect jmp
+    references the label and `switch_jump_table_labels` (plus flow_graph's
+    jump table machinery) finds the table in the file's data. Sometimes the
+    table address has no label of its own, though, and the jmp reads
+    `jmp [eax*4 + 0x41391c]`. The table is still recoverable from Ghidra's
+    switch label convention: such a jmp is itself labeled
+    `_switchD_<id>_switchD`, and the table's `.long` entries all target
+    `_switchD_<id>_caseD_*` labels of this function, appearing as a single
+    consecutive run in the file's data (possibly followed by one shared
+    `_switchD_*_default` entry). Register the recovered table in asm_data
+    under a synthetic name and rewrite the jmp to reference it."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        part = matcher.input[matcher.index]
+        if (
+            not isinstance(part, Instruction)
+            or part.mnemonic != "jmp"
+            or not isinstance(part.args[0], AsmAddressMode)
+        ):
+            return None
+        # Identify the switch id from Ghidra's labels around the jmp: the
+        # label on the jmp itself (`_switchD_<id>_switchD`, when it survived
+        # label pruning), or the first case label after the jmp (MSVC places
+        # the first case body directly after the switch dispatch). The
+        # bounds-check `ja` guard is *not* a reliable source: nested switches
+        # share a default label carrying the outer switch's id.
+        switch_id: Optional[str] = None
+        if matcher.index > 0:
+            prev = matcher.input[matcher.index - 1]
+            if isinstance(prev, Label):
+                for name in prev.names:
+                    m = RE_SWITCHD.match(name)
+                    if m:
+                        switch_id = m.group(1)
+                        break
+        if switch_id is None:
+            for j in range(matcher.index + 1, min(matcher.index + 3, len(matcher.input))):
+                nxt = matcher.input[j]
+                if isinstance(nxt, Label):
+                    for name in nxt.names:
+                        m = RE_SWITCHD_TARGET.match(name)
+                        if m:
+                            switch_id = m.group(1)
+                            break
+                    break
+        if switch_id is None:
+            return None
+        # The table must be referenced by a raw address (a literal in the
+        # address mode's addend); labeled tables are already handled.
+        addr = part.args[0]
+        literals = [
+            sub for sub in traverse_arg(addr.addend) if isinstance(sub, AsmLiteral)
+        ]
+        table_addrs = [lit for lit in literals if lit.value > 0xFFFF]
+        if len(table_addrs) != 1:
+            return None
+        table_addr = table_addrs[0]
+        table_name = self.synthesize_table(matcher, switch_id, table_addr.value)
+        if table_name is None:
+            return None
+
+        def replace_literal(arg: Argument) -> Argument:
+            if arg is table_addr:
+                return AsmGlobalSymbol(table_name)
+            if isinstance(arg, BinOp):
+                return BinOp(
+                    arg.op, replace_literal(arg.lhs), replace_literal(arg.rhs)
+                )
+            return arg
+
+        new_jmp = AsmInstruction(
+            "jmp",
+            [AsmAddressMode(addr.base, replace_literal(addr.addend), None)],
+        )
+        return Replacement([new_jmp], 1, clobbers=[])
+
+    @staticmethod
+    def synthesize_table(
+        matcher: AsmMatcher, switch_id: str, table_addr: int
+    ) -> Optional[str]:
+        table_name = f"_m2c_jtbl_{table_addr:x}"
+        if table_name in matcher.asm_data.values:
+            return table_name
+        re_case = re.compile(rf"^_switchD_{re.escape(switch_id)}_(caseD_\w+|default)$")
+        re_shared_default = re.compile(r"^_switchD_\w+_default$")
+        # Flatten the file's data in order and find the unique consecutive
+        # run of switch entries for this switch id.
+        items: List[Optional[str]] = []
+        for name, entry in matcher.asm_data.values.items():
+            if name.startswith("_m2c_jtbl_"):
+                continue  # Tables synthesized by earlier matches.
+            for item in entry.data:
+                if isinstance(item, bytes):
+                    items.append(None)
+                else:
+                    items.append(item.as_symbol_without_addend())
+        runs: List[List[str]] = []
+        current: List[str] = []
+        for sym in items:
+            if sym is not None and re_case.match(sym):
+                current.append(sym)
+            elif current:
+                # A shared default entry may close the table.
+                if sym is not None and re_shared_default.match(sym):
+                    current.append(sym)
+                runs.append(current)
+                current = []
+        if current:
+            runs.append(current)
+        # A run consisting only of `default` entries is the tail of some
+        # other switch's table, not a table of this switch.
+        runs = [run for run in runs if any("_caseD_" in sym for sym in run)]
+        if len(runs) != 1 or len(runs[0]) < 2:
+            return None
+        targets = runs[0]
+        # All targets must be labels of the current function.
+        if any(target not in matcher.labels for target in targets):
+            return None
+        sort_order = (f"_m2c_jtbl_{table_addr:x}", 0)
+        entry = AsmDataEntry(sort_order, is_readonly=True, is_jtbl=True)
+        for target in targets:
+            entry.data.append(AsmSymbolicData(AsmGlobalSymbol(target), 4))
+        matcher.asm_data.values[table_name] = entry
+        return table_name
+
+
 class X86StackRewritePattern(AsmPattern):
     """Whole-body rewrite that eliminates x86 stack pointer motion.
 
@@ -469,9 +886,27 @@ class X86StackRewritePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
             return None
-        new_body = rewrite_stack_ops(
-            matcher.input, matcher.arch, matcher.asm_data, matcher.labels
-        )
+        try:
+            new_body = rewrite_stack_ops(
+                matcher.input, matcher.arch, matcher.asm_data, matcher.labels
+            )
+        except DecompFailure as e:
+            # An inconsistent dataflow usually means an undecorated stdcall
+            # callee (which pops its own arguments) was taken for cdecl.
+            # Retry with structural stdcall inference enabled for direct
+            # calls, and keep the result only if the dataflow then becomes
+            # consistent; otherwise re-raise the original error. Functions
+            # that analyze fine without inference are never affected.
+            try:
+                new_body = rewrite_stack_ops(
+                    matcher.input,
+                    matcher.arch,
+                    matcher.asm_data,
+                    matcher.labels,
+                    infer_direct_stdcall=True,
+                )
+            except DecompFailure:
+                raise e from None
         return Replacement(new_body, len(matcher.input), clobbers=[])
 
 
@@ -480,6 +915,8 @@ def rewrite_stack_ops(
     arch: ArchAsm,
     asm_data: AsmData,
     labels: Set[str],
+    *,
+    infer_direct_stdcall: bool = False,
 ) -> List[BodyPart]:
     label_pos: Dict[str, int] = {}
     for i, part in enumerate(body):
@@ -540,22 +977,52 @@ def rewrite_stack_ops(
             j -= 1
         return total
 
+    # Callee cleanup information beyond name decoration: Ghidra-exported
+    # `.set sym, "name@N"` decorations for this file, plus stdcall prototypes
+    # from the user-provided context (which take precedence).
+    stdcall_arg_bytes: Dict[str, int] = dict(asm_data.stdcall_arg_bytes)
+    stdcall_arg_bytes.update(getattr(arch, "context_stdcall_arg_bytes", {}))
+
+    call_cleanup: Dict[int, int] = {}
+
     def caller_cleans_up(call_index: int) -> bool:
-        """Whether a caller-side cleanup (`add esp, N` / `pop ecx`) restores
-        esp after the call, before the next control-flow barrier."""
+        """Whether the caller restores esp for this call's arguments: either
+        a cleanup (`add esp, N` / `pop ecx`) directly after the call, or an
+        MSVC batched cleanup further down the same straight-line region -- a
+        single `add esp, N` covering several calls' arguments at once, which
+        must include this call's if it pops more than the argument bytes
+        pushed after this call returned."""
+        extra = 0  # argument bytes pushed since the call returned
         j = call_index + 1
         while j < len(body):
             part = body[j]
             if not isinstance(part, Instruction):
-                return False  # a label: no caller cleanup.
+                return False  # a label: control flow merge; give up.
             base, _ = split_width_suffix(part.mnemonic)
-            if base == "add" and part.args[0] == ESP and isinstance(
-                part.args[1], AsmLiteral
-            ):
-                return True
-            if base == "pop" and part.args[0] in (ECX, EDX):
-                return True
             if (
+                base == "add"
+                and part.args[0] == ESP
+                and isinstance(part.args[1], AsmLiteral)
+            ):
+                if part.args[1].value > extra:
+                    return True
+                extra -= part.args[1].value
+            elif base == "pop" and part.args[0] in (ECX, EDX):
+                if extra == 0:
+                    return True
+                extra -= 4
+            elif part.mnemonic == "push":
+                extra += 4
+            elif base == "call" and part.function_target is not None:
+                # Nested call; account for what its callee pops (computed
+                # already: calls are classified back to front).
+                extra -= call_cleanup.get(j, 0)
+                if extra < 0:
+                    # A later stdcall callee popped more than was pushed
+                    # after this call, so the pushes taken for this call's
+                    # arguments belonged to that callee instead.
+                    return True
+            elif (
                 base in ESP_NEUTRAL_STOP
                 or part.function_target is not None
                 or part.is_return
@@ -572,27 +1039,38 @@ def rewrite_stack_ops(
         call = body[call_index]
         assert isinstance(call, Instruction)
         target = call.args[0]
-        decorated = callee_cleanup_bytes(target)
-        if decorated:
-            return decorated
-        # stdcall callees pop their own arguments. cdecl callees (including
-        # MSVC's batched-cleanup pattern, where one `add esp, N` restores
-        # several direct calls' arguments at once) always have the caller
-        # restore esp. We treat a call as self-cleaning when either:
+        known = callee_cleanup_bytes(target, stdcall_arg_bytes)
+        if known is not None:
+            return known
+        # The callee's convention is not known from its name. stdcall callees
+        # pop their own arguments; cdecl callees (including MSVC's
+        # batched-cleanup pattern, where one `add esp, N` restores several
+        # calls' arguments at once) always have the caller restore esp. We
+        # treat a call as self-cleaning when no caller cleanup follows and
+        # either:
         #  - its name marks it as a Win32/DirectX DLL import
         #    (`_<LIB>_DLL_<Func>`), or
         #  - it is an indirect call through a register (`call [ecx+0x7c]`,
-        #    `call eax`), i.e. a COM/virtual method, and no caller cleanup
-        #    follows. Direct cdecl calls are never register-indirect, so this
-        #    avoids misfiring on the batched-cleanup pattern.
+        #    `call eax`), i.e. a COM/virtual method, or
+        #  - `infer_direct_stdcall` is set: the retry pass extends the same
+        #    inference to direct calls (undecorated stdcall callees), relying
+        #    on the dataflow consistency check to validate the result.
         if is_stdcall_import(target):
             return call_arg_bytes(call_index)
         if is_register_indirect_call(target) and not caller_cleans_up(call_index):
             return call_arg_bytes(call_index)
+        if (
+            infer_direct_stdcall
+            and call_target_symbol(target) is not None
+            and not caller_cleans_up(call_index)
+        ):
+            return call_arg_bytes(call_index)
         return 0
 
-    call_cleanup: Dict[int, int] = {}
-    for i, part in enumerate(body):
+    # Classify calls back to front so that the forward scan in
+    # caller_cleans_up can account for later callees' stack pops.
+    for i in reversed(range(len(body))):
+        part = body[i]
         if isinstance(part, Instruction) and part.function_target is not None:
             base, _ = split_width_suffix(part.mnemonic)
             if base == "call":
@@ -690,8 +1168,20 @@ def rewrite_stack_ops(
                     f"`leave` without a tracked ebp frame: {instr_str(item)}"
                 )
             st = (src_ebp + 4, None)
+        elif base == "and" and args[0] == ESP:
+            # Stack alignment (`and esp, -8`). The rewritten frame is an
+            # abstraction anyway, so treat alignment as a no-op; other masks
+            # are rejected below.
+            if not (
+                isinstance(args[1], AsmLiteral)
+                and args[1].value & 0xFFFFFFFF
+                in (0xFFFFFFF0, 0xFFFFFFF8, 0xFFFFFFFC)
+            ):
+                raise DecompFailure(
+                    f"cannot statically analyze stack adjustment {instr_str(item)}"
+                )
         elif item.function_target is not None:
-            st = (esp + call_cleanup.get(index, callee_cleanup_bytes(args[0])), ebp)
+            st = (esp + call_cleanup.get(index, 0), ebp)
         elif base == "jmp":
             if isinstance(item.jump_target, JumpTarget):
                 if item.jump_target.target in label_pos:
@@ -789,6 +1279,58 @@ def rewrite_stack_ops(
             cleanup_pops.add(i)
         prev_instr = part
         prev_index = i
+
+    def cdecl_arg_bytes(call_index: int) -> int:
+        """For a cdecl call: the number of argument bytes attributable to
+        this call based on the caller-side cleanup that follows, or -1 when
+        no cleanup is found (translation then takes all pending argument
+        stores). Handles immediate cleanup (`add esp, N`, cleanup pops),
+        MSVC batched cleanup (one add covering several calls' arguments),
+        and argument regions consumed by a later stdcall callee (in which
+        case the pushes preceding this call belonged to that callee)."""
+        consume = -1
+        extra = 0  # argument bytes pushed since this call returned
+        j = call_index + 1
+        while j < len(body):
+            part = body[j]
+            if not isinstance(part, Instruction):
+                break
+            base, _ = split_width_suffix(part.mnemonic)
+            if (
+                base == "add"
+                and part.args[0] == ESP
+                and isinstance(part.args[1], AsmLiteral)
+            ):
+                n = part.args[1].value
+                if n > extra:
+                    return (0 if consume < 0 else consume) + n - extra
+                extra -= n
+            elif j in cleanup_pops:
+                if extra == 0:
+                    consume = (0 if consume < 0 else consume) + 4
+                else:
+                    extra -= 4
+            elif part.mnemonic == "push":
+                extra += 4
+            elif base == "call" and part.function_target is not None:
+                extra -= call_cleanup.get(j, 0)
+                if extra < 0:
+                    # A later stdcall callee popped more than was pushed
+                    # after this call: the remaining pushes were its
+                    # arguments, not this call's.
+                    return 0 if consume < 0 else consume
+            elif (
+                base in ESP_NEUTRAL_STOP
+                or part.function_target is not None
+                or part.is_return
+                or part.jump_target is not None
+                or part.is_conditional
+                or ESP in part.outputs
+                or ESP in part.clobbers
+            ):
+                break
+            j += 1
+        return consume
 
     # Locations (offsets from the virtual frame base) that non-cleanup pops
     # read back into the same register, plus `leave`'s implicit pop of ebp.
@@ -909,6 +1451,13 @@ def rewrite_stack_ops(
                 addend = AsmLiteral(sign * addend.rhs.value)
             elif base is None and isinstance(addend, Register):
                 base, addend = addend, AsmLiteral(0)
+            if isinstance(addend, AsmLiteral) and base in (ESP, EBP):
+                # Large negative frame displacements can be exported in
+                # unsigned form (`[ebp + 0xfffff4b4]` meaning `[ebp - 0xb4c]`).
+                value = addend.value & 0xFFFFFFFF
+                if value >= 0x80000000:
+                    value -= 0x100000000
+                addend = AsmLiteral(value)
             if base == ESP:
                 return AsmAddressMode(ESP, adjust(addend, frame_size + esp), None)
             if base == EBP and ebp is not None:
@@ -949,6 +1498,8 @@ def rewrite_stack_ops(
             pass
         elif base in ("sub", "add") and args[0] == ESP:
             pass
+        elif base == "and" and args[0] == ESP:
+            pass  # Stack alignment; a no-op on the abstracted frame.
         elif base == "mov" and args[0] == ESP:
             pass
         elif base == "mov" and args[0] == EBP and args[1] == ESP and ebp_is_frame_ptr:
@@ -971,25 +1522,7 @@ def rewrite_stack_ops(
             # split the pending stack arguments across nested calls.
             consume = call_cleanup.get(i, 0)
             if consume == 0:
-                # cdecl: the argument count is the following caller cleanup.
-                consume = -1
-                j = i + 1
-                while j < len(body):
-                    nxt = body[j]
-                    if not isinstance(nxt, Instruction):
-                        break
-                    nbase, _ = split_width_suffix(nxt.mnemonic)
-                    if (
-                        nbase == "add"
-                        and nxt.args[0] == ESP
-                        and isinstance(nxt.args[1], AsmLiteral)
-                    ):
-                        consume = nxt.args[1].value
-                    elif j in cleanup_pops:
-                        consume = (0 if consume < 0 else consume) + 4
-                        j += 1
-                        continue
-                    break
+                consume = cdecl_arg_bytes(i)
             emit(
                 "call",
                 [rewrite_operand(args[0]), AsmLiteral(frame_size + esp), AsmLiteral(consume)],
@@ -1074,7 +1607,50 @@ class X86Arch(Arch):
 
     aliased_regs: Dict[str, Register] = {}
 
-    asm_patterns: List[AsmPattern] = [X86StackRewritePattern()]
+    asm_patterns: List[AsmPattern] = [
+        X86ChkstkPattern(),
+        X86SehPattern(),
+        X86JumpTablePattern(),
+        X86StackRewritePattern(),
+    ]
+
+    def __init__(self) -> None:
+        # Callee-cleanup byte counts for stdcall functions declared in the
+        # user-provided context (via __attribute__((stdcall))), keyed by asm
+        # symbol name. Populated by load_stdcall_context.
+        self.context_stdcall_arg_bytes: Dict[str, int] = {}
+
+    def load_stdcall_context(self, typemap: TypeMap) -> None:
+        """Record callee-cleanup byte counts for context functions declared
+        with __attribute__((stdcall)): the number of stack bytes the callee
+        pops on return, i.e. the sum of its parameter sizes rounded up to
+        4-byte slots. Context declarations use asm symbol names (e.g.
+        `_MessageBoxA` for MSVC-compiled 32-bit code)."""
+        from .c_types import parse_struct_member, resolve_typedefs
+        from m2c_pycparser import c_ast as ca
+
+        for name, fn in typemap.functions.items():
+            if not fn.is_stdcall or fn.params is None or fn.is_variadic:
+                continue
+            total = 0
+            for param in fn.params:
+                tp, _ = resolve_typedefs(param.type, typemap)
+                if isinstance(tp, (ca.PtrDecl, ca.ArrayDecl, ca.FuncDecl)):
+                    # Pointers, and arrays/functions, which decay to pointers.
+                    size = 4
+                else:
+                    size, _, _ = parse_struct_member(
+                        param.type,
+                        param.name or "<anonymous>",
+                        typemap,
+                        allow_unsized=False,
+                    )
+                total += (size + 3) & ~3
+            self.context_stdcall_arg_bytes[name] = total
+            # x86 asm symbols carry a leading-underscore platform prefix
+            # (`_MessageBoxA` for `MessageBoxA`); match either spelling.
+            if not name.startswith("_"):
+                self.context_stdcall_arg_bytes[f"_{name}"] = total
 
     def missing_return(self) -> List[Instruction]:
         return [self.parse("ret", [], InstructionMeta.missing())]
@@ -1883,6 +2459,47 @@ class X86Arch(Arch):
                             )
 
             eval_fn = eval_xchg
+        elif base == "mov.fs" and len(args) == 2:
+            # An fs-segment absolute access (on Win32, the Thread Information
+            # Block). The canonical SEH-chain bookkeeping at fs:[0] is
+            # removed by X86SehPattern before translation; any other access
+            # (e.g. the stack bounds at fs:[4]/fs:[8]) is modeled as an
+            # explicit opaque platform read/write.
+            fs_dst, fs_src = args
+            if (
+                isinstance(fs_dst, Register)
+                and isinstance(fs_src, AsmAddressMode)
+                and fs_src.base is None
+                and isinstance(fs_src.addend, AsmLiteral)
+            ):
+                offset = fs_src.addend.value
+                outputs = [fs_dst]
+                is_load = True
+
+                def eval_fs_load(s: NodeState, a: InstrArgs) -> None:
+                    assert isinstance(fs_dst, Register)
+                    s.set_reg(
+                        fs_dst,
+                        fn_op("M2C_FS_LOAD", [Literal(offset)], width_type(width)),
+                    )
+
+                eval_fn = eval_fs_load
+            elif (
+                isinstance(fs_dst, AsmAddressMode)
+                and fs_dst.base is None
+                and isinstance(fs_dst.addend, AsmLiteral)
+            ):
+                store_offset = fs_dst.addend.value
+                src_operand(fs_src)
+                is_store = True
+
+                def eval_fs_store(s: NodeState, a: InstrArgs) -> None:
+                    value = op_value(a, 1, width)
+                    s.write_statement(
+                        void_fn_op("M2C_FS_STORE", [Literal(store_offset), value])
+                    )
+
+                eval_fn = eval_fs_store
         elif mnemonic in cls.instrs_string:
             str_inputs, str_outputs, is_load, is_store = cls.instrs_string[mnemonic]
             inputs = list(str_inputs)
@@ -1922,14 +2539,28 @@ class X86Arch(Arch):
                     s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", count))
                     s.set_reg(ECX, Literal(0))
                 elif op == "scas":
-                    # repne scasb with al = 0: the strlen idiom. edi ends one
-                    # past the NUL; ecx is decremented once per iteration.
+                    # repne scasb: scan [edi...] for the byte in al, leaving
+                    # edi one past the match and decrementing ecx once per
+                    # byte scanned. With al = 0 this is the strlen idiom; for
+                    # other (or statically unknown) al values, model the scan
+                    # as a memchr. Both assume the byte is found before ecx
+                    # runs out, which holds for the compiler-emitted
+                    # strlen/strcpy expansions this models.
                     al = early_unwrap(a.regs[EAX])
-                    if not (isinstance(al, Literal) and al.value & 0xFF == 0):
-                        raise DecompFailure(
-                            f"x86 `{instr_str}` with non-zero al is not supported"
+                    if isinstance(al, Literal) and al.value & 0xFF == 0:
+                        length: Expression = fn_op(
+                            "M2C_STRLEN", [a.regs[EDI]], Type.u32()
                         )
-                    length = fn_op("M2C_STRLEN", [a.regs[EDI]], Type.u32())
+                    else:
+                        needle = as_type(
+                            a.regs[EAX], Type.u8(), silent=True, unify=False
+                        )
+                        found = fn_op(
+                            "M2C_MEMCHR",
+                            [a.regs[EDI], needle, as_intish(a.regs[ECX])],
+                            Type.ptr(),
+                        )
+                        length = BinaryOp.intptr(found, "-", a.regs[EDI])
                     advance = BinaryOp.int(length, "+", Literal(1))
                     s.set_reg(
                         ECX, BinaryOp.int(a.regs[ECX], "-", advance)
