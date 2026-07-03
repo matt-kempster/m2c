@@ -567,10 +567,10 @@ def parse_flags(flags: List[str]) -> Options:
         default="mips-ido-c",
         help="Target platform, compiler, and language triple. "
         "Supported platforms: [mips, mipsel, mipsee, ppc, arm, gba, x86]. "
-        "Supported compilers: [ido, gcc, mwcc]. "
+        "Supported compilers: [ido, gcc, mwcc, msvc]. "
         "Supported languages: [c, c++]. "
         "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, `arm` for "
-        "arm-gcc-c, and `x86` for x86-gcc-c.",
+        "arm-gcc-c, and `x86` for x86-msvc-c. Use x86-gcc-c for GCC-style x86.",
     )
     group.add_argument(
         "--passes",
