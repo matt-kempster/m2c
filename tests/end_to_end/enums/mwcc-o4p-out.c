@@ -1,7 +1,7 @@
 enum my_enum test(enum my_enum x) {
     switch (x) {                                    /* irregular */
     case ZERO:
-        return array->unk0;
+        return array[0];
     case TWO_TOO:
         return array[1];
     case THREE:

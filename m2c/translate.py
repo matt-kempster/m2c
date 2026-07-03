@@ -1580,6 +1580,16 @@ class StructAccess(Expression):
 
         if field_path is not None and field_path != [0]:
             has_nonzero_access = True
+        elif (
+            field_path == [0]
+            and isinstance(var, AddressOf)
+            and var.expr.type.is_array()
+        ):
+            # Element 0 of a known array: keep the resolved [0] path so this
+            # renders as `var[0]`. Accesses at other offsets are just other
+            # elements, not evidence of an unknown struct, so they shouldn't
+            # force the unk0 fallback below.
+            has_nonzero_access = True
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = fmt.format_int(self.offset)
             return f"M2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"

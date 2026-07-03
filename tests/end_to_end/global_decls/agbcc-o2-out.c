@@ -12,6 +12,6 @@ s32 test(void) {
     extern_float = __mulsf3(extern_float, 0x43E40000);
     static_fn(&static_A);
     extern_fn(static_A_ptr);
-    *static_bss_array = *static_array + *static_ro_array;
+    static_bss_array[0] = static_array[0] + static_ro_array[0];
     return static_int;
 }
