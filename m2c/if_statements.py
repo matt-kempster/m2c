@@ -1152,11 +1152,22 @@ def build_switch_between(
     jump = get_block_info(switch).switch_control
     assert jump is not None
 
+    if jump.case_map is not None:
+        # Two-level switch: recover the original case values by composing the
+        # byte-sized case-mapping table with the jump table.
+        cases = [
+            (i + jump.offset, switch.cases[b])
+            for i, b in enumerate(jump.case_map)
+            if b < len(switch.cases)
+        ]
+    else:
+        cases = list(enumerate(switch.cases, start=jump.offset))
+
     switch_index = add_labels_for_switch(
         context,
         switch,
         jump.control_expr.type,
-        cases=list(enumerate(switch.cases, start=jump.offset)),
+        cases=cases,
         default_node=default,
     )
 

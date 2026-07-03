@@ -1988,6 +1988,12 @@ class SwitchControl:
     jump_table: Optional[GlobalSymbol] = None
     offset: int = 0
     is_irregular: bool = False
+    # For two-level switches (MSVC x86): a byte-sized case-mapping table,
+    # indexed by `control_expr - offset`, whose entries select the jump table
+    # entry. When set, the original case values are recovered by composing
+    # the two tables: control value `offset + i` maps to jump table entry
+    # `case_map[i]`.
+    case_map: Optional[bytes] = None
 
     def matches_guard_condition(self, cond: Condition) -> bool:
         """
@@ -2008,8 +2014,9 @@ class SwitchControl:
             if (
                 not isinstance(left_expr, BinaryOp)
                 or late_unwrap(left_expr.left) != late_unwrap(self.control_expr)
-                or left_expr.op != "+"
-                or late_unwrap(left_expr.right) != Literal(-self.offset)
+                or left_expr.op not in ("+", "-")
+                or late_unwrap(left_expr.right)
+                != Literal(-self.offset if left_expr.op == "+" else self.offset)
             ):
                 return False
         elif left_expr != late_unwrap_ints(self.control_expr):
@@ -2076,14 +2083,60 @@ class SwitchControl:
             return error_expr
         control_expr = mul_expr.left
 
-        # Optionally match `control_expr + (-offset)`
+        # MSVC lowers switches whose case values are dense-but-clustered in
+        # two levels: a byte-sized case-mapping table indexed by the control
+        # value selects the jump table entry (`movzx r, byte [x + map];
+        # jmp [r*4 + table]`). Recognize `*(&map + x)` as the control and
+        # compose the two tables, switching on `x` directly: in-range value
+        # `x = i` selects jump table entry `map[i]`.
+        case_map: Optional[bytes] = None
+        map_expr = early_unwrap_ints(control_expr)
+        if (
+            isinstance(map_expr, StructAccess)
+            and map_expr.offset == 0
+            and map_expr.target_size == 1
+        ):
+            map_add = early_unwrap(map_expr.struct_var)
+            if isinstance(map_add, BinaryOp) and map_add.op == "+":
+                map_lhs = early_unwrap(map_add.left)
+                map_rhs = early_unwrap(map_add.right)
+                map_sym: Optional[GlobalSymbol] = None
+                idx_expr: Expression
+                if isinstance(map_lhs, AddressOf) and isinstance(
+                    map_lhs.expr, GlobalSymbol
+                ):
+                    map_sym, idx_expr = map_lhs.expr, map_add.right
+                elif isinstance(map_rhs, AddressOf) and isinstance(
+                    map_rhs.expr, GlobalSymbol
+                ):
+                    map_sym, idx_expr = map_rhs.expr, map_add.left
+                if map_sym is not None and map_sym.asm_data_entry is not None:
+                    map_entry = map_sym.asm_data_entry
+                    if (
+                        len(map_entry.data) == 1
+                        and isinstance(map_entry.data[0], bytes)
+                        and map_entry.data[0]
+                        and max(map_entry.data[0]) < num_cases
+                    ):
+                        case_map = map_entry.data[0]
+                        num_cases = len(case_map)
+                        control_expr = idx_expr
+                        # The mapping table is consumed by the switch; don't
+                        # emit it as a data symbol.
+                        map_entry.is_jtbl = True
+
+        # Optionally match `control_expr + (-offset)` or `control_expr - offset`
         offset = 0
         uw_control_expr = early_unwrap(control_expr)
-        if isinstance(uw_control_expr, BinaryOp) and uw_control_expr.op == "+":
+        if isinstance(uw_control_expr, BinaryOp) and uw_control_expr.op in ("+", "-"):
             offset_lit = early_unwrap(uw_control_expr.right)
             if isinstance(offset_lit, Literal):
                 control_expr = uw_control_expr.left
-                offset = -offset_lit.value
+                offset = (
+                    -offset_lit.value
+                    if uw_control_expr.op == "+"
+                    else offset_lit.value
+                )
 
         # Check that it is really a jump table
         # TODO: check that it's actually the same jump table as we found in the
@@ -2091,7 +2144,7 @@ class SwitchControl:
         if jump_table.asm_data_entry is None or not jump_table.asm_data_entry.is_jtbl:
             return error_expr
 
-        return SwitchControl(control_expr, num_cases, jump_table, offset)
+        return SwitchControl(control_expr, num_cases, jump_table, offset, case_map=case_map)
 
 
 @dataclass
