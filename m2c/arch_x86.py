@@ -79,6 +79,7 @@ Design notes:
 
 from __future__ import annotations
 import re
+import struct
 from dataclasses import replace
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
@@ -139,6 +140,7 @@ from .evaluate import (
     handle_add_real,
     handle_addi_real,
     handle_bitinv,
+    handle_convert,
     handle_or,
     handle_sub,
     make_store_real,
@@ -149,6 +151,7 @@ from .evaluate import (
     void_fn_op,
 )
 from .types import FunctionSignature
+from .x86_fpu import X86FpuRewritePattern
 
 
 EAX = Register("eax")
@@ -1575,6 +1578,81 @@ FLAGS_CLOBBER = "clobber"
 FLAGS_NONE = "none"
 
 
+# --- x87 FPU eval helpers (used by X86Arch._parse_fpu) ---
+#
+# The x87 register stack is eliminated by X86FpuRewritePattern (m2c/x86_fpu.py),
+# which rewrites every reachable x87 instruction into a fictive form carrying
+# explicit flat virtual registers f0..f7 (e.g. `fadd $f1, $f0`, `fstp.s [m],
+# $f2`). The handlers below give those fictive forms their semantics. Virtual
+# registers carry Type.floatish() (width-less, like a physical 80-bit slot);
+# concrete f32/f64 width only exists at memory boundaries.
+
+
+def fpu_float_type(width: int) -> Type:
+    """The C float type for an x87 memory operand of the given byte width."""
+    return Type.f64() if width == 8 else Type.f32()
+
+
+def fpu_int_type(width: int) -> Type:
+    """The signed C integer type for an fild/fistp operand of a given width."""
+    return {2: Type.s16(), 4: Type.s32(), 8: Type.s64()}[width]
+
+
+def is_f64_expr(expr: Expression) -> bool:
+    return expr.type.is_float() and expr.type.get_size_bits() == 64
+
+
+def fpu_binop(
+    op: str, lhs: Expression, rhs: Expression, *, reverse: bool = False
+) -> Expression:
+    """Build an x87 arithmetic binop. Result is f64 when either operand is
+    known-f64 (matching C's float->double promotion for the common
+    `float op double_constant` pattern), else f32. `reverse` handles the
+    fsubr/fdivr forms, which compute `rhs op lhs`."""
+    a, b = (rhs, lhs) if reverse else (lhs, rhs)
+    if is_f64_expr(lhs) or is_f64_expr(rhs):
+        return BinaryOp.f64(a, op, b)
+    return BinaryOp.f32(a, op, b)
+
+
+def f32_literal(value: float) -> Literal:
+    """A float constant as an f32-typed Literal holding its IEEE-754 bits."""
+    bits = struct.unpack(">I", struct.pack(">f", value))[0]
+    return Literal(bits, type=Type.f32())
+
+
+# x87 arithmetic op -> (C operator, reverse-operands flag).
+FPU_ARITH_OPS: Dict[str, Tuple[str, bool]] = {
+    "fadd": ("+", False),
+    "fsub": ("-", False),
+    "fsubr": ("-", True),
+    "fmul": ("*", False),
+    "fdiv": ("/", False),
+    "fdivr": ("/", True),
+    "faddp": ("+", False),
+    "fsubp": ("-", False),
+    "fsubrp": ("-", True),
+    "fmulp": ("*", False),
+    "fdivp": ("/", False),
+    "fdivrp": ("/", True),
+    "fiadd": ("+", False),
+    "fisub": ("-", False),
+    "fisubr": ("-", True),
+    "fimul": ("*", False),
+    "fidiv": ("/", False),
+    "fidivr": ("/", True),
+}
+
+# x87 unary op -> builder (value -> new value).
+FPU_UNARY_OPS: Dict[str, Callable[[Expression], Expression]] = {
+    "fchs": lambda v: UnaryOp("-", v, type=Type.floatish()),
+    "fabs": lambda v: fn_op("fabsf", [v], Type.f32()),
+    "fsqrt": lambda v: fn_op("sqrtf", [v], Type.f32()),
+    "fsin": lambda v: fn_op("sinf", [v], Type.f32()),
+    "fcos": lambda v: fn_op("cosf", [v], Type.f32()),
+}
+
+
 class X86Arch(Arch):
     arch = Target.ArchEnum.X86
 
@@ -1596,13 +1674,27 @@ class X86Arch(Arch):
     flag_regs = [Register(r) for r in ["n", "z", "c", "v", "hi", "ge", "gt"]]
     temp_regs = [EAX] + simple_temp_regs + flag_regs
     saved_regs = [EBX, ESI, EDI, EBP, EIP]
-    # x87 FPU stack registers (untranslated, but must parse)
+    # Raw x87 stack-register names (`st(0)`..`st(7)`, spelled `st0`..`st7`).
+    # These reach `parse` only during initial parsing; X86FpuRewritePattern
+    # rewrites every reachable use into a flat virtual register before
+    # translation, so they never carry real semantics.
     fpu_regs = [Register(f"st{i}") for i in range(8)]
+    # The bottom-anchored flat x87 virtual registers produced by the FPU
+    # prepass. Their `f` prefix gives them float treatment (Register.is_float)
+    # for free. They are in neither temp_regs (so calls don't clear them --
+    # x87 values live across calls in this corpus) nor saved_regs (so they get
+    # no spurious initial "caller value", keeping float-return detection clean).
+    float_regs = [Register(f"f{i}") for i in range(8)]
     # Sub-registers are parsed as their own Register instances so that operand
     # widths survive until normalize_instruction, which rewrites them into
     # full registers plus a width-suffixed mnemonic.
     all_regs = (
-        saved_regs + temp_regs + [stack_pointer_reg] + fpu_regs + list(SUB_REGS.keys())
+        saved_regs
+        + temp_regs
+        + [stack_pointer_reg]
+        + fpu_regs
+        + float_regs
+        + list(SUB_REGS.keys())
     )
 
     aliased_regs: Dict[str, Register] = {}
@@ -1612,6 +1704,7 @@ class X86Arch(Arch):
         X86SehPattern(),
         X86JumpTablePattern(),
         X86StackRewritePattern(),
+        X86FpuRewritePattern(),
     ]
 
     def __init__(self) -> None:
@@ -1832,6 +1925,21 @@ class X86Arch(Arch):
         "repe.cmpsb": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
         "repe.cmpsw": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
         "repe.cmpsd": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
+    }
+    # Fictive x87 mnemonics produced by X86FpuRewritePattern, dispatched to
+    # _parse_fpu. (Raw x87 forms -- which use st(i) names, never f0..f7 --
+    # reach `parse` only during initial parsing and fall through to the
+    # unknown-instruction handler; the FPU prepass then rewrites them.)
+    instrs_fpu: Set[str] = {
+        "fld", "fild", "fld1", "fldz", "fldpi", "fldl2e", "fldl2t", "fldlg2",
+        "fldln2", "fmov", "fmovpop", "fpop", "fst", "fstp", "fistp",
+        "fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr",
+        "faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp",
+        "fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr",
+        "fchs", "fabs", "fsqrt", "fsin", "fcos", "fxch",
+        "fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp", "ftst",
+        "ficom", "frndint", "fscale", "f2xm1", "fprem", "fprem1", "fpatan",
+        "fyl2x", "fyl2xp1", "fxam",
     }
     # Non-rep string instructions (single element): mnemonic -> (inputs,
     # outputs, load, store).
@@ -2583,6 +2691,12 @@ class X86Arch(Arch):
         elif base in cls.instrs_ignore:
             is_effectful = False
             eval_fn = None
+        elif base in cls.instrs_fpu and any(
+            isinstance(a, Register) and a.is_float() for a in args
+        ):
+            # A fictive x87 instruction emitted by X86FpuRewritePattern (raw
+            # x87 forms name st(i), never f0..f7, so this gate excludes them).
+            return self._parse_fpu(base, width, args, meta, instr_str)
         else:
             # Unknown instruction (x87 FPU, etc.). Guess a structural shape
             # so that file parsing and flow graph construction still work;
@@ -2608,6 +2722,232 @@ class X86Arch(Arch):
             is_store=is_store,
             is_load=is_load,
             is_effectful=is_effectful,
+            eval_fn=eval_fn,
+        )
+
+    def _parse_fpu(
+        self,
+        base: str,
+        width: int,
+        args: List[Argument],
+        meta: InstructionMeta,
+        instr_str: str,
+    ) -> Instruction:
+        """Build an Instruction for a fictive x87 op (see the FPU eval helpers
+        above and m2c/x86_fpu.py). Virtual registers f0..f7 are ordinary
+        registers to the rest of m2c; the only novelty is that popping ops
+        *kill* their consumed register (drop it from outputs, list it in
+        clobbers, and `del s.regs[...]` in eval) so a popped value stops
+        existing -- which is what makes float-return detection sound."""
+        cls = type(self)
+        inputs: List[Location] = []
+        outputs: List[Location] = []
+        clobbers: List[Location] = []
+        is_load = False
+        is_store = False
+        eval_fn: Optional[Callable[[NodeState, InstrArgs], object]]
+
+        def add_operand_inputs(arg: Argument) -> None:
+            for loc in cls._operand_inputs(arg):
+                if loc not in inputs:
+                    inputs.append(loc)
+
+        def not_implemented(reason: str) -> Callable[[NodeState, InstrArgs], None]:
+            for arg in args:
+                add_operand_inputs(arg)
+
+            def fail(s: NodeState, a: InstrArgs) -> None:
+                raise DecompFailure(
+                    f"x87 instruction evaluation is not implemented yet "
+                    f"({reason}): {instr_str}"
+                )
+
+            return fail
+
+        # --- Loads: dst register + memory source ---
+        if base in ("fld", "fild"):
+            dst = args[0]
+            assert isinstance(dst, Register)
+            add_operand_inputs(args[1])
+            outputs = [dst]
+            is_load = True
+            if base == "fld":
+                ftype = fpu_float_type(width)
+
+                def eval_fld(s: NodeState, a: InstrArgs) -> None:
+                    s.set_reg(dst, mem_load(a, 1, ftype))
+
+                eval_fn = eval_fld
+            else:
+                itype = fpu_int_type(width)
+
+                def eval_fild(s: NodeState, a: InstrArgs) -> None:
+                    val = mem_load(a, 1, itype)
+                    s.set_reg(dst, handle_convert(val, Type.floatish(), itype))
+
+                eval_fn = eval_fild
+
+        # --- Constants (fld1/fldz) ---
+        elif base in ("fld1", "fldz"):
+            dst = args[0]
+            assert isinstance(dst, Register)
+            outputs = [dst]
+            value = 1.0 if base == "fld1" else 0.0
+
+            def eval_fconst(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(dst, f32_literal(value))
+
+            eval_fn = eval_fconst
+
+        # --- Register moves (fld/fst st(i), fstp st(i) with i>0) ---
+        elif base in ("fmov", "fmovpop"):
+            dst, src = args
+            assert isinstance(dst, Register) and isinstance(src, Register)
+            inputs = [src]
+            outputs = [dst]
+            pop = base == "fmovpop"
+            if pop:
+                clobbers = [src]
+
+            def eval_fmov(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(dst, a.regs[src])
+                if pop:
+                    del s.regs[src]
+
+            eval_fn = eval_fmov
+
+        # --- Pop-discard (fstp st(0)) ---
+        elif base == "fpop":
+            reg = args[0]
+            assert isinstance(reg, Register)
+            inputs = [reg]
+            clobbers = [reg]
+
+            def eval_fpop(s: NodeState, a: InstrArgs) -> None:
+                del s.regs[reg]
+
+            eval_fn = eval_fpop
+
+        # --- Stores (fst/fstp to memory) ---
+        elif base in ("fst", "fstp"):
+            src = args[1]
+            assert isinstance(src, Register)
+            add_operand_inputs(args[0])
+            if src not in inputs:
+                inputs.append(src)
+            stack_loc = cls._stack_location(args[0]) if isinstance(
+                args[0], AsmAddressMode
+            ) else None
+            if stack_loc is not None:
+                outputs.append(stack_loc)
+            is_store = True
+            pop = base == "fstp"
+            if pop:
+                clobbers = [src]
+            ftype = fpu_float_type(width)
+
+            def eval_fst(s: NodeState, a: InstrArgs) -> None:
+                store = mem_store(a, 0, a.regs[src], src, ftype)
+                if store is not None:
+                    s.store_memory(store, src)
+                if pop:
+                    del s.regs[src]
+
+            eval_fn = eval_fst
+
+        # --- Non-popping arithmetic: dst register op src (register or mem) ---
+        elif base in ("fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr"):
+            dst, src = args
+            assert isinstance(dst, Register)
+            inputs = [dst]
+            if isinstance(src, Register):
+                if src not in inputs:
+                    inputs.append(src)
+            else:
+                add_operand_inputs(src)
+                is_load = True
+            outputs = [dst]
+            op, reverse = FPU_ARITH_OPS[base]
+            ftype = fpu_float_type(width)
+
+            def eval_arith(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.regs[dst]
+                rhs = a.regs[src] if isinstance(src, Register) else mem_load(
+                    a, 1, ftype
+                )
+                s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
+
+            eval_fn = eval_arith
+
+        # --- Popping arithmetic (faddp st(i), st): dst op st0, then pop st0 ---
+        elif base in ("faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp"):
+            dst, src = args
+            assert isinstance(dst, Register) and isinstance(src, Register)
+            inputs = [dst, src]
+            outputs = [dst]
+            clobbers = [src]
+            op, reverse = FPU_ARITH_OPS[base]
+
+            def eval_arithp(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.regs[dst]
+                rhs = a.regs[src]
+                s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
+                del s.regs[src]
+
+            eval_fn = eval_arithp
+
+        # --- Unary operations on the top of stack ---
+        elif base in FPU_UNARY_OPS:
+            reg = args[0]
+            assert isinstance(reg, Register)
+            inputs = [reg]
+            outputs = [reg]
+            builder = FPU_UNARY_OPS[base]
+
+            def eval_unary_fpu(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(reg, builder(a.regs[reg]))
+
+            eval_fn = eval_unary_fpu
+
+        # --- fxch: swap two slots ---
+        elif base == "fxch":
+            ra, rb = args
+            assert isinstance(ra, Register) and isinstance(rb, Register)
+            inputs = [ra, rb]
+            outputs = [ra, rb]
+
+            def eval_fxch(s: NodeState, a: InstrArgs) -> None:
+                va = a.regs[ra]
+                vb = a.regs[rb]
+                s.set_reg(ra, vb)
+                s.set_reg(rb, va)
+
+            eval_fn = eval_fxch
+
+        # --- Not yet implemented: fail cleanly (never crash, never wrong). ---
+        elif base in ("fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp",
+                      "ftst", "ficom"):
+            eval_fn = not_implemented("x87 compare")
+        elif base in ("fistp", "fiadd", "fisub", "fisubr", "fimul", "fidiv",
+                      "fidivr"):
+            eval_fn = not_implemented("x87 int conversion")
+        else:
+            eval_fn = not_implemented("x87 transcendental")
+
+        return Instruction(
+            mnemonic=base if width == 4 else base + WIDTH_SUFFIXES[width],
+            args=args,
+            meta=meta,
+            inputs=inputs,
+            clobbers=clobbers,
+            outputs=outputs,
+            jump_target=None,
+            function_target=None,
+            is_conditional=False,
+            is_return=False,
+            is_store=is_store,
+            is_load=is_load,
+            is_effectful=is_store,
             eval_fn=eval_fn,
         )
 

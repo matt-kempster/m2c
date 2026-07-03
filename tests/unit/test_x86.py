@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from typing import Tuple
+from typing import List, Set, Tuple
 
 from m2c.arch_x86 import X86Arch
+from m2c.error import DecompFailure
 from m2c.asm_instruction import (
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -564,6 +565,170 @@ _switchD_0040100d_switchdataD_00401058:
             symbols,
             ["_switchD_0040100d_caseD_1", "_switchD_0040100d_caseD_2"],
         )
+
+
+class TestX86FpuRewrite(unittest.TestCase):
+    """The x87 stack-elimination prepass: depth dataflow and the rewrite of
+    stack-relative st(i) names into flat virtual registers f0..f7."""
+
+    def setUp(self) -> None:
+        self.arch = X86Arch()
+
+    def rewrite(self, lines: str) -> List[str]:
+        """Parse a small body (labels end with ':') and run the FPU prepass,
+        returning the rewritten Instructions as strings."""
+        from m2c.asm_file import AsmData, Label
+        from m2c.asm_pattern import BodyPart
+        from m2c.x86_fpu import rewrite_fpu_ops
+
+        asm_state = AsmState(reg_formatter=RegFormatter())
+        body: List[BodyPart] = []
+        labels: Set[str] = set()
+        for raw in lines.strip().splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.endswith(":"):
+                body.append(Label([line[:-1]]))
+                labels.add(line[:-1])
+                continue
+            asm = parse_asm_instruction(line, self.arch, asm_state)
+            body.append(
+                self.arch.parse(asm.mnemonic, asm.args, InstructionMeta.missing())
+            )
+        out = rewrite_fpu_ops(body, self.arch, AsmData(), labels)
+        return [str(p) for p in out if isinstance(p, Instruction)]
+
+    def test_straight_line_depth(self) -> None:
+        # A push defines f{depth}; arithmetic keeps the top's name.
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            FADD dword ptr [ESP + 0x8]
+            FLD dword ptr [ESP + 0xc]
+            FMULP ST(1), ST(0)
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[0], "fld $f0, 0x4($esp)")
+        self.assertEqual(out[1], "fadd $f0, 0x8($esp)")
+        self.assertEqual(out[2], "fld $f1, 0xc($esp)")
+        # fmulp st(1),st(0): f0 = f0 * f1, pop f1.
+        self.assertEqual(out[3], "fmulp $f0, $f1")
+        self.assertEqual(out[4], "fstp [_g], $f0")
+
+    def test_discard_pop(self) -> None:
+        # `fstp st(0)` is a pure pop-discard.
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            FLD dword ptr [ESP + 0x8]
+            FSTP ST(0)
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[2], "fpop $f1")
+        self.assertEqual(out[3], "fstp [_g], $f0")
+
+    def test_fxch_swaps_slots(self) -> None:
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            FLD dword ptr [ESP + 0x8]
+            FXCH
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        # Bare fxch swaps st0 (f1) and st1 (f0); depth is unchanged.
+        self.assertEqual(out[2], "fxch $f1, $f0")
+        self.assertEqual(out[3], "fstp [_g], $f1")
+
+    def test_fld_st_duplicates_top(self) -> None:
+        out = self.rewrite(
+            """
+            FLD dword ptr [ESP + 0x4]
+            FLD ST(0)
+            FADD dword ptr [ESP + 0x8]
+            FMULP ST(1), ST(0)
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        # fld st(0) duplicates f0 into the new top f1.
+        self.assertEqual(out[1], "fmov $f1, $f0")
+
+    def test_merge_equal_depths(self) -> None:
+        # Both branches reach L at depth 1: consistent.
+        out = self.rewrite(
+            """
+            MOV EAX, dword ptr [ESP + 0x4]
+            FLD dword ptr [ESP + 0x8]
+            TEST EAX, EAX
+            JZ L
+            FADD dword ptr [ESP + 0xc]
+            L:
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertIn("fstp [_g], $f0", out)
+
+    def test_merge_conflict_raises(self) -> None:
+        # One path pushes twice, the other once: depth mismatch at the label.
+        with self.assertRaises(DecompFailure) as cm:
+            self.rewrite(
+                """
+                MOV EAX, dword ptr [ESP + 0x4]
+                TEST EAX, EAX
+                JZ L
+                FLD dword ptr [ESP + 0x8]
+                L:
+                FLD dword ptr [ESP + 0xc]
+                RET
+                """
+            )
+        self.assertIn("depth mismatch", str(cm.exception))
+
+    def test_loop_preserves_depth(self) -> None:
+        # A back-edge that keeps the stack balanced converges.
+        out = self.rewrite(
+            """
+            FLDZ
+            L:
+            FADD dword ptr [ESP + 0x4]
+            MOV EAX, dword ptr [ESP + 0x8]
+            TEST EAX, EAX
+            JNZ L
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[0], "fldz $f0")
+        self.assertIn("fadd $f0, 0x4($esp)", out)
+
+    def test_underflow_raises(self) -> None:
+        with self.assertRaises(DecompFailure) as cm:
+            self.rewrite(
+                """
+                FSTP dword ptr [_g]
+                RET
+                """
+            )
+        self.assertIn("underflow", str(cm.exception))
+
+    def test_unsupported_instruction_raises(self) -> None:
+        with self.assertRaises(DecompFailure) as cm:
+            self.rewrite(
+                """
+                FLD dword ptr [ESP + 0x4]
+                FPTAN
+                RET
+                """
+            )
+        self.assertIn("fptan", str(cm.exception))
 
 
 if __name__ == "__main__":
