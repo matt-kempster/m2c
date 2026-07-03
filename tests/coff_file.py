@@ -35,6 +35,10 @@ class CoffSection:
     address: int
     name: str
     data: bytes = field(repr=False)
+    # Declared byte length of the section. Equals len(data) for initialized
+    # sections; for uninitialized sections (.bss) it is the reserved size even
+    # though `data` is empty, so the symbols there can be emitted with `.space`.
+    size: int = 0
     relocations: Dict[int, CoffRelocation] = field(default_factory=dict, repr=False)
     symbols: Dict[int, CoffSymbol] = field(default_factory=dict, repr=False)
 
@@ -126,14 +130,20 @@ class CoffFile:
                 )
             )
             if pointer_to_raw_data == 0:
-                # Uninitialized sections (.bss) have no raw data in the file.
+                # Uninitialized sections (.bss) have no raw data in the file;
+                # size_of_raw_data still gives the reserved byte length.
                 section_data = b""
             else:
                 section_data = data[
                     pointer_to_raw_data : pointer_to_raw_data + size_of_raw_data
                 ]
             coff.sections.append(
-                CoffSection(address=virtual_address, name=name, data=section_data)
+                CoffSection(
+                    address=virtual_address,
+                    name=name,
+                    data=section_data,
+                    size=max(len(section_data), size_of_raw_data, virtual_size),
+                )
             )
 
         # COFF section numbers are 1-based.

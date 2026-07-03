@@ -19,6 +19,76 @@ from coff_file import (
 
 RE_VALID_UNQUOTED = re.compile(r"^[A-Za-z0-9_.$]+$")
 
+# MSVC emits float/double literals as read-only constants with a mangled name
+# encoding the value: `__real@<hex>` (the raw 4- or 8-byte IEEE-754 value) or,
+# as MSVC6 does, `__real@<size>@<80-bit-x87-extended-hex>` where <size> is 4 or
+# 8. The name is not a valid C identifier and the raw bytes carry no type, so
+# the disassembler decodes such symbols into a `.float`/`.double` data label
+# under a clean, value-derived name that m2c renders as the real constant.
+RE_REAL = re.compile(r"^__real@(?:([48])@)?([0-9a-fA-F]+)$")
+
+
+def real_constant(name: str, data: bytes) -> Optional[Tuple[str, str, str, int]]:
+    """If `name` is an MSVC `__real@` float/double constant and `data` (the
+    section bytes starting at the symbol) round-trips through a decimal literal,
+    return `(clean_name, directive, literal, size)`; otherwise None.
+
+    The clean name is derived from the raw IEEE bits so identical constants map
+    to one label and every reference agrees without needing the bytes."""
+    match = RE_REAL.match(name)
+    if match is None:
+        return None
+    size_field, hex_part = match.group(1), match.group(2)
+    if size_field is not None:
+        size = int(size_field)
+    elif len(hex_part) == 8:
+        size = 4
+    elif len(hex_part) == 16:
+        size = 8
+    else:
+        return None
+    if len(data) < size:
+        return None
+    raw = data[:size]
+    if size == 4:
+        (bits,) = struct.unpack("<I", raw)
+        (value,) = struct.unpack("<f", raw)
+        clean_name = f"_real_{bits:08x}"
+        directive = ".float"
+    else:
+        (bits,) = struct.unpack("<Q", raw)
+        (value,) = struct.unpack("<d", raw)
+        clean_name = f"_real_{bits:016x}"
+        directive = ".double"
+    literal = repr(value)
+    try:
+        packed = struct.pack("<f" if size == 4 else "<d", float(literal))
+    except (ValueError, OverflowError):
+        return None
+    if packed != raw:
+        # NaN/Inf or otherwise non-round-tripping: fall back to raw words.
+        return None
+    return clean_name, directive, literal, size
+
+
+def rename_real_constants(sections: List[CoffSection]) -> Dict[int, Dict[int, Tuple[str, str, int]]]:
+    """Rename every `__real@` constant symbol in place to a clean identifier
+    (CoffSymbol objects are shared with relocations, so references follow) and
+    return, per section index, the offsets to emit as `.float`/`.double`."""
+    per_section: Dict[int, Dict[int, Tuple[str, str, int]]] = {}
+    for index, section in enumerate(sections):
+        emit_map: Dict[int, Tuple[str, str, int]] = {}
+        for offset, symbol in section.symbols.items():
+            decoded = real_constant(symbol.name, section.data[offset:])
+            if decoded is None:
+                continue
+            clean_name, directive, literal, size = decoded
+            symbol.name = clean_name
+            emit_map[offset] = (directive, literal, size)
+        if emit_map:
+            per_section[index] = emit_map
+    return per_section
+
 
 def address_label(addr: int) -> str:
     return f".L{addr:08X}"
@@ -214,18 +284,41 @@ def relocation_word(reloc: CoffRelocation, labels: Set[int]) -> str:
     return relocation_target(reloc, labels, for_relative=True)
 
 
-def disassemble_data_section(section: CoffSection, output: TextIO) -> None:
+def disassemble_data_section(
+    section: CoffSection,
+    output: TextIO,
+    real_consts: Optional[Dict[int, Tuple[str, str, int]]] = None,
+) -> None:
     labels: Set[int] = set()
     collect_relocation_labels(section, labels)
+    real_consts = real_consts or {}
 
     offset = 0
     symbols = sorted(sym for sym in section.symbols.values() if sym.name)
     symbol_offsets = {sym.offset for sym in symbols}
+    total = max(len(section.data), section.size)
 
-    while offset < len(section.data):
+    while offset < total:
         symbol = section.symbols.get(offset)
         if symbol is not None:
             output.write(f"{asm_name(symbol_name(symbol))}:\n")
+
+        if offset >= len(section.data):
+            # Uninitialized (.bss) tail: reserve the run up to the next symbol
+            # (or the section end) so the symbol keeps its size and m2c can
+            # recover its type.
+            following = [o for o in symbol_offsets if o > offset]
+            limit = min(following) if following else total
+            output.write(f"\t.space 0x{limit - offset:X}\n")
+            offset = limit
+            continue
+
+        real = real_consts.get(offset)
+        if real is not None:
+            directive, literal, size = real
+            output.write(f"\t{directive} {literal}\n")
+            offset += size
+            continue
 
         reloc = section.relocations.get(offset)
         if reloc is not None and offset + 4 <= len(section.data):
@@ -274,7 +367,12 @@ def disassemble_msvc_coff(coff_in: BinaryIO, asm_out: TextIO) -> None:
     address = 0
     for section in sections:
         section.address = address
-        address += len(section.data)
+        address += max(len(section.data), section.size)
+
+    # Decode MSVC `__real@` float/double constants: rename their symbols to
+    # clean identifiers (shared with relocations, so references follow) and
+    # record which offsets to emit as `.float`/`.double`.
+    real_consts = rename_real_constants(sections)
 
     cap = cs.Cs(cs.CS_ARCH_X86, cs.CS_MODE_32)
     cap.detail = True
@@ -299,7 +397,7 @@ def disassemble_msvc_coff(coff_in: BinaryIO, asm_out: TextIO) -> None:
         if section.name == ".text":
             disassemble_text_section(section, disassemblies[i], labels, asm_out)
         else:
-            disassemble_data_section(section, asm_out)
+            disassemble_data_section(section, asm_out, real_consts.get(i))
         asm_out.write("\n")
 
 
