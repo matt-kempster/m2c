@@ -4,8 +4,8 @@
 # fild converts the int argument to float; the /QIfist idiom converts back
 # with `fistp qword` into a stack temp, then reads the low dword (int punning
 # through the stack, handled by the weak-stack-slot typing). Plain MSVC6 emits
-# `call __ftol` for float->int; /QIfist inlines fistp, matching the corpus's
-# fistp form (which never calls __ftol).
+# `call __ftol` for float->int; /QIfist inlines fistp instead of calling
+# __ftol, which is the form this test exercises.
 test:
     SUB ESP, 0x8
     FILD dword ptr [ESP + 0xc]

@@ -558,7 +558,7 @@ class TestX86AsmFile(unittest.TestCase):
     """File-level parsing: labels, functions, and .long jump tables."""
 
     ASM = """
-_DRIVING_SCHOOL_FUN_00401000:
+_switch_func_00401000:
     MOV EAX, dword ptr [ESP + 0xc]
     CMP EAX, 0x6
     JA _switchD_0040100d_caseD_2
@@ -586,7 +586,7 @@ _switchD_0040100d_switchdataD_00401058:
         asm_file = parse_file(f, X86Arch(), options)
 
         self.assertEqual(len(asm_file.functions), 1)
-        self.assertEqual(asm_file.functions[0].name, "_DRIVING_SCHOOL_FUN_00401000")
+        self.assertEqual(asm_file.functions[0].name, "_switch_func_00401000")
 
         # The .long directive produced 4-byte symbolic jump table entries.
         entry = asm_file.asm_data.values["_switchD_0040100d_switchdataD_00401058"]

@@ -408,8 +408,8 @@ def shld_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressi
 # the two edx:eax pairs reconstructed by glue_int64 and the result modeled the
 # same way a 64-bit-returning callee is (eax = whole value, edx = SECOND_REG).
 # (`__ftol`, the double->long cast helper, is handled separately via the x87
-# call-delta mechanism; the combined div+rem __alldvrm/__aulldvrm helpers do
-# not occur in this corpus and are left to degrade to a plain call.)
+# call-delta mechanism; the combined div+rem __alldvrm/__aulldvrm helpers are
+# not emitted by MSVC6 in practice and are left to degrade to a plain call.)
 class MathHelper:
     __slots__ = ("kind", "op", "signed", "cleanup")
 
@@ -2068,8 +2068,9 @@ class X86Arch(Arch):
     # The bottom-anchored flat x87 virtual registers produced by the FPU
     # prepass. Their `f` prefix gives them float treatment (Register.is_float)
     # for free. They are in neither temp_regs (so calls don't clear them --
-    # x87 values live across calls in this corpus) nor saved_regs (so they get
-    # no spurious initial "caller value", keeping float-return detection clean).
+    # MSVC6 does not clear the FPU stack across calls, so x87 values live
+    # across calls) nor saved_regs (so they get no spurious initial "caller
+    # value", keeping float-return detection clean).
     float_regs = [Register(f"f{i}") for i in range(8)]
     # Sub-registers are parsed as their own Register instances so that operand
     # widths survive until normalize_instruction, which rewrites them into
@@ -3535,8 +3536,8 @@ class X86Arch(Arch):
             eval_fn = eval_fnstsw
 
         # --- fistp: store the top as an integer (truncating cast), then pop.
-        # The rounding mode is set globally in this corpus (see spec §5.2), so
-        # a C truncation cast matches the game's ambient chop mode. ---
+        # The rounding mode is assumed fixed globally (see spec §5.2), so a C
+        # truncation cast matches the ambient chop mode. ---
         elif base == "fistp":
             src = args[1]
             assert isinstance(src, Register)

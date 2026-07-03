@@ -110,7 +110,7 @@ FPU_NEUTRAL: Set[str] = {
 # Depth-neutral no-ops we drop entirely (they carry no value semantics).
 FPU_DROP: Set[str] = {"fwait", "wait", "fnop"}
 # Instructions we deliberately do not support; fail loudly rather than emit
-# silently-wrong code (none observed in the target corpus).
+# silently-wrong code (not observed in typical MSVC6 output).
 FPU_UNSUPPORTED: Set[str] = {
     "fptan",
     "fsincos",
