@@ -21,6 +21,7 @@ from m2c.asm_instruction import (
     parse_asm_instruction,
 )
 from m2c.instruction import Instruction, InstructionMeta, StackLocation
+from m2c.types import Type
 
 
 class TestX86Parsing(unittest.TestCase):
@@ -566,6 +567,71 @@ _switchD_0040100d_switchdataD_00401058:
         self.assertEqual(
             symbols,
             ["_switchD_0040100d_caseD_1", "_switchD_0040100d_caseD_2"],
+        )
+
+
+class TestX86FunctionAbi(unittest.TestCase):
+    """The i386 cdecl/stdcall stack argument layout. Every stack argument
+    occupies 4-byte slots regardless of natural alignment, so an 8-byte
+    `double` starts at a 4-byte boundary (not an 8-byte one)."""
+
+    def setUp(self) -> None:
+        self.arch = X86Arch()
+
+    def abi_offsets(
+        self, params: List[Tuple[Type, str]]
+    ) -> List[Tuple[Optional[int], Optional[str]]]:
+        from m2c.types import FunctionParam, FunctionSignature
+
+        sig = FunctionSignature(
+            return_type=Type.void(),
+            params=[FunctionParam(type=t, name=n) for t, n in params],
+            params_known=True,
+            is_variadic=False,
+        )
+        abi = self.arch.function_abi(sig, {}, for_call=True)
+        return [(slot.loc.offset, slot.name) for slot in abi.arg_slots]
+
+    def test_double_returns_double(self) -> None:
+        from m2c.types import Type
+
+        # A leading `double` argument is passed at [esp+4], not [esp+8].
+        self.assertEqual(self.abi_offsets([(Type.f64(), "d")]), [(4, "d")])
+
+    def test_double_then_int(self) -> None:
+        from m2c.types import Type
+
+        # The double occupies [esp+4]..[esp+8]; the int follows at [esp+12].
+        self.assertEqual(
+            self.abi_offsets([(Type.f64(), "d"), (Type.s32(), "i")]),
+            [(4, "d"), (12, "i")],
+        )
+
+    def test_int_then_double(self) -> None:
+        from m2c.types import Type
+
+        # The int is at [esp+4]; the double is 4-byte aligned at [esp+8]
+        # (it is NOT bumped to [esp+12] for 8-byte alignment).
+        self.assertEqual(
+            self.abi_offsets([(Type.s32(), "i"), (Type.f64(), "d")]),
+            [(4, "i"), (8, "d")],
+        )
+
+    def test_stdcall_double_cleanup_bytes(self) -> None:
+        # A stdcall variant whose decorated cleanup bytes include an 8-byte
+        # argument: `void f(int, double)` decorates as `_f@12` (4 for the int
+        # + 8 for the double), which the import-thunk name `__imp__f_12`
+        # carries. The callee pops 12 bytes, and its arguments still land in
+        # 4-byte slots (i@4, d@8).
+        from m2c.arch_x86 import callee_cleanup_bytes
+        from m2c.asm_instruction import AsmGlobalSymbol
+
+        self.assertEqual(
+            callee_cleanup_bytes(AsmGlobalSymbol("__imp__f_12"), {}), 12
+        )
+        self.assertEqual(
+            self.abi_offsets([(Type.s32(), "i"), (Type.f64(), "d")]),
+            [(4, "i"), (8, "d")],
         )
 
 

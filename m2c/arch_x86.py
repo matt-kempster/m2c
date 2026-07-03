@@ -3312,6 +3312,15 @@ class X86Arch(Arch):
                 param_type = param.type.decay()
                 size, align = param_type.get_parameter_size_align_bytes()
                 size = (size + 3) & ~3
+                # 32-bit x86 (cdecl/stdcall) passes every stack argument in
+                # 4-byte slots regardless of the value's natural alignment: an
+                # 8-byte `double` still occupies two consecutive slots starting
+                # at a 4-byte boundary (a leading `double` is at [esp+4], not
+                # [esp+8]). Cap the alignment at 4 while keeping the 8-byte
+                # size, so `double`/`long long` arguments land at the right
+                # offsets. (get_parameter_size_align_bytes returns (8, 8) for
+                # scalars, which is the host/64-bit ABI's alignment.)
+                align = min(align, 4)
                 offset = (offset + align - 1) & -align
                 known_slots.append(
                     AbiArgSlot(
