@@ -355,6 +355,15 @@ def op_value(
     return imm
 
 
+def _is_zero_value(expr: Optional[Expression]) -> bool:
+    """Whether a register's current value is a literal 0 (e.g. from a preceding
+    `xor reg, reg`), used to recognize x86 zero-extend idioms."""
+    if expr is None:
+        return False
+    uw = early_unwrap(expr)
+    return isinstance(uw, Literal) and uw.value == 0
+
+
 def sub_expr(lhs: Expression, rhs: Expression) -> Expression:
     val = handle_sub(lhs, rhs)
     if isinstance(val, BinaryOp):
@@ -2898,6 +2907,25 @@ class X86Arch(Arch):
                         tp = Type.s8() if width == 1 else Type.s16()
                     else:
                         tp = Type.u8() if width == 1 else Type.u16()
+                    if isinstance(src, Register):
+                        val = as_type(a.regs[src], tp, silent=False, unify=False)
+                    else:
+                        val = mem_load(a, 1, tp)
+                    s.set_reg(dst, val)
+                    return
+                if (
+                    width < 4
+                    and isinstance(dst, Register)
+                    and not isinstance(src, AsmLiteral)
+                    and _is_zero_value(a.regs.get_raw(dst))
+                ):
+                    # `xor reg, reg; mov reg_lowN, <mem/reg>`: MSVC's
+                    # movzx-equivalent zero-extend idiom. The narrow value is
+                    # zero-extended into the just-cleared full register, so it
+                    # (and its source) are unsigned -- type it like `movzx`
+                    # rather than as a sign-ambiguous partial write, which would
+                    # otherwise render an unsigned char/short global as signed.
+                    tp = Type.u8() if width == 1 else Type.u16()
                     if isinstance(src, Register):
                         val = as_type(a.regs[src], tp, silent=False, unify=False)
                     else:
