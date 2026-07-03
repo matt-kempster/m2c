@@ -26,6 +26,7 @@ class PathsToBinaries:
     IDO_CC: Optional[Path]
     MWCC_CC: Optional[Path]
     AGBCC: Optional[Path]
+    MSVC_CL: Optional[Path]
     WINE: Optional[Path]
 
 
@@ -49,10 +50,17 @@ def get_environment_variables() -> PathsToBinaries:
         "MWCC_CC", "env variable MWCC_CC should point to a PPC cc binary (mwcceppc.exe)"
     )
     AGBCC = load("AGBCC", "env variable AGBCC should point to an AGBCC cc binary")
+    MSVC_CL = load("MSVC_CL", "env variable MSVC_CL should point to CL.EXE")
     WINE = None
-    if MWCC_CC and sys.platform.startswith("linux"):
+    if (MWCC_CC and sys.platform.startswith("linux")) or (
+        MSVC_CL
+        and MSVC_CL.suffix.lower() == ".exe"
+        and not sys.platform.startswith("win")
+    ):
         WINE = load("WINE", "env variable WINE should point to wine or wibo binary")
-    return PathsToBinaries(IDO_CC=IDO_CC, MWCC_CC=MWCC_CC, AGBCC=AGBCC, WINE=WINE)
+    return PathsToBinaries(
+        IDO_CC=IDO_CC, MWCC_CC=MWCC_CC, AGBCC=AGBCC, MSVC_CL=MSVC_CL, WINE=WINE
+    )
 
 
 @dataclass
@@ -142,11 +150,37 @@ def get_agbcc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     return []
 
 
+def get_msvc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
+    if paths.MSVC_CL is not None:
+        cc_command = [
+            str(paths.MSVC_CL),
+            "/c",
+            "/nologo",
+        ]
+        ok = True
+        if paths.MSVC_CL.suffix.lower() == ".exe" and not sys.platform.startswith(
+            "win"
+        ):
+            if paths.WINE:
+                cc_command.insert(0, str(paths.WINE))
+            else:
+                ok = False
+        if ok:
+            msvc = Compiler(name="msvc", cc_command=cc_command)
+            return [
+                ("msvc-od", msvc.with_cc_flags(["/Od"])),
+                ("msvc-o2", msvc.with_cc_flags(["/O2"])),
+            ]
+    logger.warning("MSVC tools not found; skipping x86 compilers")
+    return []
+
+
 def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     compilers: List[Tuple[str, Compiler]] = []
     compilers.extend(get_ido_compilers(paths))
     compilers.extend(get_mwcc_compilers(paths))
     compilers.extend(get_agbcc_compilers(paths))
+    compilers.extend(get_msvc_compilers(paths))
     return compilers
 
 
@@ -172,12 +206,18 @@ def do_compilation_step(
     in_file: str,
     compiler: Compiler,
 ) -> None:
-    args = compiler.cc_command + [
-        "-o",
-        temp_o_file,
-        in_file,
-    ]
-    subprocess.run(args)
+    if compiler.name == "msvc":
+        args = compiler.cc_command + [
+            f"/Fo{temp_o_file}",
+            f"/Tc{in_file}",
+        ]
+    else:
+        args = compiler.cc_command + [
+            "-o",
+            temp_o_file,
+            in_file,
+        ]
+    subprocess.run(args, check=True)
 
 
 def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
@@ -201,6 +241,12 @@ def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
                 with open(temp_o_file.name, "rb") as o_f:
                     with out_file.open("w") as out_f:
                         disassemble_ppc_elf(o_f, out_f)
+            elif compiler.name == "msvc":
+                from msvc_disasm import disassemble_msvc_coff
+
+                with open(temp_o_file.name, "rb") as o_f:
+                    with out_file.open("w") as out_f:
+                        disassemble_msvc_coff(o_f, out_f)
             else:
                 assert False, compiler.name
     logger.info(f"Successfully wrote disassembly to {out_file}.")
@@ -214,12 +260,17 @@ def add_test_from_file(
         asm_file_path = test_dir / (asm_filename + ".s")
         try:
             run_compile(orig_file, asm_file_path, compiler)
-            if compiler.name in ("mwcc", "agbcc"):
+            if compiler.name in ("mwcc", "agbcc", "msvc"):
                 # If the flags file doesn't exist, initialize it with the correct --target
-                ppc_flags = test_dir / (asm_filename + "-flags.txt")
-                if not ppc_flags.exists():
-                    target = "ppc-mwcc-c" if compiler.name == "mwcc" else "gba"
-                    ppc_flags.write_text(f"--target {target}\n")
+                flags_path = test_dir / (asm_filename + "-flags.txt")
+                if not flags_path.exists():
+                    if compiler.name == "mwcc":
+                        target = "ppc-mwcc-c"
+                    elif compiler.name == "agbcc":
+                        target = "gba"
+                    else:
+                        target = "x86"
+                    flags_path.write_text(f"--target {target}\n")
         except Exception:
             logger.exception(f"Failed to compile {asm_file_path}")
 
