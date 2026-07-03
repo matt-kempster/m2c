@@ -2105,10 +2105,33 @@ FPU_ARITH_OPS: Dict[str, Tuple[str, bool]] = {
 # x87 unary op -> builder (value -> new value). frndint stays a visible
 # intrinsic (its result depends on the rounding-control word, not modeled);
 # f2xm1 renders as its libm identity exp2f(x)-1 (its |x|<=1 domain is elided).
+def _fpu_is_f32(v: Expression) -> bool:
+    """Whether an x87 stack value is pinned to 32-bit float width. x87 registers
+    are otherwise width-less floatish (an 80-bit slot); for MSVC's inlined
+    fabs/fsqrt -- which are the *double* intrinsics (the float sqrtf/fabsf are
+    library calls) and promote their operand -- a width-less operand is f64."""
+    return v.type.is_float() and v.type.get_size_bits() == 32
+
+
+def _fpu_abs(v: Expression) -> Expression:
+    # fabs/fsqrt operate on the 80-bit st(0) value; the C intrinsic (and its
+    # type) is the f32 form only when that value is a known 32-bit float, else
+    # the f64 form (a double, or a promoted/width-less x87 value).
+    if _fpu_is_f32(v):
+        return fn_op("fabsf", [v], Type.f32())
+    return fn_op("fabs", [v], Type.f64())
+
+
+def _fpu_sqrt(v: Expression) -> Expression:
+    if _fpu_is_f32(v):
+        return fn_op("sqrtf", [v], Type.f32())
+    return fn_op("sqrt", [v], Type.f64())
+
+
 FPU_UNARY_OPS: Dict[str, Callable[[Expression], Expression]] = {
     "fchs": lambda v: UnaryOp("-", v, type=Type.floatish()),
-    "fabs": lambda v: fn_op("fabsf", [v], Type.f32()),
-    "fsqrt": lambda v: fn_op("sqrtf", [v], Type.f32()),
+    "fabs": _fpu_abs,
+    "fsqrt": _fpu_sqrt,
     "fsin": lambda v: fn_op("sinf", [v], Type.f32()),
     "fcos": lambda v: fn_op("cosf", [v], Type.f32()),
     "frndint": lambda v: fn_op("M2C_RNDINT", [v], Type.f32()),
