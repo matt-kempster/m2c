@@ -198,6 +198,13 @@ RE_OFFSET = re.compile(r"\boffset\s+", re.IGNORECASE)
 RE_ST_REG = re.compile(r"\bst\((\d)\)", re.IGNORECASE)
 RE_SEGMENT = re.compile(r"\b([cdefgs]s):", re.IGNORECASE)
 
+# x86 string instructions, whose operands are implicit (esi/edi/eax/ecx).
+STRING_OP_MNEMONICS = {
+    f"{op}{width}"
+    for op in ("movs", "stos", "scas", "lods", "cmps")
+    for width in "bwd"
+}
+
 
 def split_width_suffix(mnemonic: str) -> Tuple[str, int]:
     """Split e.g. "mov.b" into ("mov", 1). No suffix means 4 bytes."""
@@ -2171,6 +2178,20 @@ class X86Arch(Arch):
         return [self.parse("ret", [], InstructionMeta.missing())]
 
     def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
+        # String instructions: disassemblers (e.g. capstone) often render the
+        # implicit operands explicitly ("rep stosd dword ptr es:[edi], eax").
+        # The operands are fixed by the mnemonic, so drop them before the
+        # width/segment folding below would mangle the mnemonic. The es:
+        # segment marker distinguishes the string form of ambiguous mnemonics
+        # (movsd/cmpsd are also SSE2 scalar-double instructions).
+        mn = mnemonic.lower()
+        if mn in ("rep", "repe", "repne", "repz", "repnz"):
+            parts = args.split(None, 1)
+            if parts and parts[0].lower() in STRING_OP_MNEMONICS:
+                return mnemonic, parts[0].lower()
+        elif mn in STRING_OP_MNEMONICS and "es:" in args.lower():
+            return mnemonic, ""
+
         # Fold "<size> ptr" memory operand prefixes into the mnemonic as a
         # width suffix, and strip syntactic sugar the generic argument parser
         # should not see ("offset symbol" just means the symbol's address,
