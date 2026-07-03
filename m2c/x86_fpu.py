@@ -602,13 +602,16 @@ def rewrite_fpu_ops(
                 src = flat(_st_index(args[0]) or 0)
             else:
                 src = flat(1)  # bare form compares st0 with st1
-            emit(base, [flat(0), src], meta)
+            # Keep the width-suffixed mnemonic (like fld/fadd): a memory-operand
+            # compare (`fcomp qword`) must read the operand at its real width,
+            # or an f64 constant/local is truncated to f32.
+            emit(mnemonic, [flat(0), src], meta)
         elif base in ("fcompp", "fucompp"):
             emit(base, [flat(0), flat(1)], meta)
         elif base == "ftst":
             emit(base, [flat(0)], meta)
         elif base in ("ficom", "ficomp"):
-            emit(base, [flat(0), args[0]], meta)
+            emit(mnemonic, [flat(0), args[0]], meta)
         elif base in ("fnstsw", "fstsw"):
             emit("fnstsw", list(args), meta)
         elif base in ("fldcw", "fstcw", "fnstcw"):
