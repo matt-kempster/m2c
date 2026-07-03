@@ -510,6 +510,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     re_local_label = re.compile(
         "_?(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_)|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
     )
+    # MSVC emits numbered local code labels ($L95) into the COFF symbol
+    # table; they mark jump/switch-case targets and jump tables within a
+    # function, never function starts. x86-only so that other platforms'
+    # (rare) $-prefixed symbols keep starting functions.
+    re_msvc_local_label = re.compile(r"\$L\d+$")
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
     T = TypeVar("T")
@@ -613,6 +618,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                 elif (
                     re_local_glabel.match(label)
                     or (kind != LabelKind.GLOBAL and re_local_label.match(label))
+                    or (
+                        arch.arch == Target.ArchEnum.X86
+                        and re_msvc_local_label.match(label)
+                    )
                 ) and asm_file.current_function is not None:
                     # Don't treat labels as new functions if they follow a
                     # specific naming pattern. This is used for jump table
