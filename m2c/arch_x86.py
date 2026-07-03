@@ -388,6 +388,121 @@ def shld_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressi
     return fn_op("M2C_SHLD", [lhs, src, amt], Type.u32())
 
 
+# --- MSVC CRT 64-bit integer helpers ---------------------------------------
+#
+# MSVC6 lowers `__int64`/`unsigned __int64` arithmetic and shifts into calls to
+# private-convention CRT routines that do NOT follow cdecl. Two distinct ABIs
+# occur (verified by compiling with MSVC6 /O2 and reading the asm):
+#
+#  - multiply/divide/remainder (__allmul/__alldiv/__aulldiv/__allrem/
+#    __aullrem): the two 64-bit operands are passed on the stack as four
+#    dwords (a_lo, a_hi, b_lo, b_hi -- i.e. two ordinary cdecl 8-byte slots, at
+#    [esp+4] and [esp+0xc]), and the callee pops all 16 argument bytes itself
+#    (stdcall-like). The 64-bit result comes back in edx:eax (edx = high).
+#
+#  - shifts (__allshl/__allshr/__aullshr): the 64-bit value is passed in
+#    edx:eax (edx = high, eax = low) and the shift count in cl/ecx; there are
+#    NO stack arguments and nothing to clean up. The result is in edx:eax.
+#
+# Each maps directly onto a real 64-bit IR op (`*`, `/`, `%`, `<<`, `>>`), with
+# the two edx:eax pairs reconstructed by glue_int64 and the result modeled the
+# same way a 64-bit-returning callee is (eax = whole value, edx = SECOND_REG).
+# (`__ftol`, the double->long cast helper, is handled separately via the x87
+# call-delta mechanism; the combined div+rem __alldvrm/__aulldvrm helpers do
+# not occur in this corpus and are left to degrade to a plain call.)
+class MathHelper:
+    __slots__ = ("kind", "op", "signed", "cleanup")
+
+    def __init__(self, kind: str, op: str, signed: bool, cleanup: int) -> None:
+        self.kind = kind  # "muldiv" (two stack operands) or "shift" (edx:eax)
+        self.op = op  # the C operator to emit
+        self.signed = signed  # operand/result signedness
+        self.cleanup = cleanup  # stack bytes the callee pops on return
+
+
+X86_MATH_HELPERS: Dict[str, MathHelper] = {
+    "__allmul": MathHelper("muldiv", "*", True, 16),
+    "__alldiv": MathHelper("muldiv", "/", True, 16),
+    "__aulldiv": MathHelper("muldiv", "/", False, 16),
+    "__allrem": MathHelper("muldiv", "%", True, 16),
+    "__aullrem": MathHelper("muldiv", "%", False, 16),
+    "__allshl": MathHelper("shift", "<<", True, 0),
+    "__allshr": MathHelper("shift", ">>", True, 0),
+    "__aullshr": MathHelper("shift", ">>", False, 0),
+}
+
+
+def _second_reg_source(expr: Expression) -> Optional[Expression]:
+    """If `expr` is a `SECOND_REG(x)` marker -- m2c's placeholder for the high
+    half of a 64-bit value whose whole value already lives in the paired low
+    register (see function_return) -- return x, else None."""
+    uw = early_unwrap(expr)
+    if (
+        isinstance(uw, FuncCall)
+        and isinstance(uw.function, GlobalSymbol)
+        and uw.function.symbol_name == "SECOND_REG"
+        and len(uw.args) == 1
+    ):
+        return uw.args[0]
+    return None
+
+
+def glue_int64(lo: Expression, hi: Expression, *, signed: bool) -> Expression:
+    """Reconstruct the 64-bit value held in a (low, high) 32-bit register/slot
+    pair as a single s64/u64 expression. When the high half is `SECOND_REG(x)`
+    -- edx:eax already carrying a whole 64-bit x, m2c's register-pair
+    convention for a value produced by a prior 64-bit op -- recover x directly;
+    otherwise splice the halves as `((u64)hi << 32) | (u32)lo`."""
+    tp = Type.s64() if signed else Type.u64()
+    src = _second_reg_source(hi)
+    if src is not None:
+        return as_type(src, tp, silent=True)
+    lo_u = as_type(lo, Type.u32(), silent=True)
+    hi_u = as_type(as_type(hi, Type.u32(), silent=True), Type.u64(), silent=True)
+    shifted = BinaryOp(left=hi_u, op="<<", right=Literal(32), type=Type.u64())
+    glued = BinaryOp(left=shifted, op="|", right=lo_u, type=Type.u64())
+    return as_type(glued, tp, silent=True)
+
+
+def eval_math_helper(
+    spec: MathHelper,
+    s: NodeState,
+    a: InstrArgs,
+    arg_base: Optional[int],
+) -> bool:
+    """Model a call to a 64-bit CRT math helper as its real IR op, placing the
+    64-bit result in edx:eax (eax = whole value, edx = SECOND_REG, mirroring a
+    64-bit-returning callee). Returns False -- so the caller falls back to a
+    plain call -- when the operands cannot be recovered (a `muldiv` helper
+    whose stack argument slots are not all present)."""
+    tp = Type.s64() if spec.signed else Type.u64()
+    if spec.kind == "shift":
+        # Value in edx:eax, count in ecx.
+        value = glue_int64(a.regs[EAX], a.regs[EDX], signed=spec.signed)
+        count = as_intish(a.regs[ECX])
+        result: Expression = BinaryOp(left=value, op=spec.op, right=count, type=tp)
+    else:
+        # Two 64-bit operands, each two dwords, on the stack: a at arg_base+0/+4,
+        # b at arg_base+8/+12 (see the ABI note on X86_MATH_HELPERS).
+        if arg_base is None:
+            return False
+        slots = [s.subroutine_args.get(arg_base + off) for off in (0, 4, 8, 12)]
+        if any(slot is None for slot in slots):
+            return False
+        a_lo, a_hi, b_lo, b_hi = slots
+        assert a_lo is not None and a_hi is not None
+        assert b_lo is not None and b_hi is not None
+        lhs = glue_int64(a_lo, a_hi, signed=spec.signed)
+        rhs = glue_int64(b_lo, b_hi, signed=spec.signed)
+        result = BinaryOp(left=lhs, op=spec.op, right=rhs, type=tp)
+        for off in (0, 4, 8, 12):
+            s.subroutine_args.pop(arg_base + off, None)
+    s.clear_caller_save_regs()
+    s.set_reg(EAX, result)
+    s.set_reg(EDX, fn_op("SECOND_REG", [result], Type.reg32(likely_float=False)))
+    return True
+
+
 # Ghidra encodes stdcall decoration in symbol names: `_name@8` becomes
 # `__imp__name_8` for import thunks. The trailing number is the number of
 # argument bytes the callee pops on return.
@@ -628,6 +743,12 @@ def callee_cleanup_bytes(
     sym = call_target_symbol(target)
     if sym is None:
         return None
+    # 0. MSVC CRT 64-bit math helpers have a fixed private ABI (the mul/div/rem
+    # helpers pop their 16 argument bytes; the register-argument shift helpers
+    # pop nothing). This is authoritative and independent of any name decoration.
+    spec = X86_MATH_HELPERS.get(sym)
+    if spec is not None:
+        return spec.cleanup
     # 1. Explicit context/prototype (overrides everything below).
     if sym in context_arg_bytes:
         return context_arg_bytes[sym]
@@ -2431,7 +2552,20 @@ class X86Arch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = args[0]
             is_return = True
-            eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
+            tail_spec = X86_MATH_HELPERS.get(call_target_symbol(args[0]) or "")
+            if tail_spec is not None and tail_spec.kind == "shift":
+                # MSVC tail-calls the 64-bit shift helpers (`jmp __allshr`),
+                # which take their operands in edx:eax/ecx; model the shift and
+                # return its edx:eax result directly.
+                shift_spec = tail_spec
+                inputs = [EAX, EDX, ECX]
+
+                def eval_tail_shift(s: NodeState, a: InstrArgs) -> None:
+                    eval_math_helper(shift_spec, s, a, None)
+
+                eval_fn = eval_tail_shift
+            else:
+                eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
         elif base.startswith("j") and base[1:] in cls.condition_flags:
             assert len(args) == 1
             flag, negated = cls.condition_flags[base[1:]]
@@ -2501,6 +2635,13 @@ class X86Arch(Arch):
                 consumed = Register(f"f{fconsume}")
                 inputs.append(consumed)
                 clobbers.append(consumed)
+            math_spec = X86_MATH_HELPERS.get(call_target_symbol(target) or "")
+            if math_spec is not None and math_spec.kind == "shift":
+                # The shift helpers take their operands in registers (value in
+                # edx:eax, count in ecx), so those regs are live into the call.
+                for reg in (EAX, EDX, ECX):
+                    if reg not in inputs:
+                        inputs.append(reg)
             if isinstance(target, Register):
                 inputs.append(target)
             elif isinstance(target, AsmAddressMode):
@@ -2509,6 +2650,10 @@ class X86Arch(Arch):
                 raise DecompFailure(f"Invalid x86 call target in `{instr_str}`")
 
             def eval_call(s: NodeState, a: InstrArgs) -> None:
+                if math_spec is not None and eval_math_helper(
+                    math_spec, s, a, arg_base
+                ):
+                    return
                 if isinstance(target, Register):
                     fn: Expression = a.regs[target]
                 elif isinstance(target, AsmAddressMode):
