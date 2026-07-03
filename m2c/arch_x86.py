@@ -68,6 +68,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from .error import DecompFailure
 from .options import Target
+from .asm_file import AsmData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -81,7 +82,9 @@ from .asm_instruction import (
     get_jump_target,
     traverse_arg,
 )
+from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement
 from .instruction import (
+    ArchAsm,
     Instruction,
     InstructionMeta,
     Location,
@@ -106,6 +109,7 @@ from .translate import (
     UnaryOp,
     as_intish,
     as_type,
+    early_unwrap,
     parse_symbol_ref,
 )
 from .evaluate import (
@@ -125,6 +129,7 @@ from .evaluate import (
     set_arm_flags_from_add,
     set_x86_flags_from_result,
     shift_right_expr,
+    void_fn_op,
 )
 from .types import FunctionSignature
 
@@ -330,6 +335,651 @@ def shld_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressi
     return fn_op("M2C_SHLD", [lhs, src, amt], Type.u32())
 
 
+# Ghidra encodes stdcall decoration in symbol names: `_name@8` becomes
+# `__imp__name_8` for import thunks. The trailing number is the number of
+# argument bytes the callee pops on return.
+RE_STDCALL_IMPORT = re.compile(r"^__imp__.*_(\d+)$")
+
+
+# Undecorated stdcall imports appear as `_<LIB>_DLL_<Func>` (e.g.
+# `_USER32_DLL_ShowWindow`), Ghidra's naming for imports whose thunks it
+# resolved to a library.
+RE_DLL_IMPORT = re.compile(r"^_[A-Za-z0-9]+_DLL_")
+
+
+def is_stdcall_import(target: Argument) -> bool:
+    """Whether a call target is an undecorated Win32-style DLL import, which
+    uses the stdcall convention (callee pops arguments)."""
+    if isinstance(target, AsmGlobalSymbol):
+        return bool(RE_DLL_IMPORT.match(target.symbol_name))
+    if (
+        isinstance(target, AsmAddressMode)
+        and target.base is None
+        and isinstance(target.addend, AsmGlobalSymbol)
+    ):
+        return bool(RE_DLL_IMPORT.match(target.addend.symbol_name))
+    return False
+
+
+def is_register_indirect_call(target: Argument) -> bool:
+    """Whether a call target is an indirect call through a register (a COM /
+    virtual method call, e.g. `call eax` or `call [ecx + 0x7c]`), as opposed
+    to a direct call or a call through an absolute import slot."""
+    if isinstance(target, Register):
+        return True
+    if isinstance(target, AsmAddressMode) and target.base is not None:
+        return True
+    return False
+
+
+def callee_cleanup_bytes(target: Argument) -> int:
+    """Number of stack bytes a call target pops itself (stdcall); 0 for cdecl."""
+    sym: Optional[str] = None
+    if isinstance(target, AsmGlobalSymbol):
+        sym = target.symbol_name
+    elif (
+        isinstance(target, AsmAddressMode)
+        and target.base is None
+        and isinstance(target.addend, AsmGlobalSymbol)
+    ):
+        sym = target.addend.symbol_name
+    if sym is not None:
+        m = RE_STDCALL_IMPORT.match(sym)
+        if m:
+            return int(m.group(1))
+    return 0
+
+
+def switch_jump_table_labels(
+    instr: Instruction, asm_data: AsmData
+) -> Optional[List[str]]:
+    """For an indirect `jmp [index*4 + table]`, find the jump table in the
+    file's data and return the list of case labels."""
+    for arg in instr.args:
+        if not isinstance(arg, AsmAddressMode):
+            continue
+        for sub in traverse_arg(arg.addend):
+            if not isinstance(sub, AsmGlobalSymbol):
+                continue
+            entry = asm_data.values.get(sub.symbol_name)
+            if entry is None or not entry.data:
+                continue
+            targets = []
+            for item in entry.data:
+                if isinstance(item, bytes):
+                    break
+                target = item.as_symbol_without_addend()
+                if target is None:
+                    break
+                targets.append(target)
+            if targets:
+                return targets
+    return None
+
+
+# The ESP-delta dataflow state at one program point: the (nonpositive) offset
+# of esp relative to its value at function entry, plus the offset ebp holds
+# when it is a copy of esp (`push ebp; mov ebp, esp` frames), or None if ebp
+# holds an unrelated value.
+EspState = Tuple[int, Optional[int]]
+
+
+class X86StackRewritePattern(AsmPattern):
+    """Whole-body rewrite that eliminates x86 stack pointer motion.
+
+    m2c's stack machinery assumes a stack pointer that is fixed after the
+    prologue, which x86 code violates constantly (push/pop, caller-side
+    argument pushes, `add esp, N` cleanup). This pass runs a linear dataflow
+    analysis over the body computing the ESP delta from function entry at
+    every instruction, then rewrites all stack operations into accesses at
+    fixed offsets from a virtual frame base (esp at its deepest point):
+
+    - the frame size is the maximum stack depth; a synthetic `sub esp, N` is
+      inserted at the top so that get_stack_info sees the full frame;
+    - `[esp + k]` at delta d becomes `[esp + k + frame_size + d]`, and
+      `[ebp + k]` similarly resolves through the tracked ebp copy;
+    - `push reg` with a matching `pop reg` of the same slot (callee-saved
+      register saves, mid-function spills) becomes a plain store/load pair;
+    - other `push`es become `storearg.fictive` argument stores that feed the
+      next `call`'s argument list;
+    - prologue `push ecx`-style frame allocation and all `sub/add esp, N`
+      become pure delta bookkeeping (no emitted instruction);
+    - each `call` gets its current argument-region base (and its argument
+      byte count, when a cleanup `add esp, N`/`pop ecx` follows or the callee
+      is a known-stdcall import) appended as literal args;
+    - `jmp` to a label outside the function becomes `tailcall.fictive`.
+    """
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        if matcher.index != 0:
+            return None
+        new_body = rewrite_stack_ops(
+            matcher.input, matcher.arch, matcher.asm_data, matcher.labels
+        )
+        return Replacement(new_body, len(matcher.input), clobbers=[])
+
+
+def rewrite_stack_ops(
+    body: List[BodyPart],
+    arch: ArchAsm,
+    asm_data: AsmData,
+    labels: Set[str],
+) -> List[BodyPart]:
+    label_pos: Dict[str, int] = {}
+    for i, part in enumerate(body):
+        if not isinstance(part, Instruction):
+            for name in part.names:
+                label_pos[name] = i
+
+    def instr_str(item: Instruction) -> str:
+        return f"`{item}` {item.meta.loc_str()}"
+
+    # How many argument bytes each call's callee pops from the stack. cdecl
+    # callees pop nothing (the caller emits an `add esp, N`/`pop` cleanup);
+    # stdcall callees pop their arguments. MSVC's stdcall imports are not
+    # always name-decorated (`__imp__X_8`), so this is also inferred
+    # structurally: a call whose pushed arguments are not cleaned up by the
+    # caller must be to a stdcall callee that popped them itself.
+    ESP_NEUTRAL_STOP = {
+        "call",
+        "push",
+        "pop",
+        "pushad",
+        "popad",
+        "jmp",
+        "ret",
+        "leave",
+        "storearg.fictive",
+        "tailcall.fictive",
+    }
+
+    def call_arg_bytes(call_index: int) -> int:
+        """Bytes pushed as outgoing arguments for the call at `call_index`,
+        found by scanning back over the contiguous run of arg-building
+        instructions (pushes interleaved with esp-neutral setup). Labels are
+        transparent: an argument may be pushed just before a merge label whose
+        incoming paths each push it (e.g. `push x; jmp L` / `push y; L: call`)."""
+        total = 0
+        j = call_index - 1
+        while j >= 0:
+            part = body[j]
+            if not isinstance(part, Instruction):
+                j -= 1
+                continue
+            base, _ = split_width_suffix(part.mnemonic)
+            if part.mnemonic == "push":
+                total += 4
+            elif base == "push":
+                break  # sub-word push; give up.
+            elif (
+                base in ESP_NEUTRAL_STOP
+                or part.function_target is not None
+                or part.jump_target is not None
+                or part.is_conditional
+                or part.is_return
+            ):
+                break  # a call/branch/return barrier bounds the arg region.
+            elif ESP in part.outputs or ESP in part.clobbers:
+                break
+            j -= 1
+        return total
+
+    def caller_cleans_up(call_index: int) -> bool:
+        """Whether a caller-side cleanup (`add esp, N` / `pop ecx`) restores
+        esp after the call, before the next control-flow barrier."""
+        j = call_index + 1
+        while j < len(body):
+            part = body[j]
+            if not isinstance(part, Instruction):
+                return False  # a label: no caller cleanup.
+            base, _ = split_width_suffix(part.mnemonic)
+            if base == "add" and part.args[0] == ESP and isinstance(
+                part.args[1], AsmLiteral
+            ):
+                return True
+            if base == "pop" and part.args[0] in (ECX, EDX):
+                return True
+            if (
+                base in ESP_NEUTRAL_STOP
+                or part.function_target is not None
+                or part.is_return
+                or part.jump_target is not None
+                or part.is_conditional
+                or ESP in part.outputs
+                or ESP in part.clobbers
+            ):
+                return False
+            j += 1
+        return False
+
+    def compute_call_cleanup(call_index: int) -> int:
+        call = body[call_index]
+        assert isinstance(call, Instruction)
+        target = call.args[0]
+        decorated = callee_cleanup_bytes(target)
+        if decorated:
+            return decorated
+        # stdcall callees pop their own arguments. cdecl callees (including
+        # MSVC's batched-cleanup pattern, where one `add esp, N` restores
+        # several direct calls' arguments at once) always have the caller
+        # restore esp. We treat a call as self-cleaning when either:
+        #  - its name marks it as a Win32/DirectX DLL import
+        #    (`_<LIB>_DLL_<Func>`), or
+        #  - it is an indirect call through a register (`call [ecx+0x7c]`,
+        #    `call eax`), i.e. a COM/virtual method, and no caller cleanup
+        #    follows. Direct cdecl calls are never register-indirect, so this
+        #    avoids misfiring on the batched-cleanup pattern.
+        if is_stdcall_import(target):
+            return call_arg_bytes(call_index)
+        if is_register_indirect_call(target) and not caller_cleans_up(call_index):
+            return call_arg_bytes(call_index)
+        return 0
+
+    call_cleanup: Dict[int, int] = {}
+    for i, part in enumerate(body):
+        if isinstance(part, Instruction) and part.function_target is not None:
+            base, _ = split_width_suffix(part.mnemonic)
+            if base == "call":
+                call_cleanup[i] = compute_call_cleanup(i)
+
+    # The esp delta ebp holds after the function's `mov ebp, esp` frame setup.
+    # `pushad`/`popad` and mid-function scratch use of ebp can lose the tracked
+    # ebp value on a path; recovering it from this frame constant lets the
+    # epilogue's `mov esp, ebp`/`leave` still resolve. Ambiguous (conflicting)
+    # setups leave it None, disabling the fallback.
+    frame_ebp: Optional[int] = None
+    frame_ebp_ambiguous = False
+
+    # Pass 1: dataflow analysis computing the ESP delta at entry to every
+    # reachable instruction.
+    states: List[Optional[EspState]] = [None] * len(body)
+
+    def merge(a: EspState, b: EspState, item: Instruction) -> EspState:
+        if a[0] != b[0]:
+            raise DecompFailure(
+                f"x86 stack analysis failed: conflicting stack depths "
+                f"({-a[0]:#x} vs {-b[0]:#x}) at {instr_str(item)}"
+            )
+        return (a[0], a[1] if a[1] == b[1] else None)
+
+    def step(item: Instruction, st: EspState, index: int) -> None:
+        """Push the out-state(s) of `item` onto the worklist."""
+        nonlocal frame_ebp, frame_ebp_ambiguous
+        esp, ebp = st
+        base, _ = split_width_suffix(item.mnemonic)
+        args = item.args
+        fallthrough = True
+
+        def jump_to(name: str, target_st: EspState) -> None:
+            pos = label_pos.get(name)
+            if pos is not None:
+                worklist.append((pos, target_st))
+
+        if item.is_return:
+            return
+        if base == "push":
+            if item.mnemonic != "push":
+                raise DecompFailure(
+                    f"unsupported sub-word x86 push: {instr_str(item)}"
+                )
+            st = (esp - 4, ebp)
+        elif base == "pop":
+            st = (esp + 4, None if args[0] == EBP else ebp)
+        elif base == "pushad":
+            st = (esp - 32, ebp)
+        elif base == "popad":
+            # popad restores ebp to its value at the matching pushad, which
+            # for a frame pointer is the frame value.
+            st = (esp + 32, frame_ebp if not frame_ebp_ambiguous else None)
+        elif base in ("sub", "add") and args[0] == ESP:
+            if not isinstance(args[1], AsmLiteral):
+                raise DecompFailure(
+                    f"cannot statically analyze stack adjustment {instr_str(item)}"
+                )
+            st = (esp - args[1].value if base == "sub" else esp + args[1].value, ebp)
+        elif base == "mov" and args[0] == EBP and args[1] == ESP:
+            if frame_ebp is not None and frame_ebp != esp:
+                frame_ebp_ambiguous = True
+            frame_ebp = esp
+            st = (esp, esp)
+        elif base == "mov" and args[0] == ESP:
+            src_ebp = ebp if ebp is not None else (
+                frame_ebp if not frame_ebp_ambiguous else None
+            )
+            if args[1] != EBP or src_ebp is None:
+                raise DecompFailure(
+                    f"cannot statically analyze stack adjustment {instr_str(item)}"
+                )
+            st = (src_ebp, src_ebp)
+        elif base == "lea" and args[0] == ESP:
+            src = args[1]
+            if (
+                isinstance(src, AsmAddressMode)
+                and isinstance(src.addend, AsmLiteral)
+                and (src.base == ESP or (src.base == EBP and ebp is not None))
+            ):
+                src_esp = esp if src.base == ESP else ebp
+                assert src_esp is not None
+                st = (src_esp + src.addend.value, ebp)
+            else:
+                raise DecompFailure(
+                    f"cannot statically analyze stack adjustment {instr_str(item)}"
+                )
+        elif base == "leave":
+            src_ebp = ebp if ebp is not None else (
+                frame_ebp if not frame_ebp_ambiguous else None
+            )
+            if src_ebp is None:
+                raise DecompFailure(
+                    f"`leave` without a tracked ebp frame: {instr_str(item)}"
+                )
+            st = (src_ebp + 4, None)
+        elif item.function_target is not None:
+            st = (esp + call_cleanup.get(index, callee_cleanup_bytes(args[0])), ebp)
+        elif base == "jmp":
+            if isinstance(item.jump_target, JumpTarget):
+                if item.jump_target.target in label_pos:
+                    jump_to(item.jump_target.target, st)
+                # else: a tail call; terminal.
+                return
+            # Indirect jump: a jump table.
+            targets = switch_jump_table_labels(item, asm_data)
+            if targets is None:
+                raise DecompFailure(
+                    f"Unable to determine jump table for {instr_str(item)}"
+                )
+            for target in targets:
+                jump_to(target, st)
+            return
+        else:
+            if ESP in item.outputs:
+                raise DecompFailure(
+                    f"cannot statically analyze stack adjustment {instr_str(item)}"
+                )
+            if EBP in item.outputs or EBP in item.clobbers:
+                st = (esp, None)
+        if isinstance(item.jump_target, JumpTarget):
+            jump_to(item.jump_target.target, st)
+            if not item.is_conditional:
+                fallthrough = False
+        if fallthrough:
+            worklist.append((index + 1, st))
+
+    worklist: List[Tuple[int, EspState]] = [(0, (0, None))]
+    while worklist:
+        index, st = worklist.pop()
+        if index >= len(body):
+            continue
+        part = body[index]
+        if not isinstance(part, Instruction):
+            # Labels pass the state through.
+            prev = states[index]
+            if prev is not None:
+                st = (st[0], st[1] if st[1] == prev[1] else None)
+                if st[0] != prev[0]:
+                    raise DecompFailure(
+                        f"x86 stack analysis failed: conflicting stack depths "
+                        f"({-st[0]:#x} vs {-prev[0]:#x}) at label {part}"
+                    )
+                if st == prev:
+                    continue
+            states[index] = st
+            worklist.append((index + 1, st))
+            continue
+        prev = states[index]
+        if prev is not None:
+            st = merge(prev, st, part)
+            if st == prev:
+                continue
+        states[index] = st
+        step(part, st, index)
+
+    # The frame is a fixed-size region covering the deepest stack extent.
+    frame_size = 0
+    for i, part in enumerate(body):
+        st = states[i]
+        if st is None or not isinstance(part, Instruction):
+            continue
+        depth = -st[0]
+        base, _ = split_width_suffix(part.mnemonic)
+        if base == "push":
+            depth += 4
+        elif base == "pushad":
+            depth += 32
+        elif base == "sub" and part.args[0] == ESP:
+            assert isinstance(part.args[1], AsmLiteral)
+            depth += part.args[1].value
+        frame_size = max(frame_size, depth)
+
+    # Pass 2: classify pops (cleanup pops directly after calls discard
+    # argument slots) and pushes (saves/spills with a matching pop, prologue
+    # frame allocations, and call argument stores).
+    cleanup_pops: Set[int] = set()
+    prev_instr: Optional[Instruction] = None
+    prev_index = -1
+    for i, part in enumerate(body):
+        if not isinstance(part, Instruction):
+            prev_instr = None
+            continue
+        base, _ = split_width_suffix(part.mnemonic)
+        if (
+            base == "pop"
+            and part.args[0] in (ECX, EDX)
+            and prev_instr is not None
+            and (
+                prev_instr.function_target is not None or prev_index in cleanup_pops
+            )
+        ):
+            cleanup_pops.add(i)
+        prev_instr = part
+        prev_index = i
+
+    # Locations (offsets from the virtual frame base) that non-cleanup pops
+    # read back into the same register, plus `leave`'s implicit pop of ebp.
+    pop_locs: Set[Tuple[int, Register]] = set()
+    for i, part in enumerate(body):
+        st = states[i]
+        if not isinstance(part, Instruction) or st is None or i in cleanup_pops:
+            continue
+        base, _ = split_width_suffix(part.mnemonic)
+        if base == "pop" and isinstance(part.args[0], Register):
+            pop_locs.add((frame_size + st[0], part.args[0]))
+        elif base == "leave" and st[1] is not None:
+            pop_locs.add((frame_size + st[1], EBP))
+
+    def is_save_push(index: int) -> bool:
+        part = body[index]
+        st = states[index]
+        assert isinstance(part, Instruction) and st is not None
+        arg = part.args[0]
+        return (
+            isinstance(arg, Register)
+            and (frame_size + st[0] - 4, arg) in pop_locs
+        )
+
+    # The prologue: the initial run of frame-establishing instructions.
+    # Register pushes within it that are never popped back allocate frame
+    # space (MSVC's `push ecx` idiom); their stored value is meaningless.
+    alloc_pushes: Set[int] = set()
+    last_frame_op = -1
+    for i, part in enumerate(body):
+        if not isinstance(part, Instruction) or states[i] is None:
+            break
+        if (
+            part.function_target is not None
+            or part.jump_target is not None
+            or part.is_return
+        ):
+            break
+        base, _ = split_width_suffix(part.mnemonic)
+        if base == "mov" and part.args[0] == EBP and part.args[1] == ESP:
+            last_frame_op = i
+        elif base == "sub" and part.args[0] == ESP:
+            last_frame_op = i
+        elif base == "push" and is_save_push(i):
+            last_frame_op = i
+    for i in range(last_frame_op + 1):
+        part = body[i]
+        if (
+            isinstance(part, Instruction)
+            and states[i] is not None
+            and split_width_suffix(part.mnemonic)[0] == "push"
+            and isinstance(part.args[0], Register)
+            and not is_save_push(i)
+        ):
+            alloc_pushes.add(i)
+
+    # Pass 3: emit the rewritten body.
+    new_body: List[BodyPart] = []
+
+    def emit(mnemonic: str, args: List[Argument], meta: InstructionMeta) -> None:
+        new_body.append(arch.parse(mnemonic, args, meta.derived()))
+
+    if frame_size > 0:
+        first_meta = next(
+            (p.meta for p in body if isinstance(p, Instruction)),
+            InstructionMeta.missing(),
+        )
+        emit("sub", [ESP, AsmLiteral(frame_size)], first_meta)
+
+    for i, part in enumerate(body):
+        if not isinstance(part, Instruction):
+            new_body.append(part)
+            continue
+        st = states[i]
+        if st is None:
+            # Unreachable code; leave it untouched.
+            new_body.append(part)
+            continue
+        esp, ebp = st
+        base, _ = split_width_suffix(part.mnemonic)
+        args = part.args
+
+        def adjust(addend: Argument, amount: int) -> Argument:
+            if amount == 0:
+                return addend
+            if isinstance(addend, AsmLiteral):
+                return AsmLiteral(addend.value + amount)
+            if (
+                isinstance(addend, BinOp)
+                and addend.op == "+"
+                and isinstance(addend.rhs, AsmLiteral)
+            ):
+                return BinOp("+", addend.lhs, AsmLiteral(addend.rhs.value + amount))
+            return BinOp("+", addend, AsmLiteral(amount))
+
+        def rewrite_operand(arg: Argument) -> Argument:
+            if isinstance(arg, AsmAddressMode):
+                if arg.base == ESP:
+                    return AsmAddressMode(
+                        ESP, adjust(arg.addend, frame_size + esp), None
+                    )
+                if arg.base == EBP and ebp is not None:
+                    return AsmAddressMode(
+                        ESP, adjust(arg.addend, frame_size + ebp), None
+                    )
+            return arg
+
+        if base == "push":
+            loc = frame_size + esp - 4
+            if i in alloc_pushes:
+                pass  # Pure frame allocation; the value is meaningless.
+            elif is_save_push(i):
+                assert isinstance(args[0], Register)
+                emit(
+                    "mov",
+                    [AsmAddressMode(ESP, AsmLiteral(loc), None), args[0]],
+                    part.meta,
+                )
+            else:
+                # An outgoing function call argument.
+                emit(
+                    "storearg.fictive",
+                    [AsmLiteral(loc), rewrite_operand(args[0])],
+                    part.meta,
+                )
+        elif base == "pop":
+            if i not in cleanup_pops:
+                loc = frame_size + esp
+                emit(
+                    part.mnemonic.replace("pop", "mov", 1),
+                    [rewrite_operand(args[0]), AsmAddressMode(ESP, AsmLiteral(loc), None)],
+                    part.meta,
+                )
+        elif base in ("pushad", "popad"):
+            pass
+        elif base in ("sub", "add") and args[0] == ESP:
+            pass
+        elif base == "mov" and args[0] == ESP:
+            pass
+        elif base == "mov" and isinstance(args[0], Register) and args[1] == ESP:
+            # Taking the address of the stack (this includes `mov ebp, esp`,
+            # so that direct non-address uses of ebp still see the right
+            # value; frame accesses through ebp are rewritten to esp anyway).
+            emit(
+                "lea",
+                [args[0], AsmAddressMode(ESP, AsmLiteral(frame_size + esp), None)],
+                part.meta,
+            )
+        elif base == "lea" and args[0] == ESP:
+            pass
+        elif base == "leave":
+            if ebp is not None:
+                emit(
+                    "mov",
+                    [EBP, AsmAddressMode(ESP, AsmLiteral(frame_size + ebp), None)],
+                    part.meta,
+                )
+        elif part.function_target is not None and base == "call":
+            # Annotate the call with the base of its stack argument region and
+            # the number of argument bytes belonging to it, so translation can
+            # split the pending stack arguments across nested calls.
+            consume = call_cleanup.get(i, 0)
+            if consume == 0:
+                # cdecl: the argument count is the following caller cleanup.
+                consume = -1
+                j = i + 1
+                while j < len(body):
+                    nxt = body[j]
+                    if not isinstance(nxt, Instruction):
+                        break
+                    nbase, _ = split_width_suffix(nxt.mnemonic)
+                    if (
+                        nbase == "add"
+                        and nxt.args[0] == ESP
+                        and isinstance(nxt.args[1], AsmLiteral)
+                    ):
+                        consume = nxt.args[1].value
+                    elif j in cleanup_pops:
+                        consume = (0 if consume < 0 else consume) + 4
+                        j += 1
+                        continue
+                    break
+            emit(
+                "call",
+                [rewrite_operand(args[0]), AsmLiteral(frame_size + esp), AsmLiteral(consume)],
+                part.meta,
+            )
+        elif base == "jmp" and isinstance(part.jump_target, JumpTarget):
+            if part.jump_target.target in label_pos:
+                new_body.append(part)
+            else:
+                # Tail call to another function.
+                emit(
+                    "tailcall.fictive",
+                    [AsmGlobalSymbol(part.jump_target.target)],
+                    part.meta,
+                )
+        else:
+            new_args = [rewrite_operand(arg) for arg in args]
+            if new_args != args:
+                emit(part.mnemonic, new_args, part.meta)
+            else:
+                new_body.append(part)
+
+    return new_body
+
+
 # Builders for read-modify-write ALU instructions: (args, old dst value,
 # source operand values) -> new dst value.
 AluBuilder = Callable[[InstrArgs, Expression, List[Expression]], Expression]
@@ -389,6 +1039,8 @@ class X86Arch(Arch):
 
     aliased_regs: Dict[str, Register] = {}
 
+    asm_patterns: List[AsmPattern] = [X86StackRewritePattern()]
+
     def missing_return(self) -> List[Instruction]:
         return [self.parse("ret", [], InstructionMeta.missing())]
 
@@ -424,7 +1076,10 @@ class X86Arch(Arch):
         if instr.mnemonic in ("rep", "repe", "repne", "repz", "repnz"):
             assert len(instr.args) == 1 and isinstance(instr.args[0], AsmGlobalSymbol)
             op = instr.args[0].symbol_name.lower()
-            return AsmInstruction(f"{instr.mnemonic}.{op}", [])
+            prefix = {"repz": "repe", "repnz": "repne"}.get(
+                instr.mnemonic, instr.mnemonic
+            )
+            return AsmInstruction(f"{prefix}.{op}", [])
 
         # Rewrite sub-register operands into full registers, deriving a width
         # suffix from the narrowest sub-register if the mnemonic does not
@@ -564,6 +1219,20 @@ class X86Arch(Arch):
         "rep.stosb": ([EDI, EAX, ECX], [EDI, ECX], False, True),
         "repne.scasb": ([EDI, ECX, EAX], [EDI, ECX, Register("z")], True, False),
         "repe.cmpsb": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
+        "repe.cmpsw": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
+        "repe.cmpsd": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
+    }
+    # Non-rep string instructions (single element): mnemonic -> (inputs,
+    # outputs, load, store).
+    instrs_string_single: Dict[
+        str, Tuple[List[Register], List[Register], bool, bool]
+    ] = {
+        "stosd": ([EDI, EAX], [EDI], False, True),
+        "stosw": ([EDI, EAX], [EDI], False, True),
+        "stosb": ([EDI, EAX], [EDI], False, True),
+        "movsd": ([ESI, EDI], [ESI, EDI], True, True),
+        "movsw": ([ESI, EDI], [ESI, EDI], True, True),
+        "movsb": ([ESI, EDI], [ESI, EDI], True, True),
     }
 
     @classmethod
@@ -697,30 +1366,52 @@ class X86Arch(Arch):
             assert len(args) == 1
             target = args[0]
             if isinstance(target, Register):
-                # Indirect jump (jump table); target resolution is phase 2b.
+                # Indirect jump through a register (computed goto).
                 inputs = [target]
                 jump_target = target
                 is_conditional = True
-                eval_fn = cls._unsupported_eval(instr_str, "jump tables")
+                eval_fn = lambda s, a: s.set_switch_expr(a.regs[target])
             elif isinstance(target, AsmAddressMode):
                 src_operand(target)
                 regs = [loc for loc in inputs if isinstance(loc, Register)]
                 if regs:
-                    # Jump through memory, e.g. `jmp [eax*4 + switchdata]`.
-                    # Treat like an indirect jump through the index register.
+                    # Jump through memory, e.g. `jmp [eax*4 + switchdata]`:
+                    # a jump table. Treated like an indirect jump through the
+                    # index register; the loaded value drives the switch.
                     jump_target = regs[0]
                     is_conditional = True
-                    eval_fn = cls._unsupported_eval(instr_str, "jump tables")
+
+                    def eval_jmp_table(s: NodeState, a: InstrArgs) -> None:
+                        expr = mem_load(a, 0, Type.reg32(likely_float=False))
+                        s.set_switch_expr(expr)
+
+                    eval_fn = eval_jmp_table
                 else:
                     # Register-less jump through an absolute address, e.g.
                     # `jmp [__imp__GetTickCount]`: a tail call through an
                     # import thunk.
                     outputs = list(cls.all_return_regs)
+                    clobbers = list(cls.temp_regs)
                     function_target = target
                     is_return = True
+
+                    def eval_jmp_import(s: NodeState, a: InstrArgs) -> None:
+                        fn = mem_load(a, 0, Type.reg32(likely_float=False))
+                        s.make_function_call(fn, outputs)
+
+                    eval_fn = eval_jmp_import
             else:
                 jump_target = get_jump_target(target)
                 eval_fn = None
+        elif base == "tailcall.fictive":
+            # `jmp` to a label outside the function (see the stack rewrite
+            # pass): call it and return its return value.
+            assert len(args) == 1
+            outputs = list(cls.all_return_regs)
+            clobbers = list(cls.temp_regs)
+            function_target = args[0]
+            is_return = True
+            eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
         elif base.startswith("j") and base[1:] in cls.condition_flags:
             assert len(args) == 1
             flag, negated = cls.condition_flags[base[1:]]
@@ -741,9 +1432,26 @@ class X86Arch(Arch):
             outputs = [ECX]
             jump_target = get_jump_target(args[0])
             is_conditional = True
+
+            def eval_loop(s: NodeState, a: InstrArgs) -> None:
+                val = s.set_reg(ECX, sub_expr(a.regs[ECX], Literal(1)))
+                s.set_branch_condition(BinaryOp.icmp(val, "!=", Literal(0)))
+
+            eval_fn = eval_loop
         elif base == "call":
-            assert len(args) == 1
+            # The stack rewrite pass appends two literals: the frame location
+            # of [esp] at call time (the base of this call's stack argument
+            # region) and the number of argument bytes (-1 if unknown).
+            assert len(args) in (1, 3)
             target = args[0]
+            arg_base: Optional[int] = None
+            arg_bytes = -1
+            if len(args) == 3:
+                assert isinstance(args[1], AsmLiteral) and isinstance(
+                    args[2], AsmLiteral
+                )
+                arg_base = args[1].value
+                arg_bytes = args[2].value
             inputs = list(cls.argument_regs)
             outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
@@ -754,6 +1462,53 @@ class X86Arch(Arch):
                 src_operand(target)
             elif not isinstance(target, (AsmGlobalSymbol, AsmLiteral)):
                 raise DecompFailure(f"Invalid x86 call target in `{instr_str}`")
+
+            def eval_call(s: NodeState, a: InstrArgs) -> None:
+                if isinstance(target, Register):
+                    fn: Expression = a.regs[target]
+                elif isinstance(target, AsmAddressMode):
+                    fn = mem_load(a, 0, Type.reg32(likely_float=False))
+                else:
+                    fn = a.sym_imm(0)
+                if arg_base is None:
+                    s.make_function_call(fn, outputs)
+                    return
+                # Select the pending stack argument stores belonging to this
+                # call, and re-key them to the offsets used by function_abi
+                # (+4: the ABI is described from the callee's point of view,
+                # where [esp] holds the return address).
+                leftover = {
+                    loc: val
+                    for loc, val in s.subroutine_args.items()
+                    if loc < arg_base or (arg_bytes >= 0 and loc >= arg_base + arg_bytes)
+                }
+                selected = {
+                    loc - arg_base + 4: val
+                    for loc, val in s.subroutine_args.items()
+                    if loc not in leftover
+                }
+                s.subroutine_args.clear()
+                s.subroutine_args.update(selected)
+                s.make_function_call(fn, outputs)
+                # Argument stores for a later call (pushed before this call's
+                # arguments) stay pending.
+                s.subroutine_args.update(leftover)
+
+            eval_fn = eval_call
+        elif base == "storearg.fictive":
+            # A rewritten `push` that passes a stack argument to the next
+            # `call` (see the stack rewrite pass). args[0] is the frame
+            # location of the argument slot.
+            assert len(args) == 2 and isinstance(args[0], AsmLiteral)
+            arg_loc = args[0].value
+            src_operand(args[1])
+            outputs = [StackLocation(offset=arg_loc, symbolic_offset=None)]
+            is_store = True
+
+            def eval_storearg(s: NodeState, a: InstrArgs) -> None:
+                s.subroutine_args[arg_loc] = op_value(a, 1, 4)
+
+            eval_fn = eval_storearg
         elif base == "push":
             assert len(args) == 1
             inputs = [cls.stack_pointer_reg]
@@ -974,6 +1729,46 @@ class X86Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 EDX, BinaryOp.sint(a.regs[EAX], ">>", Literal(31))
             )
+        elif base == "rdtsc":
+            assert not args
+            outputs = [EAX, EDX]
+            clobbers = list(cls.flag_regs)
+            is_effectful = False
+
+            def eval_rdtsc(s: NodeState, a: InstrArgs) -> None:
+                val = fn_op("M2C_RDTSC", [], Type.u64())
+                s.set_reg(EAX, val)
+                s.set_reg(EDX, fn_op("SECOND_REG", [val], Type.reg32(likely_float=False)))
+
+            eval_fn = eval_rdtsc
+        elif base in cls.instrs_string_single and not args:
+            # Non-rep string instructions perform a single element operation
+            # and advance esi/edi (assuming the direction flag is clear).
+            str_inputs, str_outputs, is_load, is_store = cls.instrs_string_single[base]
+            inputs = list(str_inputs)
+            outputs = list(str_outputs)
+            elem = {"b": 1, "w": 2, "d": 4}[base[-1]]
+
+            def eval_string_single(s: NodeState, a: InstrArgs) -> None:
+                op = base[:-1]
+                tp = width_type(elem)
+                if op in ("stos", "movs"):
+                    if op == "stos":
+                        value: Expression = a.regs[EAX]
+                        if elem < 4:
+                            value = as_type(value, tp, silent=True, unify=False)
+                    else:
+                        value = deref(a.regs[ESI], a.regs, a.stack_info, size=elem)
+                    dest = deref(a.regs[EDI], a.regs, a.stack_info, size=elem, store=True)
+                    dest.type.unify(tp)
+                    s.write_statement(StoreStmt(source=as_type(value, tp, silent=False), dest=dest))
+                    s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", Literal(elem)))
+                    if op == "movs":
+                        s.set_reg(ESI, BinaryOp.intptr(a.regs[ESI], "+", Literal(elem)))
+                else:
+                    raise DecompFailure(f"x86 `{instr_str}` is not supported")
+
+            eval_fn = eval_string_single
         elif base in ("mul", "imul", "div", "idiv") and len(args) <= 1:
             # One-operand forms operate on edx:eax.
             inputs = [EAX] if base in ("mul", "imul") else [EAX, EDX]
@@ -1057,6 +1852,68 @@ class X86Arch(Arch):
             str_inputs, str_outputs, is_load, is_store = cls.instrs_string[mnemonic]
             inputs = list(str_inputs)
             outputs = list(str_outputs)
+            elem_size = {"b": 1, "w": 2, "d": 4}[mnemonic[-1]]
+
+            def eval_string_op(s: NodeState, a: InstrArgs) -> None:
+                count = as_intish(a.regs[ECX])
+                if elem_size != 1:
+                    count = fold_mul_chains(
+                        BinaryOp.int(count, "*", Literal(elem_size))
+                    )
+                op = mnemonic.split(".")[1][:-1] if "." in mnemonic else ""
+                if op == "movs":
+                    # rep movsX: copy ecx elements from [esi] to [edi].
+                    s.write_statement(
+                        void_fn_op(
+                            "M2C_MEMCPY", [a.regs[EDI], a.regs[ESI], count]
+                        )
+                    )
+                    s.set_reg(ESI, BinaryOp.intptr(a.regs[ESI], "+", count))
+                    s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", count))
+                    s.set_reg(ECX, Literal(0))
+                elif op == "stos":
+                    # rep stosX: fill ecx elements at [edi] with al/ax/eax.
+                    value = a.regs[EAX]
+                    if elem_size < 4:
+                        value = as_type(
+                            value, width_type(elem_size), silent=True, unify=False
+                        )
+                    fn_name = {1: "M2C_MEMSET", 2: "M2C_MEMSET16", 4: "M2C_MEMSET32"}[
+                        elem_size
+                    ]
+                    s.write_statement(
+                        void_fn_op(fn_name, [a.regs[EDI], value, as_intish(a.regs[ECX])])
+                    )
+                    s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", count))
+                    s.set_reg(ECX, Literal(0))
+                elif op == "scas":
+                    # repne scasb with al = 0: the strlen idiom. edi ends one
+                    # past the NUL; ecx is decremented once per iteration.
+                    al = early_unwrap(a.regs[EAX])
+                    if not (isinstance(al, Literal) and al.value & 0xFF == 0):
+                        raise DecompFailure(
+                            f"x86 `{instr_str}` with non-zero al is not supported"
+                        )
+                    length = fn_op("M2C_STRLEN", [a.regs[EDI]], Type.u32())
+                    advance = BinaryOp.int(length, "+", Literal(1))
+                    s.set_reg(
+                        ECX, BinaryOp.int(a.regs[ECX], "-", advance)
+                    )
+                    s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", advance))
+                    s.set_reg(Register("z"), Literal(1, type=Type.boolean()))
+                else:
+                    # repe cmpsX: memcmp-style comparison; only the z flag
+                    # outcome is modeled.
+                    assert op == "cmps"
+                    cmp = fn_op(
+                        "M2C_MEMCMP", [a.regs[ESI], a.regs[EDI], count], Type.s32()
+                    )
+                    s.set_reg(ESI, BinaryOp.intptr(a.regs[ESI], "+", count))
+                    s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", count))
+                    s.set_reg(ECX, Literal(0))
+                    s.set_reg(Register("z"), BinaryOp.icmp(cmp, "==", Literal(0)))
+
+            eval_fn = eval_string_op
         elif base in cls.instrs_ignore:
             is_effectful = False
             eval_fn = None
@@ -1126,7 +1983,10 @@ class X86Arch(Arch):
                 )
                 offset += size
         candidate_slots: List[AbiArgSlot] = []
-        if not fn_sig.params_known or fn_sig.is_variadic:
+        # For calls, unknown extra arguments are collected from the pending
+        # stack argument stores instead (make_function_call requires
+        # possible_slots to be registers).
+        if not for_call and (not fn_sig.params_known or fn_sig.is_variadic):
             for i in range(8):
                 candidate_slots.append(
                     AbiArgSlot(

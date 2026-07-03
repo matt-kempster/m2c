@@ -27,6 +27,7 @@ from .asm_instruction import (
     JumpTarget,
     Macro,
     Register,
+    traverse_arg,
 )
 from .instruction import (
     ArchAsm,
@@ -870,6 +871,23 @@ def build_graph_from_block(
             nodes.append(new_node)
 
             jtbl_names = set()
+            if arch.arch == Target.ArchEnum.X86:
+                # `jmp [index*4 + table]`: the table symbol is part of the
+                # jump instruction itself.
+                for jmp_arg in jump.args:
+                    if not isinstance(jmp_arg, AsmAddressMode):
+                        continue
+                    for sub in traverse_arg(jmp_arg.addend):
+                        if not isinstance(sub, AsmGlobalSymbol):
+                            continue
+                        ent = asm_data.values.get(sub.symbol_name)
+                        if (
+                            ent is not None
+                            and ent.data
+                            and isinstance(ent.data[0], AsmSymbolicData)
+                            and ent.data[0].as_symbol_without_addend() is not None
+                        ):
+                            jtbl_names.add(sub.symbol_name)
             for jtbl_block in [block] + parent_blocks[::-1]:
                 for ins in jtbl_block.instructions:
                     for arg in ins.args:
