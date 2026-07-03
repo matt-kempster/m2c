@@ -168,7 +168,6 @@ def get_msvc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
         if ok:
             msvc = Compiler(name="msvc", cc_command=cc_command)
             return [
-                ("msvc-od", msvc.with_cc_flags(["/Od"])),
                 ("msvc-o2", msvc.with_cc_flags(["/O2"])),
             ]
     logger.warning("MSVC tools not found; skipping x86 compilers")
