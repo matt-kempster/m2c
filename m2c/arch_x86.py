@@ -120,6 +120,7 @@ from .translate import (
     BinaryOp,
     Cast,
     Condition,
+    EvalOnceExpr,
     Expression,
     FuncCall,
     GlobalSymbol,
@@ -135,6 +136,7 @@ from .translate import (
     as_type,
     early_unwrap,
     parse_symbol_ref,
+    uses_expr,
 )
 from .evaluate import (
     condition_from_expr,
@@ -296,6 +298,37 @@ def mem_store(
     dest = deref(target, a.regs, a.stack_info, size=size, store=True)
     dest.type.unify(type)
     return StoreStmt(source=as_type(value, type, silent=False), dest=dest)
+
+
+def store_memory(s: NodeState, store: StoreStmt, reg: Register) -> None:
+    """Emit an x86 memory store, first flushing pending stack call arguments
+    (see flush_pending_call_args). Use this for every real memory store instead
+    of calling s.store_memory directly."""
+    flush_pending_call_args(s)
+    s.store_memory(store, reg)
+
+
+def flush_pending_call_args(s: NodeState) -> None:
+    """Force materialization of any pending stack call argument that contains a
+    function call, mirroring the shared `store_memory`'s
+    `prevent_later_function_calls` for x86's stack-passed arguments.
+
+    x86 passes call arguments by pushing them, so an argument that is a prior
+    call's result is captured in `subroutine_args` (not a register) at the push,
+    before any intervening store runs. The shared prevent-later logic only scans
+    registers, so without this the inlined call would float past the store:
+    `x = foo(); global = 1; bar(x);` would decompile as `global = 1;
+    bar(foo());`, silently reordering the call after the store. Forcing the
+    pending argument emits it into a temp at its (pre-store) creation point, so
+    the call stays before the store."""
+    for value in s.subroutine_args.values():
+        if not uses_expr(value, lambda e: isinstance(e, FuncCall)):
+            continue
+        expr = value
+        while isinstance(expr, Cast):
+            expr = expr.expr
+        if isinstance(expr, EvalOnceExpr):
+            expr.force()
 
 
 def op_value(
@@ -2591,7 +2624,7 @@ class X86Arch(Arch):
                 # The register argument to store_memory is only used for
                 # stack spill/restore bookkeeping; fall back to EAX for
                 # register-less sources (immediates).
-                s.store_memory(store, src_reg if src_reg is not None else EAX)
+                store_memory(s, store, src_reg if src_reg is not None else EAX)
             return None
 
         if base == "ret":
@@ -3189,8 +3222,8 @@ class X86Arch(Arch):
                         src_reg = other if isinstance(other, Register) else None
                         store = mem_store(a, i, val, src_reg, width_type(width))
                         if store is not None:
-                            s.store_memory(
-                                store, src_reg if src_reg is not None else EAX
+                            store_memory(
+                                s, store, src_reg if src_reg is not None else EAX
                             )
 
             eval_fn = eval_xchg
@@ -3501,7 +3534,7 @@ class X86Arch(Arch):
             def eval_fst(s: NodeState, a: InstrArgs) -> None:
                 store = mem_store(a, 0, a.regs[src], src, ftype)
                 if store is not None:
-                    s.store_memory(store, src)
+                    store_memory(s, store, src)
                 if pop:
                     del s.regs[src]
 
@@ -3656,7 +3689,7 @@ class X86Arch(Arch):
                 casted = handle_convert(a.regs[src], itype, Type.floatish())
                 store = mem_store(a, 0, casted, None, itype)
                 if store is not None:
-                    s.store_memory(store, src)
+                    store_memory(s, store, src)
                 del s.regs[src]
 
             eval_fn = eval_fistp
@@ -3706,7 +3739,7 @@ class X86Arch(Arch):
                     a, 0, fn_op("M2C_FSTCW", [], Type.u16()), None, Type.u16()
                 )
                 if store is not None:
-                    s.store_memory(store, EAX)
+                    store_memory(s, store, EAX)
 
             eval_fn = eval_fstcw
 
