@@ -83,19 +83,30 @@ def split_operands(op_str: str) -> List[str]:
     return operands
 
 
+# A displacement rendered by capstone at the end of a memory operand:
+# either the whole expression (`[0x8]`) or a trailing `+`/`-` term
+# (`[eax*4 + 0x8]`). Registers never end in a bare number on 32-bit x86,
+# and scale factors (`eax*4`) are not preceded by a sign, so this cannot
+# eat part of a register or scale term.
+RE_TRAILING_DISPLACEMENT = re.compile(r"(?:^|\s*[+-]\s*)(?:0x[0-9a-fA-F]+|\d+)$")
+
+
 def replace_memory_displacement(operand: str, label: str) -> str:
+    """Substitute the relocation target for a memory operand's displacement.
+
+    The displacement bytes are the relocation addend, and `relocation_target`
+    already folds that addend into `label`, so the rendered displacement must
+    be dropped entirely; keeping it would count the addend twice
+    (e.g. `[4 + _ar + 0x4]` instead of `[_ar + 0x4]`).
+    """
     start = operand.index("[")
     end = operand.rindex("]")
     inner = operand[start + 1 : end].strip()
-    if inner in ("0", "0x0"):
+    remainder = RE_TRAILING_DISPLACEMENT.sub("", inner).strip()
+    if not remainder:
         new_inner = label
-    elif re.search(r"([+-]\s*)?0x?0$", inner):
-        new_inner = re.sub(r"\s*[+]\s*0x?0$", f" + {label}", inner)
-        new_inner = re.sub(r"\s*-\s*0x?0$", f" + {label}", new_inner)
-        if new_inner == inner:
-            new_inner = re.sub(r"0x?0$", label, inner)
     else:
-        new_inner = f"{inner} + {label}"
+        new_inner = f"{remainder} + {label}"
     return operand[: start + 1] + new_inner + operand[end:]
 
 
