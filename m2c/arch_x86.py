@@ -830,6 +830,11 @@ def rewrite_stack_ops(
             alloc_pushes.add(i)
 
     # Pass 3: emit the rewritten body.
+    # When ebp is used as a frame pointer, its save/setup/restore
+    # (`push ebp; mov ebp, esp; ...; mov esp, ebp; pop ebp` / `leave`) are pure
+    # bookkeeping: every `[ebp+k]` access is rewritten against esp, so ebp is
+    # never read, and it is left holding its caller value throughout.
+    ebp_is_frame_ptr = frame_ebp is not None and not frame_ebp_ambiguous
     new_body: List[BodyPart] = []
 
     def emit(mnemonic: str, args: List[Argument], meta: InstructionMeta) -> None:
@@ -869,21 +874,37 @@ def rewrite_stack_ops(
             return BinOp("+", addend, AsmLiteral(amount))
 
         def rewrite_operand(arg: Argument) -> Argument:
-            if isinstance(arg, AsmAddressMode):
-                if arg.base == ESP:
-                    return AsmAddressMode(
-                        ESP, adjust(arg.addend, frame_size + esp), None
-                    )
-                if arg.base == EBP and ebp is not None:
-                    return AsmAddressMode(
-                        ESP, adjust(arg.addend, frame_size + ebp), None
-                    )
+            if not isinstance(arg, AsmAddressMode):
+                return arg
+            base, addend = arg.base, arg.addend
+            # The parser represents `[reg - N]` (and other displacement-only
+            # negative forms) as base=None with a `reg - N` BinOp addend,
+            # unlike `[reg + N]` which sets base=reg. Normalize so esp/ebp
+            # frame accesses are recognized either way.
+            if (
+                base is None
+                and isinstance(addend, BinOp)
+                and addend.op in ("+", "-")
+                and isinstance(addend.lhs, Register)
+                and isinstance(addend.rhs, AsmLiteral)
+            ):
+                base = addend.lhs
+                sign = 1 if addend.op == "+" else -1
+                addend = AsmLiteral(sign * addend.rhs.value)
+            elif base is None and isinstance(addend, Register):
+                base, addend = addend, AsmLiteral(0)
+            if base == ESP:
+                return AsmAddressMode(ESP, adjust(addend, frame_size + esp), None)
+            if base == EBP and ebp is not None:
+                return AsmAddressMode(ESP, adjust(addend, frame_size + ebp), None)
             return arg
 
         if base == "push":
             loc = frame_size + esp - 4
             if i in alloc_pushes:
                 pass  # Pure frame allocation; the value is meaningless.
+            elif args[0] == EBP and ebp_is_frame_ptr:
+                pass  # Saving the caller's frame pointer; bookkeeping only.
             elif is_save_push(i):
                 assert isinstance(args[0], Register)
                 emit(
@@ -899,7 +920,9 @@ def rewrite_stack_ops(
                     part.meta,
                 )
         elif base == "pop":
-            if i not in cleanup_pops:
+            if args[0] == EBP and ebp_is_frame_ptr:
+                pass  # Restoring the caller's frame pointer; bookkeeping only.
+            elif i not in cleanup_pops:
                 loc = frame_size + esp
                 emit(
                     part.mnemonic.replace("pop", "mov", 1),
@@ -912,10 +935,10 @@ def rewrite_stack_ops(
             pass
         elif base == "mov" and args[0] == ESP:
             pass
+        elif base == "mov" and args[0] == EBP and args[1] == ESP and ebp_is_frame_ptr:
+            pass  # `mov ebp, esp` frame setup; ebp accesses resolve to esp.
         elif base == "mov" and isinstance(args[0], Register) and args[1] == ESP:
-            # Taking the address of the stack (this includes `mov ebp, esp`,
-            # so that direct non-address uses of ebp still see the right
-            # value; frame accesses through ebp are rewritten to esp anyway).
+            # Taking the address of the stack into a general register.
             emit(
                 "lea",
                 [args[0], AsmAddressMode(ESP, AsmLiteral(frame_size + esp), None)],
@@ -924,12 +947,8 @@ def rewrite_stack_ops(
         elif base == "lea" and args[0] == ESP:
             pass
         elif base == "leave":
-            if ebp is not None:
-                emit(
-                    "mov",
-                    [EBP, AsmAddressMode(ESP, AsmLiteral(frame_size + ebp), None)],
-                    part.meta,
-                )
+            # `leave` = `mov esp, ebp; pop ebp`; pure frame teardown.
+            pass
         elif part.function_target is not None and base == "call":
             # Annotate the call with the base of its stack argument region and
             # the number of argument bytes belonging to it, so translation can
