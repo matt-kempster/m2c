@@ -5,9 +5,9 @@ import gc
 import sys
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Union
 
-from .c_types import build_typemap, dump_typemap
+from .c_types import TypeMap, build_typemap, dump_typemap
 from .error import DecompFailure
 from .flow_graph import FlowGraph, build_flowgraph
 from .if_statements import get_function_text
@@ -38,6 +38,60 @@ class DecompilationState:
 
     function: Function
     state: Union[Inner, Exception]
+
+
+def build_global_info(
+    asm_data: AsmData,
+    arch: Arch,
+    options: Options,
+    function_names: Set[str],
+    typemap: TypeMap,
+    typepool: TypePool,
+) -> GlobalInfo:
+    if isinstance(arch, X86Arch):
+        # Context prototypes drive callee ABI attribution in the x86 prepasses:
+        # __attribute__((stdcall)) declarations give stack-cleanup byte counts,
+        # and float/double return types seed the x87 FPU stack deltas.
+        arch.load_context(typemap)
+
+    return GlobalInfo(
+        asm_data,
+        arch,
+        options.target,
+        function_names,
+        typemap,
+        typepool,
+        deterministic_vars=options.deterministic_vars,
+        stack_spill_detection=options.stack_spill_detection,
+    )
+
+
+def decompile_function(
+    function: Function,
+    options: Options,
+    global_info: GlobalInfo,
+    *,
+    flow_graph: Optional[FlowGraph] = None,
+    translate: bool = True,
+    print_warnings: bool = False,
+) -> DecompilationState.Inner:
+    if flow_graph is None:
+        narrow_func_call_outputs(function, global_info)
+        flow_graph = build_flowgraph(
+            function,
+            global_info.asm_data,
+            global_info.arch,
+            fragment=False,
+            print_warnings=print_warnings,
+            debug_patterns=options.debug_patterns,
+        )
+    else:
+        flow_graph.reset_block_info()
+
+    info: Optional[FunctionInfo] = None
+    if translate:
+        info = translate_to_ast(function, flow_graph, options, global_info)
+    return DecompilationState.Inner(flow_graph, info)
 
 
 def print_exception(exc: Exception, sanitize: bool) -> None:
@@ -127,12 +181,6 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
-    if isinstance(arch, X86Arch):
-        # Context prototypes drive callee ABI attribution in the x86 prepasses:
-        # __attribute__((stdcall)) declarations give stack-cleanup byte counts,
-        # and float/double return types seed the x87 FPU stack deltas.
-        arch.load_context(typemap)
-
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())
     else:
@@ -160,31 +208,21 @@ def run(options: Options) -> int:
         unk_inference=options.unk_inference,
         union_field_overrides=options.union_field_overrides,
     )
-    global_info = GlobalInfo(
-        asm_data,
-        arch,
-        options.target,
-        function_names,
-        typemap,
-        typepool,
-        deterministic_vars=options.deterministic_vars,
-        stack_spill_detection=options.stack_spill_detection,
+    global_info = build_global_info(
+        asm_data, arch, options, function_names, typemap, typepool
     )
 
     decompilations: List[DecompilationState] = []
     for function in functions:
         state: Union[DecompilationState.Inner, Exception]
         try:
-            narrow_func_call_outputs(function, global_info)
-            flow_graph = build_flowgraph(
+            state = decompile_function(
                 function,
-                global_info.asm_data,
-                arch,
-                fragment=False,
+                options,
+                global_info,
+                translate=False,
                 print_warnings=options.debug,
-                debug_patterns=options.debug_patterns,
             )
-            state = DecompilationState.Inner(flow_graph)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
             state = e
@@ -198,9 +236,11 @@ def run(options: Options) -> int:
                 continue
             flow_graph = decomp.state.flow_graph
             try:
-                flow_graph.reset_block_info()
-                decomp.state.info = translate_to_ast(
-                    decomp.function, flow_graph, options, global_info
+                decomp.state = decompile_function(
+                    decomp.function,
+                    options,
+                    global_info,
+                    flow_graph=flow_graph,
                 )
             except Exception as e:
                 decomp.state = e
@@ -230,9 +270,11 @@ def run(options: Options) -> int:
             continue
         flow_graph = decomp.state.flow_graph
         try:
-            flow_graph.reset_block_info()
-            decomp.state.info = translate_to_ast(
-                decomp.function, flow_graph, options, global_info
+            decomp.state = decompile_function(
+                decomp.function,
+                options,
+                global_info,
+                flow_graph=flow_graph,
             )
         except Exception as e:
             decomp.state = e

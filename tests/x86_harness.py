@@ -20,14 +20,8 @@ if str(REPO_ROOT) not in sys.path:
 from m2c.arch_x86 import X86Arch
 from m2c.asm_file import AsmData, parse_file
 from m2c.c_types import build_typemap
-from m2c.flow_graph import build_flowgraph
 from m2c.instruction import Instruction
-from m2c.main import parse_flags
-from m2c.translate import (
-    GlobalInfo,
-    narrow_func_call_outputs,
-    translate_to_ast,
-)
+from m2c.main import build_global_info, decompile_function, parse_flags
 from m2c.types import TypePool
 
 DEFAULT_ASM_ROOT = Path.home() / "Projects/legoland/port2/project/asm"
@@ -48,9 +42,7 @@ def classify(exc: Exception) -> str:
     """Normalize a failure into a histogram bucket."""
     from m2c.instruction import InstrProcessingFailure
 
-    if isinstance(exc, InstrProcessingFailure) and isinstance(
-        exc.__cause__, Exception
-    ):
+    if isinstance(exc, InstrProcessingFailure) and isinstance(exc.__cause__, Exception):
         mnemonic = exc.instr.mnemonic
         exc = exc.__cause__
         m = RE_UNIMPLEMENTED.search(str(exc))
@@ -83,7 +75,7 @@ def main() -> None:
     arch = X86Arch()
     # --stop-on-error makes translation failures raise instead of degrading
     # into `/* Error */` comments, so they can be tallied.
-    options = parse_flags(["-t", "x86-gcc-c", "--stop-on-error", "dummy.asm"])
+    options = parse_flags(["-t", "x86", "--stop-on-error", "dummy.asm"])
     typemap = build_typemap([], arch, use_cache=False)
 
     files_parsed = 0
@@ -110,15 +102,8 @@ def main() -> None:
             unk_inference=False,
             union_field_overrides={},
         )
-        global_info = GlobalInfo(
-            asm_data,
-            arch,
-            options.target,
-            function_names,
-            typemap,
-            typepool,
-            deterministic_vars=False,
-            stack_spill_detection=options.stack_spill_detection,
+        global_info = build_global_info(
+            asm_data, arch, options, function_names, typemap, typepool
         )
 
         for function in asm_file.functions:
@@ -131,15 +116,7 @@ def main() -> None:
                 continue
             num_functions += 1
             try:
-                narrow_func_call_outputs(function, global_info)
-                flow_graph = build_flowgraph(
-                    function,
-                    global_info.asm_data,
-                    arch,
-                    fragment=False,
-                    print_warnings=False,
-                )
-                translate_to_ast(function, flow_graph, options, global_info)
+                decompile_function(function, options, global_info, print_warnings=False)
                 num_ok += 1
             except Exception as e:
                 failure_counts[classify(e)] += 1
