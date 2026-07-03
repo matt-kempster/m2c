@@ -2758,10 +2758,14 @@ class X86Arch(Arch):
                     fn = a.sym_imm(0)
                 if fconsume >= 0 and arg_base is not None:
                     # Pass the consumed st(0) value as this call's argument (an
-                    # ftol-style helper takes exactly one float in st0).
+                    # ftol-style helper takes exactly one float in st0). Type it
+                    # as the widest float (f64), not floatish: floatish unifies
+                    # across call sites to the first concrete width seen, so a
+                    # helper called with both a float and a double would narrow
+                    # the double argument to f32 and lose precision.
                     consumed = Register(f"f{fconsume}")
                     s.subroutine_args[arg_base] = as_type(
-                        a.regs[consumed], Type.floatish(), silent=True
+                        a.regs[consumed], Type.f64(), silent=True
                     )
                     del s.regs[consumed]
                 if arg_base is None:
