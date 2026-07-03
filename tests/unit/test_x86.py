@@ -840,6 +840,50 @@ class TestX86FpuRewrite(unittest.TestCase):
         self.assertEqual(out[0], "call _foo, 0x0, 0x0, 0x0, -0x1")
         self.assertEqual(out[1], "fadd $f0, 0x4($esp)")
 
+    def test_context_float_return_wrapper_no_fpu(self) -> None:
+        # A forwarding wrapper `call _returns_float; ret` has no x87 instruction
+        # of its own, so structural inference would leave it untouched. A
+        # context-declared float return seeds a +1 delta, which both makes the
+        # FPU pass run and annotates the call as producing st(0) (fpret f0).
+        self.arch.context_fpu_call_deltas = {"_returns_float": 1}
+        out = self.infer(
+            """
+            CALL _returns_float, 0x0, 0x0
+            RET
+            """
+        )
+        self.assertEqual(out[0], "call _returns_float, 0x0, 0x0, 0x0, -0x1")
+
+    def test_context_float_return_before_fstp(self) -> None:
+        # A context-known float-returning call whose result is stored: the
+        # seeded +1 delta annotates the call and the following fstp pops f0.
+        self.arch.context_fpu_call_deltas = {"_returns_float": 1}
+        out = self.infer(
+            """
+            CALL _returns_float, 0x0, 0x0
+            FSTP dword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[0], "call _returns_float, 0x0, 0x0, 0x0, -0x1")
+        self.assertEqual(out[1], "fstp [_g], $f0")
+
+    def test_no_fpu_no_context_delta_skips_pass(self) -> None:
+        # A plain integer wrapper with no x87 and no context float delta is
+        # left completely untouched (the cheap early-out still holds).
+        from m2c.asm_file import AsmData
+        from m2c.asm_pattern import AsmMatcher
+        from m2c.x86_fpu import X86FpuRewritePattern
+
+        body, labels = self._build_body(
+            """
+            CALL _plain, 0x0, 0x0
+            RET
+            """
+        )
+        matcher = AsmMatcher(self.arch, AsmData(), body, labels)
+        self.assertIsNone(X86FpuRewritePattern().match(matcher))
+
     def test_infer_float_return_call(self) -> None:
         # Without a seed, the underflow at `fadd` (depth 0) is attributed to
         # the preceding call, whose delta is inferred as +1.

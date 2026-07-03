@@ -89,7 +89,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 from .error import DecompFailure
 from .options import Target
 from .asm_file import AsmData, AsmDataEntry, AsmSymbolicData, Label
-from .c_types import TypeMap
+from .c_types import CType, TypeMap
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -1823,19 +1823,44 @@ class X86Arch(Arch):
     def __init__(self) -> None:
         # Callee-cleanup byte counts for stdcall functions declared in the
         # user-provided context (via __attribute__((stdcall))), keyed by asm
-        # symbol name. Populated by load_stdcall_context.
+        # symbol name. Populated by load_context.
         self.context_stdcall_arg_bytes: Dict[str, int] = {}
+        # x87 FPU stack deltas for context functions with a float/double return
+        # type (+1: they leave their result in st(0)), keyed by asm symbol name.
+        # Seeds the FPU prepass so a call whose result is returned directly (a
+        # wrapper with no local FPU op of its own) is still modeled as producing
+        # st(0). Populated by load_context.
+        self.context_fpu_call_deltas: Dict[str, int] = {}
 
-    def load_stdcall_context(self, typemap: TypeMap) -> None:
-        """Record callee-cleanup byte counts for context functions declared
-        with __attribute__((stdcall)): the number of stack bytes the callee
-        pops on return, i.e. the sum of its parameter sizes rounded up to
-        4-byte slots. Context declarations use asm symbol names (e.g.
-        `_MessageBoxA` for MSVC-compiled 32-bit code)."""
+    def load_context(self, typemap: TypeMap) -> None:
+        """Record per-callee ABI facts derived from the user-provided context
+        that the x86 prepasses cannot recover from the assembly alone:
+
+        - stdcall callee-cleanup byte counts (functions declared with
+          __attribute__((stdcall))): the number of stack bytes the callee pops
+          on return, i.e. the sum of its parameter sizes rounded up to 4-byte
+          slots.
+        - x87 stack deltas for float/double-returning functions (+1): such a
+          callee leaves its result on the FPU stack, which the FPU prepass must
+          know even for a caller that has no FPU instruction of its own.
+
+        Context declarations use asm symbol names (e.g. `_MessageBoxA` for
+        MSVC-compiled 32-bit code)."""
         from .c_types import parse_struct_member, resolve_typedefs
         from m2c_pycparser import c_ast as ca
 
+        def record(mapping: Dict[str, int], name: str, value: int) -> None:
+            mapping[name] = value
+            # x86 asm symbols carry a leading-underscore platform prefix
+            # (`_MessageBoxA` for `MessageBoxA`); match either spelling.
+            if not name.startswith("_"):
+                mapping[f"_{name}"] = value
+
         for name, fn in typemap.functions.items():
+            # A float/double return leaves a value on the x87 stack (delta +1).
+            if fn.ret_type is not None and self._ctype_is_float(fn.ret_type, typemap):
+                record(self.context_fpu_call_deltas, name, 1)
+
             if not fn.is_stdcall or fn.params is None or fn.is_variadic:
                 continue
             total = 0
@@ -1852,11 +1877,21 @@ class X86Arch(Arch):
                         allow_unsized=False,
                     )
                 total += (size + 3) & ~3
-            self.context_stdcall_arg_bytes[name] = total
-            # x86 asm symbols carry a leading-underscore platform prefix
-            # (`_MessageBoxA` for `MessageBoxA`); match either spelling.
-            if not name.startswith("_"):
-                self.context_stdcall_arg_bytes[f"_{name}"] = total
+            record(self.context_stdcall_arg_bytes, name, total)
+
+    @staticmethod
+    def _ctype_is_float(ret_type: CType, typemap: TypeMap) -> bool:
+        """Whether a context function's return type is `float` or `double`
+        (so the callee returns its result in st(0))."""
+        from .c_types import resolve_typedefs
+        from m2c_pycparser import c_ast as ca
+
+        tp, _ = resolve_typedefs(ret_type, typemap)
+        return (
+            isinstance(tp, ca.TypeDecl)
+            and isinstance(tp.type, ca.IdentifierType)
+            and ("float" in tp.type.names or "double" in tp.type.names)
+        )
 
     def missing_return(self) -> List[Instruction]:
         return [self.parse("ret", [], InstructionMeta.missing())]
@@ -2301,9 +2336,13 @@ class X86Arch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = target
             if fpret >= 0:
-                # The callee leaves a float on the FPU stack; it becomes a new
-                # virtual register the call defines.
-                outputs.append(Register(f"f{fpret}"))
+                # The callee returns its result in st(0), which becomes a new
+                # virtual register the call defines. A float/double-returning
+                # callee does NOT return anything in eax/edx (they are merely
+                # clobbered, via temp_regs), so drop them from the return
+                # outputs -- otherwise the return-register heuristic would
+                # prefer eax and bit-reinterpret it as the float result.
+                outputs = [Register(f"f{fpret}")]
             if fconsume >= 0:
                 # The callee consumes st(0) as an argument; it is live into the
                 # call (passed as an argument) and killed by it.

@@ -128,9 +128,10 @@ def run(options: Options) -> int:
         return 0
 
     if isinstance(arch, X86Arch):
-        # Context functions marked __attribute__((stdcall)) drive callee
-        # stack-cleanup attribution in the x86 stack rewrite.
-        arch.load_stdcall_context(typemap)
+        # Context prototypes drive callee ABI attribution in the x86 prepasses:
+        # __attribute__((stdcall)) declarations give stack-cleanup byte counts,
+        # and float/double return types seed the x87 FPU stack deltas.
+        arch.load_context(typemap)
 
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())

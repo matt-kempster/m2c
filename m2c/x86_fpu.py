@@ -253,21 +253,31 @@ class X86FpuRewritePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
             return None
-        # Cheap early-out: the ~3100 functions with no x87 pay only this scan.
         from .arch_x86 import split_width_suffix
 
-        if not any(
-            isinstance(part, Instruction)
-            and is_fpu_mnemonic(split_width_suffix(part.mnemonic)[0])
-            for part in matcher.input
-        ):
-            return None
         # Seed per-callee deltas from the user context (float/double-returning
         # functions leave their result on the FPU stack), then infer the rest
         # structurally by BFS over delta assignments.
         seed: Dict[str, int] = dict(
             getattr(matcher.arch, "context_fpu_call_deltas", {})
         )
+        # Cheap early-out: the ~3100 functions with no x87 pay only this scan.
+        # A function still needs the pass, though, if it calls a context-known
+        # float/double-returning function -- even with no x87 instruction of
+        # its own (a forwarding wrapper like `call _returns_float; ret`), the
+        # call must be annotated as producing st(0).
+        if not any(
+            isinstance(part, Instruction)
+            and is_fpu_mnemonic(split_width_suffix(part.mnemonic)[0])
+            for part in matcher.input
+        ) and not (
+            seed
+            and any(
+                _call_key(matcher.input, i) in seed
+                for i in range(len(matcher.input))
+            )
+        ):
+            return None
         queue: List[Dict[str, int]] = [seed]
         visited: Set[FrozenSet[Tuple[str, int]]] = {frozenset(seed.items())}
         last_err: Optional[X87StackError] = None
