@@ -4,10 +4,26 @@ Phase 1 established registration, parsing, and structural instruction
 information (inputs/outputs/jump targets). Phase 2a adds real semantics
 (eval_fns) for data operations, flags, and conditionals: mov/movsx/movzx/lea/
 xchg, the ALU (incl. mul/imul/div/idiv/cdq and shifts), cmp/test, all jcc and
-setcc, and loads/stores through all addressing modes. Stack modeling for
-push/pop, function call arguments, jump tables/switches, and x87 are still
-unimplemented (phase 2b); those instructions parse structurally but raise
-DecompFailure during translation.
+setcc, and loads/stores through all addressing modes. Phase 2b adds the
+moving stack: an ESP-delta prepass (X86StackRewritePattern / rewrite_stack_ops)
+computes esp's offset from function entry at every instruction and rewrites
+push/pop/call-argument/ebp-frame accesses into fixed frame offsets, so the
+rest of m2c (which assumes a constant post-prologue stack pointer) works
+unchanged. This recovers call arguments (cdecl and stdcall), tail calls, and
+jump-table switches, plus rep string ops, loop, and rdtsc. x87 FPU is out of
+scope; those instructions parse structurally but raise DecompFailure during
+translation.
+
+The ESP-delta design: a linear dataflow pass over the flow graph tracks
+(esp_delta, ebp_delta) per instruction (push/pop = ∓4, sub/add esp = ∓N,
+call = +callee_cleanup, `mov ebp, esp` binds ebp to the frame). The frame is a
+fixed region sized to the maximum stack depth; a synthetic `sub esp, frame`
+at entry makes get_stack_info see it. `[esp+k]`/`[ebp+k]` at delta d become
+`[esp + k + frame + d]`; saved-register push/pop become plain stores/loads
+(callee-saved); other pushes become `storearg.fictive` feeding the next call;
+each call is annotated with its argument-region base and byte count so
+translation splits pending stack arguments across nested calls. See
+rewrite_stack_ops for the full rewrite.
 
 Design notes:
 
