@@ -2762,14 +2762,14 @@ class X86Arch(Arch):
         elif base in cls.instrs_ignore:
             is_effectful = False
             eval_fn = None
-        elif base in ("fnstsw", "fstsw") or (
+        elif base in ("fnstsw", "fstsw", "fldcw", "fstcw", "fnstcw") or (
             base in cls.instrs_fpu
             and any(isinstance(a, Register) and a.is_float() for a in args)
         ):
             # A fictive x87 instruction emitted by X86FpuRewritePattern (raw
             # x87 forms name st(i), never f0..f7, so the f-register gate
-            # excludes them). fnstsw has no f-register operand, so it is
-            # dispatched by name.
+            # excludes them). The status/control-word ops have no f-register
+            # operand, so they are dispatched by name.
             return self._parse_fpu(base, width, args, meta, instr_str)
         else:
             # Unknown instruction (x87 FPU, etc.). Guess a structural shape
@@ -3056,10 +3056,83 @@ class X86Arch(Arch):
 
             eval_fn = eval_fnstsw
 
+        # --- fistp: store the top as an integer (truncating cast), then pop.
+        # The rounding mode is set globally in this corpus (see spec §5.2), so
+        # a C truncation cast matches the game's ambient chop mode. ---
+        elif base == "fistp":
+            src = args[1]
+            assert isinstance(src, Register)
+            add_operand_inputs(args[0])
+            if src not in inputs:
+                inputs.append(src)
+            stack_loc = cls._stack_location(args[0]) if isinstance(
+                args[0], AsmAddressMode
+            ) else None
+            if stack_loc is not None:
+                outputs.append(stack_loc)
+            is_store = True
+            clobbers = [src]
+            itype = fpu_int_type(width)
+
+            def eval_fistp(s: NodeState, a: InstrArgs) -> None:
+                casted = handle_convert(a.regs[src], itype, Type.floatish())
+                store = mem_store(a, 0, casted, None, itype)
+                if store is not None:
+                    s.store_memory(store, src)
+                del s.regs[src]
+
+            eval_fn = eval_fistp
+
+        # --- Integer-operand arithmetic: top op (float)int_load ---
+        elif base in ("fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr"):
+            dst = args[0]
+            assert isinstance(dst, Register)
+            inputs = [dst]
+            add_operand_inputs(args[1])
+            outputs = [dst]
+            is_load = True
+            op, reverse = FPU_ARITH_OPS[base]
+            itype = fpu_int_type(width)
+
+            def eval_iarith(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.regs[dst]
+                rhs = handle_convert(mem_load(a, 1, itype), Type.floatish(), itype)
+                s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
+
+            eval_fn = eval_iarith
+
+        # --- Control word: kept as visible intrinsics (see spec §5.2). The
+        # rounding/precision mode is not modeled, so surface the load/store so
+        # a human sees the mode changes rather than pretending they vanish. ---
+        elif base == "fldcw":
+            add_operand_inputs(args[0])
+            is_load = True
+
+            def eval_fldcw(s: NodeState, a: InstrArgs) -> None:
+                s.write_statement(
+                    void_fn_op("M2C_FLDCW", [mem_load(a, 0, Type.u16())])
+                )
+
+            eval_fn = eval_fldcw
+        elif base in ("fstcw", "fnstcw"):
+            add_operand_inputs(args[0])
+            stack_loc = cls._stack_location(args[0]) if isinstance(
+                args[0], AsmAddressMode
+            ) else None
+            if stack_loc is not None:
+                outputs.append(stack_loc)
+            is_store = True
+
+            def eval_fstcw(s: NodeState, a: InstrArgs) -> None:
+                store = mem_store(
+                    a, 0, fn_op("M2C_FSTCW", [], Type.u16()), None, Type.u16()
+                )
+                if store is not None:
+                    s.store_memory(store, EAX)
+
+            eval_fn = eval_fstcw
+
         # --- Not yet implemented: fail cleanly (never crash, never wrong). ---
-        elif base in ("fistp", "fiadd", "fisub", "fisubr", "fimul", "fidiv",
-                      "fidivr"):
-            eval_fn = not_implemented("x87 int conversion")
         else:
             eval_fn = not_implemented("x87 transcendental")
 
