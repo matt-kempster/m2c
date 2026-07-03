@@ -115,8 +115,10 @@ from .translate import (
     Abi,
     AbiArgSlot,
     AddressMode,
+    AddressOf,
     ArgLoc,
     Arch,
+    ArrayAccess,
     BinaryOp,
     Cast,
     Condition,
@@ -130,6 +132,7 @@ from .translate import (
     RawSymbolRef,
     RegExpression,
     StoreStmt,
+    StructAccess,
     Type,
     UnaryOp,
     as_intish,
@@ -2043,8 +2046,16 @@ FNSTSW_MARKER = "M2C_FNSTSW"
 
 def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expression]]:
     """If `expr` is an x87 compare status-word marker, its (lhs, rhs) operands;
-    otherwise None."""
-    uw = early_unwrap(expr)
+    otherwise None. Unwraps EvalOnceExpr's *even past a forced/materialized
+    boundary* (unlike early_unwrap): a store scheduled between the fcomp and the
+    fnstsw/test-ah idiom forces the marker (an fn_op) into a temp via the shared
+    store's prevent_later_function_calls, and the fold must still recover the
+    operands to reconstruct `x < 0.0f`. The returned operands keep their own
+    (possibly forced) wrappers, so a compare operand that genuinely depends on
+    the intervening store stays correctly materialized before it."""
+    uw = expr
+    while isinstance(uw, EvalOnceExpr):
+        uw = uw.wrapped_expr
     if (
         isinstance(uw, FuncCall)
         and isinstance(uw.function, GlobalSymbol)
@@ -2053,6 +2064,60 @@ def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expre
     ):
         return uw.args[0], uw.args[1]
     return None
+
+
+def fnstsw_marker_is_forced(expr: Optional[Expression]) -> bool:
+    """Whether the status-word marker in `expr` is only reachable past a forced
+    (materialized) EvalOnceExpr boundary -- i.e. a store scheduled between the
+    fcomp and fnstsw forced it into a temp (see eval_cmp's fold)."""
+    while isinstance(expr, EvalOnceExpr):
+        if expr.forced_emit or expr.emit_exactly_once:
+            return True
+        expr = expr.wrapped_expr
+    return False
+
+
+def _operand_stable_across_store(operand: Expression) -> bool:
+    """Whether one folded compare operand keeps its fcomp-time value at the
+    (post-store) branch. Register/stack/phi values and literals were snapshotted
+    before the store, so they are stable. A *direct* memory read is stable only
+    when it targets read-only data (a constant like an `_real_*` compare literal)
+    that the store cannot have modified; a writable global or a pointer/indexed
+    read might alias the store and would re-read its current value."""
+    uw = early_unwrap(operand)
+    if not isinstance(uw, StructAccess):
+        # ArrayAccess (indexed/pointer read) is treated conservatively as
+        # unstable; anything else is a snapshotted value or literal.
+        return not isinstance(uw, ArrayAccess)
+    base = early_unwrap(uw.struct_var)
+    if isinstance(base, AddressOf):
+        inner = early_unwrap(base.expr)
+        if (
+            isinstance(inner, GlobalSymbol)
+            and inner.asm_data_entry is not None
+            and inner.asm_data_entry.is_readonly
+        ):
+            return True
+    return False
+
+
+def fnstsw_operands_store_stable(operands: Tuple[Expression, Expression]) -> bool:
+    """Whether a forced marker's compare operands cannot have changed across the
+    intervening store, so folding them at the (post-store) branch stays correct
+    (see _operand_stable_across_store)."""
+    return all(_operand_stable_across_store(o) for o in operands)
+
+
+def suppress_forced_fnstsw_marker(expr: Optional[Expression]) -> None:
+    """Drop the dead `temp = M2C_FNSTSW(...)` assignment left behind when a store
+    between the fcomp and fnstsw forced the status-word marker (see eval_cmp's
+    fold). Only the marker's own EvalOnceExpr wrappers are un-emitted; the
+    operands, held inside the FuncCall, are untouched."""
+    while isinstance(expr, EvalOnceExpr):
+        if expr.forced_emit:
+            expr.forced_emit = False
+            expr.var.is_emitted = False
+        expr = expr.wrapped_expr
 
 
 def fpu_compare_condition(
@@ -3111,12 +3176,27 @@ class X86Arch(Arch):
                     # x87 status-word marker, translate the compare directly to
                     # a float condition instead of materializing bit arithmetic
                     # on the status word (see §3.2).
+                    raw_eax = a.regs.get_raw(EAX)
                     operands = fnstsw_marker_operands(a.regs[EAX])
                     op = FNSTSW_MASK_OPS.get(args[1].value & 0xFF)
-                    if operands is not None and op is not None:
+                    forced = fnstsw_marker_is_forced(raw_eax)
+                    # Fold when eax still carries the compare's status-word marker.
+                    # A store between the fcomp and this fnstsw forces the marker
+                    # (an fn_op) into a temp; still fold past it -- so the compare
+                    # surfaces as `x < 0.0f` rather than raw M2C_FNSTSW bit
+                    # arithmetic -- but only when the operands couldn't have
+                    # changed across that store (else keep the marker, which
+                    # snapshots the pre-store value correctly).
+                    if (
+                        operands is not None
+                        and op is not None
+                        and (not forced or fnstsw_operands_store_stable(operands))
+                    ):
                         cond = fpu_compare_condition(operands[0], operands[1], op)
                         for flag in cls.flag_regs:
                             s.set_reg(flag, cond)
+                        if forced:
+                            suppress_forced_fnstsw_marker(raw_eax)
                         return
                 lhs = op_value(a, 0, width)
                 if base == "test":
