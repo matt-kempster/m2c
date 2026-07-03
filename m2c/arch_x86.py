@@ -379,6 +379,19 @@ RE_DLL_IMPORT = re.compile(r"^_[A-Za-z0-9]+_(?:DLL|DRV)_(\w+)$")
 # table restores it. The values are the documented argument counts * 4 (all
 # arguments of these APIs are 4-byte). Names that are cdecl despite living in
 # system DLLs (e.g. the variadic wsprintfA) must not be listed here.
+#
+# This built-in table is a Win32 convenience layer, and deliberately the
+# lowest-priority *name-based* source of callee cleanup. callee_cleanup_bytes()
+# resolves a call's cleanup with the precedence:
+#   1. explicit context/prototype (__attribute__((stdcall)) in the user
+#      context, i.e. arch.context_stdcall_arg_bytes),
+#   2. a decorated stdcall suffix (`__imp__X_N`, or a Ghidra `.set name@N`
+#      recorded in asm_data.stdcall_arg_bytes),
+#   3. this configured platform table,
+#   4. conservative structural inference (compute_call_cleanup, when the name
+#      gives no answer).
+# So a user context declaration always overrides a table entry for the same
+# API, and the table only fills in APIs the context did not describe.
 STDCALL_API_ARG_BYTES: Dict[str, int] = {
     "AddFontResourceA": 4,
     "AdjustWindowRect": 12,
@@ -567,22 +580,37 @@ def is_register_indirect_call(target: Argument) -> bool:
 
 
 def callee_cleanup_bytes(
-    target: Argument, stdcall_arg_bytes: Dict[str, int]
+    target: Argument,
+    context_arg_bytes: Optional[Dict[str, int]] = None,
+    file_arg_bytes: Optional[Dict[str, int]] = None,
 ) -> Optional[int]:
     """Number of stack bytes a call target is known to pop itself: 0 for a
-    known-cdecl callee, None when the convention cannot be determined from
-    the name. Sources, most specific first: `__imp__X_N` name decoration,
-    the per-file/context `stdcall_arg_bytes` map (Ghidra `.set` decorations
-    and user context prototypes), and the built-in Win32 API table."""
+    known-cdecl callee, None when the convention cannot be determined from the
+    name. Sources, in strict precedence order (see STDCALL_API_ARG_BYTES):
+
+      1. an explicit context/prototype (`context_arg_bytes`, from
+         __attribute__((stdcall)) declarations),
+      2. a decorated stdcall suffix: an `__imp__X_N` import name, or a Ghidra
+         `.set name@N` decoration recorded for the file (`file_arg_bytes`),
+      3. the built-in Win32 API table.
+
+    (Conservative structural inference, the lowest priority, lives in
+    compute_call_cleanup and only runs when this returns None.)"""
+    context_arg_bytes = context_arg_bytes or {}
+    file_arg_bytes = file_arg_bytes or {}
     sym = call_target_symbol(target)
     if sym is None:
         return None
+    # 1. Explicit context/prototype (overrides everything below).
+    if sym in context_arg_bytes:
+        return context_arg_bytes[sym]
+    # 2. Decorated stdcall suffix: inline `__imp__X_N`, then file `.set name@N`.
     m = RE_STDCALL_IMPORT.match(sym)
     if m:
         return int(m.group(1))
-    known = stdcall_arg_bytes.get(sym)
-    if known is not None:
-        return known
+    if sym in file_arg_bytes:
+        return file_arg_bytes[sym]
+    # 3. The built-in Win32 API convenience table.
     dll = RE_DLL_IMPORT.match(sym)
     if dll is not None:
         api = STDCALL_API_ARG_BYTES.get(dll.group(1))
@@ -1075,11 +1103,14 @@ def rewrite_stack_ops(
             j -= 1
         return total
 
-    # Callee cleanup information beyond name decoration: Ghidra-exported
-    # `.set sym, "name@N"` decorations for this file, plus stdcall prototypes
-    # from the user-provided context (which take precedence).
-    stdcall_arg_bytes: Dict[str, int] = dict(asm_data.stdcall_arg_bytes)
-    stdcall_arg_bytes.update(getattr(arch, "context_stdcall_arg_bytes", {}))
+    # Callee cleanup information beyond name decoration, kept in separate
+    # precedence tiers (see callee_cleanup_bytes): user-context stdcall
+    # prototypes (highest), and Ghidra-exported `.set sym, "name@N"`
+    # decorations for this file.
+    context_arg_bytes: Dict[str, int] = dict(
+        getattr(arch, "context_stdcall_arg_bytes", {})
+    )
+    file_arg_bytes: Dict[str, int] = dict(asm_data.stdcall_arg_bytes)
 
     call_cleanup: Dict[int, int] = {}
 
@@ -1137,7 +1168,7 @@ def rewrite_stack_ops(
         call = body[call_index]
         assert isinstance(call, Instruction)
         target = call.args[0]
-        known = callee_cleanup_bytes(target, stdcall_arg_bytes)
+        known = callee_cleanup_bytes(target, context_arg_bytes, file_arg_bytes)
         if known is not None:
             return known
         # The callee's convention is not known from its name. stdcall callees

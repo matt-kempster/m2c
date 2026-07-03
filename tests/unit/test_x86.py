@@ -641,6 +641,49 @@ class TestX86FunctionAbi(unittest.TestCase):
         )
 
 
+class TestX86CalleeCleanupPrecedence(unittest.TestCase):
+    """callee_cleanup_bytes resolves a call's stdcall cleanup with the
+    precedence context > decorated @N > table > inference (L2)."""
+
+    def cleanup(
+        self,
+        sym: str,
+        context: Optional[Dict[str, int]] = None,
+        file: Optional[Dict[str, int]] = None,
+    ) -> Optional[int]:
+        from m2c.arch_x86 import callee_cleanup_bytes
+
+        return callee_cleanup_bytes(AsmGlobalSymbol(sym), context or {}, file or {})
+
+    def test_table_used_without_context(self) -> None:
+        # MessageBoxA is in the built-in Win32 table (4 args = 16 bytes).
+        self.assertEqual(self.cleanup("_MessageBoxA"), 16)
+
+    def test_context_overrides_table(self) -> None:
+        # A context declaration for the same API wins over the table entry.
+        self.assertEqual(self.cleanup("_MessageBoxA", context={"_MessageBoxA": 4}), 4)
+
+    def test_context_overrides_decorated(self) -> None:
+        # Context also outranks an `__imp__X_N` decorated suffix.
+        self.assertEqual(self.cleanup("__imp__Foo_8"), 8)  # decorated
+        self.assertEqual(
+            self.cleanup("__imp__Foo_8", context={"__imp__Foo_8": 12}), 12
+        )
+
+    def test_decorated_overrides_table_and_file(self) -> None:
+        # A decorated suffix outranks a file `.set` decoration and the table.
+        self.assertEqual(
+            self.cleanup("__imp__Foo_8", file={"__imp__Foo_8": 99}), 8
+        )
+
+    def test_file_decoration_below_context(self) -> None:
+        # A Ghidra `.set name@N` file decoration is used, but context wins.
+        self.assertEqual(self.cleanup("_Bar", file={"_Bar": 8}), 8)
+        self.assertEqual(
+            self.cleanup("_Bar", context={"_Bar": 4}, file={"_Bar": 8}), 4
+        )
+
+
 class TestX86StackRewrite(unittest.TestCase):
     """The ESP-delta stack-rewrite prepass, focused on stdcall/indirect
     cleanup inference not miscounting prologue/callee-save pushes as call
