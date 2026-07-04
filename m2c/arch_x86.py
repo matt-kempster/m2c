@@ -2034,6 +2034,37 @@ def fpu_int_type(width: int) -> Type:
     return {2: Type.s16(), 4: Type.s32(), 8: Type.s64()}[width]
 
 
+def load_fild_operand(a: InstrArgs, index: int, width: int) -> Tuple[Expression, Type]:
+    """Read an `fild` integer memory operand, returning (value, source int type).
+
+    A 64-bit (`qword`) operand is read as its low and high 4-byte halves rather
+    than one signed 8-byte load. MSVC's canonical unsigned u32->float/double
+    conversion spills the value with a zero high dword
+    (`mov [m], u; xor r,r; mov [m+4], r; fild qword [m]`); a plain signed 8-byte
+    load would sign-extend the low dword and corrupt values >= 2^31. A literal-0
+    high half means the value is the zero-extended (unsigned) low dword;
+    otherwise the halves splice into a genuine signed s64.
+    """
+    itype = fpu_int_type(width)
+    if width != 8:
+        return mem_load(a, index, itype), itype
+    target = mem_target(a, index)
+    hi_target: Union[AddressMode, RawSymbolRef]
+    if isinstance(target, AddressMode):
+        hi_target = AddressMode(offset=target.offset + 4, base=target.base)
+    elif isinstance(target, RawSymbolRef):
+        hi_target = RawSymbolRef(offset=target.offset + 4, sym=target.sym)
+    else:
+        # Scaled-index or otherwise non-decomposable address: signed 8-byte load.
+        return mem_load(a, index, itype), itype
+    lo = deref(target, a.regs, a.stack_info, size=4)
+    hi = deref(hi_target, a.regs, a.stack_info, size=4)
+    if early_unwrap(hi) == Literal(0):
+        unsigned_lo = as_type(as_type(lo, Type.u32(), silent=True), Type.u64(), silent=True)
+        return unsigned_lo, Type.u64()
+    return glue_int64(lo, hi, signed=True), Type.s64()
+
+
 def is_f64_expr(expr: Expression) -> bool:
     return expr.type.is_float() and expr.type.get_size_bits() == 64
 
@@ -3639,10 +3670,9 @@ class X86Arch(Arch):
 
                 eval_fn = eval_fld
             else:
-                itype = fpu_int_type(width)
 
                 def eval_fild(s: NodeState, a: InstrArgs) -> None:
-                    val = mem_load(a, 1, itype)
+                    val, itype = load_fild_operand(a, 1, width)
                     s.set_reg(dst, handle_convert(val, Type.floatish(), itype))
 
                 eval_fn = eval_fild
