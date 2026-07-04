@@ -2280,6 +2280,22 @@ FPU_UNARY_OPS: Dict[str, Callable[[Expression], Expression]] = {
     "fcos": lambda v: fn_op("cosf", [v], Type.f32()),
     "frndint": lambda v: fn_op("M2C_RNDINT", [v], Type.f32()),
     "f2xm1": lambda v: BinaryOp.f32(fn_op("exp2f", [v], Type.f32()), "-", f32_literal(1.0)),
+    # One-argument x87 CRT math helpers (`fld a; call __CIsin`), taking their
+    # f64 argument on and returning their f64 result on the x87 stack (net
+    # depth 0). x86_fpu rewrites the `call __CIxxx` to these fictive ops.
+    "m2c_ci_sqrt": lambda v: fn_op("sqrt", [v], Type.f64()),
+    "m2c_ci_sin": lambda v: fn_op("sin", [v], Type.f64()),
+    "m2c_ci_cos": lambda v: fn_op("cos", [v], Type.f64()),
+    "m2c_ci_tan": lambda v: fn_op("tan", [v], Type.f64()),
+    "m2c_ci_exp": lambda v: fn_op("exp", [v], Type.f64()),
+    "m2c_ci_log": lambda v: fn_op("log", [v], Type.f64()),
+    "m2c_ci_log10": lambda v: fn_op("log10", [v], Type.f64()),
+    "m2c_ci_asin": lambda v: fn_op("asin", [v], Type.f64()),
+    "m2c_ci_acos": lambda v: fn_op("acos", [v], Type.f64()),
+    "m2c_ci_atan": lambda v: fn_op("atan", [v], Type.f64()),
+    "m2c_ci_sinh": lambda v: fn_op("sinh", [v], Type.f64()),
+    "m2c_ci_cosh": lambda v: fn_op("cosh", [v], Type.f64()),
+    "m2c_ci_tanh": lambda v: fn_op("tanh", [v], Type.f64()),
 }
 
 # x87 two-operand transcendentals. Each is `builder(st0, st1) -> value`,
@@ -2315,6 +2331,13 @@ FPU_BINARY_OPS: Dict[str, Tuple[Callable[[Expression, Expression], Expression], 
     # fprem/fprem1: st0 = fmod(st0, st1).
     "fprem": (lambda st0, st1: fn_op("fmodf", [st0, st1], Type.f32()), 0, False),
     "fprem1": (lambda st0, st1: fn_op("fmodf", [st0, st1], Type.f32()), 0, False),
+    # Two-argument x87 CRT math helpers (`fld a; fld b; call __CIpow`): the
+    # first argument is loaded first (st1), the second last (st0); the helper
+    # consumes both and pushes one f64 result in st1's slot (net depth -1).
+    # x86_fpu rewrites the `call __CIxxx` to these fictive ops.
+    "m2c_ci_pow": (lambda st0, st1: fn_op("pow", [st1, st0], Type.f64()), 1, True),
+    "m2c_ci_fmod": (lambda st0, st1: fn_op("fmod", [st1, st0], Type.f64()), 1, True),
+    "m2c_ci_atan2": (lambda st0, st1: fn_op("atan2", [st1, st0], Type.f64()), 1, True),
 }
 
 
@@ -2680,6 +2703,8 @@ class X86Arch(Arch):
         "fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp", "ftst",
         "ficom", "ficomp", "frndint", "fscale", "f2xm1", "fprem", "fprem1", "fpatan",
         "fyl2x", "fyl2xp1", "fxam",
+    } | {k for k in FPU_UNARY_OPS if k.startswith("m2c_ci_")} | {
+        k for k in FPU_BINARY_OPS if k.startswith("m2c_ci_")
     }
     # Non-rep string instructions (single element): mnemonic -> (inputs,
     # outputs, load, store).

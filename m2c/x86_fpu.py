@@ -148,6 +148,34 @@ X86_FPU_HELPER_DELTAS: Dict[str, int] = {
     "__ftol2": -1,
 }
 
+# MSVC6 /Oi lowers the libm functions that have no single x87 instruction into
+# calls to CRT helpers that take their arguments on, and return their result
+# on, the x87 stack (`fld a; fld b; call __CIpow`). Each maps to a fictive FPU
+# op (see FPU_UNARY_OPS / FPU_BINARY_OPS in arch_x86) carrying the real call, so
+# the stack effect is modeled exactly as (consumed, pushed) -- not the ±1
+# single-value delta, which would drop one operand of a two-argument helper and
+# silently miscompile `pow(a, b)` to one of its arguments. The value is
+# (fictive mnemonic, argument count); two-argument helpers are net depth -1,
+# one-argument helpers net 0.
+X86_FPU_CALL_HELPERS: Dict[str, Tuple[str, int]] = {
+    "__CIpow": ("m2c_ci_pow", 2),
+    "__CIfmod": ("m2c_ci_fmod", 2),
+    "__CIatan2": ("m2c_ci_atan2", 2),
+    "__CIsqrt": ("m2c_ci_sqrt", 1),
+    "__CIsin": ("m2c_ci_sin", 1),
+    "__CIcos": ("m2c_ci_cos", 1),
+    "__CItan": ("m2c_ci_tan", 1),
+    "__CIexp": ("m2c_ci_exp", 1),
+    "__CIlog": ("m2c_ci_log", 1),
+    "__CIlog10": ("m2c_ci_log10", 1),
+    "__CIasin": ("m2c_ci_asin", 1),
+    "__CIacos": ("m2c_ci_acos", 1),
+    "__CIatan": ("m2c_ci_atan", 1),
+    "__CIsinh": ("m2c_ci_sinh", 1),
+    "__CIcosh": ("m2c_ci_cosh", 1),
+    "__CItanh": ("m2c_ci_tanh", 1),
+}
+
 
 def is_fpu_mnemonic(base: str) -> bool:
     return base in ALL_FPU
@@ -341,10 +369,24 @@ def rewrite_fpu_ops(
     def call_delta(index: int, item: Instruction, base: str) -> int:
         """The FPU stack effect of a call: +1 if the callee returns a float in
         st(0), -1 if it consumes st(0) (a hand-written ftol-style helper), else
-        0. Inferred per callee (direct calls) or per site (indirect calls);
-        see _call_key / _candidate_moves / the BFS."""
+        0. A CRT `__CIxxx` math helper has a fixed (consumed, pushed) effect (a
+        two-argument helper is net -1, one-argument net 0); an unrecognized
+        `__CI*` helper fails loud rather than being guessed by the ±1 inference,
+        which could accept a depth-consistent but value-wrong assignment. Other
+        callees are inferred per callee (direct) or per site (indirect); see
+        _call_key / _candidate_moves / the BFS."""
         if item.function_target is None or base != "call":
             return 0
+        from .arch_x86 import call_target_symbol
+
+        sym = call_target_symbol(item.args[0]) if item.args else None
+        if sym is not None and sym.startswith("__CI"):
+            helper = X86_FPU_CALL_HELPERS.get(sym)
+            if helper is None:
+                raise DecompFailure(
+                    f"unsupported x87 CRT math helper {sym}: {instr_str(item)}"
+                )
+            return 1 - helper[1]  # 2-arg -> -1, 1-arg -> 0
         key = _call_key(body, index)
         return call_deltas.get(key, 0) if key is not None else 0
 
@@ -505,6 +547,25 @@ def rewrite_fpu_ops(
             and part.function_target is not None
             and len(part.args) == 3
         ):
+            from .arch_x86 import call_target_symbol
+
+            sym = call_target_symbol(part.args[0]) if part.args else None
+            helper = X86_FPU_CALL_HELPERS.get(sym) if sym is not None else None
+            if helper is not None:
+                # A CRT math helper (`fld a; [fld b;] call __CIxxx`): rewrite it
+                # into its fictive FPU op reading st(0)[/st(1)] and producing the
+                # result in place (1-arg) or in st(1) with a pop (2-arg).
+                fictive, nargs = helper
+                if depth < nargs:
+                    raise X87StackError(
+                        f"x87 stack underflow (depth {depth}) calling {sym}: "
+                        f"{instr_str(part)}",
+                        i,
+                        "underflow",
+                    )
+                slots = [Register(f"f{depth - 1 - k}") for k in range(nargs)]
+                emit(fictive, list(slots), part.meta)
+                continue
             delta = call_delta(i, part, base)
             if delta != 0:
                 fpret_out = depth if delta == 1 else -1

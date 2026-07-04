@@ -1063,6 +1063,49 @@ class TestX86FpuRewrite(unittest.TestCase):
         self.assertEqual(out[0], "call _foo, 0x0, 0x0, 0x0, -0x1")
         self.assertEqual(out[1], "fadd $f0, 0x4($esp)")
 
+    def test_ci_pow_two_arg_helper(self) -> None:
+        # `fld a; fld b; call __CIpow` consumes st0 and st1 and pushes one result
+        # (net -1). It rewrites to the fictive two-operand op reading st0 (f1)
+        # and st1 (f0) -- not the ±1 single-consume annotation that would drop an
+        # operand -- so the following store sees the pow result in f0.
+        out = self.rewrite(
+            """
+            FLD qword ptr [ESP + 0x4]
+            FLD qword ptr [ESP + 0xc]
+            CALL __CIpow, 0x0, 0x0
+            FSTP qword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[2], "m2c_ci_pow $f1, $f0")
+        self.assertEqual(out[3], "fstp.q [_g], $f0")
+
+    def test_ci_sqrt_one_arg_helper(self) -> None:
+        # `fld a; call __CIsqrt` consumes st0 and pushes one result in place
+        # (net 0), rewritten to the fictive one-operand op.
+        out = self.rewrite(
+            """
+            FLD qword ptr [ESP + 0x4]
+            CALL __CIsqrt, 0x0, 0x0
+            FSTP qword ptr [_g]
+            RET
+            """
+        )
+        self.assertEqual(out[1], "m2c_ci_sqrt $f0")
+
+    def test_ci_unknown_helper_fails_loud(self) -> None:
+        # An unrecognized `__CI*` helper must fail loud rather than let the ±1
+        # inference guess a depth-consistent but value-wrong stack effect.
+        with self.assertRaises(DecompFailure) as cm:
+            self.rewrite(
+                """
+                FLD qword ptr [ESP + 0x4]
+                CALL __CIbogus, 0x0, 0x0
+                RET
+                """
+            )
+        self.assertIn("__CIbogus", str(cm.exception))
+
     def test_context_float_return_wrapper_no_fpu(self) -> None:
         # A forwarding wrapper `call _returns_float; ret` has no x87 instruction
         # of its own, so structural inference would leave it untouched. A
