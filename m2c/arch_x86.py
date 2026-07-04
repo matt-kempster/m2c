@@ -346,8 +346,10 @@ def op_value(
     arg = a.raw_arg(index)
     if isinstance(arg, Register):
         val = a.regs[arg]
-        if width < 4:
-            # Reading a sub-register: reinterpret the low bits.
+        if width < 4 and val.type.get_size_bytes() != width:
+            # Reading a sub-register: reinterpret the low bits. (If the value
+            # is already exactly this wide -- e.g. it came from a same-width
+            # memory load -- there is nothing to truncate.)
             val = as_type(val, type or width_type(width), silent=True, unify=False)
         return val
     if isinstance(arg, AsmAddressMode):

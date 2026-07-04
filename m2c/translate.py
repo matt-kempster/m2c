@@ -560,16 +560,15 @@ class StackInfo:
             return True
         return False
 
-    def get_struct_type_map(self) -> Dict[Expression, Dict[int, Type]]:
-        """Reorganize struct information in unique_type_map by var & offset"""
-        struct_type_map: Dict[Expression, Dict[int, Type]] = {}
+    def get_struct_type_map(self) -> Dict[Expression, Dict[int, Dict[int, Type]]]:
+        """Reorganize struct information in unique_type_map by var, offset &
+        access size"""
+        struct_type_map: Dict[Expression, Dict[int, Dict[int, Type]]] = {}
         for (category, key), type in self.unique_type_map.items():
             if category != "struct":
                 continue
-            var, offset = typing.cast(Tuple[Expression, int], key)
-            if var not in struct_type_map:
-                struct_type_map[var] = {}
-            struct_type_map[var][offset] = type
+            var, offset, size = typing.cast(Tuple[Expression, int, int], key)
+            struct_type_map.setdefault(var, {}).setdefault(offset, {})[size] = type
         return struct_type_map
 
     def __str__(self) -> str:
@@ -1588,6 +1587,7 @@ class StructAccess(Expression):
 
         field_path: Optional[AccessPath] = self.late_field_path()
 
+        narrow_cast = ""
         if field_path is not None and field_path != [0]:
             has_nonzero_access = True
         elif (
@@ -1600,6 +1600,30 @@ class StructAccess(Expression):
             # elements, not evidence of an unknown struct, so they shouldn't
             # force the unk0 fallback below.
             has_nonzero_access = True
+        elif (
+            field_path is None
+            and self.offset == 0
+            and self.target_size is not None
+            and self.stack_info is not None
+            and self.stack_info.global_info.arch.arch == Target.ArchEnum.X86
+            and not (fmt.valid_syntax and has_nonzero_access)
+            and var.type.data().array_dim is None
+            and (pointee := var.type.get_pointer_target()) is not None
+            and pointee.is_int()
+            and pointee.get_size_bytes() not in (None, self.target_size)
+        ):
+            # An access at the start of a scalar int, with a different width
+            # than the int itself (e.g. MSVC reading the low byte of an `int`
+            # global with a byte load). x86 is little-endian, so making the
+            # access width visible with a truncating cast of the variable
+            # itself (`(s8) glob`, or `(s8) x->unk0` when other offsets are
+            # accessed too) is faithful. (On a big-endian target this
+            # rendering would be wrong -- offset 0 there holds the *high*
+            # bits -- but non-x86 arches keep a single shared access type per
+            # offset in `deref`, so this case cannot be reached there.)
+            narrow_cast = f"({self.type.format(fmt)}) "
+            prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
+            field_path = [0, prefix + format_hex(self.offset)]
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
             offset_str = fmt.format_int(self.offset)
             return f"M2C_FIELD({var.format(fmt)}, {Type.ptr(self.type).format(fmt)}, {offset_str})"
@@ -1624,9 +1648,9 @@ class StructAccess(Expression):
 
         # Rewrite `x->unk0` to `*x` and `x.unk0` to `x`, unless has_nonzero_access
         if self.offset == 0 and not has_nonzero_access:
-            return f"{'*' if deref else ''}{var.format(fmt)}"
+            return f"{narrow_cast}{'*' if deref else ''}{var.format(fmt)}"
 
-        return f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
+        return f"{narrow_cast}{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
 
 @dataclass(frozen=True, eq=True)
@@ -4255,9 +4279,14 @@ def resolve_types_late(stack_info: StackInfo) -> None:
         if len(offset_type_map) == 1 and 0 in offset_type_map:
             # var was probably a plain pointer, not a struct
             # Try to unify it with the appropriate pointer type,
-            # to fill in the type if it does not already have one
-            type = offset_type_map[0]
-            var.type.unify(Type.ptr(type))
+            # to fill in the type if it does not already have one.
+            # If the location was accessed at multiple widths, the widest
+            # access is the best guess for the underlying type; the narrower
+            # accesses then render as truncating casts.
+            types_by_size = offset_type_map[0]
+            for size in sorted(types_by_size, reverse=True):
+                if var.type.unify(Type.ptr(types_by_size[size])):
+                    break
 
 
 @dataclass

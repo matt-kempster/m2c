@@ -7,8 +7,8 @@ s32 test(s32 in, s32 out) {
 
     var_eax = read(in, &spC, 0x123456);
     if (var_eax >= 0) {
-        spC = spC ^ 0x55;
-        *(sp + (var_eax + 0xB)) = (s8) *(sp + (var_eax + 0xB)) ^ 0x55;
+        spC ^= 0x55;
+        *(sp + (var_eax + 0xB)) = *(sp + (var_eax + 0xB)) ^ 0x55;
         var_eax = write(out, &spC, var_eax);
     }
     return var_eax;
