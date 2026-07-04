@@ -1842,6 +1842,61 @@ def rewrite_stack_ops(
         ):
             alloc_pushes.add(i)
 
+    # Mid-function dead-value pushes: MSVC allocates a call-argument slot with
+    # `push <reg>` (one byte, vs three for `sub esp, 4`) and immediately
+    # overwrites it, e.g.
+    #     push ecx; fstp dword ptr [esp]              (float argument)
+    #     push ecx; push ecx; fstp qword ptr [esp]    (double argument)
+    # The pushed value never survives, so treat such pushes as pure
+    # allocations rather than reads of the (dead) scratch register, which
+    # would otherwise become a phantom register argument or an
+    # unset-register error.
+    def stores_all_of_esp_slot(index: int, slots: int) -> bool:
+        """Whether body[index] is an instruction whose only effect on the
+        stack is fully overwriting the `slots` dwords at [esp]."""
+        part = body[index] if index < len(body) else None
+        if not isinstance(part, Instruction) or states[index] is None:
+            return False
+        base, width = split_width_suffix(part.mnemonic)
+        if base not in ("fstp", "fst", "fistp", "fist", "mov"):
+            return False
+        dest = part.args[0]
+        return (
+            width == 4 * slots
+            and isinstance(dest, AsmAddressMode)
+            and dest.base == ESP
+            and dest.addend == AsmLiteral(0)
+            and not any(
+                isinstance(arg, AsmAddressMode) for arg in part.args[1:]
+            )
+        )
+
+    for i, part in enumerate(body):
+        if (
+            i in alloc_pushes
+            or not isinstance(part, Instruction)
+            or states[i] is None
+            or split_width_suffix(part.mnemonic)[0] != "push"
+            or not isinstance(part.args[0], Register)
+            or part.args[0] == EBP
+            or is_save_push(i)
+        ):
+            continue
+        if stores_all_of_esp_slot(i + 1, 1):
+            alloc_pushes.add(i)
+            continue
+        nxt = body[i + 1] if i + 1 < len(body) else None
+        if (
+            isinstance(nxt, Instruction)
+            and states[i + 1] is not None
+            and split_width_suffix(nxt.mnemonic)[0] == "push"
+            and isinstance(nxt.args[0], Register)
+            and not is_save_push(i + 1)
+            and stores_all_of_esp_slot(i + 2, 2)
+        ):
+            alloc_pushes.add(i)
+            alloc_pushes.add(i + 1)
+
     # Pass 3: emit the rewritten body.
     # When ebp is used as a frame pointer, its save/setup/restore
     # (`push ebp; mov ebp, esp; ...; mov esp, ebp; pop ebp` / `leave`) are pure
@@ -3192,6 +3247,21 @@ class X86Arch(Arch):
                     zero = s.set_reg(args[0], Literal(0))
                     set_x86_flags_from_result(s, zero, w)
                     return
+                if base == "sbb" and args[0] == args[1] and isinstance(args[0], Register):
+                    # sbb r, r: materializes the borrow as 0 / -1 (see
+                    # sbb_expr). The result is independent of r's prior value,
+                    # so don't read the operands at all -- r is often dead
+                    # here, and reading it would register a phantom argument
+                    # (or an unset-register error). The flags of `sbb r, r`
+                    # match those of `cmp 0, borrow`: c' = borrow (0 - 1
+                    # borrows), z = !borrow, n = borrow (result is -1), no
+                    # signed overflow.
+                    borrow = carry_in(a)
+                    val = s.set_reg(
+                        args[0], UnaryOp("-", borrow, type=Type.intish())
+                    )
+                    eval_x86_cmp(s, Literal(0), as_intish(borrow), w)
+                    return
                 if (
                     w == 4
                     and isinstance(args[0], Register)
@@ -4108,10 +4178,18 @@ class X86Arch(Arch):
         # stack argument stores instead (make_function_call requires
         # possible_slots to be registers).
         if not for_call and (not fn_sig.params_known or fn_sig.is_variadic):
+            # __fastcall (and __thiscall's `this`) passes the first
+            # register-sized arguments in ecx/edx. Offer them as candidates:
+            # compiler-generated cdecl/stdcall code never reads these
+            # caller-save registers before setting them, so this only fires
+            # for functions that really do take register arguments, which
+            # would otherwise decode as unset-register errors.
+            candidate_slots.append(AbiArgSlot(ArgLoc(None, 0, ECX), Type.any_reg()))
+            candidate_slots.append(AbiArgSlot(ArgLoc(None, 1, EDX), Type.any_reg()))
             for i in range(8):
                 candidate_slots.append(
                     AbiArgSlot(
-                        ArgLoc(offset + 4 * i, len(known_slots) + i, None),
+                        ArgLoc(offset + 4 * i, len(known_slots) + 2 + i, None),
                         Type.any_reg(),
                     )
                 )
