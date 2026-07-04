@@ -374,6 +374,18 @@ def sub_expr(lhs: Expression, rhs: Expression) -> Expression:
     return fold_mul_chains(val)
 
 
+def add_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expression:
+    """`add`. A register += immediate follows the same path as MIPS
+    `addu reg, reg, imm` (handle_add): on pointers, handle_addi_real's
+    field-path resolution recovers `&s->field` / array-element addresses
+    instead of leaving raw arithmetic."""
+    src = srcs[0]
+    if isinstance(a.raw_arg(0), Register) and isinstance(src, Literal):
+        dst = a.reg_ref(0)
+        return fold_mul_chains(handle_addi_real(dst, dst, lhs, src, a))
+    return handle_add_real(lhs, src, a)
+
+
 def carry_in(a: InstrArgs) -> Expression:
     """The x86 carry flag as a 0/1 integer expression (for adc/sbb)."""
     return condition_from_expr(a.regs[Register("c")])
@@ -2325,6 +2337,19 @@ class X86Arch(Arch):
         X86FpuRewritePattern(),
     ]
 
+    def return_reg_always_meaningful(self, reg: Register) -> bool:
+        # The x87 ABI requires the register stack to be empty at every
+        # function boundary except for a float/double return value in st(0).
+        # The FPU prepass preserves exactly this property in its flat
+        # registers: `f0` is set at a return block iff the x87 stack is
+        # non-empty there (see x86_fpu.py). So a value in f0 at every return
+        # site *is* the return value in compiler-generated code, no matter
+        # how it got there (loaded back from a spill slot, phi'd across
+        # branches, or produced by a callee). eax gets no such treatment: it
+        # doubles as the primary scratch register, so the generic
+        # read-after-write heuristic stays in force for it.
+        return reg == Register("f0")
+
     def __init__(self) -> None:
         # Callee-cleanup byte counts for stdcall functions declared in the
         # user-provided context (via __attribute__((stdcall))), keyed by asm
@@ -2529,7 +2554,7 @@ class X86Arch(Arch):
     # dst is read and written (register or memory), sources are read.
     # base mnemonic -> (flags behavior, value builder).
     instrs_alu: Dict[str, Tuple[str, AluBuilder]] = {
-        "add": (FLAGS_ADD, lambda a, l, s: handle_add_real(l, s[0], a)),
+        "add": (FLAGS_ADD, add_expr),
         "adc": (FLAGS_ADD, adc_expr),
         "sub": (FLAGS_CMP, lambda a, l, s: sub_expr(l, s[0])),
         "sbb": (FLAGS_SBB, sbb_expr),

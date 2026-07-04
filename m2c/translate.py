@@ -116,6 +116,16 @@ class Arch(ArchFlowGraph, ArchC):
     def is_likely_partial_offset(self, addend: int) -> bool:
         return addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
 
+    def return_reg_always_meaningful(self, reg: Register) -> bool:
+        """Whether the platform ABI guarantees that a value left in `reg` at
+        every return site is the function's return value, letting return
+        detection trust it even when the value is also read, comes from a
+        function call, or was produced inside an asm pattern -- cases the
+        generic heuristic treats as likely-unintentional and skips. The
+        default False keeps the generic heuristic; only x86's x87 `f0`
+        overrides it (see X86Arch)."""
+        return False
+
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
 
@@ -3488,10 +3498,15 @@ def determine_return_register(
         if max_prio == 4:
             # Register is not always set, skip it
             continue
-        if max_prio <= 2 and not fn_decl_provided:
+        if (
+            max_prio <= 2
+            and not fn_decl_provided
+            and not arch.return_reg_always_meaningful(reg)
+        ):
             # Register is always read after being written, or comes from a
             # function call; seems unlikely to be an intentional return.
-            # Skip it, unless we have a known non-void return type.
+            # Skip it, unless we have a known non-void return type, or the
+            # ABI guarantees that a value here can only be the return value.
             continue
         if max_prio > best_prio:
             best_prio = max_prio
