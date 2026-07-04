@@ -1489,7 +1489,7 @@ def rewrite_stack_ops(
         #  - `infer_direct_stdcall` is set: the retry pass extends the same
         #    inference to direct calls (undecorated stdcall callees), relying
         #    on the dataflow consistency check to validate the result.
-        if is_stdcall_import(target):
+        if is_stdcall_import(target) and not caller_cleans_up(call_index):
             return call_arg_bytes(call_index)
         if is_register_indirect_call(target) and not caller_cleans_up(call_index):
             return call_arg_bytes(call_index)

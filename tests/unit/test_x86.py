@@ -812,6 +812,37 @@ class TestX86StackRewrite(unittest.TestCase):
         )
         self.assertEqual(self.call_cleanup_bytes(instrs), 8)
 
+    def test_stdcall_dll_import_pops_arguments(self) -> None:
+        # A genuine Win32-style stdcall DLL import (`_LIB_DLL_Func`) with no
+        # caller cleanup after the call pops its own arguments.
+        instrs = self.rewrite(
+            """
+            PUSH EAX
+            CALL _USER32_DLL_Foo
+            RET
+            """
+        )
+        self.assertEqual(self.call_cleanup_bytes(instrs), 4)
+
+    def test_cdecl_dll_export_not_double_counted(self) -> None:
+        # A cdecl export that merely lives in a system DLL (e.g. the variadic
+        # `_MSVCRT_DLL_sprintf`) matches the DLL-import name pattern but is
+        # cleaned up by the caller (`add esp, N` after the call). Counting it as
+        # a callee pop *and* honoring the caller's `add esp, 4` over-pops esp,
+        # unbalancing the frame at the return. With the caller-cleanup guard the
+        # call is treated as cdecl and the body balances (no DecompFailure).
+        instrs = self.rewrite(
+            """
+            PUSH EAX
+            CALL _MSVCRT_DLL_sprintf
+            ADD ESP, 0x4
+            RET
+            """
+        )
+        self.assertTrue(any(p.mnemonic == "ret" for p in instrs))
+        # The caller cleans up its 4 argument bytes; the callee pops nothing.
+        self.assertEqual(self.call_cleanup_bytes(instrs), 4)
+
 
 class TestX86FpuRewrite(unittest.TestCase):
     """The x87 stack-elimination prepass: depth dataflow and the rewrite of
