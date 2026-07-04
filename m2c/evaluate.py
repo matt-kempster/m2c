@@ -1524,6 +1524,30 @@ def eval_x86_cmp(
     s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
 
 
+def fold_x86_literal_add_cmp(cmp: BinaryOp) -> BinaryOp:
+    """Fold `(x - c1) == c2` into `x == (c1 + c2)` (and the same for `!=` and
+    for `+`). MSVC lowers small switches into in-place `dec reg; je` ladders,
+    whose equality flags otherwise render as `(x - 1) == 1` instead of
+    `x == 2` (hiding e.g. enum names). Exact for wrapping arithmetic, so only
+    applied to equality comparisons."""
+    while cmp.op in ("==", "!="):
+        lhs, rhs = early_unwrap(cmp.left), early_unwrap(cmp.right)
+        if isinstance(lhs, Literal):
+            lhs, rhs = rhs, lhs
+        if not isinstance(rhs, Literal):
+            break
+        if not (isinstance(lhs, BinaryOp) and lhs.op in ("-", "+")):
+            break
+        addend = early_unwrap(lhs.right)
+        if not isinstance(addend, Literal):
+            break
+        sign = 1 if lhs.op == "-" else -1
+        cmp = BinaryOp.icmp(
+            lhs.left, cmp.op, Literal(rhs.value + sign * addend.value)
+        )
+    return cmp
+
+
 def set_x86_flags_from_result(
     s: NodeState,
     val: Expression,
@@ -1545,6 +1569,7 @@ def set_x86_flags_from_result(
     _, stype = x86_flag_types(width)
     nez = handle_cmpnez(val)
     assert isinstance(nez, BinaryOp)
+    nez = fold_x86_literal_add_cmp(nez)
     s.set_reg(Register("z"), nez.negated())
     sval = as_type(val, stype, silent=True, unify=False)
     s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))

@@ -3515,25 +3515,28 @@ def determine_return_register(
         return None
 
     best_reg: Optional[Tuple[Register, bool]] = None
-    best_prio = -1
+    best_key = (False, -1)
     for reg, floating in arch.base_return_regs:
+        always_meaningful = arch.return_reg_always_meaningful(reg)
         prios = [priority(b, reg) for b in return_blocks]
         max_prio = max(prios)
         if max_prio == 4:
             # Register is not always set, skip it
             continue
-        if (
-            max_prio <= 2
-            and not fn_decl_provided
-            and not arch.return_reg_always_meaningful(reg)
-        ):
+        if max_prio <= 2 and not fn_decl_provided and not always_meaningful:
             # Register is always read after being written, or comes from a
             # function call; seems unlikely to be an intentional return.
             # Skip it, unless we have a known non-void return type, or the
             # ABI guarantees that a value here can only be the return value.
             continue
-        if max_prio > best_prio:
-            best_prio = max_prio
+        # A register whose ABI guarantees a value at every return site is the
+        # return value beats any heuristic candidate (on x86, f0 set at every
+        # return means the function returns a float no matter what eax holds).
+        # For arches without such a register the key reduces to max_prio, with
+        # ties keeping the earlier base_return_regs entry.
+        key = (always_meaningful, max_prio)
+        if key > best_key:
+            best_key = key
             best_reg = reg, floating
     return best_reg
 
