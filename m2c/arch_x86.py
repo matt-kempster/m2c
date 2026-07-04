@@ -200,6 +200,9 @@ PTR_WIDTHS: Dict[str, int] = {"byte": 1, "word": 2, "dword": 4, "qword": 8}
 
 RE_PTR = re.compile(r"\b(byte|word|dword|qword)\s+ptr\s+", re.IGNORECASE)
 RE_OFFSET = re.compile(r"\boffset\s+", re.IGNORECASE)
+# Branch-distance operand hints (IDA/MASM style: `jmp short loc_1`,
+# `call near ptr foo`). Pure syntax; the target that follows is all we need.
+RE_DISTANCE = re.compile(r"\b(short|near\s+ptr|far\s+ptr)\s+", re.IGNORECASE)
 RE_ST_REG = re.compile(r"\bst\((\d)\)", re.IGNORECASE)
 RE_SEGMENT = re.compile(r"\b([cdefgs]s):", re.IGNORECASE)
 
@@ -2520,6 +2523,7 @@ class X86Arch(Arch):
         widths = [PTR_WIDTHS[m.lower()] for m in RE_PTR.findall(args)]
         args = RE_PTR.sub("", args)
         args = RE_OFFSET.sub("", args)
+        args = RE_DISTANCE.sub("", args)
         # Rewrite st(N) FPU registers into parseable names.
         args = RE_ST_REG.sub(lambda m: f"st{m.group(1)}", args)
         # Segment override prefixes (e.g. the fs:[0] accesses in SEH

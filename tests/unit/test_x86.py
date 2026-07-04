@@ -122,6 +122,15 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(asm.mnemonic, "push")
         self.assertEqual(asm.args, [AsmGlobalSymbol("_FUN_0040e440")])
 
+    def test_branch_distance_hints(self) -> None:
+        # IDA/MASM-style branch-distance keywords are pure syntax.
+        asm, _ = self.parse_asm("jl short loc_685729")
+        self.assertEqual(asm.mnemonic, "jl")
+        self.assertEqual(asm.args, [AsmGlobalSymbol("loc_685729")])
+        asm, _ = self.parse_asm("call near ptr _foo")
+        self.assertEqual(asm.mnemonic, "call")
+        self.assertEqual(asm.args, [AsmGlobalSymbol("_foo")])
+
     def test_negative_displacement(self) -> None:
         asm, _ = self.parse_asm("MOV EAX, dword ptr [EBP + -0x8]")
         addr = asm.args[1]
