@@ -2,7 +2,8 @@ from __future__ import annotations
 import re
 import struct
 import sys
-from typing import BinaryIO, Dict, List, Optional, Set, TextIO, Tuple
+from dataclasses import dataclass
+from typing import BinaryIO, Dict, List, Optional, Set, TextIO, Tuple, Union
 
 import capstone as cs
 
@@ -15,6 +16,36 @@ from coff_file import (
     CoffSection,
     CoffSymbol,
 )
+
+
+@dataclass
+class Insn:
+    """A decoded machine instruction."""
+
+    insn: cs.CsInsn
+    address: int
+    raw: bytes
+
+
+@dataclass
+class DataLong:
+    """A 4-byte relocated data word living in `.text` (a jump-table entry)."""
+
+    address: int
+    reloc: CoffRelocation
+
+
+@dataclass
+class DataByte:
+    """A single raw data byte living in `.text` (a 2-level switch byte map)."""
+
+    address: int
+    value: int
+
+
+# One decoded `.text` element: either a real instruction or in-`.text` data
+# (jump tables and case-mapping byte maps that MSVC emits after the code).
+Element = Union[Insn, DataLong, DataByte]
 
 
 RE_VALID_UNQUOTED = re.compile(r"^[A-Za-z0-9_.$]+$")
@@ -220,21 +251,100 @@ def instruction_to_text(insn: cs.CsInsn, section: CoffSection, labels: Set[int])
     return insn.mnemonic
 
 
-def disassemble_bytes(
-    cap: cs.Cs, base_address: int, data: bytes
-) -> List[Tuple[cs.CsInsn, int, bytes]]:
-    output: List[Tuple[cs.CsInsn, int, bytes]] = []
-    offset = 0
+def _next_data_boundary(
+    offset: int, end: int, data_bases: Set[int], reloc_offsets: Set[int]
+) -> int:
+    """The end of a reloc-less data run starting at `offset`: the next data-table
+    base, the next relocation (which starts a `.long` jump table), or the section
+    end — whichever comes first."""
+    limit = end
+    for candidate in data_bases | reloc_offsets:
+        if offset < candidate < limit:
+            limit = candidate
+    return limit
+
+
+def decode_text_section(cap: cs.Cs, section: CoffSection) -> List[Element]:
+    """Linearly decode a `.text` section into instructions and in-`.text` data.
+
+    MSVC emits switch jump tables and 2-level case-mapping byte maps as data
+    *inside* `.text`, after the function body. A naive linear sweep decodes these
+    zero-filled/relocated bytes as garbage instructions. Two structural signals
+    separate data from code without guessing:
+
+    * A relocation the code stream lands on (i.e. at an instruction *start*) is a
+      data word: a real x86 instruction begins with an opcode byte, never with
+      its own operand's relocation, so any relocation we reach at a decode
+      boundary is a 4-byte jump-table entry (`.long <label>`).
+    * A reloc-less case-mapping byte map has no per-entry relocation, but its base
+      is referenced by an absolute (DIR32) memory operand elsewhere in the same
+      section (`mov dl, byte ptr [eax + $Lxxx]`). Direct branches within a
+      section are PC-relative and *not* relocated, so an in-section absolute
+      reference can only point at such a data table; those bytes are emitted raw.
+
+    Every relocation must be either consumed as an instruction operand or emitted
+    as a data word; a leftover relocation, or a byte capstone cannot decode,
+    raises rather than silently baking wrong ground truth into a fixture.
+    """
+    elements: List[Element] = []
+    data = section.data
+    # MSVC pads a COMDAT `.text` section's tail with single-byte `nop` (0x90) to
+    # the section's alignment. That padding is not code, and — crucially — when
+    # it trails a 2-level switch's case-mapping byte map it would otherwise be
+    # read as extra (out-of-range) map entries. No function body or table ends in
+    # a 0x90 run (a byte map's real entries are small jump-table indices), so the
+    # trailing 0x90 run is unambiguously padding and is dropped.
     end = len(data)
+    while end > 0 and data[end - 1] == 0x90:
+        end -= 1
+    reloc_offsets = set(section.relocations.keys())
+    data_bases: Set[int] = set()
+    consumed_relocs: Set[int] = set()
+
+    offset = 0
     while offset < end:
-        code = data[offset:end]
-        insns = list(cap.disasm(code, base_address + offset, count=1))
+        if offset in reloc_offsets:
+            reloc = section.relocations[offset]
+            elements.append(DataLong(section.address + offset, reloc))
+            consumed_relocs.add(offset)
+            offset += 4
+            continue
+
+        if offset in data_bases:
+            limit = _next_data_boundary(offset, end, data_bases, reloc_offsets)
+            for i in range(offset, limit):
+                elements.append(DataByte(section.address + i, data[i]))
+            offset = limit
+            continue
+
+        insns = list(cap.disasm(data[offset:end], section.address + offset, count=1))
         if not insns:
-            break
+            raise ValueError(
+                f"{section.name}: cannot decode byte {data[offset]:#04x} at "
+                f"offset {offset:#x}"
+            )
         insn = insns[0]
-        output.append((insn, insn.address, insn.bytes))
+        elements.append(Insn(insn, insn.address, insn.bytes))
+        for reloc_offset in range(offset, offset + insn.size):
+            reloc = section.relocations.get(reloc_offset)
+            if reloc is None:
+                continue
+            consumed_relocs.add(reloc_offset)
+            if (
+                reloc.relocation_type
+                in (IMAGE_REL_I386_DIR32, IMAGE_REL_I386_DIR32NB)
+                and reloc.symbol.section is section
+            ):
+                data_bases.add(reloc.symbol.offset + reloc.symbol_offset)
         offset += insn.size
-    return output
+
+    dropped = reloc_offsets - consumed_relocs
+    if dropped:
+        raise ValueError(
+            f"{section.name}: relocations dropped at offsets "
+            + ", ".join(hex(o) for o in sorted(dropped))
+        )
+    return elements
 
 
 def collect_relocation_labels(section: CoffSection, labels: Set[int]) -> None:
@@ -247,11 +357,14 @@ def collect_relocation_labels(section: CoffSection, labels: Set[int]) -> None:
 
 
 def collect_jump_labels(
-    disassembly: List[Tuple[cs.CsInsn, int, bytes]],
+    elements: List[Element],
     section: CoffSection,
     labels: Set[int],
 ) -> None:
-    for insn, _addr, _raw in disassembly:
+    for element in elements:
+        if not isinstance(element, Insn):
+            continue
+        insn = element.insn
         if insn.mnemonic.startswith("j") and insn.operands and insn.imm_size:
             target = insn.operands[-1].imm
             if target - section.address not in section.symbols:
@@ -260,22 +373,30 @@ def collect_jump_labels(
 
 def disassemble_text_section(
     section: CoffSection,
-    disassembly: List[Tuple[cs.CsInsn, int, bytes]],
+    elements: List[Element],
     labels: Set[int],
     output: TextIO,
 ) -> None:
-    for insn, addr, raw in disassembly:
+    for element in elements:
+        addr = element.address
         symbol = section.symbols.get(addr - section.address)
         if symbol is not None:
             output.write(f"{asm_name(text_symbol_name(symbol))}:\n")
         if addr in labels:
             output.write(f"{address_label(addr)}:\n")
-        prefix = "/* %08X %04X  %s */" % (
-            addr,
-            addr - section.address,
-            " ".join(f"{b:02X}" for b in raw),
-        )
-        output.write(f"{prefix}\t{instruction_to_text(insn, section, labels)}\n")
+        if isinstance(element, Insn):
+            prefix = "/* %08X %04X  %s */" % (
+                addr,
+                addr - section.address,
+                " ".join(f"{b:02X}" for b in element.raw),
+            )
+            output.write(
+                f"{prefix}\t{instruction_to_text(element.insn, section, labels)}\n"
+            )
+        elif isinstance(element, DataLong):
+            output.write(f"\t.long {relocation_word(element.reloc, labels)}\n")
+        else:
+            output.write(f"\t.byte 0x{element.value:02X}\n")
 
 
 def relocation_word(reloc: CoffRelocation, labels: Set[int]) -> str:
@@ -380,12 +501,12 @@ def disassemble_msvc_coff(coff_in: BinaryIO, asm_out: TextIO) -> None:
 
     # First pass: collect all label targets, so that labels referenced across
     # sections (e.g. jump tables) are known before any section is emitted.
-    disassemblies: Dict[int, List[Tuple[cs.CsInsn, int, bytes]]] = {}
+    disassemblies: Dict[int, List[Element]] = {}
     labels: Set[int] = set()
     for i, section in enumerate(sections):
         collect_relocation_labels(section, labels)
         if section.name == ".text":
-            disassembly = disassemble_bytes(cap, section.address, section.data)
+            disassembly = decode_text_section(cap, section)
             disassemblies[i] = disassembly
             collect_jump_labels(disassembly, section, labels)
 

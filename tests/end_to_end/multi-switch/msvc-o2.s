@@ -46,10 +46,6 @@ $L105:
 /* 0000005F 005F  B8 02 00 00 00 */	mov eax, 2
 /* 00000064 0064  C3 */	ret
 /* 00000065 0065  8D 49 00 */	lea ecx, [ecx]
-# The tables below are hand-fixed: the COFF disassembler decodes these
-# relocated .text dwords (zero-filled before relocation) and the byte-sized
-# case-mapping table as code. The .long entries come from the object's dir32
-# relocations; the .byte values are the raw section bytes.
 $L111:
 	.long $L99
 	.long $L95
@@ -312,3 +308,4 @@ $L110:
 	.byte 0x08
 	.byte 0x08
 	.byte 0x03
+

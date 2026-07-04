@@ -36,9 +36,6 @@ $L106:
 .L00000071:
 /* 00000071 0071  C3 */	ret
 /* 00000072 0072  8B FF */	mov edi, edi
-# The jump table(s) below are hand-fixed: the COFF disassembler decodes these
-# relocated .text dwords (zero-filled before relocation) as code. The entries
-# come from the object file's dir32 relocations.
 $L114:
 	.long $L95
 	.long $L95
@@ -53,3 +50,4 @@ $L115:
 	.long $L104
 	.long $L106
 	.long $L106
+

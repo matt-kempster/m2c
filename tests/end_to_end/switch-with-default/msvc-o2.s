@@ -36,11 +36,6 @@ $L92:
 /* 00000055 0055  5E */	pop esi
 /* 00000056 0056  C3 */	ret
 /* 00000057 0057  90 */	nop
-# The jump table(s) below are hand-fixed: the COFF disassembler decodes these
-# relocated .text dwords (zero-filled before relocation) as code. The entries
-# come from the object file's dir32 relocations.
-# $L107 is a byte-sized case-mapping table (values transcribed from the raw
-# bytes); MSVC maps `x - 2` through it to a jump-table index.
 $L108:
 	.long $L95
 	.long $L96
@@ -60,3 +55,4 @@ $L107:
 	.byte 0x04
 	.byte 0x04
 	.byte 0x03
+

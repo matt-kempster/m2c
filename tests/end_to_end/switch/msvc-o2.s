@@ -30,9 +30,6 @@ $L100:
 /* 0000003D 003D  A3 00 00 00 00 */	mov dword ptr [_glob], eax
 /* 00000042 0042  B8 02 00 00 00 */	mov eax, 2
 /* 00000047 0047  C3 */	ret
-# The jump table below is hand-fixed: the COFF disassembler decodes these
-# relocated .text dwords (zero-filled before relocation) as code. The entries
-# come from the object file's dir32 relocations at 0x48..0x60.
 $L105:
 	.long $L95
 	.long $L96
@@ -41,3 +38,4 @@ $L105:
 	.long $L100
 	.long $L99
 	.long $L99
+
