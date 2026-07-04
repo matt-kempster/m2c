@@ -1544,6 +1544,22 @@ def rewrite_stack_ops(
                 worklist.append((pos, target_st))
 
         if item.is_return:
+            # A well-formed function restores esp to its entry value before
+            # returning (the return address sits on top; a stdcall `ret N` pops
+            # arguments that live in the caller's frame, above entry esp, so they
+            # do not affect this delta). A nonzero delta here means a straight-
+            # line cleanup misclassification -- an undecorated stdcall taken for
+            # cdecl, a wrong table entry, an un-tabled DLL import -- which would
+            # otherwise silently shift every later frame slot. Fail loud so the
+            # infer_direct_stdcall retry can correct it, or the caller gets a
+            # clean error instead of corrupt output.
+            if esp != 0:
+                raise DecompFailure(
+                    f"x86 stack analysis failed: esp is {-esp:#x} bytes from its "
+                    f"entry value at {instr_str(item)}, not balanced for return. "
+                    f"This usually means a called function's argument cleanup was "
+                    f"misclassified (stdcall vs cdecl)."
+                )
             return
         if base == "push":
             if item.mnemonic != "push":
