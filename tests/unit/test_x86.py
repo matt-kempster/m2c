@@ -942,7 +942,9 @@ class TestX86FpuRewrite(unittest.TestCase):
         self.assertIn("fstp [_g], $f0", out)
 
     def test_merge_conflict_raises(self) -> None:
-        # One path pushes twice, the other once: depth mismatch at the label.
+        # One path pushes once, the other not at all: depth mismatch at the
+        # label (each path's return depth stays <= 1, so this exercises the
+        # merge check rather than the return-depth check).
         with self.assertRaises(DecompFailure) as cm:
             self.rewrite(
                 """
@@ -951,11 +953,23 @@ class TestX86FpuRewrite(unittest.TestCase):
                 JZ L
                 FLD dword ptr [ESP + 0x8]
                 L:
-                FLD dword ptr [ESP + 0xc]
                 RET
                 """
             )
         self.assertIn("depth mismatch", str(cm.exception))
+
+    def test_return_depth_raises(self) -> None:
+        # Two live values remain on the x87 stack at the return: the ABI allows
+        # at most one (a float/double result in st(0)), so this fails loud.
+        with self.assertRaises(DecompFailure) as cm:
+            self.rewrite(
+                """
+                FLD dword ptr [ESP + 0x4]
+                FLD dword ptr [ESP + 0x8]
+                RET
+                """
+            )
+        self.assertIn("not empty at return", str(cm.exception))
 
     def test_loop_preserves_depth(self) -> None:
         # A back-edge that keeps the stack balanced converges.

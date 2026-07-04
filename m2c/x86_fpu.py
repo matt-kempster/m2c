@@ -394,6 +394,21 @@ def rewrite_fpu_ops(
             push(index + 1, depth)
             continue
         if part.is_return:
+            # The x86 ABI leaves the x87 stack empty at a return except for a
+            # single float/double result in st(0), so a valid return depth is 0
+            # (void/int) or 1 (float/double). A deeper stack means leftover
+            # values -- typically a per-callee depth delta that is value-wrong
+            # but sign-consistent (e.g. an unseeded `__CI*` helper that consumes
+            # two operands and pushes one). Raise a conflict so the BFS repair
+            # loop can search call-delta assignments; a genuinely unbalanced
+            # body then fails loud instead of silently miscompiling.
+            if depth > 1:
+                raise X87StackError(
+                    f"x87 stack not empty at return (depth {depth}): at most one "
+                    f"float/double result may remain in st(0) at {instr_str(part)}",
+                    index,
+                    "conflict",
+                )
             continue
         base, _ = split_width_suffix(part.mnemonic)
         out = depth + depth_delta(index, part, base)
