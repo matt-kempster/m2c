@@ -184,7 +184,9 @@ def imm_add_32(expr: Expression) -> Expression:
         return BinaryOp.int(expr, "+", Literal(32))
 
 
-def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
+def fn_op(
+    fn_name: str, args: List[Expression], type: Type, *, marker: bool = False
+) -> FuncCall:
     fn_sig = FunctionSignature(
         return_type=type,
         params=[FunctionParam(type=arg.type) for arg in args],
@@ -195,6 +197,7 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
         function=GlobalSymbol(symbol_name=fn_name, type=Type.function(fn_sig)),
         args=args,
         type=type,
+        is_marker=marker,
     )
 
 

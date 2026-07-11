@@ -1381,6 +1381,7 @@ class FuncCall(Expression):
     function: Expression
     args: List[Expression]
     type: Type
+    is_marker: bool = False
 
     def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
@@ -3668,7 +3669,9 @@ class NodeState:
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
-        self._prevent_later_uses(lambda e: isinstance(e, FuncCall))
+        self._prevent_later_uses(
+            lambda e: isinstance(e, FuncCall) and not e.is_marker
+        )
 
     def prevent_later_reads(self) -> None:
         """Prevent later uses of registers that recursively contain a read."""

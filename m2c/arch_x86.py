@@ -2150,9 +2150,22 @@ def fnstsw_operands_store_stable(operands: Tuple[Expression, Expression]) -> boo
     return all(_operand_stable_across_store(o) for o in operands)
 
 
+def fnstsw_operands_can_be_marker(
+    operands: Tuple[Expression, Expression]
+) -> bool:
+    """Whether a status-word marker needs no materialization across a store."""
+    return fnstsw_operands_store_stable(operands) and not any(
+        uses_expr(operand, lambda expr: isinstance(expr, FuncCall))
+        for operand in operands
+    )
+
+
 def suppress_forced_fnstsw_marker(expr: Optional[Expression]) -> None:
-    """Drop the dead `temp = M2C_FNSTSW(...)` assignment left behind by a fold
-    past a forced marker; the operands inside the FuncCall are untouched."""
+    """Drop the dead `temp = M2C_FNSTSW(...)` assignment left behind by a fold.
+
+    Slow-path markers remain ordinary calls so nested call operands are
+    materialized before an intervening store. Only the outer marker is dead;
+    its operand temporaries remain load-bearing."""
     while isinstance(expr, EvalOnceExpr):
         if expr.forced_emit:
             expr.forced_emit = False
@@ -3936,7 +3949,16 @@ class X86Arch(Arch):
                     rhs = a.regs[rhs_arg]
                 else:
                     rhs = mem_load(a, 1, fpu_float_type(width))
-                s.set_reg(cls.fsw_reg, fn_op(FNSTSW_MARKER, [lhs, rhs], Type.u16()))
+                operands = (lhs, rhs)
+                s.set_reg(
+                    cls.fsw_reg,
+                    fn_op(
+                        FNSTSW_MARKER,
+                        list(operands),
+                        Type.u16(),
+                        marker=fnstsw_operands_can_be_marker(operands),
+                    ),
+                )
                 for reg in popped:
                     del s.regs[reg]
 
