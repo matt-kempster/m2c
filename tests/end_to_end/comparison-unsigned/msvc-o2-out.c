@@ -1,6 +1,4 @@
-extern s32 _global;
-
-void test(u32 arg0, u32 arg1) {
-    _global = arg0 < arg1;
-    _global = arg1 >= arg0;
+void test(u32 a, u32 b) {
+    _global = a < b;
+    _global = b >= a;
 }

@@ -1620,13 +1620,13 @@ class StructAccess(Expression):
         ):
             # An access at the start of a scalar int, with a different width
             # than the int itself (e.g. MSVC reading the low byte of an `int`
-            # global with a byte load). x86 is little-endian, so making the
+            # global with a byte load). On a little-endian target, making the
             # access width visible with a truncating cast of the variable
             # itself (`(s8) glob`, or `(s8) x->unk0` when other offsets are
-            # accessed too) is faithful. (On a big-endian target this
-            # rendering would be wrong -- offset 0 there holds the *high*
-            # bits -- but non-x86 arches keep a single shared access type per
-            # offset in `deref`, so this case cannot be reached there.)
+            # accessed too) is faithful. The real precondition is little-
+            # endianness (offset 0 = low bits), but gating on x86 for now:
+            # little-endian ARM can reach this via context types and renders
+            # an invalid lvalue cast, needing store-side support first.
             narrow_cast = f"({self.type.format(fmt)}) "
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [0, prefix + format_hex(self.offset)]
@@ -2626,12 +2626,6 @@ class InstrArgs:
         """Extract a double from a register. This may involve reading both the
         mentioned register and the next."""
         reg = self.reg_ref(index)
-        if self.stack_info.global_info.arch.arch == Target.ArchEnum.X86:
-            raise DecompFailure(
-                "x86 does not use paired registers for doubles; they live on "
-                "the x87 stack, which the FPU prepass rewrites before "
-                "translation, so dreg should be unreachable here"
-            )
         if (
             self.stack_info.global_info.arch.arch != Target.ArchEnum.ARM
             and not reg.is_float()

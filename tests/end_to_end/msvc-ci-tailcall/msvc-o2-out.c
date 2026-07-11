@@ -1,3 +1,3 @@
-f64 test(f64 arg0, f64 arg2) {
-    return pow(arg0, arg2);
+f64 test(f64 a, f64 b) {
+    return pow(a, b);
 }

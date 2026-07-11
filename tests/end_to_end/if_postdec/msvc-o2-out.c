@@ -1,5 +1,3 @@
-extern s32 _glob;
-
 s32 test(void) {
     s32 temp_ecx;
     s32 var_eax;

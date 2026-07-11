@@ -1,63 +1,60 @@
-extern ? _d7;
-extern ? _s7;
-
 void test(void) {
 
 }
 
-void test_0(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
+void test_0(Test0 *a, Test0 *b) {
+    a->a = b->a;
+    a->b = b->b;
 }
 
-void test_1(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s8) arg1->unk8;
+void test_1(Test1 *a, Test1 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
 }
 
-void test_2(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s16) arg1->unk8;
+void test_2(Test2 *a, Test2 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
 }
 
-void test_3(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s16) arg1->unk8;
-    arg0->unkA = (s8) arg1->unkA;
+void test_3(Test3 *a, Test3 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
+    a->d = b->d;
 }
 
-void test_4(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s32) arg1->unk8;
+void test_4(Test4 *a, Test4 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
 }
 
-void test_5(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s32) arg1->unk8;
-    arg0->unkC = (s8) arg1->unkC;
+void test_5(Test5 *a, Test5 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
+    a->d = b->d;
 }
 
-void test_6(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s32) arg1->unk8;
-    arg0->unkC = (s16) arg1->unkC;
+void test_6(Test6 *a, Test6 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
+    a->d = b->d;
 }
 
-void test_7(void *arg0, void *arg1) {
-    arg0->unk0 = (s32) arg1->unk0;
-    arg0->unk4 = (s32) arg1->unk4;
-    arg0->unk8 = (s32) arg1->unk8;
-    arg0->unkC = (s16) arg1->unkC;
-    arg0->unkE = (s8) arg1->unkE;
-    _d7.unk0 = (s32) _s7.unk0;
-    _d7.unk4 = (s32) _s7.unk4;
-    _d7.unk8 = (s32) _s7.unk8;
-    _d7.unkC = (s16) _s7.unkC;
-    _d7.unkE = (s8) _s7.unkE;
+void test_7(Test7 *a, Test7 *b) {
+    a->a = b->a;
+    a->b = b->b;
+    a->c = b->c;
+    a->d = b->d;
+    a->e = b->e;
+    _d7.a = _s7.a;
+    _d7.b = _s7.b;
+    _d7.c = _s7.c;
+    _d7.d = _s7.d;
+    _d7.e = _s7.e;
 }

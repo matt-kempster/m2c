@@ -1,9 +1,9 @@
-void test(s32 arg0, s32 arg1) {
+void test(s8 *foo, s32 length) {
     u32 temp_ecx;
 
-    if (arg1 > 0) {
-        temp_ecx = (u32) arg1 >> 2;
-        M2C_MEMSET32(arg0, 0, temp_ecx);
-        M2C_MEMSET(arg0 + (temp_ecx * 4), 0, arg1 & 3);
+    if (length > 0) {
+        temp_ecx = (u32) length >> 2;
+        M2C_MEMSET32(foo, 0, temp_ecx);
+        M2C_MEMSET(foo + (temp_ecx * 4), 0, length & 3);
     }
 }

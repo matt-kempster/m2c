@@ -1,9 +1,7 @@
-extern s32 _glob;
-
-s32 test(s32 arg0) {
+s32 test(s32 x) {
     s32 var_esi;
 
-    var_esi = arg0;
+    var_esi = x;
     switch (var_esi) {
     case 9:
         break;

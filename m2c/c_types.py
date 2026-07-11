@@ -173,7 +173,7 @@ def get_align_override(
 
 
 def has_stdcall_attr(attrs: List[ca.GccAttribute]) -> bool:
-    return any(attr.name in ("stdcall", "__stdcall__") for attr in attrs)
+    return any(attr.name == "stdcall" for attr in attrs)
 
 
 def has_128bit_attr(attrs: List[ca.GccAttribute]) -> bool:
@@ -320,7 +320,9 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
             return False
 
 
-def parse_function(fn: CType) -> Optional[Function]:
+def parse_function(
+    fn: CType, gcc_attributes: Optional[List[ca.GccAttribute]] = None
+) -> Optional[Function]:
     if not isinstance(fn, FuncDecl):
         return None
     params: List[Param] = []
@@ -348,7 +350,11 @@ def parse_function(fn: CType) -> Optional[Function]:
         maybe_params = None
     ret_type = None if is_void(fn.type) else fn.type
     return Function(
-        type=fn, ret_type=ret_type, params=maybe_params, is_variadic=is_variadic
+        type=fn,
+        ret_type=ret_type,
+        params=maybe_params,
+        is_variadic=is_variadic,
+        is_stdcall=has_stdcall_attr(gcc_attributes or []),
     )
 
 
@@ -905,15 +911,15 @@ def _build_typemap(
                     typemap.struct_typedefs[item.type.type] = typedef
             if isinstance(item, ca.FuncDef):
                 assert item.decl.name is not None, "cannot define anonymous function"
-                fn = parse_function(type_of_var_decl(item.decl))
+                fn = parse_function(
+                    type_of_var_decl(item.decl), item.decl.gcc_attributes
+                )
                 assert fn is not None
-                fn.is_stdcall = has_stdcall_attr(item.decl.gcc_attributes)
                 typemap.functions[item.decl.name] = fn
             if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
                 assert item.name is not None, "cannot define anonymous function"
-                fn = parse_function(item.type)
+                fn = parse_function(item.type, item.gcc_attributes)
                 assert fn is not None
-                fn.is_stdcall = has_stdcall_attr(item.gcc_attributes)
                 typemap.functions[item.name] = fn
 
         cur_pack = 0

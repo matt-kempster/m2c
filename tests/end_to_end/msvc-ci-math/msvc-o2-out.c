@@ -1,6 +1,6 @@
-f64 test(f64 arg0, f64 arg2) {
+f64 test(f64 a, f64 b) {
     f64 temp_f0;
 
-    temp_f0 = pow(arg0, arg2);
-    return temp_f0 + temp_f0 + fmod(arg0, arg2);
+    temp_f0 = pow(a, b);
+    return temp_f0 + temp_f0 + fmod(a, b);
 }

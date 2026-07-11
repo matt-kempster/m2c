@@ -1,3 +1,10 @@
-u64 test(u32 arg0, u32 arg1, u32 arg2, u32 arg3) {
-    return (((u64) arg1 << 0x20) | arg0) % (((u64) arg3 << 0x20) | arg2);
-}
+CRASHED
+
+/*
+Decompilation failure:
+
+Syntax error when parsing C context.
+before: test at line 1, column 18
+
+unsigned __int64 test(unsigned __int64 a, unsigned __int64 b) { return a % b; }
+*/

@@ -27,7 +27,7 @@ void test(s32 arg0) {
     temp_r1 = SECOND_REG(temp_ret);
     var_r5 = temp_r1;
     var_r4_2 = temp_r0;
-    if (__gedf2(temp_r0, temp_r1, .L5.unk4, .L5.unk8) < 0) {
+    if (__gedf2(temp_r0, temp_r1, 0, 0) < 0) {
         temp_ret_2 = __negdf2(var_r4_2, var_r5);
         temp_r0_2 = temp_ret_2;
         var_r5 = SECOND_REG(temp_ret_2);

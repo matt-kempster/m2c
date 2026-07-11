@@ -1,11 +1,9 @@
-extern s32 _glob;
-
-void test(void *arg0, s32 arg1) {
-    _glob = *(arg0 + ((arg1 * 4) + 4));
-    _glob = arg0 + ((arg1 * 4) + 4);
-    _glob = *(arg0 + ((arg1 * 8) + 0x30));
-    _glob = arg0 + ((arg1 * 8) + 0x30);
-    _glob = *((arg1 << 7) + (arg0 + 0x7C));
-    _glob = arg0->unk48;
-    _glob = arg0 + 0x48;
+void test(struct A *a, s32 b) {
+    _glob = (s32) a->array[b];
+    _glob = (s32) &a->array[b];
+    _glob = a->array2[b].x;
+    _glob = (s32) &a->array2[b].x;
+    _glob = *((b << 7) + (a + 0x7C));
+    _glob = a->array2[3].x;
+    _glob = (s32) &a->array2[3].x;
 }

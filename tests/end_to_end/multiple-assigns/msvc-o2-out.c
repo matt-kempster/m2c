@@ -1,6 +1,4 @@
-extern s32 _glob;
-
-s32 test(s32 arg0) {
+s32 test(s32 x) {
     s32 temp_ecx;
     s32 temp_ecx_2;
     s32 temp_ecx_3;
@@ -8,7 +6,7 @@ s32 test(s32 arg0) {
     s32 temp_ecx_5;
     s32 var_ecx;
 
-    var_ecx = arg0;
+    var_ecx = x;
     if (var_ecx == 5) {
         do {
             _glob = var_ecx;
@@ -28,5 +26,5 @@ s32 test(s32 arg0) {
         } while (var_ecx == 5);
         return temp_ecx;
     }
-    return arg0;
+    return x;
 }

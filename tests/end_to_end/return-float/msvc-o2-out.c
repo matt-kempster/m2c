@@ -1,9 +1,9 @@
 static f32 _real_41700000 = 15.0f;                  /* const */
 static f32 _real_00000000 = 0.0f;                   /* const */
 
-f32 test(f32 arg0) {
-    if (arg0 != _real_00000000) {
+f32 test(f32 x) {
+    if (x != _real_00000000) {
         return _real_41700000;
     }
-    return arg0;
+    return x;
 }

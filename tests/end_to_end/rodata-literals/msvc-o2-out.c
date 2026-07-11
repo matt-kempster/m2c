@@ -1,11 +1,7 @@
-extern ? ??_C@_09DAMD@?$CChello?$CC?6?$AB?$AA@;
-extern s32 _a;
-extern ? _b;
-extern ? _c;
-extern ? *_d;
+extern s8 ??_C@_09DAMD@?$CChello?$CC?6?$AB?$AA@;
 
 void test(void) {
-    _a = 0x3F99999A;
+    _a = 1.2f;
     _b.unk0 = 0;
     _b.unk4 = 0x402A0000;
     _c.unk0 = 0x60000000;

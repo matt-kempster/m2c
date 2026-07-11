@@ -1,10 +1,8 @@
-? foo(s32);                                         /* static */
-
-s32 test(s32 arg0) {
+s32 test(s32 x) {
     s32 temp_esi;
     s32 var_esi;
 
-    var_esi = arg0;
+    var_esi = x;
 loop_1:
     foo(var_esi);
     temp_esi = var_esi * 2;

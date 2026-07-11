@@ -1,4 +1,3 @@
-extern f32 _x;
 static f32 _real_40c00000 = 6.0f;                   /* const */
 static f32 _real_00000000 = 0.0f;                   /* const */
 static f32 _real_40a00000 = 5.0f;                   /* const */

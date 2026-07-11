@@ -1,9 +1,7 @@
-s32 foo(s32);                                       /* static */
-
-void test(s32 arg0) {
+void test(s32 x) {
     s32 var_eax;
 
-    var_eax = arg0;
+    var_eax = x;
 loop_1:
     if (var_eax <= 2) {
         goto loop_1;

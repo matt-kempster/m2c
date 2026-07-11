@@ -20,13 +20,13 @@ void test(s32 arg1, s32 arg2, s32 arg3) {
     globalf = __floatsisf(arg1);
     temp_r7 = arg3 + 3;
     temp_ret = __extendsfdf2(arg2);
-    __adddf3(temp_ret, SECOND_REG(temp_ret), 0, .L6.unkC);
+    __adddf3(temp_ret, SECOND_REG(temp_ret), 0x40140000, 0);
     __truncdfsf2();
     temp_ret_2 = __extendsfdf2();
-    __adddf3(temp_ret_2, SECOND_REG(temp_ret_2), .L6.unk10, .L6.unk14);
-    __addsf3(__truncdfsf2(), .L6.unk18);
+    __adddf3(temp_ret_2, SECOND_REG(temp_ret_2), 0, 0);
+    __addsf3(__truncdfsf2(), 0);
     temp_ret_3 = __extendsfdf2();
-    __adddf3(temp_ret_3, SECOND_REG(temp_ret_3), .L6.unk1C, .L6.unk20);
+    __adddf3(temp_ret_3, SECOND_REG(temp_ret_3), 0x40153333, 0x33333333);
     temp_r6 = __truncdfsf2();
     if (temp_r7 >= 0) {
         var_r0 = __floatsisf(temp_r7);

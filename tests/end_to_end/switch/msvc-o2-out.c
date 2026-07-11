@@ -1,9 +1,7 @@
-extern s32 _glob;
-
-s32 test(s32 arg0) {
+s32 test(s32 x) {
     s32 var_eax;
 
-    var_eax = arg0;
+    var_eax = x;
     switch (var_eax) {
     case 1:
         return var_eax * var_eax;

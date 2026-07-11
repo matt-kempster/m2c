@@ -16,8 +16,8 @@ void test(s32 arg0) {
     s32 var_r5;
     s32 var_r6;
 
-    var_r6 = .L9.unk4;
-    var_r5 = .L9.unk0;
+    var_r6 = 0;
+    var_r5 = 0x3FF00000;
     var_r4 = arg0;
     if (var_r4 != 0) {
         do {
@@ -27,7 +27,7 @@ void test(s32 arg0) {
             var_r3 = temp_r1;
             var_r2 = temp_r0;
             if (var_r4 < 0) {
-                temp_ret_2 = __adddf3(temp_r0, temp_r1, .L9.unk8, .L9.unkC);
+                temp_ret_2 = __adddf3(temp_r0, temp_r1, 0x41F00000, 0);
                 var_r3 = SECOND_REG(temp_ret_2);
                 var_r2 = temp_ret_2;
             }

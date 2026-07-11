@@ -1075,7 +1075,7 @@ class TestX86FpuRewrite(unittest.TestCase):
             RET
             """
         )
-        self.assertEqual(out[2], "m2c_ci_pow $f1, $f0")
+        self.assertEqual(out[2], "ci_pow.fictive $f1, $f0")
         self.assertEqual(out[3], "fstp.q [_g], $f0")
 
     def test_ci_sqrt_one_arg_helper(self) -> None:
@@ -1089,7 +1089,7 @@ class TestX86FpuRewrite(unittest.TestCase):
             RET
             """
         )
-        self.assertEqual(out[1], "m2c_ci_sqrt $f0")
+        self.assertEqual(out[1], "ci_sqrt.fictive $f0")
 
     def test_ci_pow_tail_call(self) -> None:
         # `fld a; fld b; jmp __CIpow` (the stack pass turns the jmp into a
@@ -1118,7 +1118,7 @@ class TestX86FpuRewrite(unittest.TestCase):
             for p in rewrite_fpu_ops(body, self.arch, AsmData(), labels, {})
             if isinstance(p, Instruction)
         ]
-        self.assertEqual(out[2], "m2c_ci_pow $f1, $f0")
+        self.assertEqual(out[2], "ci_pow.fictive $f1, $f0")
         self.assertEqual(out[3], "ret")
 
     def test_ci_tail_call_wrong_depth_fails_loud(self) -> None:

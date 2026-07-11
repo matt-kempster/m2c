@@ -64,8 +64,8 @@ func_b:
 
 
 class TestSetDirectiveLeniency(unittest.TestCase):
-    """Non-integer `.set` values are warned-and-ignored only for x86
-    inputs; other architectures keep the strict parse failure."""
+    """Non-integer `.set` values (label-equate expressions emitted by
+    disassemblers) are ignored on every architecture."""
 
     SET_ASM = """
 .set noat
@@ -77,11 +77,9 @@ glabel func_a
 /* 04 04 00000000 */   nop
 """
 
-    def test_non_x86_non_integer_set_raises(self) -> None:
-        from m2c.error import DecompFailure
-
-        with self.assertRaises(DecompFailure):
-            _parse(self.SET_ASM, "mips-ido-c", MipsArch())
+    def test_mips_non_integer_set_ignored(self) -> None:
+        asm_file = _parse(self.SET_ASM, "mips-ido-c", MipsArch())
+        self.assertEqual([fn.name for fn in asm_file.functions], ["func_a"])
 
     X86_SET_ASM = """
 .set some_symbol, table_base + 3
@@ -90,8 +88,6 @@ func_a:
 """
 
     def test_x86_non_integer_set_ignored(self) -> None:
-        # x86 tolerates the non-integer .set (disassemblers emit label-equate
-        # expressions) instead of failing.
         asm_file = _parse(self.X86_SET_ASM, "x86-gcc-c", X86Arch())
         self.assertEqual([fn.name for fn in asm_file.functions], ["func_a"])
 

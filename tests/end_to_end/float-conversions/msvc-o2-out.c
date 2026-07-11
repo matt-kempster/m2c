@@ -1,7 +1,4 @@
 u32 __ftol(f64);                                    /* extern */
-extern f64 _dbl;
-extern f32 _flt;
-extern u32 _u;
 
 void test(void) {
     u32 sp0;

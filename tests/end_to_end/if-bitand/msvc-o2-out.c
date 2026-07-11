@@ -1,5 +1,3 @@
-extern s32 _glob;
-
 void test(void) {
     if ((s8) _glob & 1) {
         _glob = 0;

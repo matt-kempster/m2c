@@ -545,7 +545,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             and curr_section == ".text"
             and arch.synthesize_text_data_labels
         ):
-            name = f"__m2c_textdata_{len(asm_file.asm_data.values)}"
+            stem = re.sub(r"\W", "_", Path(asm_file.filename).stem)
+            name = f"__m2c_textdata_{stem}_{len(asm_file.asm_data.values)}"
             asm_file.new_data_label(name, is_readonly=True, is_text=True)
 
     def emit_bytes(data: bytes, *, is_string: bool = False) -> None:
@@ -739,14 +740,8 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # Disassembler exports write symbol decorations as
                         # `.set mangled, "original"`. An `@N` suffix
                         # (`_exit@4`) is the stdcall cleanup byte count;
-                        # record it for the x86 backend. These idioms (and
-                        # the non-integer tolerance below) sit behind
-                        # lenient_set_directives so other arches keep the
-                        # strict failure.
-                        lenient = arch.lenient_set_directives
-                        decorated = (
-                            re.fullmatch(r"(.*)@(\d+)", args[1]) if lenient else None
-                        )
+                        # record it for the x86 backend.
+                        decorated = re.fullmatch(r"(.*)@(\d+)", args[1])
                         if decorated is not None:
                             arg_bytes = int(decorated.group(2))
                             stdcall_map = asm_file.asm_data.stdcall_arg_bytes
@@ -760,16 +755,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             try:
                                 asm_state.defines[args[0]] = parse_int(args[1])
                             except DecompFailure:
-                                if not lenient:
-                                    # Other architectures keep the hard failure.
-                                    raise
-                                # x86 disassembler exports contain .set
-                                # directives with non-integer values (label
-                                # equates like "table[4]+3"); ignore them.
-                                add_warning(
-                                    warnings,
-                                    f"Ignoring non-integer .set directive: {line}",
-                                )
+                                # Disassembler exports contain .set directives
+                                # with non-integer values (label equates like
+                                # "table[4]+3"); ignore them.
+                                pass
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
@@ -793,7 +782,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif args_str.strip() == "32":
                         asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
-                    if directive in arch.word_directives:
+                    if directive in (".word", ".gpword", ".4byte", ".long"):
                         args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 4)

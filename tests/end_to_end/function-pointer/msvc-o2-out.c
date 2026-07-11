@@ -1,3 +1,3 @@
-s32 test(s32 (*arg0)(s32), s32 arg1) {
-    return arg0(arg1) + 1;
+s32 test(s32 (*fn)(s32), s32 x) {
+    return fn(x) + 1;
 }
