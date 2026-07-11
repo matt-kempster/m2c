@@ -365,6 +365,13 @@ def parse_intel_address_mode(
         if isinstance(arg, BinOp) and arg.op == "+":
             flatten(arg.lhs)
             flatten(arg.rhs)
+        elif (
+            isinstance(arg, BinOp)
+            and arg.op == "-"
+            and isinstance(arg.rhs, AsmLiteral)
+        ):
+            flatten(arg.lhs)
+            terms.append(AsmLiteral(-arg.rhs.value))
         else:
             terms.append(arg)
 
@@ -381,7 +388,13 @@ def parse_intel_address_mode(
             addend = BinOp("+", addend, term)
     if addend is None:
         addend = AsmLiteral(0)
-    return AsmAddressMode(base, constant_fold(addend, asm_state), None)
+    addend = constant_fold(addend, asm_state)
+    if base != ZERO and isinstance(addend, AsmLiteral):
+        value = addend.value & 0xFFFFFFFF
+        if value >= 0x80000000:
+            value -= 0x100000000
+        addend = AsmLiteral(value)
+    return AsmAddressMode(base, addend, None)
 
 
 # Main parser.

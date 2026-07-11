@@ -1712,29 +1712,6 @@ def rewrite_stack_ops(
             if not isinstance(arg, AsmAddressMode):
                 return arg
             base, addend = arg.base, arg.addend
-            # The parser represents `[reg - N]` (and other displacement-only
-            # negative forms) as base=zero with a `reg - N` BinOp addend,
-            # unlike `[reg + N]` which sets base=reg. Normalize so esp/ebp
-            # frame accesses are recognized either way.
-            if (
-                base == ZERO
-                and isinstance(addend, BinOp)
-                and addend.op in ("+", "-")
-                and isinstance(addend.lhs, Register)
-                and isinstance(addend.rhs, AsmLiteral)
-            ):
-                base = addend.lhs
-                sign = 1 if addend.op == "+" else -1
-                addend = AsmLiteral(sign * addend.rhs.value)
-            elif base == ZERO and isinstance(addend, Register):
-                base, addend = addend, AsmLiteral(0)
-            if isinstance(addend, AsmLiteral) and base in (ESP, EBP):
-                # Large negative frame displacements can be exported in
-                # unsigned form (`[ebp + 0xfffff4b4]` meaning `[ebp - 0xb4c]`).
-                value = addend.value & 0xFFFFFFFF
-                if value >= 0x80000000:
-                    value -= 0x100000000
-                addend = AsmLiteral(value)
             if base == ESP:
                 return AsmAddressMode(ESP, adjust(addend, frame_size + esp), None)
             if base == EBP and ebp is not None:

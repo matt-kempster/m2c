@@ -139,6 +139,18 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(addr.base, Register("ebp"))
         self.assertEqual(addr.addend, AsmLiteral(-8))
 
+        asm, _ = self.parse_asm("MOV EAX, dword ptr [EBP - 0x8]")
+        addr = asm.args[1]
+        assert isinstance(addr, AsmAddressMode)
+        self.assertEqual(addr.base, Register("ebp"))
+        self.assertEqual(addr.addend, AsmLiteral(-8))
+
+        asm, _ = self.parse_asm("MOV EAX, dword ptr [ESI + 0xfffffff8]")
+        addr = asm.args[1]
+        assert isinstance(addr, AsmAddressMode)
+        self.assertEqual(addr.base, Register("esi"))
+        self.assertEqual(addr.addend, AsmLiteral(-8))
+
     def test_st_registers(self) -> None:
         asm, _ = self.parse_asm("FADDP ST(2), ST(0)")
         self.assertEqual(asm.args, [Register("st2"), Register("st0")])
