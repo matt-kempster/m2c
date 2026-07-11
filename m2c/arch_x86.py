@@ -129,6 +129,7 @@ from .evaluate import (
     make_store_real,
     replace_bitand,
     shift_right_expr,
+    split_imm_addend,
     void_fn_op,
 )
 from .types import FunctionSignature
@@ -1973,13 +1974,10 @@ def fold_literal_add_cmp(cmp: BinaryOp) -> BinaryOp:
             lhs, rhs = rhs, lhs
         if not isinstance(rhs, Literal):
             break
-        if not (isinstance(lhs, BinaryOp) and lhs.op in ("-", "+")):
+        base, addend = split_imm_addend(lhs)
+        if addend == 0:
             break
-        addend = early_unwrap(lhs.right)
-        if not isinstance(addend, Literal):
-            break
-        sign = 1 if lhs.op == "-" else -1
-        cmp = BinaryOp.icmp(lhs.left, cmp.op, Literal(rhs.value + sign * addend.value))
+        cmp = BinaryOp.icmp(base, cmp.op, Literal(rhs.value - addend))
     return cmp
 
 

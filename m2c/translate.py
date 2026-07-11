@@ -2181,15 +2181,10 @@ class SwitchControl:
                         map_entry.is_jtbl = True
 
         # Optionally match `control_expr + (-offset)` or `control_expr - offset`
-        offset = 0
-        uw_control_expr = early_unwrap(control_expr)
-        if isinstance(uw_control_expr, BinaryOp) and uw_control_expr.op in ("+", "-"):
-            offset_lit = early_unwrap(uw_control_expr.right)
-            if isinstance(offset_lit, Literal):
-                control_expr = uw_control_expr.left
-                offset = (
-                    -offset_lit.value if uw_control_expr.op == "+" else offset_lit.value
-                )
+        from .evaluate import split_imm_addend
+
+        control_expr, addend = split_imm_addend(control_expr)
+        offset = -addend
 
         # Check that it is really a jump table
         # TODO: check that it's actually the same jump table as we found in the

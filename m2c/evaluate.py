@@ -184,6 +184,17 @@ def imm_add_32(expr: Expression) -> Expression:
         return BinaryOp.int(expr, "+", Literal(32))
 
 
+def split_imm_addend(expr: Expression) -> Tuple[Expression, int]:
+    """Split `base +/- literal` into its base and signed immediate addend."""
+    unwrapped = early_unwrap(expr)
+    if isinstance(unwrapped, BinaryOp) and unwrapped.op in ("+", "-"):
+        right = early_unwrap(unwrapped.right)
+        if isinstance(right, Literal):
+            value = right.value if unwrapped.op == "+" else -right.value
+            return unwrapped.left, value
+    return expr, 0
+
+
 def fn_op(
     fn_name: str, args: List[Expression], type: Type, *, marker: bool = False
 ) -> FuncCall:
@@ -1066,11 +1077,12 @@ def array_access_from_add(
         base, addend = addend, base
 
     uw_addend = early_unwrap(addend)
-    if isinstance(uw_addend, BinaryOp) and uw_addend.op == "+":
-        if isinstance(uw_addend.right, Literal):
-            offset += uw_addend.right.value
-            addend = uw_addend.left
-        elif isinstance(uw_addend.left, Literal):
+    addend_base, imm = split_imm_addend(addend)
+    if imm:
+        offset += imm
+        addend = addend_base
+    elif isinstance(uw_addend, BinaryOp) and uw_addend.op == "+":
+        if isinstance(uw_addend.left, Literal):
             offset += uw_addend.left.value
             addend = uw_addend.right
 
