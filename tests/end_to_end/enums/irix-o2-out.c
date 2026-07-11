@@ -5,9 +5,9 @@ enum my_enum test(enum my_enum x) {
     case ZERO:
         return *array;
     case TWO_TOO:
-        return *array;
+        return array[1];
     case THREE:
-        return *array;
+        return array[2];
     default:
         return ZERO;
     }
