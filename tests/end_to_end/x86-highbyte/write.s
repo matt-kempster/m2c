@@ -1,0 +1,3 @@
+test:
+    INC AH
+    RET

@@ -20,17 +20,14 @@ ABI: returns, per-callee stack deltas, and float arguments).
 
 Design notes:
 
-- Operand widths ("byte ptr" prefixes, sub-register names like al/ah/ax) are
+- Operand widths ("byte ptr" prefixes, sub-register names like al/ax) are
   canonicalized into ARM-style mnemonic suffixes (`mov.b`, `mov.w`, `mov.q`;
   32-bit is bare); see preprocess_instruction and normalize_instruction.
 
-- Sub-register writes: an instruction that writes a sub-register (`mov.b` to
-  cl, setcc, a byte load, ...) is deliberately modeled as writing the *full*
-  storage register with a partial-width-typed value. This is correct for the
-  overwhelmingly common patterns (`xor reg, reg` + byte load, setcc after
-  clearing the register, byte loads that feed byte stores) but loses the
-  upper bits of the old register value in the rare cases where they are
-  live across the sub-register write.
+- Low-byte/word writes are modeled as writing the full storage register with
+  a partial-width-typed value. Reads of ah/bh/ch/dh are lowered to explicit
+  shifts from the full register; high-byte writes are rejected because they
+  would require preserving both the low byte and upper 16 bits.
 
 - Flags mirror ARM's condition flag scheme (z, n, c, v plus the composite
   hi/ge/gt pseudo-registers), except that after `cmp a, b` (or sub/neg)
@@ -152,25 +149,30 @@ EBP = Register("ebp")
 ESI = Register("esi")
 EDI = Register("edi")
 EIP = Register("eip")
+HI8A = Register("hi8a")
+HI8B = Register("hi8b")
 
 # Sub-register name -> (full register, width in bytes)
 SUB_REGS: Dict[Register, Tuple[Register, int]] = {
     Register("al"): (EAX, 1),
-    Register("ah"): (EAX, 1),
     Register("ax"): (EAX, 2),
     Register("bl"): (EBX, 1),
-    Register("bh"): (EBX, 1),
     Register("bx"): (EBX, 2),
     Register("cl"): (ECX, 1),
-    Register("ch"): (ECX, 1),
     Register("cx"): (ECX, 2),
     Register("dl"): (EDX, 1),
-    Register("dh"): (EDX, 1),
     Register("dx"): (EDX, 2),
     Register("si"): (ESI, 2),
     Register("di"): (EDI, 2),
     Register("bp"): (EBP, 2),
     Register("sp"): (ESP, 2),
+}
+
+HIGH_BYTE_REGS: Dict[Register, Register] = {
+    Register("ah"): EAX,
+    Register("bh"): EBX,
+    Register("ch"): ECX,
+    Register("dh"): EDX,
 }
 
 PTR_WIDTHS: Dict[str, int] = {"byte": 1, "word": 2, "dword": 4, "qword": 8}
@@ -2089,6 +2091,29 @@ def set_x86_flags_from_add(
 FNSTSW_MARKER = "M2C_FNSTSW"
 
 
+def _unwrap_fnstsw_marker(expr: Expression) -> Tuple[Expression, bool]:
+    """Remove high-byte extraction and eval-once wrappers around a marker."""
+    forced = False
+    while True:
+        if isinstance(expr, EvalOnceExpr):
+            forced |= expr.forced_emit or expr.emit_exactly_once
+            expr = expr.wrapped_expr
+        elif isinstance(expr, Cast) and expr.type.is_int():
+            expr = expr.expr
+        elif (
+            isinstance(expr, BinaryOp)
+            and expr.op in ("&", ">>")
+            and isinstance(expr.right, Literal)
+            and (
+                (expr.op == "&" and expr.right.value == 0xFF)
+                or (expr.op == ">>" and expr.right.value == 8)
+            )
+        ):
+            expr = expr.left
+        else:
+            return expr, forced
+
+
 def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expression]]:
     """If `expr` is an x87 compare status-word marker, its (lhs, rhs) operands;
     otherwise None. Unwraps EvalOnceExpr's *even past a forced/materialized
@@ -2098,9 +2123,7 @@ def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expre
     operands to reconstruct `x < 0.0f`. The returned operands keep their own
     (possibly forced) wrappers, so a compare operand that genuinely depends on
     the intervening store stays correctly materialized before it."""
-    uw = expr
-    while isinstance(uw, EvalOnceExpr):
-        uw = uw.wrapped_expr
+    uw, _ = _unwrap_fnstsw_marker(expr)
     if (
         isinstance(uw, FuncCall)
         and isinstance(uw.function, GlobalSymbol)
@@ -2114,11 +2137,10 @@ def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expre
 def fnstsw_marker_is_forced(expr: Optional[Expression]) -> bool:
     """Whether the marker sits past a forced EvalOnceExpr boundary (see
     fnstsw_marker_operands)."""
-    while isinstance(expr, EvalOnceExpr):
-        if expr.forced_emit or expr.emit_exactly_once:
-            return True
-        expr = expr.wrapped_expr
-    return False
+    if expr is None:
+        return False
+    _, forced = _unwrap_fnstsw_marker(expr)
+    return forced
 
 
 def _operand_stable_across_store(operand: Expression) -> bool:
@@ -2166,11 +2188,26 @@ def suppress_forced_fnstsw_marker(expr: Optional[Expression]) -> None:
     Slow-path markers remain ordinary calls so nested call operands are
     materialized before an intervening store. Only the outer marker is dead;
     its operand temporaries remain load-bearing."""
-    while isinstance(expr, EvalOnceExpr):
-        if expr.forced_emit:
-            expr.forced_emit = False
-            expr.var.is_emitted = False
-        expr = expr.wrapped_expr
+    while expr is not None:
+        if isinstance(expr, EvalOnceExpr):
+            if expr.forced_emit:
+                expr.forced_emit = False
+                expr.var.is_emitted = False
+            expr = expr.wrapped_expr
+        elif isinstance(expr, Cast) and expr.type.is_int():
+            expr = expr.expr
+        elif (
+            isinstance(expr, BinaryOp)
+            and expr.op in ("&", ">>")
+            and isinstance(expr.right, Literal)
+            and (
+                (expr.op == "&" and expr.right.value == 0xFF)
+                or (expr.op == ">>" and expr.right.value == 8)
+            )
+        ):
+            expr = expr.left
+        else:
+            return
 
 
 def fpu_compare_condition(lhs: Expression, rhs: Expression, op: str) -> Condition:
@@ -2328,6 +2365,44 @@ FPU_BINARY_OPS: Dict[
 }
 
 
+class X86HighBytePattern(AsmPattern):
+    """Lower reads of ah/bh/ch/dh into explicit full-register extraction."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        part = matcher.input[matcher.index]
+        if not isinstance(part, Instruction):
+            return None
+
+        written = [reg for reg in part.outputs if reg in HIGH_BYTE_REGS]
+        if written:
+            name = written[0].register_name
+            raise DecompFailure(
+                f"writes to high-byte sub-register {name} are not supported yet"
+            )
+
+        read = []
+        for reg in part.inputs:
+            if reg in HIGH_BYTE_REGS and reg not in read:
+                read.append(reg)
+        if not read:
+            return None
+        if len(read) > 2:
+            raise DecompFailure("x86 instruction reads more than two high-byte registers")
+
+        replacements = dict(zip(read, (HI8A, HI8B)))
+        new_body: List[ReplacementPart] = [
+            AsmInstruction("hibyte.fictive", [replacements[reg], HIGH_BYTE_REGS[reg]])
+            for reg in read
+        ]
+        new_body.append(
+            AsmInstruction(
+                part.mnemonic,
+                [replacements.get(arg, arg) for arg in part.args],
+            )
+        )
+        return Replacement(new_body, 1)
+
+
 class X86Arch(Arch):
     arch = Target.ArchEnum.X86
 
@@ -2372,7 +2447,7 @@ class X86Arch(Arch):
     # A temp reg so calls clobber it; not a flag reg so it is not swept by the
     # integer-flag machinery.
     fsw_reg = Register("fsw")
-    temp_regs = [EAX] + simple_temp_regs + flag_regs + [fsw_reg]
+    temp_regs = [EAX] + simple_temp_regs + flag_regs + [fsw_reg, HI8A, HI8B]
     saved_regs = [EBX, ESI, EDI, EBP, EIP]
     # Raw x87 stack-register names (`st(0)`..`st(7)`, spelled `st0`..`st7`).
     # These reach `parse` only during initial parsing; X86FpuRewritePattern
@@ -2393,6 +2468,7 @@ class X86Arch(Arch):
         + fpu_regs
         + float_regs
         + list(SUB_REGS.keys())
+        + list(HIGH_BYTE_REGS.keys())
     )
 
     aliased_regs: Dict[str, Register] = {}
@@ -2404,6 +2480,7 @@ class X86Arch(Arch):
         X86JumpTablePattern(),
         X86StackRewritePattern(),
         X86FpuRewritePattern(),
+        X86HighBytePattern(),
     ]
 
     def return_reg_always_meaningful(self, reg: Register) -> bool:
@@ -2554,9 +2631,15 @@ class X86Arch(Arch):
                 if sub_width is None or width < sub_width:
                     sub_width = width
                 return full
+            if isinstance(arg, Register) and arg in HIGH_BYTE_REGS:
+                if sub_width is None or 1 < sub_width:
+                    sub_width = 1
+                return arg
             if isinstance(arg, AsmAddressMode):
                 # Sub-registers cannot appear in 32-bit address modes.
-                assert arg.base is None or arg.base not in SUB_REGS
+                assert arg.base is None or (
+                    arg.base not in SUB_REGS and arg.base not in HIGH_BYTE_REGS
+                )
             return arg
 
         new_args = [rewrite(arg) for arg in instr.args]
@@ -2892,7 +2975,27 @@ class X86Arch(Arch):
                 store_memory(s, store, src_reg if src_reg is not None else EAX)
             return None
 
-        if base == "ret":
+        if base == "hibyte.fictive":
+            assert len(args) == 2
+            dst, src = args
+            assert isinstance(dst, Register) and isinstance(src, Register)
+            inputs = [src]
+            outputs = [dst]
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                shifted = shift_right_expr(a.regs[src], Literal(8), signed=False)
+                val = replace_bitand(
+                    BinaryOp(
+                        shifted,
+                        "&",
+                        Literal(0xFF),
+                        type=Type.int_of_size(8),
+                    )
+                )
+                s.set_reg(dst, val)
+
+        elif base == "ret":
             assert len(args) <= 1, "ret takes at most one (immediate) operand"
             inputs = [cls.stack_pointer_reg]
             is_return = True
@@ -3362,16 +3465,18 @@ class X86Arch(Arch):
                 if (
                     base == "test"
                     and width == 1
-                    and args[0] == EAX
+                    and args[0] in (EAX, HI8A, HI8B)
                     and isinstance(args[1], AsmLiteral)
-                    and EAX in s.regs
+                    and args[0] in s.regs
                 ):
-                    # `test ah, mask` after `fnstsw ax`: if eax still holds the
-                    # x87 status-word marker, translate the compare directly to
-                    # a float condition instead of materializing bit arithmetic
-                    # on the status word (see FNSTSW_MASK_OPS).
-                    raw_eax = a.regs.get_raw(EAX)
-                    operands = fnstsw_marker_operands(a.regs[EAX])
+                    # `test ah, mask` after `fnstsw ax`: if the extracted AH
+                    # value still contains the x87 status-word marker, translate
+                    # the compare directly to a float condition instead of
+                    # materializing bit arithmetic (see FNSTSW_MASK_OPS).
+                    status_reg = args[0]
+                    assert isinstance(status_reg, Register)
+                    raw_eax = a.regs.get_raw(status_reg)
+                    operands = fnstsw_marker_operands(a.regs[status_reg])
                     op = FNSTSW_MASK_OPS.get(args[1].value & 0xFF)
                     forced = fnstsw_marker_is_forced(raw_eax)
                     # Fold past a forced marker only when the operands cannot
@@ -3686,6 +3791,17 @@ class X86Arch(Arch):
             if args and isinstance(args[0], Register):
                 inputs = [loc for loc in inputs if loc != args[0]]
                 outputs = [args[0]]
+
+        surviving_high_bytes = [
+            arg for arg in args if isinstance(arg, Register) and arg in HIGH_BYTE_REGS
+        ]
+        if surviving_high_bytes:
+            name = surviving_high_bytes[0].register_name
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                raise DecompFailure(
+                    f"read from high-byte sub-register {name} survived lowering"
+                )
 
         return Instruction(
             mnemonic=mnemonic,

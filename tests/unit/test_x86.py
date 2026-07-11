@@ -162,7 +162,7 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(asm.args, [Register("ecx"), AsmLiteral(0xFF)])
         asm, _ = self.parse_asm("MOV CH, 0xff")
         self.assertEqual(asm.mnemonic, "mov.b")
-        self.assertEqual(asm.args[0], Register("ecx"))
+        self.assertEqual(asm.args[0], Register("ch"))
 
     def test_mov_word_subregister(self) -> None:
         asm, _ = self.parse_asm("MOV BP, word ptr [EAX + 0x8]")
@@ -178,8 +178,8 @@ class TestX86Parsing(unittest.TestCase):
     def test_and_subregister(self) -> None:
         instr = self.parse_instruction("AND AH, 0xeb")
         self.assertEqual(instr.mnemonic, "and.b")
-        self.assertEqual(instr.outputs[0], Register("eax"))
-        self.assertIn(Register("eax"), instr.inputs)
+        self.assertEqual(instr.outputs[0], Register("ah"))
+        self.assertIn(Register("ah"), instr.inputs)
 
     def test_subregister_names_preserved_in_formatter(self) -> None:
         _, asm_state = self.parse_asm("MOV CL, 0xff")
