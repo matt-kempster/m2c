@@ -2754,6 +2754,10 @@ class InstrArgs:
                 "Expected instruction argument to be of the form offset($register), "
                 f"but found {ret}"
             )
+        if ret.base == ZERO:
+            ref = parse_symbol_ref(ret.addend)
+            if ref is not None:
+                return ref
         if not isinstance(ret.addend, AsmLiteral):
             raise DecompFailure(
                 f"Unable to parse offset for instruction argument {ret}. "

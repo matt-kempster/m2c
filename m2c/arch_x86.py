@@ -238,12 +238,10 @@ def mem_target(
     accesses)."""
     arg = a.raw_arg(index)
     assert isinstance(arg, AsmAddressMode), f"expected a memory operand, found {arg}"
-    if arg.base != ZERO and isinstance(arg.addend, AsmLiteral):
-        return AddressMode(offset=arg.addend.value, base=arg.base)
-    if arg.base == ZERO:
-        ref = parse_symbol_ref(arg.addend)
-        if ref is not None:
-            return ref
+    if isinstance(arg.addend, AsmLiteral) or (
+        arg.base == ZERO and parse_symbol_ref(arg.addend) is not None
+    ):
+        return a.memory_ref(index)
     addend = address_expr(arg.addend, a)
     if arg.base == ZERO:
         return addend
