@@ -32,12 +32,12 @@ from .arch_sh import Sh2Arch
 @dataclass
 class DecompilationState:
     @dataclass
-    class Inner:
+    class Valid:
         flow_graph: FlowGraph
         info: Optional[FunctionInfo] = None
 
     function: Function
-    state: Union[Inner, Exception]
+    state: Union[Valid, Exception]
 
 
 def print_exception(exc: Exception, sanitize: bool) -> None:
@@ -167,7 +167,7 @@ def run(options: Options) -> int:
 
     decompilations: List[DecompilationState] = []
     for function in functions:
-        state: Union[DecompilationState.Inner, Exception]
+        state: Union[DecompilationState.Valid, Exception]
         try:
             narrow_func_call_outputs(function, global_info)
             flow_graph = build_flowgraph(
@@ -178,7 +178,7 @@ def run(options: Options) -> int:
                 print_warnings=options.debug,
                 debug_patterns=options.debug_patterns,
             )
-            state = DecompilationState.Inner(flow_graph)
+            state = DecompilationState.Valid(flow_graph)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
             state = e
