@@ -54,9 +54,7 @@ from .error import DecompFailure
 from .options import Target
 from .asm_file import (
     AsmData,
-    AsmDataEntry,
     AsmFile,
-    AsmSymbolicData,
     Label,
 )
 from .c_types import CType, TypeMap, parse_struct_member, resolve_typedefs
@@ -928,19 +926,7 @@ RE_SWITCHD_TARGET = re.compile(r"^_switchD_(\w+?)_(?:caseD_\w+|default)$")
 
 
 class X86JumpTablePattern(AsmPattern):
-    """Resolve Ghidra jump tables that are referenced by raw address.
-
-    Ghidra usually labels jump tables, in which case the indirect jmp
-    references the label and `switch_jump_table_labels` (plus flow_graph's
-    jump table machinery) finds the table in the file's data. Sometimes the
-    table address has no label of its own, though, and the jmp reads
-    `jmp [eax*4 + 0x41391c]`. The table is still recoverable from Ghidra's
-    switch label convention: such a jmp is itself labeled
-    `_switchD_<id>_switchD`, and the table's `.long` entries all target
-    `_switchD_<id>_caseD_*` labels of this function, appearing as a single
-    consecutive run in the file's data (possibly followed by one shared
-    `_switchD_*_default` entry). Register the recovered table in asm_data
-    under a synthetic name and rewrite the jmp to reference it."""
+    """Reject raw-address Ghidra jump tables that need source cleanup."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         part = matcher.input[matcher.index]
@@ -988,72 +974,10 @@ class X86JumpTablePattern(AsmPattern):
         table_addrs = [lit for lit in literals if lit.value > 0xFFFF]
         if len(table_addrs) != 1:
             return None
-        table_addr = table_addrs[0]
-        table_name = self.synthesize_table(matcher, switch_id, table_addr.value)
-        if table_name is None:
-            return None
-
-        def replace_literal(arg: Argument) -> Argument:
-            if arg is table_addr:
-                return AsmGlobalSymbol(table_name)
-            if isinstance(arg, BinOp):
-                return BinOp(arg.op, replace_literal(arg.lhs), replace_literal(arg.rhs))
-            return arg
-
-        new_jmp = AsmInstruction(
-            "jmp",
-            [AsmAddressMode(addr.base, replace_literal(addr.addend), None)],
+        raise DecompFailure(
+            "raw-address Ghidra jump table requires preprocessing with "
+            "tools/ghidra_fix_jumptables.py"
         )
-        return Replacement([new_jmp], 1, clobbers=[])
-
-    @staticmethod
-    def synthesize_table(
-        matcher: AsmMatcher, switch_id: str, table_addr: int
-    ) -> Optional[str]:
-        table_name = f"_m2c_jtbl_{table_addr:x}"
-        if table_name in matcher.asm_data.values:
-            return table_name
-        re_case = re.compile(rf"^_switchD_{re.escape(switch_id)}_(caseD_\w+|default)$")
-        re_shared_default = re.compile(r"^_switchD_\w+_default$")
-        # Flatten the file's data in order and find the unique consecutive
-        # run of switch entries for this switch id.
-        items: List[Optional[str]] = []
-        for name, entry in matcher.asm_data.values.items():
-            if name.startswith("_m2c_jtbl_"):
-                continue  # Tables synthesized by earlier matches.
-            for item in entry.data:
-                if isinstance(item, bytes):
-                    items.append(None)
-                else:
-                    items.append(item.as_symbol_without_addend())
-        runs: List[List[str]] = []
-        current: List[str] = []
-        for sym in items:
-            if sym is not None and re_case.match(sym):
-                current.append(sym)
-            elif current:
-                # A shared default entry may close the table.
-                if sym is not None and re_shared_default.match(sym):
-                    current.append(sym)
-                runs.append(current)
-                current = []
-        if current:
-            runs.append(current)
-        # A run consisting only of `default` entries is the tail of some
-        # other switch's table, not a table of this switch.
-        runs = [run for run in runs if any("_caseD_" in sym for sym in run)]
-        if len(runs) != 1 or len(runs[0]) < 2:
-            return None
-        targets = runs[0]
-        # All targets must be labels of the current function.
-        if any(target not in matcher.labels for target in targets):
-            return None
-        sort_order = (f"_m2c_jtbl_{table_addr:x}", 0)
-        entry = AsmDataEntry(sort_order, is_readonly=True, is_jtbl=True)
-        for target in targets:
-            entry.data.append(AsmSymbolicData(AsmGlobalSymbol(target), 4))
-        matcher.asm_data.values[table_name] = entry
-        return table_name
 
 
 class X86StackRewritePattern(AsmPattern):
