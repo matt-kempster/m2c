@@ -939,12 +939,12 @@ class X86JumpTablePattern(AsmPattern):
             or not isinstance(part.args[0], AsmAddressMode)
         ):
             return None
-        # Identify the switch id from Ghidra's labels around the jmp: the
+        # Only fire when Ghidra's switch labels sit next to the jmp -- the
         # label on the jmp itself (`_switchD_<id>_switchD`, when it survived
-        # label pruning), or the first case label after the jmp (MSVC places
-        # the first case body directly after the switch dispatch). The
-        # bounds-check `ja` guard is *not* a reliable source: nested switches
-        # share a default label carrying the outer switch's id.
+        # label pruning), or the first case label after it (MSVC places the
+        # first case body directly after the switch dispatch). This just
+        # confirms the jmp is a switch dispatch before erroring; the id value
+        # itself is not used.
         switch_id: Optional[str] = None
         if matcher.index > 0:
             prev = matcher.input[matcher.index - 1]
