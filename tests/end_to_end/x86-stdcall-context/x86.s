@@ -10,4 +10,5 @@ test:
     PUSH offset _caption
     PUSH EAX
     CALL _MyApiCall
+    MOV EAX, dword ptr [ESP + 0x4]
     RET
