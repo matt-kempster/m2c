@@ -1,18 +1,14 @@
-static f32 real_40c00000 = 6.0f;                    /* const */
-static f32 real_00000000 = 0.0f;                    /* const */
-static f32 real_40a00000 = 5.0f;                    /* const */
-
 void test(void) {
     f32 sp0;
     f32 var_f0;
 
-    var_f0 = real_40a00000;
+    var_f0 = 5.0f;
     sp0 = x;
-    if (!(sp0 >= real_00000000)) {
-        var_f0 = real_40c00000;
+    if (!(sp0 >= 0.0f)) {
+        var_f0 = 6.0f;
     }
     x = 3.0f;
-    if (var_f0 >= real_00000000) {
+    if (var_f0 >= 0.0f) {
         x = 7.0f;
     }
 }

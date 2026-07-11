@@ -137,6 +137,7 @@ from .evaluate import (
     handle_or,
     handle_sub,
     make_store_real,
+    load_rodata_constant,
     replace_bitand,
     shift_right_expr,
     split_imm_addend,
@@ -264,6 +265,9 @@ def mem_load(a: InstrArgs, index: int, type: Type) -> Expression:
     assert size is not None
     target = mem_target(a, index)
     expr = deref(target, a.regs, a.stack_info, size=size)
+    const = load_rodata_constant(a, expr, type, raw_index=index, fixed=True)
+    if const is not None:
+        return const
     return as_type(expr, type, silent=True)
 
 

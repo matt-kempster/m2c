@@ -41,6 +41,7 @@ from .translate import (
     Lwl,
     NodeState,
     RawSymbolRef,
+    ReadonlyDataLiteral,
     RegExpression,
     RegInfo,
     StackInfo,
@@ -491,67 +492,73 @@ def add_imm(
         return BinaryOp.intptr(left=source, op="+", right=imm)
 
 
+def load_rodata_constant(
+    args: InstrArgs,
+    expr: Expression,
+    type: Type,
+    *,
+    raw_index: int,
+    output_reg: Optional[Register] = None,
+    fixed: bool = False,
+) -> Optional[Expression]:
+    size = type.get_size_bytes()
+    assert size is not None
+    if not isinstance(expr, StructAccess):
+        return None
+
+    is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
+    if is_arm and isinstance(args.raw_arg(raw_index), AsmAddressMode):
+        return None
+    if not is_arm and (not type.is_likely_float() or expr.offset != 0):
+        return None
+
+    target = early_unwrap(expr.struct_var)
+    if not isinstance(target, AddressOf) or not isinstance(target.expr, GlobalSymbol):
+        return None
+
+    ent = args.stack_info.global_info.asm_data_value(target.expr.symbol_name)
+    if ent is None or not ent.is_readonly:
+        return None
+    data = ent.data_at_offset(expr.offset, size)
+    if data is None:
+        return None
+
+    if isinstance(data, bytes) and size in (4, 8):
+        ent.used_as_literal = True
+        endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
+        fmt = "I" if size == 4 else "Q"
+        val: int = struct.unpack(endian + fmt, data)[0]
+        if fixed:
+            return ReadonlyDataLiteral(value=val, type=type)
+        return Literal(value=val, type=type)
+
+    if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
+        assert output_reg is not None
+        sym = data.data
+        addend = 0
+        if (
+            isinstance(sym, BinOp)
+            and sym.op in ("+", "-")
+            and isinstance(sym.rhs, AsmLiteral)
+        ):
+            addend = sym.rhs.value * (-1 if sym.op == "-" else 1)
+            sym = sym.lhs
+        if isinstance(sym, AsmGlobalSymbol):
+            ent.used_as_literal = True
+            addr = args.stack_info.global_info.address_of_gsym(sym.symbol_name)
+            addr = add_imm(output_reg, addr, Literal(addend), args)
+            return as_type(addr, type, silent=True)
+    return None
+
+
 def handle_load(args: InstrArgs, type: Type) -> Expression:
     size = type.get_size_bytes()
     assert size is not None
     output_reg = args.reg_ref(0)
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
-
-    def load_rodata_constant() -> Optional[Expression]:
-        if not isinstance(expr, StructAccess):
-            return None
-
-        is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
-        if is_arm and isinstance(args.raw_arg(1), AsmAddressMode):
-            # For ARM, only allow constants loaded through `ldr pool`.
-            # Do allow non-zero offsets: they occur in raw agbcc output which
-            # we use for tests.
-            return None
-        if not is_arm and (not type.is_likely_float() or expr.offset != 0):
-            # For non-ARM, only allow float constants and offset 0.
-            return None
-
-        target = early_unwrap(expr.struct_var)
-        if not isinstance(target, AddressOf) or not isinstance(
-            target.expr, GlobalSymbol
-        ):
-            return None
-
-        sym_name = target.expr.symbol_name
-        ent = args.stack_info.global_info.asm_data_value(sym_name)
-        if ent is None or not ent.is_readonly:
-            return None
-
-        data = ent.data_at_offset(expr.offset, size)
-        if data is None:
-            return None
-
-        if isinstance(data, bytes) and size in (4, 8):
-            ent.used_as_literal = True
-            endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
-            fmt = "I" if size == 4 else "Q"
-            val: int = struct.unpack(endian + fmt, data)[0]
-            return Literal(value=val, type=type)
-
-        if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
-            sym = data.data
-            addend = 0
-            if (
-                isinstance(sym, BinOp)
-                and sym.op in ("+", "-")
-                and isinstance(sym.rhs, AsmLiteral)
-            ):
-                addend = sym.rhs.value * (-1 if sym.op == "-" else 1)
-                sym = sym.lhs
-            if isinstance(sym, AsmGlobalSymbol):
-                ent.used_as_literal = True
-                addr = args.stack_info.global_info.address_of_gsym(sym.symbol_name)
-                addr = add_imm(output_reg, addr, Literal(addend), args)
-                return as_type(addr, type, silent=True)
-
-        return None
-
-    const = load_rodata_constant()
+    const = load_rodata_constant(
+        args, expr, type, raw_index=1, output_reg=output_reg
+    )
     if const is not None:
         return const
 

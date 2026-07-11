@@ -1800,6 +1800,21 @@ class Literal(Expression):
 
 
 @dataclass(frozen=True, eq=True)
+class ReadonlyDataLiteral(Expression):
+    """A typed data-section scalar that formats as a literal without acting
+    as a freely coercible immediate during type inference."""
+
+    value: int
+    type: Type = field(compare=False)
+
+    def dependencies(self) -> List[Expression]:
+        return []
+
+    def format(self, fmt: Formatter) -> str:
+        return Literal(self.value, self.type).format(fmt)
+
+
+@dataclass(frozen=True, eq=True)
 class AddressOf(Expression):
     expr: Expression
     type: Type = field(compare=False, default_factory=Type.ptr)
@@ -2765,7 +2780,7 @@ def is_trivial_expression(expr: Expression) -> bool:
     # NaivePhiExpr could be made trivial, but it's better to keep it symmetric
     # with PlannedPhiExpr to avoid different deduplication between passes,
     # since that can cause naive phis to end up in the final output.
-    if isinstance(expr, (Literal, GlobalSymbol, SecondF64Half)):
+    if isinstance(expr, (Literal, ReadonlyDataLiteral, GlobalSymbol, SecondF64Half)):
         return True
     if isinstance(expr, AddressOf):
         return all(is_trivial_expression(e) for e in expr.dependencies())
@@ -2779,6 +2794,7 @@ def should_wrap_transparently(expr: Expression) -> bool:
         expr,
         (
             Literal,
+            ReadonlyDataLiteral,
             LocalVar,
             PassedInArg,
             NaivePhiExpr,
