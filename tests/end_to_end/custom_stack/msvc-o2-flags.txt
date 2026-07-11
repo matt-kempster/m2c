@@ -1,1 +1,1 @@
---stack-structs --no-unk-inference --target x86 --context orig.c
+--stack-structs --no-unk-inference --target x86 --context stack-x86.c

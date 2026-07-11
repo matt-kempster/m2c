@@ -1,10 +1,3 @@
-CRASHED
-
-/*
-Decompilation failure:
-
-Syntax error when parsing C context.
-before: test at line 1, column 9
-
-__int64 test(__int64 a, int b) { return a << b; }
-*/
+s64 test(s64 a, s32 b, u32 arg1) {
+    return (s64) (((u64) arg1 << 0x20) | (u32) a) << b;
+}

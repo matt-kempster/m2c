@@ -1,10 +1,3 @@
-CRASHED
-
-/*
-Decompilation failure:
-
-Syntax error when parsing C context.
-before: test at line 1, column 18
-
-unsigned __int64 test(unsigned __int64 a, int b) { return a >> b; }
-*/
+u64 test(u64 a, s32 b, u32 arg1) {
+    return (((u64) arg1 << 0x20) | (u32) a) >> b;
+}
