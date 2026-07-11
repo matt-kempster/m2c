@@ -622,7 +622,7 @@ def make_store(args: InstrArgs, type: Type) -> Optional[StoreStmt]:
 def make_store_real(
     source_val: Expression,
     source_raw: Optional[RegExpression],
-    target: Union[AddressMode, RawSymbolRef],
+    target: Union[AddressMode, RawSymbolRef, Expression],
     regs: RegInfo,
     stack_info: StackInfo,
     type: Type,

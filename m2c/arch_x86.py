@@ -263,17 +263,11 @@ def mem_store(
     value_reg: Optional[Register],
     type: Type,
 ) -> Optional[StoreStmt]:
-    size = type.get_size_bytes()
-    assert size is not None
     target = mem_target(a, index)
     source_raw: Optional[RegExpression] = None
     if value_reg is not None:
         source_raw = a.regs.get_raw(value_reg)
-    if isinstance(target, (AddressMode, RawSymbolRef)):
-        return make_store_real(value, source_raw, target, a.regs, a.stack_info, type)
-    dest = deref(target, a.regs, a.stack_info, size=size, store=True)
-    dest.type.unify(type)
-    return StoreStmt(source=as_type(value, type, silent=False), dest=dest)
+    return make_store_real(value, source_raw, target, a.regs, a.stack_info, type)
 
 
 def store_memory(s: NodeState, store: StoreStmt, reg: Register) -> None:
