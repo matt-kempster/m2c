@@ -4,7 +4,7 @@
 #         g_result = (a + b) * c - a / b;
 #     }
 # Exercises fld/fadd/fmul/fdiv, the popping fsubp accumulator combine, and a
-# store-and-pop back to a global (no float return, which slice 4 handles).
+# store-and-pop back to a global (no float return; see x86-fpu-return).
 test:
     FLD dword ptr [ESP + 0x4]
     FADD dword ptr [ESP + 0x8]

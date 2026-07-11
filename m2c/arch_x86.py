@@ -18,32 +18,11 @@ with the per-instruction semantics in X86Arch._parse_fpu (float arithmetic/
 compares/conversions, the fnstsw/test-ah compare idiom, and the float call
 ABI: returns, per-callee stack deltas, and float arguments).
 
-The ESP-delta design: a linear dataflow pass over the flow graph tracks
-(esp_delta, ebp_delta) per instruction (push/pop = ∓4, sub/add esp = ∓N,
-call = +callee_cleanup, `mov ebp, esp` binds ebp to the frame). The frame is a
-fixed region sized to the maximum stack depth; a synthetic `sub esp, frame`
-at entry makes get_stack_info see it. `[esp+k]`/`[ebp+k]` at delta d become
-`[esp + k + frame + d]`; saved-register push/pop become plain stores/loads
-(callee-saved); other pushes become `storearg.fictive` feeding the next call;
-each call is annotated with its argument-region base and byte count so
-translation splits pending stack arguments across nested calls. See
-rewrite_stack_ops for the full rewrite.
-
 Design notes:
 
-- Operand widths: x86 encodes operand sizes both in memory operand prefixes
-  ("byte ptr"/"word ptr"/"dword ptr"/"qword ptr") and in sub-register names
-  (al/ah/ax/...). Both are canonicalized into a mnemonic suffix during
-  parsing/normalization, ARM-style: `mov.b`, `mov.w`, `mov.q`. The default
-  32-bit width has no suffix ("dword ptr" and plain 32-bit registers map to
-  a bare mnemonic). This happens in two places:
-    * `preprocess_instruction` strips "<size> ptr" from the argument string
-      (before the generic argument parser runs) and appends the suffix;
-    * `normalize_instruction` rewrites sub-register operands (al -> eax etc.)
-      and appends the suffix derived from the narrowest sub-register, if the
-      mnemonic doesn't already carry one.
-  This keeps width information available in `X86Arch.parse` (and the eval
-  functions) without extending the shared Argument types.
+- Operand widths ("byte ptr" prefixes, sub-register names like al/ah/ax) are
+  canonicalized into ARM-style mnemonic suffixes (`mov.b`, `mov.w`, `mov.q`;
+  32-bit is bare); see preprocess_instruction and normalize_instruction.
 
 - Sub-register writes: an instruction that writes a sub-register (`mov.b` to
   cl, setcc, a byte load, ...) is deliberately modeled as writing the *full*
@@ -53,25 +32,10 @@ Design notes:
   upper bits of the old register value in the rare cases where they are
   live across the sub-register write.
 
-- Memory operands: Intel bracket expressions are parsed by the shared parser
-  (gated by the `supports_intel_addressing` capability) into AsmAddressMode,
-  with an Optional base register: `[esp + 0xc]` -> base=esp, addend=0xc;
-  `[symbol]` -> base=None, addend=symbol; scaled indices stay in the addend
-  as BinOp trees: `[esi + ebx*8 + 0x30]` -> base=esi,
-  addend=(ebx * 8) + 0x30. During evaluation these become either an
-  AddressMode (base + literal offset; handles stack accesses), a RawSymbolRef
-  (absolute [symbol + off]), or a generic address Expression whose shape
-  (base + index * scale + offset) `deref`/`array_access_from_add` recognize
-  and turn into array indexing.
-
-- Flags: mirrors ARM's condition flag scheme (z, n, c, v plus the composite
-  hi/ge/gt pseudo-registers): flag-setting instructions store complete
-  symbolic conditions into the flag registers, and consumers (jcc/setcc/
-  adc/sbb) read them back, negating via Condition.negated() where needed.
-  One crucial difference from ARM: after `cmp a, b` (or sub/neg), x86's
-  carry flag is a *borrow*: c = (u32)a < (u32)b, the inverse of ARM's carry.
-  After additions, c is the carry-out (same as ARM). See eval_x86_cmp and
-  `condition_flags` below.
+- Flags mirror ARM's condition flag scheme (z, n, c, v plus the composite
+  hi/ge/gt pseudo-registers), except that after `cmp a, b` (or sub/neg)
+  x86's carry flag is a *borrow*, the inverse of ARM's carry; see
+  eval_x86_cmp and `condition_flags`.
 
 - Arguments: cdecl passes all arguments on the stack. At function entry
   [esp + 0] holds the return address, so with an unmoved stack pointer the
@@ -207,7 +171,6 @@ SUB_REGS: Dict[Register, Tuple[Register, int]] = {
     Register("sp"): (ESP, 2),
 }
 
-WIDTH_SUFFIXES: Dict[int, str] = {1: ".b", 2: ".w", 4: "", 8: ".q"}
 PTR_WIDTHS: Dict[str, int] = {"byte": 1, "word": 2, "dword": 4, "qword": 8}
 
 RE_PTR = re.compile(r"\b(byte|word|dword|qword)\s+ptr\s+", re.IGNORECASE)
@@ -319,18 +282,12 @@ def store_memory(s: NodeState, store: StoreStmt, reg: Register) -> None:
 
 
 def flush_pending_call_args(s: NodeState) -> None:
-    """Force materialization of any pending stack call argument that contains a
+    """Force materialization of pending stack call arguments that contain a
     function call, mirroring the shared `store_memory`'s
-    `prevent_later_function_calls` for x86's stack-passed arguments.
-
-    x86 passes call arguments by pushing them, so an argument that is a prior
-    call's result is captured in `subroutine_args` (not a register) at the push,
-    before any intervening store runs. The shared prevent-later logic only scans
-    registers, so without this the inlined call would float past the store:
-    `x = foo(); global = 1; bar(x);` would decompile as `global = 1;
-    bar(foo());`, silently reordering the call after the store. Forcing the
-    pending argument emits it into a temp at its (pre-store) creation point, so
-    the call stays before the store."""
+    `prevent_later_function_calls`. x86 captures call-result arguments in
+    `subroutine_args` (not registers) at the push, which that logic does not
+    scan; without this, the inlined call would be reordered past an
+    intervening store."""
     for value in s.subroutine_args.values():
         if not uses_expr(value, lambda e: isinstance(e, FuncCall)):
             continue
@@ -415,11 +372,8 @@ def sbb_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressio
 
 
 def neg_expr(v: Expression) -> Expression:
-    """`neg`: arithmetic negation, collapsing a double negation. Applied to the
-    `sbb r,r` idiom (which materializes a compare's borrow as -(cond)), this
-    recovers the plain boolean, so `cmp a,b; sbb r,r; neg r` reads as `a < b`
-    rather than `--(a < b)`. -(-x) == x holds for every two's-complement
-    integer, so the fold is always valid, not only for the 0/-1 boolean."""
+    """`neg`. Collapses -(-x) (always valid in two's complement), so
+    `sbb r,r; neg r` reads as the plain comparison."""
     uw = early_unwrap(v)
     if isinstance(uw, UnaryOp) and uw.op == "-" and not uw.expr.type.is_float():
         return uw.expr
@@ -427,10 +381,8 @@ def neg_expr(v: Expression) -> Expression:
 
 
 def inc_expr(a: InstrArgs, v: Expression) -> Expression:
-    """`inc`. Applied to the negated boolean from `sbb r,r` (-(cond)), inc
-    computes 1 + -(cond) = !cond (cond is 0 or 1), so `cmp a,b; sbb r,r; inc r`
-    reads as the negated comparison (e.g. `a >= b`) instead of `-(a < b) + 1`.
-    Only fires for a negated comparison, where 1 - cond == !cond holds."""
+    """`inc`. 1 + -(cond) = !cond, so `sbb r,r; inc r` reads as the negated
+    comparison; the fold only fires on a negated comparison."""
     uw = early_unwrap(v)
     if isinstance(uw, UnaryOp) and uw.op == "-":
         inner = early_unwrap(uw.expr)
@@ -465,7 +417,7 @@ def shld_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressi
 #
 # MSVC6 lowers `__int64`/`unsigned __int64` arithmetic and shifts into calls to
 # private-convention CRT routines that do NOT follow cdecl. Two distinct ABIs
-# occur (verified by compiling with MSVC6 /O2 and reading the asm):
+# occur (both observed in MSVC6 /O2 output):
 #
 #  - multiply/divide/remainder (__allmul/__alldiv/__aulldiv/__allrem/
 #    __aullrem): the two 64-bit operands are passed on the stack as four
@@ -611,17 +563,9 @@ def callee_cleanup_bytes(
 ) -> Optional[int]:
     """Number of stack bytes a call target is known to pop itself: 0 for a
     known-cdecl callee, None when the convention cannot be determined from the
-    name. Sources, in strict precedence order:
-
-      1. an explicit context/prototype (`context_arg_bytes`, from
-         __attribute__((stdcall)) declarations),
-      2. a decorated stdcall suffix: an `__imp__X_N` import name, or a
-         `.set name@N` decoration recorded for the file (`file_arg_bytes`).
-
-    (Conservative structural inference, the lowest priority, lives in
-    compute_call_cleanup and only runs when this returns None; the esp-balance
-    check at return validates the result and triggers the infer_direct_stdcall
-    retry when a callee was misclassified.)"""
+    name. The sources, in strict precedence order, are marked 0-2 below;
+    structural inference (compute_call_cleanup) runs only when this returns
+    None, validated by the esp-balance check at return."""
     context_arg_bytes = context_arg_bytes or {}
     file_arg_bytes = file_arg_bytes or {}
     sym = call_target_symbol(target)
@@ -836,29 +780,17 @@ class X86ChkstkPattern(AsmPattern):
 
 class X86PushAllocPattern(AsmPattern):
     """MSVC allocates a single 4-byte local with `push <scratch>` (one byte)
-    rather than `sub esp, 4` (three bytes), and restores esp with a matching
-    `pop <scratch>` right before `ret`:
+    rather than `sub esp, 4` (three bytes), releasing it before `ret`. At a
+    __cdecl/__stdcall entry the pushed scratch register (eax/ecx/edx) holds no
+    live value, so the bracket is exactly a frame allocate/deallocate; rewrite
+    it to `sub esp, 4` / `add esp, 4` so no register value is stored.
 
-        push ecx          # allocate one dword local ([esp] is now that slot)
-        ...               # [esp] used as a scratch local
-        pop ecx           # deallocate
-        ret
-
-    At a __cdecl/__stdcall entry the pushed scratch register (eax/ecx/edx)
-    holds no live value, so the bracket is exactly a frame allocate/deallocate.
-    Left as a `push`, it reads as storing an uninitialized register into the
-    local slot -- a spurious M2C_ERROR. Rewrite the bracket into
-    `sub esp, 4` / `add esp, 4` so nothing is stored.
-
-    The dealloc before each `ret` is either the matching `pop <same reg>`, or --
-    when MSVC batches the local's release into the caller-side cleanup of
-    deferred stack arguments -- a plain `add esp, N` (N >= 4) whose N includes
-    the local's 4 bytes. Only these two forms count: a real value push (a
-    __fastcall/__thiscall argument spill) is not paired with either. For the
-    `pop` form the pop becomes `add esp, 4`; for the `add esp, N` form the add
-    already releases the local, so it is left untouched and only the entry
-    `push` is rewritten to `sub esp, 4` (its delta is unchanged, so the ESP
-    dataflow stays balanced and the N-4 argument bytes are attributed correctly)."""
+    The dealloc before each `ret` is either the matching `pop <same reg>`
+    (rewritten to `add esp, 4`), or -- when MSVC batches the local's release
+    into the caller-side cleanup of deferred stack arguments -- a plain
+    `add esp, N` (N >= 4) that already includes the local's 4 bytes and is
+    left untouched. Only these two forms count: a real value push (a
+    __fastcall/__thiscall argument spill) is paired with neither."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
@@ -1209,13 +1141,8 @@ def rewrite_stack_ops(
         "tailcall.fictive",
     }
 
-    # Register saves/frame setup, identified structurally (independent of the
-    # ESP dataflow, which is not available yet). A backward argument scan must
-    # not mistake these for outgoing call arguments -- otherwise a call right
-    # after the prologue or after a callee-save push (common for early indirect
-    # / undecorated stdcall calls) gets a phantom cleanup byte count that can
-    # make the dataflow look internally consistent while corrupting the stack
-    # model. See compute_save_pushes.
+    # Identified structurally, before the ESP dataflow exists; see
+    # compute_save_pushes for why the argument scan must not see these.
     save_pushes = compute_save_pushes(body)
 
     def call_arg_bytes(call_index: int) -> int:
@@ -1395,15 +1322,10 @@ def rewrite_stack_ops(
                 worklist.append((pos, target_st))
 
         if item.is_return:
-            # A well-formed function restores esp to its entry value before
-            # returning (the return address sits on top; a stdcall `ret N` pops
-            # arguments that live in the caller's frame, above entry esp, so they
-            # do not affect this delta). A nonzero delta here means a straight-
-            # line cleanup misclassification -- an undecorated stdcall taken for
-            # cdecl, a wrong table entry, an un-tabled DLL import -- which would
-            # otherwise silently shift every later frame slot. Fail loud so the
-            # infer_direct_stdcall retry can correct it, or the caller gets a
-            # clean error instead of corrupt output.
+            # esp must be back at its entry value before a return (a stdcall
+            # `ret N` pops caller-frame bytes above it). A nonzero delta means
+            # some callee's cleanup was misclassified (stdcall vs cdecl); fail
+            # loud so the infer_direct_stdcall retry can correct it.
             if esp != 0:
                 raise DecompFailure(
                     f"x86 stack analysis failed: esp is {-esp:#x} bytes from its "
@@ -2187,9 +2109,8 @@ def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expre
 
 
 def fnstsw_marker_is_forced(expr: Optional[Expression]) -> bool:
-    """Whether the status-word marker in `expr` is only reachable past a forced
-    (materialized) EvalOnceExpr boundary -- i.e. a store scheduled between the
-    fcomp and fnstsw forced it into a temp (see eval_cmp's fold)."""
+    """Whether the marker sits past a forced EvalOnceExpr boundary (see
+    fnstsw_marker_operands)."""
     while isinstance(expr, EvalOnceExpr):
         if expr.forced_emit or expr.emit_exactly_once:
             return True
@@ -2222,17 +2143,13 @@ def _operand_stable_across_store(operand: Expression) -> bool:
 
 
 def fnstsw_operands_store_stable(operands: Tuple[Expression, Expression]) -> bool:
-    """Whether a forced marker's compare operands cannot have changed across the
-    intervening store, so folding them at the (post-store) branch stays correct
-    (see _operand_stable_across_store)."""
+    """Whether all operands are stable per _operand_stable_across_store."""
     return all(_operand_stable_across_store(o) for o in operands)
 
 
 def suppress_forced_fnstsw_marker(expr: Optional[Expression]) -> None:
-    """Drop the dead `temp = M2C_FNSTSW(...)` assignment left behind when a store
-    between the fcomp and fnstsw forced the status-word marker (see eval_cmp's
-    fold). Only the marker's own EvalOnceExpr wrappers are un-emitted; the
-    operands, held inside the FuncCall, are untouched."""
+    """Drop the dead `temp = M2C_FNSTSW(...)` assignment left behind by a fold
+    past a forced marker; the operands inside the FuncCall are untouched."""
     while isinstance(expr, EvalOnceExpr):
         if expr.forced_emit:
             expr.forced_emit = False
@@ -2422,11 +2339,8 @@ class X86Arch(Arch):
     frame_pointer_regs = [EBP]
     return_address_reg = EIP
 
-    # f0 (the bottom x87 slot) holds a float/double return, disambiguated from
-    # eax the same way MIPS disambiguates v0/f0. f0 is deliberately *not* in
-    # all_return_regs: that list drives the default call-output set, and x87
-    # values must survive calls uncleared (a call only pushes its own float
-    # return via the per-call `fpret` annotation).
+    # f0 (the bottom x87 slot) holds a float/double return; not in
+    # all_return_regs since x87 values survive calls uncleared (see x86_fpu.py).
     base_return_regs = [(EAX, False), (Register("f0"), True)]
     all_return_regs = [EAX, EDX]
     argument_regs: List[Register] = []
@@ -2444,12 +2358,9 @@ class X86Arch(Arch):
     # rewrites every reachable use into a flat virtual register before
     # translation, so they never carry real semantics.
     fpu_regs = [Register(f"st{i}") for i in range(8)]
-    # The bottom-anchored flat x87 virtual registers produced by the FPU
-    # prepass. Their `f` prefix gives them float treatment (Register.is_float)
-    # for free. They are in neither temp_regs (so calls don't clear them --
-    # MSVC6 does not clear the FPU stack across calls, so x87 values live
-    # across calls) nor saved_regs (so they get no spurious initial "caller
-    # value", keeping float-return detection clean).
+    # The flat x87 virtual registers produced by the FPU prepass (see
+    # x86_fpu.py); in neither temp_regs (calls must not clear them) nor
+    # saved_regs (no spurious initial "caller value").
     float_regs = [Register(f"f{i}") for i in range(8)]
     # Sub-registers are parsed as their own Register instances so that operand
     # widths survive until normalize_instruction, which rewrites them into
@@ -3333,12 +3244,10 @@ class X86Arch(Arch):
                     and isinstance(args[0], Register)
                     and isinstance(args[1], AsmLiteral)
                 ):
-                    # `or reg, -1` / `and reg, 0`: constant-result idioms whose
-                    # value does not depend on reg's prior contents (MSVC emits
-                    # `or reg, -1` as a compact 3-byte `mov reg, -1`). Modeling
-                    # them as `reg | -1` / `reg & 0` would spuriously read reg,
-                    # which is often dead here (e.g. cleared by a preceding call),
-                    # yielding a bogus M2C_ERROR(unset register).
+                    # `or reg, -1` / `and reg, 0`: constant-result idioms
+                    # (MSVC's compact `mov reg, -1`). Don't read reg -- it is
+                    # often dead here, and reading it would yield a spurious
+                    # M2C_ERROR(unset register).
                     imm = args[1].value & 0xFFFFFFFF
                     const: Optional[int] = None
                     if base == "or" and imm == 0xFFFFFFFF:
@@ -3355,13 +3264,8 @@ class X86Arch(Arch):
                     op_value(a, i, w, sign_extend_imm=sign_ext)
                     for i in range(1, len(args))
                 ]
-                # Build the new value before touching the flags: sbb (and adc)
-                # read the incoming carry flag for their value, and the
-                # FLAGS_SBB flag write below overwrites `c` with sbb's own
-                # borrow. Computing the value only reads registers (no state
-                # change), so ordering it first is safe for every op and is
-                # what lets sbb see the pre-instruction carry rather than the
-                # borrow it is about to produce.
+                # Compute the value before writing flags: adc/sbb read the
+                # incoming carry, which the FLAGS_SBB write below overwrites.
                 val = alu_builder(a, lhs, srcs)
 
                 if flags_kind == FLAGS_CMP:
@@ -3458,13 +3362,9 @@ class X86Arch(Arch):
                     operands = fnstsw_marker_operands(a.regs[EAX])
                     op = FNSTSW_MASK_OPS.get(args[1].value & 0xFF)
                     forced = fnstsw_marker_is_forced(raw_eax)
-                    # Fold when eax still carries the compare's status-word marker.
-                    # A store between the fcomp and this fnstsw forces the marker
-                    # (an fn_op) into a temp; still fold past it -- so the compare
-                    # surfaces as `x < 0.0f` rather than raw M2C_FNSTSW bit
-                    # arithmetic -- but only when the operands couldn't have
-                    # changed across that store (else keep the marker, which
-                    # snapshots the pre-store value correctly).
+                    # Fold past a forced marker only when the operands cannot
+                    # have changed across the intervening store (see
+                    # fnstsw_marker_operands).
                     if (
                         operands is not None
                         and op is not None

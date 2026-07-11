@@ -342,7 +342,7 @@ class X86FpuRewritePattern(AsmPattern):
         arch = cast("X86Arch", matcher.arch)
         seed: Dict[str, int] = dict(X86_FPU_HELPER_DELTAS)
         seed.update(arch.context_fpu_call_deltas)
-        # Cheap early-out: the ~3100 functions with no x87 pay only this scan.
+        # Cheap early-out: functions with no x87 instructions pay only this scan.
         # A function still needs the pass, though, if it calls a context-known
         # float/double-returning function -- even with no x87 instruction of
         # its own (a forwarding wrapper like `call _returns_float; ret`), the

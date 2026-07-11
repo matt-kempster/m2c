@@ -2,8 +2,8 @@
 # lowering of an unsigned 64-bit less-than: `sub` the low halves (producing a
 # borrow) then `sbb` the high halves; the resulting carry flag is the borrow
 # out of the full 64-bit subtraction, i.e. the unsigned comparison. `setb`
-# reads that carry. With sbb modeled as logic (the bug), the carry would be a
-# constant 0 and the comparison would collapse.
+# reads that carry. Modeling sbb with logic-op flags (CF = 0) would collapse
+# the comparison to a constant.
 test:
     MOV EAX, dword ptr [ESP + 0x4]
     MOV EDX, dword ptr [ESP + 0x8]

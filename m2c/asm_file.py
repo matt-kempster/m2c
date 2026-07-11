@@ -159,9 +159,8 @@ class AsmData:
     values: Dict[str, AsmDataEntry] = field(default_factory=dict)
     mentioned_labels: Set[str] = field(default_factory=set)
     # Symbol -> number of argument bytes the symbol pops on return (stdcall).
-    # Populated from disassembler-exported `.set sym, "name@N"` decorations
-    # (e.g. from Ghidra); used by
-    # the x86 backend to attribute callee stack cleanup.
+    # Populated from disassembler-exported `.set sym, "name@N"` decorations;
+    # used by the x86 backend to attribute callee stack cleanup.
     stdcall_arg_bytes: Dict[str, int] = field(default_factory=dict)
 
     def merge_into(self, other: AsmData) -> None:
@@ -538,10 +537,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         return struct.pack(endian + fmt, val)
 
     def ensure_data_label() -> None:
-        # x86 disassembler exports can place data (jump tables in
-        # particular) directly after code with no label of its own; without one the data
-        # would be dropped. Attach it to a synthetic label so that jump table
-        # recovery can find it.
+        # x86 disassembler exports can place data (jump tables in particular)
+        # directly after code with no label of its own; attach a synthetic
+        # label so the data is kept and jump table recovery can find it.
         if (
             asm_file.current_data is None
             and curr_section == ".text"
@@ -738,16 +736,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        # Disassembler exports (e.g. Ghidra's) write
-                        # symbol-name decorations as `.set mangled, "original"`. When the original name
-                        # carries an `@N` stdcall suffix (`_exit@4`,
-                        # `__imp__MessageBoxA@16`), N is the number of argument
-                        # bytes the symbol pops on return; record it so the
-                        # x86 backend can attribute callee stack cleanup. These
-                        # Dump-isms (the `@N` decoration and the tolerance
-                        # of non-integer values below) are behind an arch
-                        # capability, so that other architectures keep the
-                        # strict parse failure for an unsupported `.set`.
+                        # Disassembler exports write symbol decorations as
+                        # `.set mangled, "original"`. An `@N` suffix
+                        # (`_exit@4`) is the stdcall cleanup byte count;
+                        # record it for the x86 backend. These idioms (and
+                        # the non-integer tolerance below) sit behind
+                        # lenient_set_directives so other arches keep the
+                        # strict failure.
                         lenient = arch.lenient_set_directives
                         decorated = (
                             re.fullmatch(r"(.*)@(\d+)", args[1]) if lenient else None
@@ -768,9 +763,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                                 if not lenient:
                                     # Other architectures keep the hard failure.
                                     raise
-                                # x86 disassembler exports contain .set directives with non-integer
-                                # values (e.g. equating a label with an
-                                # expression like "table[4]+3"); ignore them.
+                                # x86 disassembler exports contain .set
+                                # directives with non-integer values (label
+                                # equates like "table[4]+3"); ignore them.
                                 add_warning(
                                     warnings,
                                     f"Ignoring non-integer .set directive: {line}",

@@ -2,7 +2,7 @@
 #     extern float mix(float u, float v);
 #     float apply(float a, float b) { return mix(a * b, a - b) + a; }
 # Each float argument is allocated with `push ecx` and filled with `fstp
-# [esp]` into the call's argument window (routed to a subroutine arg, §4.5);
+# [esp]` into the call's argument window (routed to a subroutine arg);
 # the callee returns its float in st(0) (call depth delta +1, inferred), which
 # is then added to a and returned.
 test:
