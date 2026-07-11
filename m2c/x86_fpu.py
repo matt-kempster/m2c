@@ -30,11 +30,9 @@ from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, c
 from .asm_file import AsmData
 from .asm_instruction import (
     Argument,
-    AsmAddressMode,
     AsmLiteral,
     JumpTarget,
     Register,
-    ZERO,
 )
 from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement
 from .error import DecompFailure
@@ -64,6 +62,7 @@ FPU_PUSH: Set[str] = {
 }
 FPU_POP1: Set[str] = {
     "fstp",
+    "fstparg",
     "fistp",
     "fcomp",
     "fucomp",
@@ -97,6 +96,7 @@ FPU_NEUTRAL: Set[str] = {
     "ficom",
     "ftst",
     "fst",
+    "fstarg",
     "fist",
     "fchs",
     "fabs",
@@ -248,6 +248,8 @@ def _is_ftol_shaped(body: List[BodyPart], index: int) -> bool:
             return base not in (
                 "fst",
                 "fstp",
+                "fstarg",
+                "fstparg",
                 "fistp",
                 "fcom",
                 "fcomp",
@@ -504,46 +506,6 @@ def rewrite_fpu_ops(
             continue
         push(index + 1, out)
 
-    def arg_window_offset(store_index: int, addr: Argument) -> Optional[int]:
-        """If a store to `addr` at `store_index` targets an esp-relative slot
-        inside the very next call's outgoing-argument window, the frame offset
-        of that slot; else None. This is how float arguments reach a call: a
-        `push`/`sub esp` allocates the slot and `fstp [esp+k]` fills it.
-        Only stores with no intervening esp change / barrier qualify, so the
-        offset shares the call's frame coordinate."""
-        if not (
-            isinstance(addr, AsmAddressMode)
-            and addr.base != ZERO
-            and addr.base.register_name == "esp"
-            and isinstance(addr.addend, AsmLiteral)
-        ):
-            return None
-        offset = addr.addend.value
-        for j in range(store_index + 1, len(body)):
-            nxt = body[j]
-            if not isinstance(nxt, Instruction):
-                return None  # a label / merge: give up
-            nbase, _ = split_width_suffix(nxt.mnemonic)
-            if nbase == "call" and nxt.function_target is not None:
-                if len(nxt.args) < 3 or not isinstance(nxt.args[1], AsmLiteral):
-                    return None
-                win_base = nxt.args[1].value
-                assert isinstance(nxt.args[2], AsmLiteral)
-                win_bytes = nxt.args[2].value
-                in_window = offset >= win_base and (
-                    win_bytes < 0 or offset < win_base + win_bytes
-                )
-                return offset if in_window else None
-            # Any other store to a different slot is fine to skip over, but a
-            # branch or esp change means this store is not a pending argument.
-            if (
-                nxt.jump_target is not None
-                or nxt.is_return
-                or nbase in ("push", "pop", "add", "sub", "call")
-            ):
-                return None
-        return None
-
     # Pass 2: emit the rewritten body.
     new_body: List[BodyPart] = []
 
@@ -631,14 +593,11 @@ def rewrite_fpu_ops(
             emit(base, [Register(f"f{depth}")], meta)
 
         # --- Stores from the top of stack. ---
-        elif base in ("fst", "fstp", "fistp"):
+        elif base in ("fst", "fstp", "fistp", "fstarg", "fstparg"):
             st_i = _st_index(args[0])
-            win_off = (
-                arg_window_offset(i, args[0])
-                if base in ("fst", "fstp") and st_i is None
-                else None
-            )
-            if st_i is not None:
+            if base in ("fstarg", "fstparg"):
+                emit(mnemonic, [args[0], flat(0)], meta)
+            elif st_i is not None:
                 # Register store form (`fst st(i)` / `fstp st(i)`).
                 if base == "fstp" and st_i == 0:
                     emit("fpop", [flat(0)], meta)  # discard-pop idiom
@@ -646,12 +605,6 @@ def rewrite_fpu_ops(
                     emit("fmovpop", [flat(st_i), flat(0)], meta)
                 else:
                     emit("fmov", [flat(st_i), flat(0)], meta)
-            elif win_off is not None:
-                # A float stored into the next call's argument window.
-                _, w = split_width_suffix(mnemonic)
-                stem = "fstparg" if base == "fstp" else "fstarg"
-                mn = stem if w == 4 else stem + ".q"
-                emit(mn, [AsmLiteral(win_off), flat(0)], meta)
             else:
                 emit(mnemonic, [args[0], flat(0)], meta)
 
