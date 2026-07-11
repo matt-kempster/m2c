@@ -4359,6 +4359,10 @@ class GlobalInfo:
         mapped = self.symbol_name_map.get(asm_name)
         if mapped is not None:
             return mapped
+        # Fallback for symbols not registered up front (main.py pre-populates
+        # asm_symbol_names exhaustively, so this is rare). It uses a weaker
+        # collision check than __post_init__'s deterministic sorted pass:
+        # first-come-first-served against names claimed so far.
         candidate = asm_name
         if self.target.arch == Target.ArchEnum.X86:
             if candidate.startswith("_"):

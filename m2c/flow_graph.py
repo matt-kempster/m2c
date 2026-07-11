@@ -832,7 +832,6 @@ def build_graph_from_block(
     nodes: List[Node],
     asm_data: AsmData,
     arch: ArchFlowGraph,
-    typemap: Optional[TypeMap] = None,
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:

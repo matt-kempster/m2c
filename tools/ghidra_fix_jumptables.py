@@ -42,6 +42,7 @@ def table_run(lines: List[str], switch_id: str) -> Optional[Tuple[int, int]]:
     runs: List[Tuple[int, int]] = []
     start: Optional[int] = None
     has_case = False
+    entries = 0
     for index, line in enumerate(lines + [""]):
         symbols = long_symbols(line)
         valid = symbols is not None and all(
@@ -51,9 +52,13 @@ def table_run(lines: List[str], switch_id: str) -> Optional[Tuple[int, int]]:
             if start is None:
                 start = index
                 has_case = False
+                entries = 0
             has_case |= any("_caseD_" in symbol for symbol in symbols or [])
+            entries += len(symbols or [])
         elif start is not None:
-            if has_case:
+            # A single-entry run is not a jump table; refuse it like the
+            # in-decompiler pattern does for labeled tables.
+            if has_case and entries >= 2:
                 runs.append((start, index))
             start = None
     return runs[0] if len(runs) == 1 else None

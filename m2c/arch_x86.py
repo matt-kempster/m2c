@@ -750,17 +750,6 @@ def compute_save_pushes(body: List[BodyPart]) -> Set[int]:
     return saves
 
 
-def is_fs_zero_operand(arg: Argument) -> bool:
-    """Whether a (fs-segment) memory operand is exactly [0x0], the head of
-    the SEH exception handler chain."""
-    return (
-        isinstance(arg, AsmAddressMode)
-        and arg.base == ZERO
-        and isinstance(arg.addend, AsmLiteral)
-        and arg.addend.value == 0
-    )
-
-
 CHKSTK_NAMES = {"__chkstk", "_chkstk", "__alloca_probe", "_alloca_probe"}
 
 
@@ -2437,7 +2426,9 @@ def x86_context_facts(typemap: Optional[TypeMap]) -> X86ContextFacts:
             total += (size + 3) & ~3
         record(stdcall_arg_bytes, name, total)
 
-    facts = X86ContextFacts(stdcall_arg_bytes, fpu_call_deltas)
+    facts = X86ContextFacts(
+        MappingProxyType(stdcall_arg_bytes), MappingProxyType(fpu_call_deltas)
+    )
     _X86_CONTEXT_FACTS_CACHE[typemap] = facts
     return facts
 
