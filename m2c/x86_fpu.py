@@ -25,7 +25,7 @@ arguments (e.g. `fadd $f1, $f0`, `fstp.s [m], $f2`); their semantics live in
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, cast
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 from .asm_file import AsmData
 from .asm_instruction import (
@@ -42,10 +42,6 @@ from .x86_utils import (
     split_width_suffix,
     switch_jump_table_labels,
 )
-
-if TYPE_CHECKING:
-    from .arch_x86 import X86Arch
-
 
 # x87 depth effects, keyed by the base mnemonic (after any width suffix is
 # split off).
@@ -320,11 +316,10 @@ class X86FpuRewritePattern(AsmPattern):
         # the user context (float/double-returning functions leave their result
         # on the FPU stack), then infer the rest structurally by BFS over delta
         # assignments. Context deltas win on conflict.
-        # This pattern is only registered on X86Arch, whose load_context
-        # mines the deltas from context prototypes.
-        arch = cast("X86Arch", matcher.arch)
+        from .arch_x86 import x86_context_facts
+
         seed: Dict[str, int] = dict(X86_FPU_HELPER_DELTAS)
-        seed.update(arch.context_fpu_call_deltas)
+        seed.update(x86_context_facts(matcher.typemap).fpu_call_deltas)
         # Cheap early-out: functions with no x87 instructions pay only this scan.
         # A function still needs the pass, though, if it calls a context-known
         # float/double-returning function -- even with no x87 instruction of

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -894,14 +895,23 @@ class TestX86FpuRewrite(unittest.TestCase):
         out = rewrite_fpu_ops(body, self.arch, AsmData(), labels, call_deltas or {})
         return [str(p) for p in out if isinstance(p, Instruction)]
 
-    def infer(self, lines: str) -> List[str]:
+    def infer(self, lines: str, *, context: bool = False) -> List[str]:
         """Run the whole FPU pattern (with structural call-delta inference)."""
         from m2c.asm_file import AsmData
         from m2c.asm_pattern import AsmMatcher
         from m2c.x86_fpu import X86FpuRewritePattern
 
         body, labels = self._build_body(lines)
-        matcher = AsmMatcher(self.arch, AsmData(), body, labels)
+        typemap = None
+        if context:
+            from m2c.c_types import build_typemap
+
+            context_path = (
+                Path(__file__).parents[2]
+                / "tests/end_to_end/x86-fpu-wrapper-float/orig.c"
+            )
+            typemap = build_typemap([context_path], self.arch, use_cache=False)
+        matcher = AsmMatcher(self.arch, AsmData(), body, labels, typemap=typemap)
         repl = X86FpuRewritePattern().match(matcher)
         assert repl is not None
         return [str(p) for p in repl.new_body if isinstance(p, Instruction)]
@@ -1172,25 +1182,25 @@ class TestX86FpuRewrite(unittest.TestCase):
         # of its own, so structural inference would leave it untouched. A
         # context-declared float return seeds a +1 delta, which both makes the
         # FPU pass run and annotates the call as producing st(0) (fpret f0).
-        self.arch.context_fpu_call_deltas = {"_returns_float": 1}
         out = self.infer(
             """
             CALL _returns_float, 0x0, 0x0
             RET
-            """
+            """,
+            context=True,
         )
         self.assertEqual(out[0], "call _returns_float, 0x0, 0x0, 0x0, -0x1")
 
     def test_context_float_return_before_fstp(self) -> None:
         # A context-known float-returning call whose result is stored: the
         # seeded +1 delta annotates the call and the following fstp pops f0.
-        self.arch.context_fpu_call_deltas = {"_returns_float": 1}
         out = self.infer(
             """
             CALL _returns_float, 0x0, 0x0
             FSTP dword ptr [_g]
             RET
-            """
+            """,
+            context=True,
         )
         self.assertEqual(out[0], "call _returns_float, 0x0, 0x0, 0x0, -0x1")
         self.assertEqual(out[1], "fstp [_g], $f0")

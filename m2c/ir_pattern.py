@@ -92,7 +92,7 @@ class IrPattern(abc.ABC):
             func.new_instruction(parse_instruction(part, missing_meta, arch, asm_state))
 
         asm_data = AsmData()
-        flow_graph = build_flowgraph(func, asm_data, arch, fragment=True)
+        flow_graph = build_flowgraph(func, asm_data, arch, None, fragment=True)
         return CompiledIrPattern(
             source=self,
             flow_graph=flow_graph,

@@ -2,7 +2,7 @@ from __future__ import annotations
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
 from .asm_file import AsmData, Label
 from .asm_instruction import (
@@ -27,6 +27,9 @@ from .instruction import (
     Instruction,
     InstructionMeta,
 )
+
+if TYPE_CHECKING:
+    from .c_types import TypeMap
 
 
 BodyPart = Union[Instruction, Label]
@@ -243,6 +246,7 @@ class AsmMatcher:
     asm_data: AsmData
     input: List[BodyPart]
     labels: Set[str]
+    typemap: Optional[TypeMap] = None
     output: List[BodyPart] = field(default_factory=list)
     index: int = 0
 
@@ -314,6 +318,7 @@ def simplify_patterns(
     asm_data: AsmData,
     arch: ArchAsm,
     *,
+    typemap: Optional[TypeMap] = None,
     debug_patterns: bool,
 ) -> List[BodyPart]:
     """Detect and simplify asm standard patterns emitted by known compilers. This is
@@ -321,7 +326,7 @@ def simplify_patterns(
     in the translate phase."""
     labels = {name for item in body if isinstance(item, Label) for name in item.names}
     for pattern in patterns:
-        matcher = AsmMatcher(arch, asm_data, body, labels)
+        matcher = AsmMatcher(arch, asm_data, body, labels, typemap=typemap)
         matched_any = False
         while matcher.index < len(matcher.input):
             m = pattern.match(matcher)

@@ -127,8 +127,6 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
-    arch.load_context(typemap)
-
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())
     else:
@@ -176,6 +174,7 @@ def run(options: Options) -> int:
                 function,
                 global_info.asm_data,
                 arch,
+                typemap,
                 fragment=False,
                 print_warnings=options.debug,
                 debug_patterns=options.debug_patterns,

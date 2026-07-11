@@ -127,12 +127,6 @@ class Arch(ArchFlowGraph, ArchC):
         overrides it (see X86Arch)."""
         return False
 
-    def load_context(self, typemap: TypeMap) -> None:
-        """Hook called once after the user context is parsed, for
-        architectures that mine it for ABI facts (x86 reads stdcall
-        stack-cleanup byte counts and x87 float-return stack deltas from
-        context prototypes). Default: no-op."""
-
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
 

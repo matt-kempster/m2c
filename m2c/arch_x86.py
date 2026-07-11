@@ -48,7 +48,9 @@ import re
 import struct
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from types import MappingProxyType
+from typing import Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
+from weakref import WeakKeyDictionary
 
 from .error import DecompFailure
 from .options import Target
@@ -1009,9 +1011,14 @@ class X86StackRewritePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
             return None
+        context_facts = x86_context_facts(matcher.typemap)
         try:
             new_body = rewrite_stack_ops(
-                matcher.input, matcher.arch, matcher.asm_data, matcher.labels
+                matcher.input,
+                matcher.arch,
+                matcher.asm_data,
+                matcher.labels,
+                context_facts,
             )
         except DecompFailure as e:
             # An inconsistent dataflow usually means an undecorated stdcall
@@ -1026,6 +1033,7 @@ class X86StackRewritePattern(AsmPattern):
                     matcher.arch,
                     matcher.asm_data,
                     matcher.labels,
+                    context_facts,
                     infer_direct_stdcall=True,
                 )
             except DecompFailure:
@@ -1038,6 +1046,7 @@ def rewrite_stack_ops(
     arch: ArchAsm,
     asm_data: AsmData,
     labels: Set[str],
+    context_facts: Optional[X86ContextFacts] = None,
     *,
     infer_direct_stdcall: bool = False,
 ) -> List[BodyPart]:
@@ -1117,8 +1126,8 @@ def rewrite_stack_ops(
     # precedence tiers (see callee_cleanup_bytes): user-context stdcall
     # prototypes (highest), and disassembler-exported `.set sym, "name@N"`
     # decorations for this file.
-    context_arg_bytes: Dict[str, int] = (
-        dict(arch.context_stdcall_arg_bytes) if isinstance(arch, X86Arch) else {}
+    context_arg_bytes = (
+        dict(context_facts.stdcall_arg_bytes) if context_facts is not None else {}
     )
     file_arg_bytes: Dict[str, int] = dict(asm_data.stdcall_arg_bytes)
 
@@ -2366,6 +2375,69 @@ class X86HighBytePattern(AsmPattern):
         return Replacement(new_body, 1)
 
 
+@dataclass(frozen=True)
+class X86ContextFacts:
+    stdcall_arg_bytes: Mapping[str, int]
+    fpu_call_deltas: Mapping[str, int]
+
+
+EMPTY_X86_CONTEXT_FACTS = X86ContextFacts(
+    MappingProxyType({}), MappingProxyType({})
+)
+_X86_CONTEXT_FACTS_CACHE: WeakKeyDictionary[TypeMap, X86ContextFacts] = (
+    WeakKeyDictionary()
+)
+
+
+def _ctype_is_float(ret_type: CType, typemap: TypeMap) -> bool:
+    tp, _ = resolve_typedefs(ret_type, typemap)
+    return (
+        isinstance(tp, ca.TypeDecl)
+        and isinstance(tp.type, ca.IdentifierType)
+        and ("float" in tp.type.names or "double" in tp.type.names)
+    )
+
+
+def x86_context_facts(typemap: Optional[TypeMap]) -> X86ContextFacts:
+    if typemap is None:
+        return EMPTY_X86_CONTEXT_FACTS
+    cached = _X86_CONTEXT_FACTS_CACHE.get(typemap)
+    if cached is not None:
+        return cached
+
+    stdcall_arg_bytes: Dict[str, int] = {}
+    fpu_call_deltas: Dict[str, int] = {}
+
+    def record(mapping: Dict[str, int], name: str, value: int) -> None:
+        mapping[name] = value
+        if not name.startswith("_"):
+            mapping[f"_{name}"] = value
+
+    for name, fn in typemap.functions.items():
+        if fn.ret_type is not None and _ctype_is_float(fn.ret_type, typemap):
+            record(fpu_call_deltas, name, 1)
+        if not fn.is_stdcall or fn.params is None or fn.is_variadic:
+            continue
+        total = 0
+        for param in fn.params:
+            tp, _ = resolve_typedefs(param.type, typemap)
+            if isinstance(tp, (ca.PtrDecl, ca.ArrayDecl, ca.FuncDecl)):
+                size = 4
+            else:
+                size, _, _ = parse_struct_member(
+                    param.type,
+                    param.name or "<anonymous>",
+                    typemap,
+                    allow_unsized=False,
+                )
+            total += (size + 3) & ~3
+        record(stdcall_arg_bytes, name, total)
+
+    facts = X86ContextFacts(stdcall_arg_bytes, fpu_call_deltas)
+    _X86_CONTEXT_FACTS_CACHE[typemap] = facts
+    return facts
+
+
 class X86Arch(Arch):
     arch = Target.ArchEnum.X86
 
@@ -2460,74 +2532,6 @@ class X86Arch(Arch):
         # doubles as the primary scratch register, so the generic
         # read-after-write heuristic stays in force for it.
         return reg == Register("f0")
-
-    def __init__(self) -> None:
-        # Callee-cleanup byte counts for stdcall functions declared in the
-        # user-provided context (via __attribute__((stdcall))), keyed by asm
-        # symbol name. Populated by load_context.
-        self.context_stdcall_arg_bytes: Dict[str, int] = {}
-        # x87 FPU stack deltas for context functions with a float/double return
-        # type (+1: they leave their result in st(0)), keyed by asm symbol name.
-        # Seeds the FPU prepass so a call whose result is returned directly (a
-        # wrapper with no local FPU op of its own) is still modeled as producing
-        # st(0). Populated by load_context.
-        self.context_fpu_call_deltas: Dict[str, int] = {}
-
-    def load_context(self, typemap: TypeMap) -> None:
-        """Record per-callee ABI facts derived from the user-provided context
-        that the x86 prepasses cannot recover from the assembly alone:
-
-        - stdcall callee-cleanup byte counts (functions declared with
-          __attribute__((stdcall))): the number of stack bytes the callee pops
-          on return, i.e. the sum of its parameter sizes rounded up to 4-byte
-          slots.
-        - x87 stack deltas for float/double-returning functions (+1): such a
-          callee leaves its result on the FPU stack, which the FPU prepass must
-          know even for a caller that has no FPU instruction of its own.
-
-        Context declarations use asm symbol names (e.g. `_MessageBoxA` for
-        MSVC-compiled 32-bit code)."""
-
-        def record(mapping: Dict[str, int], name: str, value: int) -> None:
-            mapping[name] = value
-            # x86 asm symbols carry a leading-underscore platform prefix
-            # (`_MessageBoxA` for `MessageBoxA`); match either spelling.
-            if not name.startswith("_"):
-                mapping[f"_{name}"] = value
-
-        for name, fn in typemap.functions.items():
-            # A float/double return leaves a value on the x87 stack (delta +1).
-            if fn.ret_type is not None and self._ctype_is_float(fn.ret_type, typemap):
-                record(self.context_fpu_call_deltas, name, 1)
-
-            if not fn.is_stdcall or fn.params is None or fn.is_variadic:
-                continue
-            total = 0
-            for param in fn.params:
-                tp, _ = resolve_typedefs(param.type, typemap)
-                if isinstance(tp, (ca.PtrDecl, ca.ArrayDecl, ca.FuncDecl)):
-                    # Pointers, and arrays/functions, which decay to pointers.
-                    size = 4
-                else:
-                    size, _, _ = parse_struct_member(
-                        param.type,
-                        param.name or "<anonymous>",
-                        typemap,
-                        allow_unsized=False,
-                    )
-                total += (size + 3) & ~3
-            record(self.context_stdcall_arg_bytes, name, total)
-
-    @staticmethod
-    def _ctype_is_float(ret_type: CType, typemap: TypeMap) -> bool:
-        """Whether a context function's return type is `float` or `double`
-        (so the callee returns its result in st(0))."""
-        tp, _ = resolve_typedefs(ret_type, typemap)
-        return (
-            isinstance(tp, ca.TypeDecl)
-            and isinstance(tp.type, ca.IdentifierType)
-            and ("float" in tp.type.names or "double" in tp.type.names)
-        )
 
     def missing_return(self) -> List[Instruction]:
         return [self.parse("ret", [], InstructionMeta.missing())]

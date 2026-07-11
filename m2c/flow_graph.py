@@ -17,6 +17,8 @@ from typing import (
     Union,
 )
 
+from .c_types import TypeMap
+
 from .error import DecompFailure
 from .options import Formatter, Options, Target
 from .asm_file import AsmData, AsmSymbolicData, Function, Label
@@ -396,10 +398,19 @@ def minimize_labels(function: Function, asm_data: AsmData) -> Function:
 
 
 def simplify_standard_patterns(
-    function: Function, asm_data: AsmData, arch: ArchFlowGraph, debug_patterns: bool
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    typemap: Optional[TypeMap],
+    debug_patterns: bool,
 ) -> Function:
     new_body = simplify_patterns(
-        function.body, arch.asm_patterns, asm_data, arch, debug_patterns=debug_patterns
+        function.body,
+        arch.asm_patterns,
+        asm_data,
+        arch,
+        typemap=typemap,
+        debug_patterns=debug_patterns,
     )
     new_function = function.bodyless_copy()
     new_function.body.extend(new_body)
@@ -410,6 +421,7 @@ def build_blocks(
     function: Function,
     asm_data: AsmData,
     arch: ArchFlowGraph,
+    typemap: Optional[TypeMap],
     *,
     fragment: bool,
     debug_patterns: bool,
@@ -422,7 +434,7 @@ def build_blocks(
 
     function = minimize_labels(function, asm_data)
     function = simplify_standard_patterns(
-        function, asm_data, arch, debug_patterns=debug_patterns
+        function, asm_data, arch, typemap, debug_patterns=debug_patterns
     )
     function = minimize_labels(function, asm_data)
 
@@ -820,6 +832,7 @@ def build_graph_from_block(
     nodes: List[Node],
     asm_data: AsmData,
     arch: ArchFlowGraph,
+    typemap: Optional[TypeMap] = None,
 ) -> Node:
     # Don't reanalyze blocks.
     for node in nodes:
@@ -1674,6 +1687,7 @@ def build_flowgraph(
     function: Function,
     asm_data: AsmData,
     arch: ArchFlowGraph,
+    typemap: Optional[TypeMap] = None,
     *,
     fragment: bool,
     print_warnings: bool = False,
@@ -1685,7 +1699,12 @@ def build_flowgraph(
     for analyzing IR patterns which do not need to be normalized in the same way.
     """
     blocks = build_blocks(
-        function, asm_data, arch, fragment=fragment, debug_patterns=debug_patterns
+        function,
+        asm_data,
+        arch,
+        typemap,
+        fragment=fragment,
+        debug_patterns=debug_patterns,
     )
     verify_no_duplicate_instructions(blocks)
 
