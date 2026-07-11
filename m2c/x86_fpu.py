@@ -34,6 +34,7 @@ from .asm_instruction import (
     AsmLiteral,
     JumpTarget,
     Register,
+    ZERO,
 )
 from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement
 from .error import DecompFailure
@@ -549,7 +550,7 @@ def rewrite_fpu_ops(
         offset shares the call's frame coordinate."""
         if not (
             isinstance(addr, AsmAddressMode)
-            and addr.base is not None
+            and addr.base != ZERO
             and addr.base.register_name == "esp"
             and isinstance(addr.addend, AsmLiteral)
         ):

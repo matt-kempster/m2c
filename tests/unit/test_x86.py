@@ -18,6 +18,7 @@ from m2c.asm_instruction import (
     JumpTarget,
     RegFormatter,
     Register,
+    ZERO,
     parse_asm_instruction,
 )
 from m2c.instruction import Instruction, InstructionMeta, StackLocation
@@ -80,14 +81,14 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(len(asm.args), 2)
         addr = asm.args[1]
         assert isinstance(addr, AsmAddressMode)
-        self.assertIsNone(addr.base)
+        self.assertEqual(addr.base, ZERO)
         self.assertEqual(addr.addend, AsmGlobalSymbol("_DAT_0079a8b0"))
 
     def test_absolute_literal_address_mode(self) -> None:
         asm, _ = self.parse_asm("CMP dword ptr [0x4a1b20], 0x0")
         addr = asm.args[0]
         assert isinstance(addr, AsmAddressMode)
-        self.assertIsNone(addr.base)
+        self.assertEqual(addr.base, ZERO)
         self.assertEqual(addr.addend, AsmLiteral(0x4A1B20))
 
     def test_scaled_index_address_mode(self) -> None:
@@ -107,7 +108,7 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(asm.mnemonic, "jmp")
         addr = asm.args[0]
         assert isinstance(addr, AsmAddressMode)
-        self.assertIsNone(addr.base)
+        self.assertEqual(addr.base, ZERO)
         self.assertEqual(
             addr.addend,
             BinOp(
@@ -218,7 +219,7 @@ class TestX86Parsing(unittest.TestCase):
 
     def test_base_less_memory_not_stack_access(self) -> None:
         # A base-less Intel memory operand -- an absolute [symbol] or a
-        # scaled-index expression with no plain base register (base=None) --
+        # scaled-index expression with no plain base register (base=zero) --
         # must not be modeled as a stack access: no StackLocation should appear
         # among its inputs/outputs (only esp-relative operands are stack).
         load = self.parse_instruction("MOV EAX, [_DAT_00401000]")

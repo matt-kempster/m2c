@@ -71,6 +71,7 @@ from .asm_instruction import (
     BinOp,
     JumpTarget,
     Register,
+    ZERO,
     get_jump_target,
     traverse_arg,
 )
@@ -237,14 +238,14 @@ def mem_target(
     accesses)."""
     arg = a.raw_arg(index)
     assert isinstance(arg, AsmAddressMode), f"expected a memory operand, found {arg}"
-    if arg.base is not None and isinstance(arg.addend, AsmLiteral):
+    if arg.base != ZERO and isinstance(arg.addend, AsmLiteral):
         return AddressMode(offset=arg.addend.value, base=arg.base)
-    if arg.base is None:
+    if arg.base == ZERO:
         ref = parse_symbol_ref(arg.addend)
         if ref is not None:
             return ref
     addend = address_expr(arg.addend, a)
-    if arg.base is None:
+    if arg.base == ZERO:
         return addend
     return BinaryOp.intptr(a.regs[arg.base], "+", addend)
 
@@ -555,7 +556,7 @@ def is_register_indirect_call(target: Argument) -> bool:
     to a direct call or a call through an absolute import slot."""
     if isinstance(target, Register):
         return True
-    if isinstance(target, AsmAddressMode) and target.base is not None:
+    if isinstance(target, AsmAddressMode) and target.base != ZERO:
         return True
     return False
 
@@ -747,7 +748,7 @@ def is_fs_zero_operand(arg: Argument) -> bool:
     the SEH exception handler chain."""
     return (
         isinstance(arg, AsmAddressMode)
-        and arg.base is None
+        and arg.base == ZERO
         and isinstance(arg.addend, AsmLiteral)
         and arg.addend.value == 0
     )
@@ -1712,11 +1713,11 @@ def rewrite_stack_ops(
                 return arg
             base, addend = arg.base, arg.addend
             # The parser represents `[reg - N]` (and other displacement-only
-            # negative forms) as base=None with a `reg - N` BinOp addend,
+            # negative forms) as base=zero with a `reg - N` BinOp addend,
             # unlike `[reg + N]` which sets base=reg. Normalize so esp/ebp
             # frame accesses are recognized either way.
             if (
-                base is None
+                base == ZERO
                 and isinstance(addend, BinOp)
                 and addend.op in ("+", "-")
                 and isinstance(addend.lhs, Register)
@@ -1725,7 +1726,7 @@ def rewrite_stack_ops(
                 base = addend.lhs
                 sign = 1 if addend.op == "+" else -1
                 addend = AsmLiteral(sign * addend.rhs.value)
-            elif base is None and isinstance(addend, Register):
+            elif base == ZERO and isinstance(addend, Register):
                 base, addend = addend, AsmLiteral(0)
             if isinstance(addend, AsmLiteral) and base in (ESP, EBP):
                 # Large negative frame displacements can be exported in
@@ -2469,6 +2470,7 @@ class X86Arch(Arch):
         + float_regs
         + list(SUB_REGS.keys())
         + list(HIGH_BYTE_REGS.keys())
+        + [ZERO]
     )
 
     aliased_regs: Dict[str, Register] = {}
@@ -2637,7 +2639,7 @@ class X86Arch(Arch):
                 return arg
             if isinstance(arg, AsmAddressMode):
                 # Sub-registers cannot appear in 32-bit address modes.
-                assert arg.base is None or (
+                assert arg.base == ZERO or (
                     arg.base not in SUB_REGS and arg.base not in HIGH_BYTE_REGS
                 )
             return arg
@@ -3238,7 +3240,7 @@ class X86Arch(Arch):
                     assert isinstance(dst, Register) and isinstance(
                         src, AsmAddressMode
                     ), f"bad lea operands in `{instr_str}`"
-                    if src.base is not None and isinstance(src.addend, AsmLiteral):
+                    if src.base != ZERO and isinstance(src.addend, AsmLiteral):
                         # Plain base + offset; for esp-relative addresses this
                         # takes the address of a stack variable.
                         val = handle_addi_real(
@@ -3250,7 +3252,7 @@ class X86Arch(Arch):
                         )
                     else:
                         addend = address_expr(src.addend, a)
-                        if src.base is not None:
+                        if src.base != ZERO:
                             val = handle_add_real(a.regs[src.base], addend, a)
                         else:
                             val = fold_mul_chains(addend)
@@ -3663,7 +3665,7 @@ class X86Arch(Arch):
             if (
                 isinstance(fs_dst, Register)
                 and isinstance(fs_src, AsmAddressMode)
-                and fs_src.base is None
+                and fs_src.base == ZERO
                 and isinstance(fs_src.addend, AsmLiteral)
             ):
                 offset = fs_src.addend.value
@@ -3679,7 +3681,7 @@ class X86Arch(Arch):
 
             elif (
                 isinstance(fs_dst, AsmAddressMode)
-                and fs_dst.base is None
+                and fs_dst.base == ZERO
                 and isinstance(fs_dst.addend, AsmLiteral)
             ):
                 store_offset = fs_dst.addend.value

@@ -12,6 +12,7 @@ from .asm_instruction import (
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
+    ZERO,
     traverse_arg,
 )
 from .instruction import Instruction
@@ -39,7 +40,7 @@ def call_target_symbol(target: Argument) -> Optional[str]:
         return target.symbol_name
     if (
         isinstance(target, AsmAddressMode)
-        and target.base is None
+        and target.base == ZERO
         and isinstance(target.addend, AsmGlobalSymbol)
     ):
         return target.addend.symbol_name

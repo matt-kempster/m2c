@@ -19,6 +19,7 @@ from .asm_instruction import (
     NaiveParsingArch,
     Register,
     RegisterList,
+    ZERO,
     parse_asm_instruction,
 )
 from .instruction import (
@@ -163,8 +164,8 @@ class TryMatchState:
         if isinstance(e, AsmAddressMode):
             if not isinstance(a, AsmAddressMode):
                 return False
-            if e.base is None or a.base is None:
-                if (e.base is None) != (a.base is None):
+            if e.base == ZERO or a.base == ZERO:
+                if (e.base == ZERO) != (a.base == ZERO):
                     return False
             elif not self.match_reg(a.base, e.base):
                 return False

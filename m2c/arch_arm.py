@@ -774,7 +774,7 @@ class AddrModeWritebackPattern(AsmPattern):
         if addr.writeback == Writeback.PRE:
             return Replacement(
                 [
-                    AsmInstruction("add", [addr.base_reg, addr.base_reg, addr.addend]),
+                    AsmInstruction("add", [addr.base, addr.base, addr.addend]),
                     AsmInstruction(instr.mnemonic, new_args),
                 ],
                 1,
@@ -783,7 +783,7 @@ class AddrModeWritebackPattern(AsmPattern):
             return Replacement(
                 [
                     AsmInstruction(instr.mnemonic, new_args),
-                    AsmInstruction("add", [addr.base_reg, addr.base_reg, addr.addend]),
+                    AsmInstruction("add", [addr.base, addr.base, addr.addend]),
                 ],
                 1,
             )
@@ -805,7 +805,7 @@ class RegRegAddrModePattern(AsmPattern):
         new_args[-1] = AsmAddressMode(temp, AsmLiteral(0), None)
         return Replacement(
             [
-                AsmInstruction("add", [temp, arg.base_reg, arg.addend]),
+                AsmInstruction("add", [temp, arg.base, arg.addend]),
                 AsmInstruction(instr.mnemonic, new_args),
             ],
             1,
@@ -1201,7 +1201,7 @@ class ArmArch(Arch):
             ret: List[Location] = []
             for arg in args[starti:]:
                 if isinstance(arg, AsmAddressMode):
-                    ret.append(arg.base_reg)
+                    ret.append(arg.base)
                     arg = arg.addend
                 if isinstance(arg, BinOp):
                     if isinstance(arg.rhs, Register):
@@ -1350,7 +1350,7 @@ class ArmArch(Arch):
                 assert isinstance(args[0], AsmAddressMode)
                 assert args[0].addend == AsmLiteral(0)
                 assert args[0].writeback == Writeback.PRE
-                base_reg = args[0].base_reg
+                base_reg = args[0].base
                 if base_reg in outputs:
                     # According to ARMv6 documentation, "If the base register
                     # <Rn> is specified in <registers>, and base register
@@ -1394,7 +1394,7 @@ class ArmArch(Arch):
                 assert isinstance(args[0], AsmAddressMode)
                 assert args[0].addend == AsmLiteral(0)
                 assert args[0].writeback == Writeback.PRE
-                base_reg = args[0].base_reg
+                base_reg = args[0].base
                 outputs.append(base_reg)
                 writeback = True
             inputs.append(base_reg)
@@ -1435,7 +1435,7 @@ class ArmArch(Arch):
             is_store = True
 
             if isinstance(args[1], AsmAddressMode):
-                inputs.append(args[1].base_reg)
+                inputs.append(args[1].base)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[base](a)

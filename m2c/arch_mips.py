@@ -1152,7 +1152,7 @@ class MipsArch(Arch):
             elif mnemonic in ("sd", "sq") and outputs:
                 inputs *= len(outputs)
             if isinstance(args[1], AsmAddressMode):
-                inputs.append(args[1].base_reg)
+                inputs.append(args[1].base)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = cls.instrs_store[mnemonic](a)
@@ -1203,7 +1203,7 @@ class MipsArch(Arch):
                 assert len(args) == 2
                 inputs = make_memory_access(args[1])
                 if isinstance(args[1], AsmAddressMode):
-                    inputs.append(args[1].base_reg)
+                    inputs.append(args[1].base)
                 if mnemonic == "lwr":
                     # lwl, lwr sometimes read from their destination registers,
                     # though we treat lwl as not doing so -- see handle_lwl.
@@ -1211,7 +1211,7 @@ class MipsArch(Arch):
                 elif mnemonic == "ldc1":
                     outputs.append(other_f64_reg(args[0]))
             elif mnemonic == "la" and isinstance(args[1], AsmAddressMode):
-                inputs = [args[1].base_reg]
+                inputs = [args[1].base]
             elif base_mult_mnemonic == "mfhi":
                 assert len(args) == 1
                 inputs = [hi_reg]

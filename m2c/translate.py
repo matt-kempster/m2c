@@ -54,6 +54,7 @@ from .asm_instruction import (
     Macro,
     Register,
     RegisterList,
+    ZERO,
 )
 from .instruction import (
     Instruction,
@@ -757,9 +758,9 @@ def get_stack_info(
                         or arch_mnemonic.startswith("arm:ldr")
                     )
                     and isinstance(inst.args[1], AsmAddressMode)
-                    # Absolute address modes (base=None) are never stack
+                    # Absolute address modes (base=zero) are never stack
                     # references.
-                    and inst.args[1].base is not None
+                    and inst.args[1].base != ZERO
                     and info.is_stack_reg(inst.args[1].base)
                 ):
                     offset = inst.args[1].addend_as_literal()
@@ -2376,11 +2377,11 @@ class RegInfo:
             self._current_instr_ref = None
 
     def __getitem__(self, key: Register) -> Expression:
+        if key == ZERO:
+            return Literal(0)
         if self.has_current_instr() and key not in self.current_instr().inputs:
             lineno = self.get_instruction_lineno()
             return ErrorExpr(f"Read from unset register {key} on line {lineno}")
-        if key == Register("zero"):
-            return Literal(0)
         data = self.contents.get(key)
         if data is None:
             return ErrorExpr(f"Read from unset register {key}")
@@ -2758,8 +2759,6 @@ class InstrArgs:
                 f"Unable to parse offset for instruction argument {ret}. "
                 "Expected a constant or a %lo macro."
             )
-        if ret.base is None:
-            raise DecompFailure(f"Absolute memory operand {ret} is not supported here")
         return AddressMode(offset=ret.addend.value, base=ret.base)
 
     def count(self) -> int:

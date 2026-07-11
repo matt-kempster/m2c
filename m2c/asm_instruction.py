@@ -48,6 +48,9 @@ class Register:
         return f"${self.register_name}"
 
 
+ZERO = Register("zero")
+
+
 @final
 @dataclass(frozen=True)
 class RegisterList:
@@ -113,10 +116,10 @@ class Writeback(Enum):
 @final
 @dataclass(frozen=True)
 class AsmAddressMode:
-    # `base` is None for absolute memory operands without a base register,
+    # `base` is zero for absolute memory operands without a base register,
     # e.g. x86's `[symbol]` or `[eax*4 + symbol]` (where the scaled index
     # is part of `addend`). MIPS/PPC/ARM address modes always have a base.
-    base: Optional[Register]
+    base: Register
     addend: Argument
     writeback: Optional[Writeback]
 
@@ -124,16 +127,8 @@ class AsmAddressMode:
         assert isinstance(self.addend, AsmLiteral)
         return self.addend.value
 
-    @property
-    def base_reg(self) -> Register:
-        """The base register, for architectures/paths where address modes
-        always have one (MIPS/PPC/ARM). x86 absolute address modes
-        (`[symbol]`) have `base=None` and must be handled explicitly."""
-        assert self.base is not None, "address mode has no base register"
-        return self.base
-
     def __str__(self) -> str:
-        if self.base is None:
+        if self.base == ZERO:
             return f"[{self.addend}]"
         if self.writeback is not None:
             add_str = ", {self.addend}" if self.addend != AsmLiteral(0) else ""
@@ -375,10 +370,10 @@ def parse_intel_address_mode(
 
     flatten(replace_regs(val))
 
-    base: Optional[Register] = None
+    base = ZERO
     addend: Optional[Argument] = None
     for term in terms:
-        if isinstance(term, Register) and base is None:
+        if isinstance(term, Register) and base == ZERO:
             base = term
         elif addend is None:
             addend = term
@@ -757,7 +752,7 @@ def traverse_arg(arg: Argument) -> Iterator[Argument]:
         for reg in arg.regs:
             yield reg
     elif isinstance(arg, AsmAddressMode):
-        if arg.base is not None:
+        if arg.base != ZERO:
             yield arg.base
         yield from traverse_arg(arg.addend)
     elif isinstance(arg, Macro):
