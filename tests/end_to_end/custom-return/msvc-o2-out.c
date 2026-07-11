@@ -3,7 +3,7 @@ s32 test(void) {
 
     var_eax = foo(1);
     if (var_eax == 0) {
-        if (_glob != 0x7B) {
+        if (glob != 0x7B) {
             return (s32) foo(2);
         }
         var_eax = foo(3);

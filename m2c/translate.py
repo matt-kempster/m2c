@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 import math
+import re
 import struct
 import sys
 import traceback
@@ -1675,6 +1676,7 @@ class ArrayAccess(Expression):
 class GlobalSymbol(Expression):
     symbol_name: str
     type: Type
+    c_name: Optional[str] = None
     asm_data_entry: Optional[AsmDataEntry] = None
     symbol_in_context: bool = False
     type_provided: bool = False
@@ -1708,7 +1710,7 @@ class GlobalSymbol(Expression):
         return ret
 
     def format(self, fmt: Formatter) -> str:
-        return self.symbol_name
+        return self.c_name or self.symbol_name
 
     def potential_array_dim(self, element_size: int) -> Tuple[int, int]:
         """
@@ -4314,10 +4316,42 @@ class GlobalInfo:
     typepool: TypePool
     deterministic_vars: bool
     stack_spill_detection: bool
+    asm_symbol_names: Set[str]
     global_symbol_map: Dict[str, GlobalSymbol] = field(default_factory=dict)
+    symbol_name_map: Dict[str, str] = field(init=False)
     persistent_function_state: Dict[str, PersistentFunctionState] = field(
         default_factory=lambda: defaultdict(PersistentFunctionState)
     )
+
+    def __post_init__(self) -> None:
+        self.symbol_name_map = {}
+        claimed: Set[str] = set()
+        for name in sorted(self.asm_symbol_names):
+            candidate = name
+            if self.target.arch == Target.ArchEnum.X86:
+                if candidate.startswith("_"):
+                    candidate = candidate[1:]
+                candidate = re.sub(r"@\d+$", "", candidate)
+            if candidate != name and candidate in self.asm_symbol_names:
+                candidate = name
+            if candidate in claimed:
+                candidate = name
+            self.symbol_name_map[name] = candidate
+            claimed.add(candidate)
+
+    def c_symbol_name(self, asm_name: str) -> str:
+        mapped = self.symbol_name_map.get(asm_name)
+        if mapped is not None:
+            return mapped
+        candidate = asm_name
+        if self.target.arch == Target.ArchEnum.X86:
+            if candidate.startswith("_"):
+                candidate = candidate[1:]
+            candidate = re.sub(r"@\d+$", "", candidate)
+        if candidate in self.symbol_name_map.values():
+            candidate = asm_name
+        self.symbol_name_map[asm_name] = candidate
+        return candidate
 
     def get_persistent_function_state(self, func_name: str) -> PersistentFunctionState:
         return self.persistent_function_state[func_name]
@@ -4345,6 +4379,7 @@ class GlobalInfo:
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
                 symbol_name=sym_name,
                 type=Type.any(),
+                c_name=self.c_symbol_name(sym_name),
                 asm_data_entry=self.asm_data_value(sym_name),
                 demangled_str=demangled_str,
             )
@@ -4753,7 +4788,7 @@ class GlobalInfo:
                     (
                         sort_order,
                         fmt.with_comments(
-                            f"{qualifier}{sym.type.to_decl(name, fmt)}{value};",
+                            f"{qualifier}{sym.type.to_decl(self.c_symbol_name(name), fmt)}{value};",
                             comments,
                         )
                         + "\n",

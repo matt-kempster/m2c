@@ -9,20 +9,20 @@ s32 test(s32 x) {
     var_ecx = x;
     if (var_ecx == 5) {
         do {
-            _glob = var_ecx;
+            glob = var_ecx;
             temp_ecx_2 = var_ecx + 1;
-            _glob = temp_ecx_2;
+            glob = temp_ecx_2;
             temp_ecx_3 = temp_ecx_2 + 1;
-            _glob = temp_ecx_3;
+            glob = temp_ecx_3;
             temp_ecx = temp_ecx_3 + 1;
-            _glob = temp_ecx;
+            glob = temp_ecx;
             temp_ecx_4 = temp_ecx + 1;
-            _glob = temp_ecx_4;
-            _glob = temp_ecx_4;
+            glob = temp_ecx_4;
+            glob = temp_ecx_4;
             temp_ecx_5 = temp_ecx_4 + 1;
-            _glob = temp_ecx_5;
+            glob = temp_ecx_5;
             var_ecx = temp_ecx_5 + 1;
-            _glob = temp_ecx;
+            glob = temp_ecx;
         } while (var_ecx == 5);
         return temp_ecx;
     }

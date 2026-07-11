@@ -1,8 +1,8 @@
-extern s8 _sbyte;
-extern s16 _sword;
-extern u8 _ubyte;
-extern u16 _uword;
+extern s8 sbyte;
+extern s16 sword;
+extern u8 ubyte;
+extern u16 uword;
 
 s32 test(void *arg0) {
-    return _sbyte + _ubyte + _sword + _uword + arg0->unk1;
+    return sbyte + ubyte + sword + uword + arg0->unk1;
 }

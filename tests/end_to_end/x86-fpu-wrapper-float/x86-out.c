@@ -1,3 +1,3 @@
 f32 test(void) {
-    return _returns_float();
+    return returns_float();
 }

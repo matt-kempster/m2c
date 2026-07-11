@@ -1,4 +1,4 @@
-static f64 _real_3ff0000000000000 = 1.0;            /* const */
+static f64 real_3ff0000000000000 = 1.0;             /* const */
 
 f32 test(u32 y) {
     u32 sp0;
@@ -8,7 +8,7 @@ f32 test(u32 y) {
     u32 var_eax;
 
     var_eax = y;
-    var_f0 = _real_3ff0000000000000;
+    var_f0 = real_3ff0000000000000;
     temp_c = var_eax < 0U;
     if (var_eax != 0) {
         do {

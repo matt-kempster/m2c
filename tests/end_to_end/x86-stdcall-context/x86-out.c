@@ -1,5 +1,5 @@
-extern s8 _caption;
+extern s8 caption;
 
 void test(void *arg0) {
-    _MyApiCall(arg0, &_caption, 0x30U);
+    MyApiCall(arg0, &caption, 0x30U);
 }

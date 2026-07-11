@@ -13,7 +13,8 @@ from .flow_graph import FlowGraph, build_flowgraph
 from .if_statements import get_function_text
 from .options import CodingStyle, Options, Target
 from .asm_file import AsmData, Function, parse_file
-from .instruction import InstrProcessingFailure
+from .asm_instruction import AsmGlobalSymbol, traverse_arg
+from .instruction import Instruction, InstrProcessingFailure
 from .translate import (
     Arch,
     FunctionInfo,
@@ -149,6 +150,16 @@ def run(options: Options) -> int:
 
     fmt = options.formatter()
     function_names = set(all_functions.keys())
+    asm_symbol_names = function_names | set(asm_data.values)
+    for function in all_functions.values():
+        for part in function.body:
+            if isinstance(part, Instruction):
+                asm_symbol_names.update(
+                    arg.symbol_name
+                    for raw_arg in part.args
+                    for arg in traverse_arg(raw_arg)
+                    if isinstance(arg, AsmGlobalSymbol)
+                )
     typepool = TypePool(
         unknown_field_prefix="unk_" if fmt.coding_style.unknown_underscore else "unk",
         unk_inference=options.unk_inference,
@@ -163,6 +174,7 @@ def run(options: Options) -> int:
         typepool,
         deterministic_vars=options.deterministic_vars,
         stack_spill_detection=options.stack_spill_detection,
+        asm_symbol_names=asm_symbol_names,
     )
 
     decompilations: List[DecompilationState] = []

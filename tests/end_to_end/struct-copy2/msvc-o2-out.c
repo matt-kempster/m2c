@@ -52,9 +52,9 @@ void test_7(Test7 *a, Test7 *b) {
     a->c = b->c;
     a->d = b->d;
     a->e = b->e;
-    _d7.a = _s7.a;
-    _d7.b = _s7.b;
-    _d7.c = _s7.c;
-    _d7.d = _s7.d;
-    _d7.e = _s7.e;
+    d7.a = s7.a;
+    d7.b = s7.b;
+    d7.c = s7.c;
+    d7.d = s7.d;
+    d7.e = s7.e;
 }

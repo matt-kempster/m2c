@@ -9,7 +9,7 @@ s32 test(s32 x) {
         var_esi -= 1;
         /* fallthrough */
     case 3:
-        _glob += 1;
+        glob += 1;
         break;
     case 13:
         var_esi *= 2;
@@ -26,9 +26,9 @@ s32 test(s32 x) {
         var_esi = (s32) (var_esi - (var_esi >> 0x1F)) >> 1;
         break;
     }
-    test(_glob);
-    if (_glob == 0) {
-        _glob = var_esi;
+    test(glob);
+    if (glob == 0) {
+        glob = var_esi;
     }
     return 2;
 }

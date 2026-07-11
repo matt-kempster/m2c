@@ -6,5 +6,5 @@ s32 test(s32 index, s32 *argArray, struct S *s) {
 
     sp8 = ??_C@_05DLON@hello?$AA@.unk4;
     sp4 = ??_C@_05DLON@hello?$AA@.unk0;
-    return (argArray[index] * *(sp + (index + 4))) + s->b[index] + _globalArray[index];
+    return (argArray[index] * *(sp + (index + 4))) + s->b[index] + globalArray[index];
 }

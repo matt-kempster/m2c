@@ -1,5 +1,5 @@
-extern f32 _g_wave;
+extern f32 g_wave;
 
 void test(f32 arg0) {
-    _g_wave = fabsf(sinf(arg0));
+    g_wave = fabsf(sinf(arg0));
 }

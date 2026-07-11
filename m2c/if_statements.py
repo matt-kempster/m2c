@@ -1458,7 +1458,9 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         if line:
             function_lines.append(line)
 
-    fn_name = function_info.stack_info.function.name
+    fn_name = function_info.stack_info.global_info.c_symbol_name(
+        function_info.stack_info.function.name
+    )
     arg_strs = []
     for i, arg in enumerate(function_info.stack_info.arguments):
         if i == 0 and function_info.stack_info.replace_first_arg is not None:

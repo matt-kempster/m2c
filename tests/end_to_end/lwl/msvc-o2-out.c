@@ -10,8 +10,8 @@ void test(void) {
     sp8 = ??_C@_06CBKI@abcdef?$AA@.unk4;
     spA = ??_C@_06CBKI@abcdef?$AA@.unk6;
     foo(&sp4);
-    _a1.unk1 = (s32) _a2.unk1;
-    _a3->unk0 = (s32) _a1.unk0;
-    _a3->data.ar[0] = _a1.data.ar[0];
-    *_buf = ??_C@_03LKLC@ghi?$AA@;
+    a1.unk1 = (s32) a2.unk1;
+    a3->unk0 = (s32) a1.unk0;
+    a3->data.ar[0] = a1.data.ar[0];
+    *buf = ??_C@_03LKLC@ghi?$AA@;
 }

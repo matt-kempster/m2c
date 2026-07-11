@@ -1,3 +1,3 @@
 f64 test(void) {
-    return _returns_double();
+    return returns_double();
 }
