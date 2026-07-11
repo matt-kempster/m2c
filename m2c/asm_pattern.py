@@ -35,8 +35,9 @@ PatternPart = Union[AsmInstruction, Label, None]
 Pattern = List[Tuple[PatternPart, bool]]
 
 
-def make_pattern(*parts: str) -> Pattern:
+def make_pattern(*parts: str, intel: bool = False) -> Pattern:
     ret: Pattern = []
+    arch = NaiveParsingArch(intel=intel)
     for part in parts:
         optional = part.endswith("?")
         part = part.rstrip("?")
@@ -45,7 +46,7 @@ def make_pattern(*parts: str) -> Pattern:
         elif part.endswith(":"):
             ret.append((Label([part[:-1]]), optional))
         else:
-            ins = parse_asm_instruction(part, NaiveParsingArch(), AsmState())
+            ins = parse_asm_instruction(part, arch, AsmState())
             ret.append((ins, optional))
     return ret
 

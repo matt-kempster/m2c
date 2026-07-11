@@ -226,6 +226,16 @@ class NaiveParsingArch(ArchAsmParsing):
     aliased_regs: Dict[str, Register] = {}
     supports_dollar_regs = True
 
+    def __init__(self, *, intel: bool = False) -> None:
+        self.supports_intel_addressing = intel
+
+    def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
+        if not self.supports_intel_addressing:
+            return mnemonic, args
+        from .arch_x86 import X86Arch
+
+        return X86Arch.preprocess_instruction(self, mnemonic, args)  # type: ignore[arg-type]
+
     def normalize_instruction(
         self, instr: AsmInstruction, asm_state: AsmState
     ) -> AsmInstruction:

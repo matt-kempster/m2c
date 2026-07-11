@@ -75,7 +75,17 @@ from .asm_instruction import (
     get_jump_target,
     traverse_arg,
 )
-from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement, ReplacementPart
+from .asm_pattern import (
+    AsmMatch,
+    AsmMatcher,
+    AsmPattern,
+    BodyPart,
+    Pattern,
+    Replacement,
+    ReplacementPart,
+    SimpleAsmPattern,
+    make_pattern,
+)
 from .instruction import (
     ArchAsm,
     Instruction,
@@ -857,7 +867,7 @@ class X86PushAllocPattern(AsmPattern):
         return Replacement(new_body, len(body), clobbers=[reg])
 
 
-class X86SehPattern(AsmPattern):
+class X86SehPattern(SimpleAsmPattern):
     """MSVC's structured exception handling bookkeeping. After the
     `push ebp; mov ebp, esp` frame setup, an SEH-using function pushes a
     16-byte exception registration record and installs it at fs:[0]:
@@ -875,46 +885,42 @@ class X86SehPattern(AsmPattern):
     16-byte frame allocation and the epilogue store is dropped. Nonstandard
     fs: accesses are left alone and fail translation with a clear error."""
 
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        parts = matcher.input[matcher.index : matcher.index + 6]
-        if len(parts) == 6 and all(isinstance(p, Instruction) for p in parts):
-            p1, p2, p3, p4, p5, p6 = parts
-            assert isinstance(p1, Instruction) and isinstance(p2, Instruction)
-            assert isinstance(p3, Instruction) and isinstance(p4, Instruction)
-            assert isinstance(p5, Instruction) and isinstance(p6, Instruction)
-            if (
-                p1.mnemonic == "push"
-                and isinstance(p1.args[0], AsmLiteral)
-                and p1.args[0].value in (-1, 0xFFFFFFFF)
-                and p2.mnemonic == "push"
-                and isinstance(p2.args[0], AsmGlobalSymbol)
-                and p3.mnemonic == "push"
-                and isinstance(p3.args[0], AsmGlobalSymbol)
-                and "except_handler" in p3.args[0].symbol_name
-                and p4.mnemonic == "mov.fs"
-                and isinstance(p4.args[0], Register)
-                and is_fs_zero_operand(p4.args[1])
-                and p5.mnemonic == "push"
-                and p5.args[0] == p4.args[0]
-                and p6.mnemonic == "mov.fs"
-                and is_fs_zero_operand(p6.args[0])
-                and p6.args[1] == ESP
-            ):
-                sub = AsmInstruction("sub", [ESP, AsmLiteral(16)])
-                return Replacement([sub], 6, clobbers=[p4.args[0]])
-        # The epilogue store restoring the saved chain head, and the
-        # trylevel-management stores MSVC sometimes emits through fs:[0].
-        part = matcher.input[matcher.index]
-        if (
-            isinstance(part, Instruction)
-            and part.mnemonic == "mov.fs"
-            and len(part.args) == 2
-            and is_fs_zero_operand(part.args[0])
-            and isinstance(part.args[1], Register)
-            and part.args[1] != ESP
+    @property
+    def pattern(self) -> Pattern:
+        return make_pattern(
+            "push N",
+            "push _",
+            "push _",
+            "mov $x, fs:[0]",
+            "push $x",
+            "mov fs:[0], $esp",
+            intel=True,
+        )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        handler = m.body[2]
+        if not (
+            m.literals["N"] in (-1, 0xFFFFFFFF)
+            and isinstance(handler, Instruction)
+            and isinstance(handler.args[0], AsmGlobalSymbol)
+            and "except_handler" in handler.args[0].symbol_name
         ):
-            return Replacement([], 1, clobbers=[])
-        return None
+            return None
+        sub = AsmInstruction("sub", [ESP, AsmLiteral(16)])
+        return Replacement([sub], len(m.body), clobbers=[m.regs["x"]])
+
+
+class X86SehEpiloguePattern(SimpleAsmPattern):
+    """Remove stores that restore or update the canonical fs:[0] SEH head."""
+
+    @property
+    def pattern(self) -> Pattern:
+        return make_pattern("mov fs:[0], $x", intel=True)
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        if m.regs["x"] == ESP:
+            return None
+        return Replacement([], len(m.body), clobbers=[])
 
 
 RE_SWITCHD = re.compile(r"^_switchD_(\w+?)_switchD$")
@@ -2511,6 +2517,7 @@ class X86Arch(Arch):
         X86ChkstkPattern(),
         X86PushAllocPattern(),
         X86SehPattern(),
+        X86SehEpiloguePattern(),
         X86JumpTablePattern(),
         X86StackRewritePattern(),
         X86FpuRewritePattern(),
