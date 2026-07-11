@@ -249,7 +249,15 @@ def mem_target(
     address Expression (scaled-index modes, which deref turns into array
     accesses)."""
     arg = a.raw_arg(index)
-    assert isinstance(arg, AsmAddressMode), f"expected a memory operand, found {arg}"
+    if not isinstance(arg, AsmAddressMode):
+        # IDA writes a direct memory operand without brackets when it is a
+        # bare symbol (`fld _FastAtanTable+0x4004`, `fadd _real`). This
+        # function is only ever called on known memory operands, so such an
+        # operand is an absolute [symbol (+ offset)] access.
+        ref = parse_symbol_ref(arg)
+        if ref is not None:
+            return ref
+        raise DecompFailure(f"expected a memory operand, found {arg}")
     if isinstance(arg.addend, AsmLiteral) or (
         arg.base == ZERO and parse_symbol_ref(arg.addend) is not None
     ):
@@ -2539,6 +2547,9 @@ class X86Arch(Arch):
         # segment marker distinguishes the string form of ambiguous mnemonics
         # (movsd/cmpsd are also SSE2 scalar-double instructions).
         mn = mnemonic  # already lowercased by the parser
+        if mn == "retn":
+            # IDA spells near returns "retn"; identical to "ret".
+            mnemonic = mn = "ret"
         if mn in ("rep", "repe", "repne", "repz", "repnz"):
             parts = args.split(None, 1)
             if parts and parts[0].lower() in STRING_OP_MNEMONICS:
@@ -2556,14 +2567,18 @@ class X86Arch(Arch):
         args = RE_DISTANCE.sub("", args)
         # Rewrite st(N) FPU registers into parseable names.
         args = RE_ST_REG.sub(lambda m: f"st{m.group(1)}", args)
-        # Segment override prefixes (e.g. the fs:[0] accesses in SEH
-        # prologues): move the segment into the mnemonic. The resulting
-        # mnemonic (e.g. "mov.fs") is treated as an unknown instruction, which
-        # parses fine structurally but fails translation with a clear error.
+        # Segment override prefixes. cs/ds/es/ss address the flat default
+        # segments in 32-bit code and carry no semantics (IDA decorates
+        # absolute operands with "ds:"), so they are simply stripped. fs/gs
+        # genuinely change the address space (on Win32, fs: is the Thread
+        # Information Block, e.g. the fs:[0] accesses in SEH prologues), so
+        # they move into the mnemonic: the result (e.g. "mov.fs") is either
+        # handled explicitly or fails translation with a clear error.
         segments = [m.lower() for m in RE_SEGMENT.findall(args)]
         args = RE_SEGMENT.sub("", args)
         for seg in segments:
-            mnemonic += f".{seg}"
+            if seg in ("fs", "gs"):
+                mnemonic += f".{seg}"
         if widths:
             # x86 has no instructions with two memory operands of different
             # widths, so all prefixes agree.

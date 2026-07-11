@@ -647,6 +647,9 @@ def rewrite_fpu_ops(
                 src_i = _st_index(args[1])
                 assert dst_i is not None and src_i is not None
                 emit(mnemonic, [flat(dst_i), flat(src_i)], meta)
+            elif (st_i := _st_index(args[0])) is not None:
+                # One-operand register form: `fmul st(i)` means `st0 *= st(i)`.
+                emit(mnemonic, [flat(0), flat(st_i)], meta)
             else:
                 emit(mnemonic, [flat(0), args[0]], meta)  # `fadd m`
         elif base in ("fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr"):
