@@ -1105,10 +1105,9 @@ class TestX86FpuRewrite(unittest.TestCase):
         self.assertEqual(out[1], "ci_sqrt.fictive $f0")
 
     def test_ci_pow_tail_call(self) -> None:
-        # `fld a; fld b; jmp __CIpow` (the stack pass turns the jmp into a
-        # `tailcall.fictive`): `return pow(a, b);`. The prepass emits the same
-        # fictive op as a normal CI call, followed by a plain return, so the
-        # pow result in f0 becomes the return value.
+        # `fld a; fld b; jmp __CIpow` becomes `call __CIpow; ret`. The prepass
+        # emits the same fictive op as a normal CI call, followed by the return,
+        # so the pow result in f0 becomes the return value.
         from m2c.asm_file import AsmData
         from m2c.asm_instruction import AsmGlobalSymbol
         from m2c.x86_fpu import rewrite_fpu_ops
@@ -1121,11 +1120,12 @@ class TestX86FpuRewrite(unittest.TestCase):
         )
         body.append(
             self.arch.parse(
-                "tailcall.fictive",
-                [AsmGlobalSymbol("__CIpow")],
+                "call",
+                [AsmGlobalSymbol("__CIpow"), AsmLiteral(0), AsmLiteral(-1)],
                 InstructionMeta.missing(),
             )
         )
+        body.append(self.arch.parse("ret", [], InstructionMeta.missing()))
         out = [
             str(p)
             for p in rewrite_fpu_ops(body, self.arch, AsmData(), labels, {})
@@ -1144,14 +1144,15 @@ class TestX86FpuRewrite(unittest.TestCase):
         body, labels = self._build_body("FLD qword ptr [ESP + 0x4]")
         body.append(
             self.arch.parse(
-                "tailcall.fictive",
-                [AsmGlobalSymbol("__CIpow")],
+                "call",
+                [AsmGlobalSymbol("__CIpow"), AsmLiteral(0), AsmLiteral(-1)],
                 InstructionMeta.missing(),
             )
         )
+        body.append(self.arch.parse("ret", [], InstructionMeta.missing()))
         with self.assertRaises(DecompFailure) as cm:
             rewrite_fpu_ops(body, self.arch, AsmData(), labels, {})
-        self.assertIn("CRT math helper", str(cm.exception))
+        self.assertIn("x87 stack underflow", str(cm.exception))
 
     def test_ci_unknown_helper_fails_loud(self) -> None:
         # An unrecognized `__CI*` helper must fail loud rather than let the ±1

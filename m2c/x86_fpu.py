@@ -186,26 +186,6 @@ X86_FPU_CALL_HELPERS: Dict[str, Tuple[str, int]] = {
 }
 
 
-def _tailcall_ci_helper(part: BodyPart) -> Optional[Tuple[str, int]]:
-    """If `part` is a tail call to a CRT x87 math helper -- `jmp __CIxxx`, which
-    the stack pass rewrites to `tailcall.fictive __CIxxx` -- return its (fictive
-    mnemonic, argument count) from X86_FPU_CALL_HELPERS, else None.
-
-    `return pow(a, b);` compiles to `fld a; fld b; jmp __CIpow`: the helper
-    consumes its arguments off the x87 stack, leaves its result in st(0), and
-    returns straight to our caller. That is exactly a CI-helper call whose
-    result is our return value, so it is modeled as the fictive op followed by
-    a plain return (see rewrite_fpu_ops)."""
-    if not isinstance(part, Instruction) or not part.args:
-        return None
-    if split_width_suffix(part.mnemonic)[0] != "tailcall.fictive":
-        return None
-    sym = call_target_symbol(part.args[0])
-    if sym is None:
-        return None
-    return X86_FPU_CALL_HELPERS.get(sym)
-
-
 def is_fpu_mnemonic(base: str) -> bool:
     return base in ALL_FPU
 
@@ -474,23 +454,6 @@ def rewrite_fpu_ops(
             push(index + 1, depth)
             continue
         if part.is_return:
-            ci_tail = _tailcall_ci_helper(part)
-            if ci_tail is not None:
-                # A tail call to a CRT math helper (`return pow(a, b);`). The
-                # helper consumes exactly its arguments off the x87 stack and
-                # returns one result, so a valid stack holds precisely the
-                # arguments here. Anything else is leftover/unbalanced -- fail
-                # loud rather than drop a value.
-                nargs = ci_tail[1]
-                if depth != nargs:
-                    raise X87StackError(
-                        f"x87 stack depth {depth} at a tail call to a "
-                        f"{nargs}-argument CRT math helper (expected {nargs}): "
-                        f"{instr_str(part)}",
-                        index,
-                        "conflict",
-                    )
-                continue
             # The x86 ABI leaves the x87 stack empty at a return except for a
             # single float/double result in st(0), so a valid return depth is 0
             # (void/int) or 1 (float/double). A deeper stack means leftover
@@ -629,19 +592,6 @@ def rewrite_fpu_ops(
                     part.meta,
                 )
                 continue
-        ci_tail = _tailcall_ci_helper(part)
-        if ci_tail is not None and depth is not None:
-            # A tail call to a CRT math helper (`return pow(a, b);`): emit the
-            # same fictive FPU op as a normal CI call -- producing the result in
-            # the bottom flat slot -- then a plain return. The depth pass has
-            # already checked depth == nargs, so the returned value is exactly
-            # the helper's result (return-value detection then picks up st(0)
-            # via return_reg_always_meaningful(f0)).
-            fictive, nargs = ci_tail
-            slots = [Register(f"f{depth - 1 - k}") for k in range(nargs)]
-            emit(fictive, list(slots), part.meta)
-            emit("ret", [], part.meta)
-            continue
         if depth is None or not is_fpu_mnemonic(base):
             # Unreachable code, or a non-x87 instruction: pass through.
             new_body.append(part)

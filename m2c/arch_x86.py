@@ -1073,7 +1073,7 @@ class X86StackRewritePattern(AsmPattern):
     - each `call` gets its current argument-region base (and its argument
       byte count, when a cleanup `add esp, N`/`pop ecx` follows or the callee
       is a known-stdcall import) appended as literal args;
-    - `jmp` to a label outside the function becomes `tailcall.fictive`.
+    - `jmp` to a label outside the function becomes `call; ret`.
     """
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
@@ -1136,7 +1136,6 @@ def rewrite_stack_ops(
         "ret",
         "leave",
         "storearg.fictive",
-        "tailcall.fictive",
     }
 
     # Identified structurally, before the ESP dataflow exists; see
@@ -1786,12 +1785,19 @@ def rewrite_stack_ops(
             if part.jump_target.target in label_pos:
                 new_body.append(part)
             else:
-                # Tail call to another function.
+                # A terminal jump tears down the current frame. Nothing can
+                # follow it, so every pending stack argument belongs to this
+                # synthetic call and its argument window is unbounded.
                 emit(
-                    "tailcall.fictive",
-                    [AsmGlobalSymbol(part.jump_target.target)],
+                    "call",
+                    [
+                        AsmGlobalSymbol(part.jump_target.target),
+                        AsmLiteral(frame_size + esp),
+                        AsmLiteral(-1),
+                    ],
                     part.meta,
                 )
+                emit("ret", [], part.meta)
         else:
             new_args = [rewrite_operand(arg) for arg in args]
             if new_args != args:
@@ -3008,27 +3014,6 @@ class X86Arch(Arch):
             else:
                 jump_target = get_jump_target(target)
                 eval_fn = None
-        elif base == "tailcall.fictive":
-            # `jmp` to a label outside the function (see the stack rewrite
-            # pass): call it and return its return value.
-            assert len(args) == 1
-            outputs = list(cls.all_return_regs)
-            clobbers = list(cls.temp_regs)
-            function_target = args[0]
-            is_return = True
-            tail_spec = X86_MATH_HELPERS.get(call_target_symbol(args[0]) or "")
-            if tail_spec is not None and tail_spec.kind == "shift":
-                # MSVC tail-calls the 64-bit shift helpers (`jmp __allshr`),
-                # which take their operands in edx:eax/ecx; model the shift and
-                # return its edx:eax result directly.
-                shift_spec = tail_spec
-                inputs = [EAX, EDX, ECX]
-
-                def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                    eval_math_helper(shift_spec, s, a, None)
-
-            else:
-                eval_fn = lambda s, a: s.make_function_call(a.sym_imm(0), outputs)
         elif base.startswith("j") and base[1:] in cls.condition_flags:
             assert len(args) == 1
             flag, negated = cls.condition_flags[base[1:]]
