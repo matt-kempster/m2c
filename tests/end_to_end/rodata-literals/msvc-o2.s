@@ -17,4 +17,3 @@ test:
 	.long 0x0A226F6C
 	.byte 0x01
 	.byte 0x00
-

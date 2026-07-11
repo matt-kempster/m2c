@@ -40,4 +40,3 @@ test:
 /* 0000007A 006A  03 C1 */	add eax, ecx
 /* 0000007C 006C  83 C4 08 */	add esp, 8
 /* 0000007F 006F  C3 */	ret
-

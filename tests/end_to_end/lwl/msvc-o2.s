@@ -50,4 +50,3 @@ test:
 	.byte 0x65
 	.byte 0x66
 	.byte 0x00
-

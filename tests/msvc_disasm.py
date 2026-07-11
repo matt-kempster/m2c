@@ -102,7 +102,9 @@ def real_constant(name: str, data: bytes) -> Optional[Tuple[str, str, str, int]]
     return clean_name, directive, literal, size
 
 
-def rename_real_constants(sections: List[CoffSection]) -> Dict[int, Dict[int, Tuple[str, str, int]]]:
+def rename_real_constants(
+    sections: List[CoffSection],
+) -> Dict[int, Dict[int, Tuple[str, str, int]]]:
     """Rename every `__real@` constant symbol in place to a clean identifier
     (CoffSymbol objects are shared with relocations, so references follow) and
     return, per section index, the offsets to emit as `.float`/`.double`."""
@@ -331,8 +333,7 @@ def decode_text_section(cap: cs.Cs, section: CoffSection) -> List[Element]:
                 continue
             consumed_relocs.add(reloc_offset)
             if (
-                reloc.relocation_type
-                in (IMAGE_REL_I386_DIR32, IMAGE_REL_I386_DIR32NB)
+                reloc.relocation_type in (IMAGE_REL_I386_DIR32, IMAGE_REL_I386_DIR32NB)
                 and reloc.symbol.section is section
             ):
                 data_bases.add(reloc.symbol.offset + reloc.symbol_offset)
@@ -512,6 +513,8 @@ def disassemble_msvc_coff(coff_in: BinaryIO, asm_out: TextIO) -> None:
 
     previous_name: Optional[str] = None
     for i, section in enumerate(sections):
+        if i != 0:
+            asm_out.write("\n")
         if section.name != previous_name:
             asm_out.write(f".section {section.name}\n")
             previous_name = section.name
@@ -519,7 +522,6 @@ def disassemble_msvc_coff(coff_in: BinaryIO, asm_out: TextIO) -> None:
             disassemble_text_section(section, disassemblies[i], labels, asm_out)
         else:
             disassemble_data_section(section, asm_out, real_consts.get(i))
-        asm_out.write("\n")
 
 
 if __name__ == "__main__":

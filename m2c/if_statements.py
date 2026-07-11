@@ -1486,10 +1486,9 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         formatted_body = body.format(fmt)
 
         local_vars = function_info.stack_info.local_vars
-        # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`).
-        # The x86 backend has the same established output order even though
-        # bare `x86` now denotes MSVC. IDO's and MWCC's stack is ordered
-        # high-to-low (e.g. `int sp14; int sp10;`).
+        # GCC's stack is ordered low-to-high (e.g. `int sp10; int sp14;`),
+        # and x86 (MSVC) stacks are declared in the same order. IDO's and
+        # MWCC's stack is ordered high-to-low (e.g. `int sp14; int sp10;`).
         if (
             options.target.compiler != Target.CompilerEnum.GCC
             and options.target.arch != Target.ArchEnum.X86

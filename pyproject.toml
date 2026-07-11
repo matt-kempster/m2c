@@ -1,7 +1,7 @@
 [project]
 name = "m2c"
 version = "0.1.0"
-description = "MIPS, ARM and PowerPC decompiler"
+description = "MIPS, ARM, PowerPC and x86 decompiler"
 maintainers = [
     {name = "Simon Lindholm", email = "simon.lindholm10@gmail.com"},
 ]
@@ -43,7 +43,7 @@ force-exclude = "/m2c_pycparser/"
 extra-paths = ["./stubs"]
 
 [tool.ty.src]
-include = ["./m2c.py", "./m2c", "./run_tests.py", "./tests/add_test.py", "./tests/x86_harness.py", "./tests/unit"]
+include = ["./m2c.py", "./m2c", "./run_tests.py", "./tests/add_test.py", "./tests/unit"]
 
 [build-system]
 requires = ["poetry-core"]

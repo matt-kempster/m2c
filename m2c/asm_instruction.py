@@ -5,7 +5,7 @@ import abc
 from dataclasses import dataclass, field
 from enum import Enum
 import string
-from typing import Dict, Iterator, List, Optional, Tuple, Union, final
+from typing import Dict, Iterator, List, Optional, Pattern, Tuple, Union, final
 
 from .error import DecompFailure, assert_never
 
@@ -196,6 +196,32 @@ class ArchAsmParsing(abc.ABC):
     # memory operands (`[base + index*scale + disp]`, `[symbol]`) instead of
     # ARM address modes. Only x86 sets this.
     supports_intel_addressing: bool = False
+
+    # Directives that emit a 4-byte word of data. x86 additionally accepts
+    # `.long` (disassembler exports emit jump tables with it); other arches
+    # have historically ignored `.long`, and handling it would change
+    # existing outputs.
+    word_directives: Tuple[str, ...] = (".word", ".gpword", ".4byte")
+
+    # Capability hook: an additional arch-specific local-label pattern.
+    # Non-global labels matching it are treated as jump targets inside the
+    # current function rather than as new function starts. x86 uses this for
+    # MSVC's numbered COFF code labels ($L95) and for disassembler-export
+    # label spellings behind the platform's `_` symbol prefix
+    # (_LAB_00401234, _switchD_..._caseD_...).
+    re_arch_local_label: Optional[Pattern[str]] = None
+
+    # Capability hook: tolerate disassembler-export `.set` idioms -- symbol
+    # decorations (`.set mangled, "name@N"`, recording stdcall cleanup byte
+    # counts) and non-integer values (label-equate expressions), which are
+    # warned-and-ignored instead of a strict parse failure. Only x86 sets
+    # this.
+    lenient_set_directives: bool = False
+
+    # Capability hook: attach a synthetic label to unlabeled data appearing
+    # in .text (disassembler exports place jump tables directly after code),
+    # so the data is kept instead of dropped. Only x86 sets this.
+    synthesize_text_data_labels: bool = False
 
     def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
         """Hook that allows an arch to rewrite an instruction line before its

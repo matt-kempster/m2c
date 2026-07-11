@@ -20,12 +20,12 @@ This pass runs after `X86StackRewritePattern`, so every x87 memory operand is
 already frame-resolved and every `call` already carries its argument-window
 annotation. It emits fictive instructions carrying explicit virtual-register
 arguments (e.g. `fadd $f1, $f0`, `fstp.s [m], $f2`); their semantics live in
-`X86Arch._parse_fpu`. See the design spec for the full rationale.
+`X86Arch._parse_fpu`.
 """
 
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple, cast
 
 from .asm_file import AsmData
 from .asm_instruction import (
@@ -38,10 +38,18 @@ from .asm_instruction import (
 from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement
 from .error import DecompFailure
 from .instruction import ArchAsm, Instruction, InstructionMeta
+from .x86_utils import (
+    call_target_symbol,
+    split_width_suffix,
+    switch_jump_table_labels,
+)
+
+if TYPE_CHECKING:
+    from .arch_x86 import X86Arch
 
 
 # x87 depth effects, keyed by the base mnemonic (after any width suffix is
-# split off). See the spec's §1.2 table.
+# split off).
 FPU_PUSH: Set[str] = {
     "fld",
     "fild",
@@ -187,8 +195,6 @@ def _tailcall_ci_helper(part: BodyPart) -> Optional[Tuple[str, int]]:
     returns straight to our caller. That is exactly a CI-helper call whose
     result is our return value, so it is modeled as the fictive op followed by
     a plain return (see rewrite_fpu_ops)."""
-    from .arch_x86 import call_target_symbol, split_width_suffix
-
     if not isinstance(part, Instruction) or not part.args:
         return None
     if split_width_suffix(part.mnemonic)[0] != "tailcall.fictive":
@@ -215,8 +221,8 @@ def _st_index(arg: Argument) -> Optional[int]:
 
 class X87StackError(DecompFailure):
     """A dataflow inconsistency that per-callee depth-delta inference can try
-    to repair (see §4.3). Carries the faulting body index and the failure kind
-    so the retry loop can attribute it to a call."""
+    to repair (see X86FpuRewritePattern.match). Carries the faulting body
+    index and the failure kind so the retry loop can attribute it to a call."""
 
     def __init__(self, message: str, index: int, kind: str) -> None:
         super().__init__(message)
@@ -235,8 +241,6 @@ def _call_key(body: List[BodyPart], index: int) -> Optional[str]:
     (so all sites of a callee agree), or a per-site `@index` for an indirect
     call through a register/pointer (a float-returning function-pointer
     argument, which has no symbol to share). None if not a call."""
-    from .arch_x86 import call_target_symbol, split_width_suffix
-
     part = body[index]
     if not (
         isinstance(part, Instruction)
@@ -254,8 +258,6 @@ def _is_ftol_shaped(body: List[BodyPart], index: int) -> bool:
     compare) sits just before it with no barrier between. Such a call leaves
     the FPU stack imbalanced unless its delta is -1, but the resulting conflict
     can surface far away, so these are always offered to the search."""
-    from .arch_x86 import split_width_suffix
-
     for j in range(index - 1, max(index - 8, -1), -1):
         part = body[j]
         if not isinstance(part, Instruction):
@@ -263,11 +265,30 @@ def _is_ftol_shaped(body: List[BodyPart], index: int) -> bool:
         base, _ = split_width_suffix(part.mnemonic)
         if is_fpu_mnemonic(base):
             return base not in (
-                "fst", "fstp", "fistp", "fcom", "fcomp", "fcompp", "fucom",
-                "fucomp", "fucompp", "ftst", "ficom", "ficomp", "fnstsw",
-                "fstsw", "fldcw", "fstcw", "fnstcw", "fxam",
+                "fst",
+                "fstp",
+                "fistp",
+                "fcom",
+                "fcomp",
+                "fcompp",
+                "fucom",
+                "fucomp",
+                "fucompp",
+                "ftst",
+                "ficom",
+                "ficomp",
+                "fnstsw",
+                "fstsw",
+                "fldcw",
+                "fstcw",
+                "fnstcw",
+                "fxam",
             )
-        if part.function_target is not None or part.jump_target is not None or part.is_return:
+        if (
+            part.function_target is not None
+            or part.jump_target is not None
+            or part.is_return
+        ):
             return False
     return False
 
@@ -281,9 +302,7 @@ def _candidate_moves(
     ftol-style helper, -1; a conflict is ambiguous, so try both), plus any
     ftol-shaped call anywhere in the body toward -1. Feeds a BFS, so a wrong
     guess is explored in parallel with the right one rather than committed."""
-    keyed = [
-        (i, _call_key(body, i)) for i in range(len(body)) if _call_key(body, i)
-    ]
+    keyed = [(i, _call_key(body, i)) for i in range(len(body)) if _call_key(body, i)]
     keyed.sort(key=lambda p: (abs(p[0] - err.index), p[0]))
     signs = [-1, 1] if err.kind == "overflow" else [1, -1]
     moves: List[Tuple[str, int]] = []
@@ -314,14 +333,15 @@ class X86FpuRewritePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
             return None
-        from .arch_x86 import split_width_suffix
-
         # Seed per-callee deltas from the known stack-consuming CRT helpers and
         # the user context (float/double-returning functions leave their result
         # on the FPU stack), then infer the rest structurally by BFS over delta
         # assignments. Context deltas win on conflict.
+        # This pattern is only registered on X86Arch, whose load_context
+        # mines the deltas from context prototypes.
+        arch = cast("X86Arch", matcher.arch)
         seed: Dict[str, int] = dict(X86_FPU_HELPER_DELTAS)
-        seed.update(getattr(matcher.arch, "context_fpu_call_deltas", {}))
+        seed.update(arch.context_fpu_call_deltas)
         # Cheap early-out: the ~3100 functions with no x87 pay only this scan.
         # A function still needs the pass, though, if it calls a context-known
         # float/double-returning function -- even with no x87 instruction of
@@ -334,8 +354,7 @@ class X86FpuRewritePattern(AsmPattern):
         ) and not (
             seed
             and any(
-                _call_key(matcher.input, i) in seed
-                for i in range(len(matcher.input))
+                _call_key(matcher.input, i) in seed for i in range(len(matcher.input))
             )
         ):
             return None
@@ -375,8 +394,6 @@ def rewrite_fpu_ops(
     labels: Set[str],
     call_deltas: Optional[Dict[str, int]] = None,
 ) -> List[BodyPart]:
-    from .arch_x86 import split_width_suffix, switch_jump_table_labels
-
     call_deltas = call_deltas or {}
 
     label_pos: Dict[str, int] = {}
@@ -399,8 +416,6 @@ def rewrite_fpu_ops(
         _call_key / _candidate_moves / the BFS."""
         if item.function_target is None or base != "call":
             return 0
-        from .arch_x86 import call_target_symbol
-
         sym = call_target_symbol(item.args[0]) if item.args else None
         if sym is not None and sym.startswith("__CI"):
             helper = X86_FPU_CALL_HELPERS.get(sym)
@@ -529,7 +544,7 @@ def rewrite_fpu_ops(
         """If a store to `addr` at `store_index` targets an esp-relative slot
         inside the very next call's outgoing-argument window, the frame offset
         of that slot; else None. This is how float arguments reach a call: a
-        `push`/`sub esp` allocates the slot and `fstp [esp+k]` fills it (§4.5).
+        `push`/`sub esp` allocates the slot and `fstp [esp+k]` fills it.
         Only stores with no intervening esp change / barrier qualify, so the
         offset shares the call's frame coordinate."""
         if not (
@@ -586,8 +601,6 @@ def rewrite_fpu_ops(
             and part.function_target is not None
             and len(part.args) == 3
         ):
-            from .arch_x86 import call_target_symbol
-
             sym = call_target_symbol(part.args[0]) if part.args else None
             helper = X86_FPU_CALL_HELPERS.get(sym) if sym is not None else None
             if helper is not None:
@@ -611,8 +624,7 @@ def rewrite_fpu_ops(
                 fconsume_in = depth - 1 if delta == -1 else -1
                 emit(
                     "call",
-                    list(part.args)
-                    + [AsmLiteral(fpret_out), AsmLiteral(fconsume_in)],
+                    list(part.args) + [AsmLiteral(fpret_out), AsmLiteral(fconsume_in)],
                     part.meta,
                 )
                 continue
@@ -684,7 +696,7 @@ def rewrite_fpu_ops(
                 else:
                     emit("fmov", [flat(st_i), flat(0)], meta)
             elif win_off is not None:
-                # A float stored into the next call's argument window (§4.5).
+                # A float stored into the next call's argument window.
                 _, w = split_width_suffix(mnemonic)
                 stem = "fstparg" if base == "fstp" else "fstarg"
                 mn = stem if w == 4 else stem + ".q"
@@ -719,9 +731,9 @@ def rewrite_fpu_ops(
         elif base in ("fchs", "fabs", "fsqrt", "fsin", "fcos", "frndint", "f2xm1"):
             emit(base, [flat(0)], meta)
 
-        # --- Compares (slice 2), control word (slice 3), transcendentals
-        # (slice 5): pass fictive top-of-stack forms to the eval layer, which
-        # raises a clean DecompFailure for anything not yet implemented. ---
+        # --- Compares, control word, transcendentals: pass fictive
+        # top-of-stack forms to the eval layer, which raises a clean
+        # DecompFailure for anything not implemented. ---
         elif base in ("fcom", "fcomp", "fucom", "fucomp"):
             src: Argument
             if args and _st_index(args[0]) is None:

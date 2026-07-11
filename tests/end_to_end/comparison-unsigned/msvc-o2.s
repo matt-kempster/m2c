@@ -12,4 +12,3 @@ test:
 /* 00000019 0019  A3 00 00 00 00 */	mov dword ptr [_global], eax
 /* 0000001E 001E  C3 */	ret
 /* 0000001F 001F  90 */	nop
-

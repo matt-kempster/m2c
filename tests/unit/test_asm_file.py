@@ -17,8 +17,8 @@ def _parse(source: str, target: str, arch: object) -> AsmFile:
 
 
 class TestCrossFunctionMerge(unittest.TestCase):
-    """merge_functions_with_cross_jumps rejoins Ghidra-style x86 functions that
-    a mid-function global label split apart. It is gated to x86 (M2): other
+    """merge_functions_with_cross_jumps rejoins disassembler-exported x86 functions that
+    a mid-function global label split apart. It is gated to x86: other
     architectures may legitimately branch conditionally to another symbol, and
     such functions must not be silently fused."""
 
@@ -46,7 +46,7 @@ glabel func_b
         self.assertEqual(names, ["func_a", "func_b"])
 
     # The equivalent x86 pattern (a conditional branch to another parsed
-    # function's entry) IS merged: Ghidra split one function at a named label.
+    # function's entry) IS merged: the disassembler split one function at a named label.
     X86_ASM = """
 func_a:
     TEST EAX, EAX
@@ -64,8 +64,8 @@ func_b:
 
 
 class TestSetDirectiveLeniency(unittest.TestCase):
-    """Non-integer `.set` values are warned-and-ignored only for x86/Ghidra
-    inputs; other architectures keep the strict parse failure (L1)."""
+    """Non-integer `.set` values are warned-and-ignored only for x86
+    inputs; other architectures keep the strict parse failure."""
 
     SET_ASM = """
 .set noat
@@ -90,7 +90,7 @@ func_a:
 """
 
     def test_x86_non_integer_set_ignored(self) -> None:
-        # x86 tolerates the non-integer .set (Ghidra emits label-equate
+        # x86 tolerates the non-integer .set (disassemblers emit label-equate
         # expressions) instead of failing.
         asm_file = _parse(self.X86_SET_ASM, "x86-gcc-c", X86Arch())
         self.assertEqual([fn.name for fn in asm_file.functions], ["func_a"])

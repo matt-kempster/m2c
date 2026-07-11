@@ -127,11 +127,7 @@ def run(options: Options) -> int:
         dump_typemap(typemap)
         return 0
 
-    if isinstance(arch, X86Arch):
-        # Context prototypes drive callee ABI attribution in the x86 prepasses:
-        # __attribute__((stdcall)) declarations give stack-cleanup byte counts,
-        # and float/double return types seed the x87 FPU stack deltas.
-        arch.load_context(typemap)
+    arch.load_context(typemap)
 
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())
@@ -570,7 +566,7 @@ def parse_flags(flags: List[str]) -> Options:
         "Supported compilers: [ido, gcc, mwcc, msvc]. "
         "Supported languages: [c, c++]. "
         "Default is mips-ido-c, `ppc` is an alias for ppc-mwcc-c++, `arm` for "
-        "arm-gcc-c, and `x86` for x86-msvc-c. Use x86-gcc-c for GCC-style x86.",
+        "arm-gcc-c, and `x86` for x86-msvc-c.",
     )
     group.add_argument(
         "--passes",

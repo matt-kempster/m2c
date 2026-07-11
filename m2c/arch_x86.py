@@ -1,21 +1,22 @@
-"""i386 (x86) architecture support, for Ghidra-exported Intel-syntax asm.
+"""i386 (x86) architecture support, for disassembler-exported (Ghidra,
+IDA) Intel-syntax asm.
 
-Phase 1 established registration, parsing, and structural instruction
-information (inputs/outputs/jump targets). Phase 2a adds real semantics
-(eval_fns) for data operations, flags, and conditionals: mov/movsx/movzx/lea/
-xchg, the ALU (incl. mul/imul/div/idiv/cdq and shifts), cmp/test, all jcc and
-setcc, and loads/stores through all addressing modes. Phase 2b adds the
-moving stack: an ESP-delta prepass (X86StackRewritePattern / rewrite_stack_ops)
+The module provides registration, parsing, and structural instruction
+information (inputs/outputs/jump targets), plus semantics (eval_fns) for the
+data operations, flags, and conditionals: mov/movsx/movzx/lea/xchg, the ALU
+(incl. mul/imul/div/idiv/cdq and shifts), cmp/test, all jcc and setcc, and
+loads/stores through all addressing modes. x86's moving stack is handled by
+an ESP-delta prepass (X86StackRewritePattern / rewrite_stack_ops) that
 computes esp's offset from function entry at every instruction and rewrites
 push/pop/call-argument/ebp-frame accesses into fixed frame offsets, so the
 rest of m2c (which assumes a constant post-prologue stack pointer) works
 unchanged. This recovers call arguments (cdecl and stdcall), tail calls, and
-jump-table switches, plus rep string ops, loop, and rdtsc. Phase 3 adds x87
-FPU support via a second whole-body prepass (X86FpuRewritePattern in
-m2c/x86_fpu.py) that eliminates the FPU register stack into flat virtual
-registers f0..f7, with the per-instruction semantics in X86Arch._parse_fpu
-(float arithmetic/compares/conversions, the fnstsw/test-ah compare idiom, and
-the float call ABI: returns, per-callee stack deltas, and float arguments).
+jump-table switches, plus rep string ops, loop, and rdtsc. x87 FPU support
+lives in a second whole-body prepass (X86FpuRewritePattern in m2c/x86_fpu.py)
+that eliminates the FPU register stack into flat virtual registers f0..f7,
+with the per-instruction semantics in X86Arch._parse_fpu (float arithmetic/
+compares/conversions, the fnstsw/test-ah compare idiom, and the float call
+ABI: returns, per-callee stack deltas, and float arguments).
 
 The ESP-delta design: a linear dataflow pass over the flow graph tracks
 (esp_delta, ebp_delta) per instruction (push/pop = ∓4, sub/add esp = ∓N,
@@ -69,26 +70,33 @@ Design notes:
   adc/sbb) read them back, negating via Condition.negated() where needed.
   One crucial difference from ARM: after `cmp a, b` (or sub/neg), x86's
   carry flag is a *borrow*: c = (u32)a < (u32)b, the inverse of ARM's carry.
-  After additions, c is the carry-out (same as ARM). See eval_x86_cmp in
-  evaluate.py and `condition_flags` below.
+  After additions, c is the carry-out (same as ARM). See eval_x86_cmp and
+  `condition_flags` below.
 
 - Arguments: cdecl passes all arguments on the stack. At function entry
   [esp + 0] holds the return address, so with an unmoved stack pointer the
   arguments live at [esp + 4], [esp + 8], ... A literal `sub esp, N` in the
   prologue is folded into StackInfo.allocated_stack_size (see
-  get_stack_info), moving the argument region to [esp + N + 4]. Arbitrary
-  mid-function esp adjustment (push/pop in particular) is not modeled yet.
+  get_stack_info), moving the argument region to [esp + N + 4]. Mid-function
+  esp movement (push/pop in particular) never reaches this static view: the
+  ESP-delta prepass has already rewritten it into fixed frame offsets.
 """
 
 from __future__ import annotations
 import re
 import struct
-from dataclasses import replace
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from .error import DecompFailure
 from .options import Target
-from .asm_file import AsmData, AsmDataEntry, AsmSymbolicData, Label
+from .asm_file import (
+    AsmData,
+    AsmDataEntry,
+    AsmFile,
+    AsmSymbolicData,
+    Label,
+)
 from .c_types import CType, TypeMap
 from .asm_instruction import (
     Argument,
@@ -144,25 +152,29 @@ from .translate import (
 from .evaluate import (
     condition_from_expr,
     deref,
-    eval_x86_cmp,
     fn_op,
     fold_divmod,
     fold_mul_chains,
     handle_add_real,
     handle_addi_real,
     handle_bitinv,
+    handle_cmpnez,
     handle_convert,
     handle_or,
     handle_sub,
     make_store_real,
     replace_bitand,
-    set_x86_flags_from_add,
-    set_x86_flags_from_result,
     shift_right_expr,
     void_fn_op,
 )
 from .types import FunctionSignature
 from .x86_fpu import X86FpuRewritePattern
+from .x86_utils import (
+    WIDTH_SUFFIXES,
+    call_target_symbol,
+    split_width_suffix,
+    switch_jump_table_labels,
+)
 
 
 EAX = Register("eax")
@@ -208,18 +220,8 @@ RE_SEGMENT = re.compile(r"\b([cdefgs]s):", re.IGNORECASE)
 
 # x86 string instructions, whose operands are implicit (esi/edi/eax/ecx).
 STRING_OP_MNEMONICS = {
-    f"{op}{width}"
-    for op in ("movs", "stos", "scas", "lods", "cmps")
-    for width in "bwd"
+    f"{op}{width}" for op in ("movs", "stos", "scas", "lods", "cmps") for width in "bwd"
 }
-
-
-def split_width_suffix(mnemonic: str) -> Tuple[str, int]:
-    """Split e.g. "mov.b" into ("mov", 1). No suffix means 4 bytes."""
-    for width, suffix in WIDTH_SUFFIXES.items():
-        if suffix and mnemonic.endswith(suffix):
-            return mnemonic[: -len(suffix)], width
-    return mnemonic, 4
 
 
 def width_type(width: int) -> Type:
@@ -258,7 +260,9 @@ def address_expr(arg: Argument, a: InstrArgs) -> Expression:
     raise DecompFailure(f"Unsupported x86 address expression: {arg}")
 
 
-def mem_target(a: InstrArgs, index: int) -> Union[AddressMode, RawSymbolRef, Expression]:
+def mem_target(
+    a: InstrArgs, index: int
+) -> Union[AddressMode, RawSymbolRef, Expression]:
     """Compute the target of a memory operand, as either an AddressMode
     (base register + literal offset, which also handles esp-relative stack
     accesses), a RawSymbolRef (absolute [symbol + offset]), or a generic
@@ -479,14 +483,12 @@ def shld_expr(a: InstrArgs, lhs: Expression, srcs: List[Expression]) -> Expressi
 # (`__ftol`, the double->long cast helper, is handled separately via the x87
 # call-delta mechanism; the combined div+rem __alldvrm/__aulldvrm helpers are
 # not emitted by MSVC6 in practice and are left to degrade to a plain call.)
+@dataclass(frozen=True)
 class MathHelper:
-    __slots__ = ("kind", "op", "signed", "cleanup")
-
-    def __init__(self, kind: str, op: str, signed: bool, cleanup: int) -> None:
-        self.kind = kind  # "muldiv" (two stack operands) or "shift" (edx:eax)
-        self.op = op  # the C operator to emit
-        self.signed = signed  # operand/result signedness
-        self.cleanup = cleanup  # stack bytes the callee pops on return
+    kind: str  # "muldiv" (two stack operands) or "shift" (edx:eax)
+    op: str  # the C operator to emit
+    signed: bool  # operand/result signedness
+    cleanup: int  # stack bytes the callee pops on return
 
 
 X86_MATH_HELPERS: Dict[str, MathHelper] = {
@@ -572,204 +574,16 @@ def eval_math_helper(
     return True
 
 
-# Ghidra encodes stdcall decoration in symbol names: `_name@8` becomes
+# Disassembler exports encode stdcall decoration in symbol names: `_name@8` becomes
 # `__imp__name_8` for import thunks. The trailing number is the number of
 # argument bytes the callee pops on return.
 RE_STDCALL_IMPORT = re.compile(r"^__imp__.*_(\d+)$")
 
 
 # Undecorated stdcall imports appear as `_<LIB>_DLL_<Func>` or
-# `_<LIB>_DRV_<Func>` (e.g. `_USER32_DLL_ShowWindow`), Ghidra's naming for
+# `_<LIB>_DRV_<Func>` (e.g. `_USER32_DLL_ShowWindow`), a disassembler naming for
 # imports whose thunks it resolved to a library.
 RE_DLL_IMPORT = re.compile(r"^_[A-Za-z0-9]+_(?:DLL|DRV)_(\w+)$")
-
-
-# Argument byte counts for well-known stdcall Win32/multimedia/DirectX APIs.
-# MSVC calls these through undecorated thunk symbols (`call _MessageBoxA`),
-# so the `@N` suffix that normally identifies callee cleanup is missing; this
-# table restores it. The values are the documented argument counts * 4 (all
-# arguments of these APIs are 4-byte). Names that are cdecl despite living in
-# system DLLs (e.g. the variadic wsprintfA) must not be listed here.
-#
-# This built-in table is a Win32 convenience layer, and deliberately the
-# lowest-priority *name-based* source of callee cleanup. callee_cleanup_bytes()
-# resolves a call's cleanup with the precedence:
-#   1. explicit context/prototype (__attribute__((stdcall)) in the user
-#      context, i.e. arch.context_stdcall_arg_bytes),
-#   2. a decorated stdcall suffix (`__imp__X_N`, or a Ghidra `.set name@N`
-#      recorded in asm_data.stdcall_arg_bytes),
-#   3. this configured platform table,
-#   4. conservative structural inference (compute_call_cleanup, when the name
-#      gives no answer).
-# So a user context declaration always overrides a table entry for the same
-# API, and the table only fills in APIs the context did not describe.
-STDCALL_API_ARG_BYTES: Dict[str, int] = {
-    "AddFontResourceA": 4,
-    "AdjustWindowRect": 12,
-    "ClientToScreen": 8,
-    "CloseHandle": 4,
-    "CoCreateInstance": 20,
-    "CoInitialize": 4,
-    "CoUninitialize": 0,
-    "CreateCompatibleDC": 4,
-    "CreateDCA": 16,
-    "CreateDIBitmap": 24,
-    "CreateEventA": 16,
-    "CreateFileA": 28,
-    "CreateFontIndirectA": 4,
-    "CreateMutexA": 12,
-    "CreatePen": 12,
-    "CreateRectRgn": 16,
-    "CreateRectRgnIndirect": 4,
-    "CreateSolidBrush": 4,
-    "CreateThread": 24,
-    "CreateWindowExA": 48,
-    "DefWindowProcA": 16,
-    "DeleteDC": 4,
-    "DeleteObject": 4,
-    "DestroyWindow": 4,
-    "DeviceIoControl": 32,
-    "DialogBoxParamA": 20,
-    "DispatchMessageA": 4,
-    "DrawTextA": 20,
-    "EndDialog": 8,
-    "EndDoc": 4,
-    "EndPage": 4,
-    "EnumPrintersA": 28,
-    "FileTimeToDosDateTime": 12,
-    "FileTimeToLocalFileTime": 8,
-    "FillRect": 12,
-    "FreeLibrary": 4,
-    "GetClientRect": 8,
-    "GetComputerNameA": 8,
-    "GetDesktopWindow": 0,
-    "GetDeviceCaps": 8,
-    "GetDlgItem": 8,
-    "GetDriveTypeA": 4,
-    "GetFileSize": 8,
-    "GetFileTime": 16,
-    "GetKeyState": 4,
-    "GetLastError": 0,
-    "GetLogicalDrives": 0,
-    "GetMessageA": 16,
-    "GetModuleFileNameA": 12,
-    "GetNearestColor": 8,
-    "GetStockObject": 4,
-    "GetSystemInfo": 4,
-    "GetSystemTimeAsFileTime": 4,
-    "GetTickCount": 0,
-    "GetUserNameA": 8,
-    "GetVolumeInformationA": 32,
-    "GetWindowLongA": 8,
-    "GlobalAlloc": 8,
-    "GlobalFree": 4,
-    "GlobalLock": 4,
-    "GlobalMemoryStatus": 4,
-    "GlobalUnlock": 4,
-    "IntersectRect": 12,
-    "IsBadReadPtr": 8,
-    "LineTo": 12,
-    "LoadCursorA": 8,
-    "LoadIconA": 8,
-    "LoadLibraryA": 4,
-    "LoadLibraryExA": 12,
-    "LocalAlloc": 8,
-    "LocalFree": 4,
-    "MessageBoxA": 16,
-    "MoveToEx": 16,
-    "MulDiv": 12,
-    "MultiByteToWideChar": 24,
-    "OffsetRect": 12,
-    "OutputDebugStringA": 4,
-    "PeekMessageA": 20,
-    "PostQuitMessage": 4,
-    "PtInRect": 12,
-    "QueryPerformanceCounter": 4,
-    "QueryPerformanceFrequency": 4,
-    "ReadFile": 20,
-    "RegisterClassExA": 4,
-    "RemoveFontResourceA": 4,
-    "ResetEvent": 4,
-    "ResumeThread": 4,
-    "SelectObject": 8,
-    "SendMessageA": 16,
-    "SetBkColor": 8,
-    "SetBkMode": 8,
-    "SetCurrentDirectoryA": 4,
-    "SetCursor": 4,
-    "SetEvent": 4,
-    "SetFilePointer": 16,
-    "SetTextAlign": 8,
-    "SetTextColor": 8,
-    "ShowCursor": 4,
-    "ShowWindow": 8,
-    "Sleep": 4,
-    "StartDocA": 8,
-    "StartPage": 4,
-    "StretchDIBits": 52,
-    "SuspendThread": 4,
-    "SystemParametersInfoA": 16,
-    "TerminateThread": 8,
-    "TextOutA": 20,
-    "TranslateMessage": 4,
-    "VirtualQuery": 12,
-    "WaitForMultipleObjects": 16,
-    "WaitForSingleObject": 8,
-    "WaitMessage": 0,
-    "WriteFile": 20,
-    "lstrcpyA": 8,
-    "lstrlenA": 4,
-    "wvsprintfA": 12,
-    # winmm
-    "midiOutClose": 4,
-    "midiOutOpen": 20,
-    "midiOutShortMsg": 8,
-    "timeKillEvent": 4,
-    "timeSetEvent": 20,
-    # DirectX / codec DLLs (called via `_<LIB>_DLL_<Func>` names)
-    "DirectDrawCreate": 12,
-    "DirectInputCreateA": 16,
-    "DirectSoundCreate": 12,
-    "GetFileVersionInfoA": 16,
-    "GetFileVersionInfoSizeA": 8,
-    "VerQueryValueA": 16,
-    "AVIFileExit": 0,
-    "AVIFileGetStream": 16,
-    "AVIFileInfoA": 12,
-    "AVIFileInit": 0,
-    "AVIFileOpenA": 16,
-    "AVIFileRelease": 4,
-    "AVIStreamAddRef": 4,
-    "AVIStreamGetFrame": 8,
-    "AVIStreamGetFrameClose": 4,
-    "AVIStreamGetFrameOpen": 8,
-    "AVIStreamInfoA": 12,
-    "AVIStreamLength": 4,
-    "AVIStreamRead": 28,
-    "AVIStreamReadFormat": 16,
-    "AVIStreamRelease": 4,
-    "AVIStreamStart": 4,
-    "acmStreamClose": 8,
-    "acmStreamConvert": 12,
-    "acmStreamOpen": 32,
-    "acmStreamPrepareHeader": 12,
-    "acmStreamSize": 16,
-    "acmStreamUnprepareHeader": 12,
-}
-
-
-def call_target_symbol(target: Argument) -> Optional[str]:
-    """The symbol a call goes through: the name of a direct call target, or
-    the absolute import slot of a `call [__imp__X]`-style indirect call."""
-    if isinstance(target, AsmGlobalSymbol):
-        return target.symbol_name
-    if (
-        isinstance(target, AsmAddressMode)
-        and target.base is None
-        and isinstance(target.addend, AsmGlobalSymbol)
-    ):
-        return target.addend.symbol_name
-    return None
 
 
 def is_stdcall_import(target: Argument) -> bool:
@@ -797,16 +611,17 @@ def callee_cleanup_bytes(
 ) -> Optional[int]:
     """Number of stack bytes a call target is known to pop itself: 0 for a
     known-cdecl callee, None when the convention cannot be determined from the
-    name. Sources, in strict precedence order (see STDCALL_API_ARG_BYTES):
+    name. Sources, in strict precedence order:
 
       1. an explicit context/prototype (`context_arg_bytes`, from
          __attribute__((stdcall)) declarations),
-      2. a decorated stdcall suffix: an `__imp__X_N` import name, or a Ghidra
-         `.set name@N` decoration recorded for the file (`file_arg_bytes`),
-      3. the built-in Win32 API table.
+      2. a decorated stdcall suffix: an `__imp__X_N` import name, or a
+         `.set name@N` decoration recorded for the file (`file_arg_bytes`).
 
     (Conservative structural inference, the lowest priority, lives in
-    compute_call_cleanup and only runs when this returns None.)"""
+    compute_call_cleanup and only runs when this returns None; the esp-balance
+    check at return validates the result and triggers the infer_direct_stdcall
+    retry when a callee was misclassified.)"""
     context_arg_bytes = context_arg_bytes or {}
     file_arg_bytes = file_arg_bytes or {}
     sym = call_target_symbol(target)
@@ -827,48 +642,76 @@ def callee_cleanup_bytes(
         return int(m.group(1))
     if sym in file_arg_bytes:
         return file_arg_bytes[sym]
-    # 3. The built-in Win32 API convenience table.
-    dll = RE_DLL_IMPORT.match(sym)
-    if dll is not None:
-        api = STDCALL_API_ARG_BYTES.get(dll.group(1))
-        if api is not None:
-            return api
-    elif sym.startswith("__imp__"):
-        api = STDCALL_API_ARG_BYTES.get(sym[len("__imp__") :])
-        if api is not None:
-            return api
-    elif sym.startswith("_"):
-        api = STDCALL_API_ARG_BYTES.get(sym[1:])
-        if api is not None:
-            return api
     return None
 
 
-def switch_jump_table_labels(
-    instr: Instruction, asm_data: AsmData
-) -> Optional[List[str]]:
-    """For an indirect `jmp [index*4 + table]`, find the jump table in the
-    file's data and return the list of case labels."""
-    for arg in instr.args:
-        if not isinstance(arg, AsmAddressMode):
-            continue
-        for sub in traverse_arg(arg.addend):
-            if not isinstance(sub, AsmGlobalSymbol):
-                continue
-            entry = asm_data.values.get(sub.symbol_name)
-            if entry is None or not entry.data:
-                continue
-            targets = []
-            for item in entry.data:
-                if isinstance(item, bytes):
-                    break
-                target = item.as_symbol_without_addend()
-                if target is None:
-                    break
-                targets.append(target)
-            if targets:
-                return targets
-    return None
+def merge_functions_with_cross_jumps(asm_file: AsmFile) -> None:
+    """Rejoin functions that were split apart by mid-function global labels
+    (X86Arch.postprocess_asm_file).
+
+    Disassemblers let users name arbitrary code addresses, and an exported
+    label in the middle of a function is indistinguishable by name from the
+    start of a new one, so parsing splits the function at that point. The
+    split becomes evident when one chunk branches into another: a branch to a
+    label inside a different chunk, or a conditional branch to another chunk's
+    entry (compilers do not emit conditional tail calls), can only happen if
+    the chunks are really one function. Merge the whole range of chunks
+    between such branches back together, turning the intermediate entry names
+    into plain labels."""
+    functions = asm_file.functions
+
+    def build_label_owner() -> Dict[str, int]:
+        return {
+            name: idx
+            for idx, fn in enumerate(functions)
+            for part in fn.body
+            if isinstance(part, Label)
+            for name in part.names
+        }
+
+    while len(functions) > 1:
+        label_owner = build_label_owner()
+        entry_index = {fn.name: idx for idx, fn in enumerate(functions)}
+        merge_range: Optional[Tuple[int, int]] = None
+        for i, fn in enumerate(functions):
+            lo = hi = i
+            for part in fn.body:
+                if not isinstance(part, Instruction) or not isinstance(
+                    part.jump_target, JumpTarget
+                ):
+                    continue
+                target = part.jump_target.target
+                j = label_owner.get(target)
+                if j is None and part.is_conditional:
+                    j = entry_index.get(target)
+                if j is not None and j != i:
+                    lo = min(lo, j)
+                    hi = max(hi, j)
+            if (lo, hi) != (i, i):
+                merge_range = (lo, hi)
+                break
+        if merge_range is None:
+            return
+        lo, hi = merge_range
+        base = functions[lo]
+        for fn in functions[lo + 1 : hi + 1]:
+            # The absorbed chunk's entry name becomes a plain label. Avoid
+            # creating consecutive Labels: fold the name into the chunk's
+            # leading label if it has one.
+            body = fn.body
+            if body and isinstance(body[0], Label):
+                body = [Label([fn.name] + body[0].names)] + body[1:]
+            else:
+                body = [Label([fn.name])] + body
+            if (
+                base.body
+                and isinstance(base.body[-1], Label)
+                and isinstance(body[0], Label)
+            ):
+                base.body[-1:] = [Label(base.body[-1].names + body[0].names)]
+                body = body[1:]
+            base.body.extend(body)
+        del functions[lo + 1 : hi + 1]
 
 
 # The ESP-delta dataflow state at one program point: the (nonpositive) offset
@@ -890,7 +733,7 @@ def compute_save_pushes(body: List[BodyPart]) -> Set[int]:
     frame pointer, rather than pushing an outgoing call argument. Computed
     purely structurally (before the ESP dataflow runs), so the stdcall/indirect
     cleanup inference does not miscount prologue and callee-save pushes as call
-    arguments (H3).
+    arguments.
 
     Register saves live in the prologue: the initial run of frame setup
     (`sub esp`, `push ebp; mov ebp, esp`, callee-saved pushes) before the first
@@ -909,9 +752,7 @@ def compute_save_pushes(body: List[BodyPart]) -> Set[int]:
                 restored.add(part.args[0])
 
     def is_frame_ptr_save(index: int) -> bool:
-        nxt = next(
-            (p for p in body[index + 1 :] if isinstance(p, Instruction)), None
-        )
+        nxt = next((p for p in body[index + 1 :] if isinstance(p, Instruction)), None)
         return (
             nxt is not None
             and split_width_suffix(nxt.mnemonic)[0] == "mov"
@@ -1189,7 +1030,9 @@ class X86JumpTablePattern(AsmPattern):
                         switch_id = m.group(1)
                         break
         if switch_id is None:
-            for j in range(matcher.index + 1, min(matcher.index + 3, len(matcher.input))):
+            for j in range(
+                matcher.index + 1, min(matcher.index + 3, len(matcher.input))
+            ):
                 nxt = matcher.input[j]
                 if isinstance(nxt, Label):
                     for name in nxt.names:
@@ -1218,9 +1061,7 @@ class X86JumpTablePattern(AsmPattern):
             if arg is table_addr:
                 return AsmGlobalSymbol(table_name)
             if isinstance(arg, BinOp):
-                return BinOp(
-                    arg.op, replace_literal(arg.lhs), replace_literal(arg.rhs)
-                )
+                return BinOp(arg.op, replace_literal(arg.lhs), replace_literal(arg.rhs))
             return arg
 
         new_jmp = AsmInstruction(
@@ -1374,7 +1215,7 @@ def rewrite_stack_ops(
     # after the prologue or after a callee-save push (common for early indirect
     # / undecorated stdcall calls) gets a phantom cleanup byte count that can
     # make the dataflow look internally consistent while corrupting the stack
-    # model. See H3.
+    # model. See compute_save_pushes.
     save_pushes = compute_save_pushes(body)
 
     def call_arg_bytes(call_index: int) -> int:
@@ -1398,7 +1239,12 @@ def rewrite_stack_ops(
                 total += 4
             elif base == "push":
                 break  # sub-word push; give up.
-            elif base == "mov" and len(part.args) == 2 and part.args[0] == EBP and part.args[1] == ESP:
+            elif (
+                base == "mov"
+                and len(part.args) == 2
+                and part.args[0] == EBP
+                and part.args[1] == ESP
+            ):
                 break  # `mov ebp, esp` frame setup: nothing before it is an arg.
             elif (
                 base in ESP_NEUTRAL_STOP
@@ -1415,10 +1261,10 @@ def rewrite_stack_ops(
 
     # Callee cleanup information beyond name decoration, kept in separate
     # precedence tiers (see callee_cleanup_bytes): user-context stdcall
-    # prototypes (highest), and Ghidra-exported `.set sym, "name@N"`
+    # prototypes (highest), and disassembler-exported `.set sym, "name@N"`
     # decorations for this file.
-    context_arg_bytes: Dict[str, int] = dict(
-        getattr(arch, "context_stdcall_arg_bytes", {})
+    context_arg_bytes: Dict[str, int] = (
+        dict(arch.context_stdcall_arg_bytes) if isinstance(arch, X86Arch) else {}
     )
     file_arg_bytes: Dict[str, int] = dict(asm_data.stdcall_arg_bytes)
 
@@ -1568,9 +1414,7 @@ def rewrite_stack_ops(
             return
         if base == "push":
             if item.mnemonic != "push":
-                raise DecompFailure(
-                    f"unsupported sub-word x86 push: {instr_str(item)}"
-                )
+                raise DecompFailure(f"unsupported sub-word x86 push: {instr_str(item)}")
             st = (esp - 4, ebp)
         elif base == "pop":
             st = (esp + 4, None if args[0] == EBP else ebp)
@@ -1592,8 +1436,10 @@ def rewrite_stack_ops(
             frame_ebp = esp
             st = (esp, esp)
         elif base == "mov" and args[0] == ESP:
-            src_ebp = ebp if ebp is not None else (
-                frame_ebp if not frame_ebp_ambiguous else None
+            src_ebp = (
+                ebp
+                if ebp is not None
+                else (frame_ebp if not frame_ebp_ambiguous else None)
             )
             if args[1] != EBP or src_ebp is None:
                 raise DecompFailure(
@@ -1615,8 +1461,10 @@ def rewrite_stack_ops(
                     f"cannot statically analyze stack adjustment {instr_str(item)}"
                 )
         elif base == "leave":
-            src_ebp = ebp if ebp is not None else (
-                frame_ebp if not frame_ebp_ambiguous else None
+            src_ebp = (
+                ebp
+                if ebp is not None
+                else (frame_ebp if not frame_ebp_ambiguous else None)
             )
             if src_ebp is None:
                 raise DecompFailure(
@@ -1629,8 +1477,7 @@ def rewrite_stack_ops(
             # are rejected below.
             if not (
                 isinstance(args[1], AsmLiteral)
-                and args[1].value & 0xFFFFFFFF
-                in (0xFFFFFFF0, 0xFFFFFFF8, 0xFFFFFFFC)
+                and args[1].value & 0xFFFFFFFF in (0xFFFFFFF0, 0xFFFFFFF8, 0xFFFFFFFC)
             ):
                 raise DecompFailure(
                     f"cannot statically analyze stack adjustment {instr_str(item)}"
@@ -1727,9 +1574,7 @@ def rewrite_stack_ops(
             base == "pop"
             and part.args[0] in (ECX, EDX)
             and prev_instr is not None
-            and (
-                prev_instr.function_target is not None or prev_index in cleanup_pops
-            )
+            and (prev_instr.function_target is not None or prev_index in cleanup_pops)
         ):
             cleanup_pops.add(i)
         prev_instr = part
@@ -1805,10 +1650,7 @@ def rewrite_stack_ops(
         st = states[index]
         assert isinstance(part, Instruction) and st is not None
         arg = part.args[0]
-        return (
-            isinstance(arg, Register)
-            and (frame_size + st[0] - 4, arg) in pop_locs
-        )
+        return isinstance(arg, Register) and (frame_size + st[0] - 4, arg) in pop_locs
 
     # The prologue: the initial run of frame-establishing instructions.
     # Register pushes within it that are never popped back allocate frame
@@ -1866,9 +1708,7 @@ def rewrite_stack_ops(
             and isinstance(dest, AsmAddressMode)
             and dest.base == ESP
             and dest.addend == AsmLiteral(0)
-            and not any(
-                isinstance(arg, AsmAddressMode) for arg in part.args[1:]
-            )
+            and not any(isinstance(arg, AsmAddressMode) for arg in part.args[1:])
         )
 
     for i, part in enumerate(body):
@@ -2001,7 +1841,10 @@ def rewrite_stack_ops(
                 loc = frame_size + esp
                 emit(
                     part.mnemonic.replace("pop", "mov", 1),
-                    [rewrite_operand(args[0]), AsmAddressMode(ESP, AsmLiteral(loc), None)],
+                    [
+                        rewrite_operand(args[0]),
+                        AsmAddressMode(ESP, AsmLiteral(loc), None),
+                    ],
                     part.meta,
                 )
         elif base in ("pushad", "popad"):
@@ -2035,7 +1878,11 @@ def rewrite_stack_ops(
                 consume = cdecl_arg_bytes(i)
             emit(
                 "call",
-                [rewrite_operand(args[0]), AsmLiteral(frame_size + esp), AsmLiteral(consume)],
+                [
+                    rewrite_operand(args[0]),
+                    AsmLiteral(frame_size + esp),
+                    AsmLiteral(consume),
+                ],
                 part.meta,
             )
         elif base == "jmp" and isinstance(part.jump_target, JumpTarget):
@@ -2136,7 +1983,9 @@ def load_fild_operand(a: InstrArgs, index: int, width: int) -> Tuple[Expression,
     lo = deref(target, a.regs, a.stack_info, size=4)
     hi = deref(hi_target, a.regs, a.stack_info, size=4)
     if early_unwrap(hi) == Literal(0):
-        unsigned_lo = as_type(as_type(lo, Type.u32(), silent=True), Type.u64(), silent=True)
+        unsigned_lo = as_type(
+            as_type(lo, Type.u32(), silent=True), Type.u64(), silent=True
+        )
         return unsigned_lo, Type.u64()
     return glue_int64(lo, hi, signed=True), Type.s64()
 
@@ -2177,9 +2026,141 @@ FPU_CONSTANTS: Dict[str, Callable[[], Expression]] = {
 }
 
 
+def x86_flag_types(width: int) -> Tuple[Type, Type]:
+    """(unsigned, signed) types for an x86 operand width in bytes."""
+    if width == 1:
+        return Type.u8(), Type.s8()
+    if width == 2:
+        return Type.u16(), Type.s16()
+    return Type.u32(), Type.s32()
+
+
+def eval_x86_cmp(
+    s: NodeState, lhs: Expression, rhs: Expression, width: int = 4
+) -> None:
+    """Set the x86 flag pseudo-registers for `cmp lhs, rhs` (also used by
+    sub/neg, which compute the same flags).
+
+    This mirrors evaluate.eval_arm_cmp, with one crucial difference: on x86 the carry
+    flag after cmp/sub is a *borrow*, i.e. c = (u32)lhs < (u32)rhs. This is
+    the INVERSE of ARM's carry, which is set when there is *no* borrow
+    ((u32)lhs >= (u32)rhs). Consumers map jb/jc directly to c, and jae/jnc to
+    its negation (see X86Arch.condition_flags)."""
+    utype, stype = x86_flag_types(width)
+    s.set_reg(Register("z"), BinaryOp.icmp(lhs, "==", rhs))
+    sub = BinaryOp.intptr(lhs, "-", rhs)
+    sval = as_type(sub, stype, silent=True, unify=False)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    v = fn_op("M2C_OVERFLOW", [sval], Type.boolean())
+    s.set_reg(Register("v"), v)
+    ulhs = as_type(lhs, utype, silent=True, unify=False)
+    slhs = as_type(lhs, stype, silent=True, unify=False)
+    urhs = as_type(rhs, utype, silent=True, unify=False)
+    srhs = as_type(rhs, stype, silent=True, unify=False)
+    # x86 carry flag = borrow (see above).
+    s.set_reg(Register("c"), BinaryOp.ucmp(ulhs, "<", urhs))
+    s.set_reg(Register("hi"), BinaryOp.ucmp(ulhs, ">", urhs))
+    s.set_reg(Register("ge"), BinaryOp.scmp(slhs, ">=", srhs))
+    s.set_reg(Register("gt"), BinaryOp.scmp(slhs, ">", srhs))
+
+
+def fold_x86_literal_add_cmp(cmp: BinaryOp) -> BinaryOp:
+    """Fold `(x - c1) == c2` into `x == (c1 + c2)` (and the same for `!=` and
+    for `+`). MSVC lowers small switches into in-place `dec reg; je` ladders,
+    whose equality flags otherwise render as `(x - 1) == 1` instead of
+    `x == 2` (hiding e.g. enum names). Exact for wrapping arithmetic, so only
+    applied to equality comparisons."""
+    while cmp.op in ("==", "!="):
+        lhs, rhs = early_unwrap(cmp.left), early_unwrap(cmp.right)
+        if isinstance(lhs, Literal):
+            lhs, rhs = rhs, lhs
+        if not isinstance(rhs, Literal):
+            break
+        if not (isinstance(lhs, BinaryOp) and lhs.op in ("-", "+")):
+            break
+        addend = early_unwrap(lhs.right)
+        if not isinstance(addend, Literal):
+            break
+        sign = 1 if lhs.op == "-" else -1
+        cmp = BinaryOp.icmp(lhs.left, cmp.op, Literal(rhs.value + sign * addend.value))
+    return cmp
+
+
+def set_x86_flags_from_result(
+    s: NodeState,
+    val: Expression,
+    width: int = 4,
+    *,
+    set_c_v: bool = True,
+    preserved_carry: Optional[Expression] = None,
+) -> None:
+    """Set the x86 flag pseudo-registers based on an ALU result, comparing it
+    against zero. Used for logic ops (and/or/xor/test/shifts), for which the
+    real x86 semantics are CF = OF = 0 (making e.g. `ja` equivalent to
+    "result != 0"), and for inc/dec with set_c_v=False (inc/dec preserve the
+    carry flag; their overflow flag is set separately).
+
+    For inc/dec, `preserved_carry` supplies the carry flag that the operation
+    keeps unchanged, so the composite unsigned-above (ja/jbe) predicate is
+    computed as CF==0 && ZF==0 from that preserved carry rather than assuming
+    CF==0."""
+    _, stype = x86_flag_types(width)
+    nez = handle_cmpnez(val)
+    assert isinstance(nez, BinaryOp)
+    nez = fold_x86_literal_add_cmp(nez)
+    s.set_reg(Register("z"), nez.negated())
+    sval = as_type(val, stype, silent=True, unify=False)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    if preserved_carry is not None:
+        # Unsigned-above (ja) = CF==0 && ZF==0, with CF preserved from before.
+        not_carry = condition_from_expr(preserved_carry).negated()
+        s.set_reg(
+            Register("hi"),
+            BinaryOp(left=not_carry, op="&&", right=nez, type=Type.boolean()),
+        )
+    else:
+        # With CF = 0, unsigned-above means "result != 0".
+        s.set_reg(Register("hi"), nez)
+    s.set_reg(Register("ge"), BinaryOp.scmp(sval, ">=", Literal(0)))
+    s.set_reg(Register("gt"), BinaryOp.scmp(sval, ">", Literal(0)))
+    if set_c_v:
+        s.set_reg(Register("c"), Literal(0))
+        s.set_reg(Register("v"), Literal(0))
+
+
+def set_x86_flags_from_add(
+    s: NodeState, lhs: Expression, val: Expression, width: int = 4
+) -> None:
+    """Set the x86 flag pseudo-registers for an addition (add/adc) whose result
+    is `val` and whose left operand is `lhs`, width-aware in `width` bytes.
+
+    Unlike the ARM helper, the carry-out and the composite unsigned predicate
+    respect the operand width, so a byte/word add does not get 32-bit carry
+    behaviour: CF is the carry-out (the truncated sum wrapped below the left
+    operand), and unsigned-above (ja/jbe) is CF==0 && ZF==0."""
+    utype, stype = x86_flag_types(width)
+    uval = as_type(val, utype, silent=True, unify=False)
+    sval = as_type(val, stype, silent=True, unify=False)
+    ulhs = as_type(lhs, utype, silent=True, unify=False)
+    z = BinaryOp.icmp(val, "==", Literal(0))
+    s.set_reg(Register("z"), z)
+    s.set_reg(Register("n"), BinaryOp.scmp(sval, "<", Literal(0)))
+    # Carry-out: the width-truncated sum wrapped below the left operand.
+    carry = BinaryOp.ucmp(uval, "<", ulhs)
+    s.set_reg(Register("c"), carry)
+    s.set_reg(Register("v"), fn_op("M2C_OVERFLOW", [sval], Type.boolean()))
+    # Unsigned-above (ja/jbe): no carry-out and nonzero.
+    s.set_reg(
+        Register("hi"),
+        BinaryOp(left=carry.negated(), op="&&", right=z.negated(), type=Type.boolean()),
+    )
+    s.set_reg(Register("ge"), BinaryOp.scmp(sval, ">=", Literal(0)))
+    s.set_reg(Register("gt"), BinaryOp.scmp(sval, ">", Literal(0)))
+
+
 # Name of the symbolic x87 status-word marker (fn_op) threaded from an
-# fcom-family compare through fnstsw ax to the test-ah idiom (see §3 of the
-# design spec). Carries the compare's two operands as its arguments.
+# fcom-family compare through fnstsw ax to the test-ah idiom. Carries the
+# compare's two operands as its arguments.
 FNSTSW_MARKER = "M2C_FNSTSW"
 
 
@@ -2259,9 +2240,7 @@ def suppress_forced_fnstsw_marker(expr: Optional[Expression]) -> None:
         expr = expr.wrapped_expr
 
 
-def fpu_compare_condition(
-    lhs: Expression, rhs: Expression, op: str
-) -> Condition:
+def fpu_compare_condition(lhs: Expression, rhs: Expression, op: str) -> Condition:
     """A float comparison `lhs op rhs`, as f64 when either operand is
     known-f64 (matching the arithmetic width rule) else f32."""
     if is_f64_expr(lhs) or is_f64_expr(rhs):
@@ -2272,14 +2251,14 @@ def fpu_compare_condition(
 # TEST AH, mask after FNSTSW AX: the relational operator that is true exactly
 # when the x87 compare's ZF would be 1 (i.e. what `jz`/`setz` should read).
 # C0 (AH 0x01) = "st0 < src", C3 (AH 0x40) = "st0 == src"; ZF = ((AH & mask)
-# == 0). See §3.2. Unordered (NaN) outcomes are folded into the signed
-# direction, as MSVC's mask choice implies.
+# == 0). Unordered (NaN) outcomes are folded into the signed direction, as
+# MSVC's mask choice implies.
 FNSTSW_MASK_OPS: Dict[int, str] = {
     0x01: ">=",  # ZF=1 <=> not(st0 < src)
     0x40: "!=",  # ZF=1 <=> not(st0 == src)
-    0x41: ">",   # ZF=1 <=> not(st0 < src) and not(st0 == src)
+    0x41: ">",  # ZF=1 <=> not(st0 < src) and not(st0 == src)
     0x05: ">=",  # C0|C2: unordered folded in
-    0x45: ">",   # C0|C2|C3
+    0x45: ">",  # C0|C2|C3
     0x44: "!=",  # C2|C3
 }
 
@@ -2305,6 +2284,7 @@ FPU_ARITH_OPS: Dict[str, Tuple[str, bool]] = {
     "fidiv": ("/", False),
     "fidivr": ("/", True),
 }
+
 
 # x87 unary op -> builder (value -> new value). frndint stays a visible
 # intrinsic (its result depends on the rounding-control word, not modeled);
@@ -2339,7 +2319,9 @@ FPU_UNARY_OPS: Dict[str, Callable[[Expression], Expression]] = {
     "fsin": lambda v: fn_op("sinf", [v], Type.f32()),
     "fcos": lambda v: fn_op("cosf", [v], Type.f32()),
     "frndint": lambda v: fn_op("M2C_RNDINT", [v], Type.f32()),
-    "f2xm1": lambda v: BinaryOp.f32(fn_op("exp2f", [v], Type.f32()), "-", f32_literal(1.0)),
+    "f2xm1": lambda v: BinaryOp.f32(
+        fn_op("exp2f", [v], Type.f32()), "-", f32_literal(1.0)
+    ),
     # One-argument x87 CRT math helpers (`fld a; call __CIsin`), taking their
     # f64 argument on and returning their f64 result on the x87 stack (net
     # depth 0). x86_fpu rewrites the `call __CIxxx` to these fictive ops.
@@ -2361,7 +2343,9 @@ FPU_UNARY_OPS: Dict[str, Callable[[Expression], Expression]] = {
 # x87 two-operand transcendentals. Each is `builder(st0, st1) -> value`,
 # written into `dst` (0 = st0/top, 1 = st1); `pop` also kills the top. The
 # rewrite passes [st0, st1] as the fictive operands.
-FPU_BINARY_OPS: Dict[str, Tuple[Callable[[Expression, Expression], Expression], int, bool]] = {
+FPU_BINARY_OPS: Dict[
+    str, Tuple[Callable[[Expression, Expression], Expression], int, bool]
+] = {
     # fpatan: st1 = atan2(st1, st0), pop.
     "fpatan": (lambda st0, st1: fn_op("atan2f", [st1, st0], Type.f32()), 1, True),
     # fyl2x: st1 = st1 * log2(st0), pop.
@@ -2383,7 +2367,9 @@ FPU_BINARY_OPS: Dict[str, Tuple[Callable[[Expression, Expression], Expression], 
     # fscale: st0 = st0 * 2**trunc(st1) = ldexpf(st0, (int)st1).
     "fscale": (
         lambda st0, st1: fn_op(
-            "ldexpf", [st0, handle_convert(st1, Type.s32(), Type.floatish())], Type.f32()
+            "ldexpf",
+            [st0, handle_convert(st1, Type.s32(), Type.floatish())],
+            Type.f32(),
         ),
         0,
         False,
@@ -2407,6 +2393,27 @@ class X86Arch(Arch):
     re_comment = r"[#;].*"
     supports_dollar_regs = False
     supports_intel_addressing = True
+    # Disassembler exports emit jump tables with `.long`, place them unlabeled
+    # directly after code, and use `.set` for symbol decorations / label
+    # equates (see ArchAsmParsing for each capability).
+    word_directives = (".word", ".gpword", ".4byte", ".long")
+    lenient_set_directives = True
+    synthesize_text_data_labels = True
+    # MSVC's numbered COFF code labels ($L95) and disassembler-export label
+    # spellings behind the platform's `_` symbol prefix (_LAB_00401234,
+    # _switchD_..._caseD_...) mark jump targets, never function starts.
+    re_arch_local_label = re.compile(
+        r"\$L\d+$|_(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_)"
+    )
+
+    def postprocess_asm_file(self, asm_file: AsmFile) -> None:
+        # Named code addresses in the middle of a function are
+        # indistinguishable from new functions' entries when parsing, so
+        # parse_file splits at each; rejoin the pieces. Other architectures'
+        # inputs may legitimately contain conditional branches to another
+        # symbol (hand-authored asm, linker labels, tail-call-like control
+        # flow), which must not be silently fused, so this is x86-only.
+        merge_functions_with_cross_jumps(asm_file)
 
     home_space_size = 0
     base_struct_align = 4
@@ -2419,7 +2426,7 @@ class X86Arch(Arch):
     # eax the same way MIPS disambiguates v0/f0. f0 is deliberately *not* in
     # all_return_regs: that list drives the default call-output set, and x87
     # values must survive calls uncleared (a call only pushes its own float
-    # return via the per-call `fpret` annotation, §4.3).
+    # return via the per-call `fpret` annotation).
     base_return_regs = [(EAX, False), (Register("f0"), True)]
     all_return_regs = [EAX, EDX]
     argument_regs: List[Register] = []
@@ -2689,7 +2696,10 @@ class X86Arch(Arch):
         "adc": (FLAGS_ADD, adc_expr),
         "sub": (FLAGS_CMP, lambda a, l, s: sub_expr(l, s[0])),
         "sbb": (FLAGS_SBB, sbb_expr),
-        "and": (FLAGS_LOGIC, lambda a, l, s: replace_bitand(BinaryOp.int(l, "&", s[0]))),
+        "and": (
+            FLAGS_LOGIC,
+            lambda a, l, s: replace_bitand(BinaryOp.int(l, "&", s[0])),
+        ),
         "or": (FLAGS_LOGIC, lambda a, l, s: handle_or(l, s[0])),
         "xor": (FLAGS_LOGIC, lambda a, l, s: BinaryOp.int(l, "^", s[0])),
         "shl": (
@@ -2753,20 +2763,71 @@ class X86Arch(Arch):
     # _parse_fpu. (Raw x87 forms -- which use st(i) names, never f0..f7 --
     # reach `parse` only during initial parsing and fall through to the
     # unknown-instruction handler; the FPU prepass then rewrites them.)
-    instrs_fpu: Set[str] = {
-        "fld", "fild", "fld1", "fldz", "fldpi", "fldl2e", "fldl2t", "fldlg2",
-        "fldln2", "fmov", "fmovpop", "fpop", "fst", "fstp", "fistp",
-        "fstparg", "fstarg",
-        "fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr",
-        "faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp",
-        "fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr",
-        "fchs", "fabs", "fsqrt", "fsin", "fcos", "fxch",
-        "fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp", "ftst",
-        "ficom", "ficomp", "frndint", "fscale", "f2xm1", "fprem", "fprem1", "fpatan",
-        "fyl2x", "fyl2xp1", "fxam",
-    } | {k for k in FPU_UNARY_OPS if k.startswith("m2c_ci_")} | {
-        k for k in FPU_BINARY_OPS if k.startswith("m2c_ci_")
-    }
+    instrs_fpu: Set[str] = (
+        {
+            "fld",
+            "fild",
+            "fld1",
+            "fldz",
+            "fldpi",
+            "fldl2e",
+            "fldl2t",
+            "fldlg2",
+            "fldln2",
+            "fmov",
+            "fmovpop",
+            "fpop",
+            "fst",
+            "fstp",
+            "fistp",
+            "fstparg",
+            "fstarg",
+            "fadd",
+            "fsub",
+            "fsubr",
+            "fmul",
+            "fdiv",
+            "fdivr",
+            "faddp",
+            "fsubp",
+            "fsubrp",
+            "fmulp",
+            "fdivp",
+            "fdivrp",
+            "fiadd",
+            "fisub",
+            "fisubr",
+            "fimul",
+            "fidiv",
+            "fidivr",
+            "fchs",
+            "fabs",
+            "fsqrt",
+            "fsin",
+            "fcos",
+            "fxch",
+            "fcom",
+            "fcomp",
+            "fcompp",
+            "fucom",
+            "fucomp",
+            "fucompp",
+            "ftst",
+            "ficom",
+            "ficomp",
+            "frndint",
+            "fscale",
+            "f2xm1",
+            "fprem",
+            "fprem1",
+            "fpatan",
+            "fyl2x",
+            "fyl2xp1",
+            "fxam",
+        }
+        | {k for k in FPU_UNARY_OPS if k.startswith("m2c_ci_")}
+        | {k for k in FPU_BINARY_OPS if k.startswith("m2c_ci_")}
+    )
     # Non-rep string instructions (single element): mnemonic -> (inputs,
     # outputs, load, store).
     instrs_string_single: Dict[
@@ -2782,12 +2843,10 @@ class X86Arch(Arch):
 
     @classmethod
     def _unsupported_eval(
-        cls, instr_str: str, reason: str = "phase 2b"
+        cls, instr_str: str, reason: str = "no evaluation implemented"
     ) -> Callable[[NodeState, InstrArgs], object]:
         def eval_fn(s: NodeState, a: InstrArgs) -> None:
-            raise DecompFailure(
-                f"x86 instruction evaluation is not implemented yet ({reason}): {instr_str}"
-            )
+            raise DecompFailure(f"unsupported x86 instruction ({reason}): {instr_str}")
 
         return eval_fn
 
@@ -2819,9 +2878,7 @@ class X86Arch(Arch):
         return [sub for sub in traverse_arg(arg) if isinstance(sub, Register)]
 
     @classmethod
-    def _flag_outputs(
-        cls, flags_kind: str
-    ) -> Tuple[List[Register], List[Register]]:
+    def _flag_outputs(cls, flags_kind: str) -> Tuple[List[Register], List[Register]]:
         """(outputs, clobbers) among the flag registers for a flags kind."""
         if flags_kind == FLAGS_NONE:
             return [], []
@@ -2893,7 +2950,9 @@ class X86Arch(Arch):
             dst = args[0]
             if isinstance(dst, Register):
                 return s.set_reg(dst, val)
-            src_reg = args[1] if len(args) > 1 and isinstance(args[1], Register) else None
+            src_reg = (
+                args[1] if len(args) > 1 and isinstance(args[1], Register) else None
+            )
             store = mem_store(a, 0, val, src_reg, store_type)
             if store is not None:
                 # The register argument to store_memory is only used for
@@ -3086,7 +3145,8 @@ class X86Arch(Arch):
                 leftover = {
                     loc: val
                     for loc, val in s.subroutine_args.items()
-                    if loc < arg_base or (arg_bytes >= 0 and loc >= arg_base + arg_bytes)
+                    if loc < arg_base
+                    or (arg_bytes >= 0 and loc >= arg_base + arg_bytes)
                 }
                 selected = {
                     loc - arg_base + 4: val
@@ -3155,7 +3215,11 @@ class X86Arch(Arch):
                         # Plain base + offset; for esp-relative addresses this
                         # takes the address of a stack variable.
                         val = handle_addi_real(
-                            dst, src.base, a.regs[src.base], Literal(src.addend.value), a
+                            dst,
+                            src.base,
+                            a.regs[src.base],
+                            Literal(src.addend.value),
+                            a,
                         )
                     else:
                         addend = address_expr(src.addend, a)
@@ -3247,7 +3311,11 @@ class X86Arch(Arch):
                     zero = s.set_reg(args[0], Literal(0))
                     set_x86_flags_from_result(s, zero, w)
                     return
-                if base == "sbb" and args[0] == args[1] and isinstance(args[0], Register):
+                if (
+                    base == "sbb"
+                    and args[0] == args[1]
+                    and isinstance(args[0], Register)
+                ):
                     # sbb r, r: materializes the borrow as 0 / -1 (see
                     # sbb_expr). The result is independent of r's prior value,
                     # so don't read the operands at all -- r is often dead
@@ -3257,9 +3325,7 @@ class X86Arch(Arch):
                     # borrows), z = !borrow, n = borrow (result is -1), no
                     # signed overflow.
                     borrow = carry_in(a)
-                    val = s.set_reg(
-                        args[0], UnaryOp("-", borrow, type=Type.intish())
-                    )
+                    val = s.set_reg(args[0], UnaryOp("-", borrow, type=Type.intish()))
                     eval_x86_cmp(s, Literal(0), as_intish(borrow), w)
                     return
                 if (
@@ -3306,9 +3372,7 @@ class X86Arch(Arch):
                     # sbb: subtract-with-borrow flags = flags of
                     # lhs - (src + carry-in), a compare (c is a borrow), also
                     # taken before the destination is overwritten.
-                    eval_x86_cmp(
-                        s, lhs, BinaryOp.intptr(srcs[0], "+", carry_in(a)), w
-                    )
+                    eval_x86_cmp(s, lhs, BinaryOp.intptr(srcs[0], "+", carry_in(a)), w)
 
                 def set_alu_flags(result: Expression) -> None:
                     if flags_kind == FLAGS_ADD:
@@ -3389,7 +3453,7 @@ class X86Arch(Arch):
                     # `test ah, mask` after `fnstsw ax`: if eax still holds the
                     # x87 status-word marker, translate the compare directly to
                     # a float condition instead of materializing bit arithmetic
-                    # on the status word (see §3.2).
+                    # on the status word (see FNSTSW_MASK_OPS).
                     raw_eax = a.regs.get_raw(EAX)
                     operands = fnstsw_marker_operands(a.regs[EAX])
                     op = FNSTSW_MASK_OPS.get(args[1].value & 0xFF)
@@ -3462,7 +3526,9 @@ class X86Arch(Arch):
             def eval_rdtsc(s: NodeState, a: InstrArgs) -> None:
                 val = fn_op("M2C_RDTSC", [], Type.u64())
                 s.set_reg(EAX, val)
-                s.set_reg(EDX, fn_op("SECOND_REG", [val], Type.reg32(likely_float=False)))
+                s.set_reg(
+                    EDX, fn_op("SECOND_REG", [val], Type.reg32(likely_float=False))
+                )
 
             eval_fn = eval_rdtsc
         elif base in cls.instrs_string_single and not args:
@@ -3483,9 +3549,13 @@ class X86Arch(Arch):
                             value = as_type(value, tp, silent=True, unify=False)
                     else:
                         value = deref(a.regs[ESI], a.regs, a.stack_info, size=elem)
-                    dest = deref(a.regs[EDI], a.regs, a.stack_info, size=elem, store=True)
+                    dest = deref(
+                        a.regs[EDI], a.regs, a.stack_info, size=elem, store=True
+                    )
                     dest.type.unify(tp)
-                    s.write_statement(StoreStmt(source=as_type(value, tp, silent=False), dest=dest))
+                    s.write_statement(
+                        StoreStmt(source=as_type(value, tp, silent=False), dest=dest)
+                    )
                     s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", Literal(elem)))
                     if op == "movs":
                         s.set_reg(ESI, BinaryOp.intptr(a.regs[ESI], "+", Literal(elem)))
@@ -3629,9 +3699,7 @@ class X86Arch(Arch):
                 if op == "movs":
                     # rep movsX: copy ecx elements from [esi] to [edi].
                     s.write_statement(
-                        void_fn_op(
-                            "M2C_MEMCPY", [a.regs[EDI], a.regs[ESI], count]
-                        )
+                        void_fn_op("M2C_MEMCPY", [a.regs[EDI], a.regs[ESI], count])
                     )
                     s.set_reg(ESI, BinaryOp.intptr(a.regs[ESI], "+", count))
                     s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", count))
@@ -3647,7 +3715,9 @@ class X86Arch(Arch):
                         elem_size
                     ]
                     s.write_statement(
-                        void_fn_op(fn_name, [a.regs[EDI], value, as_intish(a.regs[ECX])])
+                        void_fn_op(
+                            fn_name, [a.regs[EDI], value, as_intish(a.regs[ECX])]
+                        )
                     )
                     s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", count))
                     s.set_reg(ECX, Literal(0))
@@ -3675,9 +3745,7 @@ class X86Arch(Arch):
                         )
                         length = BinaryOp.intptr(found, "-", a.regs[EDI])
                     advance = BinaryOp.int(length, "+", Literal(1))
-                    s.set_reg(
-                        ECX, BinaryOp.int(a.regs[ECX], "-", advance)
-                    )
+                    s.set_reg(ECX, BinaryOp.int(a.regs[ECX], "-", advance))
                     s.set_reg(EDI, BinaryOp.intptr(a.regs[EDI], "+", advance))
                     s.set_reg(Register("z"), Literal(1, type=Type.boolean()))
                 else:
@@ -3766,8 +3834,7 @@ class X86Arch(Arch):
 
             def fail(s: NodeState, a: InstrArgs) -> None:
                 raise DecompFailure(
-                    f"x87 instruction evaluation is not implemented yet "
-                    f"({reason}): {instr_str}"
+                    f"unsupported x87 instruction ({reason}): {instr_str}"
                 )
 
             return fail
@@ -3795,7 +3862,7 @@ class X86Arch(Arch):
                 eval_fn = eval_fild
 
         # --- Constants: 0/1 as numeric literals, pi/log constants as named
-        # macros so matching source can #define them (spec Q5). ---
+        # macros so matching source can #define them. ---
         elif base in FPU_CONSTANTS:
             dst = args[0]
             assert isinstance(dst, Register)
@@ -3825,7 +3892,7 @@ class X86Arch(Arch):
             eval_fn = eval_fmov
 
         # --- Float call arguments: fstp/fst into the next call's argument
-        # window, routed to subroutine_args like a rewritten push (§4.5). ---
+        # window, routed to subroutine_args like a rewritten push. ---
         elif base in ("fstparg", "fstarg"):
             assert isinstance(args[0], AsmLiteral) and isinstance(args[1], Register)
             arg_loc = args[0].value
@@ -3864,9 +3931,11 @@ class X86Arch(Arch):
             add_operand_inputs(args[0])
             if src not in inputs:
                 inputs.append(src)
-            stack_loc = cls._stack_location(args[0]) if isinstance(
-                args[0], AsmAddressMode
-            ) else None
+            stack_loc = (
+                cls._stack_location(args[0])
+                if isinstance(args[0], AsmAddressMode)
+                else None
+            )
             if stack_loc is not None:
                 outputs.append(stack_loc)
             is_store = True
@@ -3901,8 +3970,8 @@ class X86Arch(Arch):
 
             def eval_arith(s: NodeState, a: InstrArgs) -> None:
                 lhs = a.regs[dst]
-                rhs = a.regs[src] if isinstance(src, Register) else mem_load(
-                    a, 1, ftype
+                rhs = (
+                    a.regs[src] if isinstance(src, Register) else mem_load(a, 1, ftype)
                 )
                 s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
 
@@ -3955,8 +4024,17 @@ class X86Arch(Arch):
 
         # --- Compares: store a symbolic status-word marker into `fsw`, killing
         # any popped operands. The fnstsw/test-ah idiom below consumes it. ---
-        elif base in ("fcom", "fcomp", "fucom", "fucomp", "fcompp", "fucompp",
-                      "ftst", "ficom", "ficomp"):
+        elif base in (
+            "fcom",
+            "fcomp",
+            "fucom",
+            "fucomp",
+            "fcompp",
+            "fucompp",
+            "ftst",
+            "ficom",
+            "ficomp",
+        ):
             top = args[0]
             assert isinstance(top, Register)
             inputs = [top]
@@ -4012,17 +4090,19 @@ class X86Arch(Arch):
             eval_fn = eval_fnstsw
 
         # --- fistp: store the top as an integer (truncating cast), then pop.
-        # The rounding mode is assumed fixed globally (see spec §5.2), so a C
-        # truncation cast matches the ambient chop mode. ---
+        # The rounding mode is assumed fixed globally, so a C truncation cast
+        # matches the ambient chop mode. ---
         elif base == "fistp":
             src = args[1]
             assert isinstance(src, Register)
             add_operand_inputs(args[0])
             if src not in inputs:
                 inputs.append(src)
-            stack_loc = cls._stack_location(args[0]) if isinstance(
-                args[0], AsmAddressMode
-            ) else None
+            stack_loc = (
+                cls._stack_location(args[0])
+                if isinstance(args[0], AsmAddressMode)
+                else None
+            )
             if stack_loc is not None:
                 outputs.append(stack_loc)
             is_store = True
@@ -4056,24 +4136,24 @@ class X86Arch(Arch):
 
             eval_fn = eval_iarith
 
-        # --- Control word: kept as visible intrinsics (see spec §5.2). The
-        # rounding/precision mode is not modeled, so surface the load/store so
-        # a human sees the mode changes rather than pretending they vanish. ---
+        # --- Control word: kept as visible intrinsics. The rounding/precision
+        # mode is not modeled, so surface the load/store so a human sees the
+        # mode changes rather than pretending they vanish. ---
         elif base == "fldcw":
             add_operand_inputs(args[0])
             is_load = True
 
             def eval_fldcw(s: NodeState, a: InstrArgs) -> None:
-                s.write_statement(
-                    void_fn_op("M2C_FLDCW", [mem_load(a, 0, Type.u16())])
-                )
+                s.write_statement(void_fn_op("M2C_FLDCW", [mem_load(a, 0, Type.u16())]))
 
             eval_fn = eval_fldcw
         elif base in ("fstcw", "fnstcw"):
             add_operand_inputs(args[0])
-            stack_loc = cls._stack_location(args[0]) if isinstance(
-                args[0], AsmAddressMode
-            ) else None
+            stack_loc = (
+                cls._stack_location(args[0])
+                if isinstance(args[0], AsmAddressMode)
+                else None
+            )
             if stack_loc is not None:
                 outputs.append(stack_loc)
             is_store = True

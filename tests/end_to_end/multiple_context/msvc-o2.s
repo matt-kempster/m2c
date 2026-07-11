@@ -18,4 +18,3 @@ test:
 .section .rdata
 _real_00000000:
 	.float 0.0
-

@@ -38,4 +38,3 @@ $L105:
 	.long $L100
 	.long $L99
 	.long $L99
-

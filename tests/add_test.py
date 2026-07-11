@@ -250,9 +250,7 @@ def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
     logger.info(f"Successfully wrote disassembly to {out_file}.")
 
 
-def add_test_from_file(
-    orig_file: Path, compilers: List[Tuple[str, Compiler]]
-) -> None:
+def add_test_from_file(orig_file: Path, compilers: List[Tuple[str, Compiler]]) -> None:
     test_dir = orig_file.parent
     for asm_filename, compiler in compilers:
         asm_file_path = test_dir / (asm_filename + ".s")

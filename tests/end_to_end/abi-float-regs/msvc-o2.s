@@ -28,4 +28,3 @@ test:
 .section .rdata
 _real_3ff0000000000000:
 	.double 1.0
-

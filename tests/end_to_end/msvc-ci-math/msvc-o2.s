@@ -9,4 +9,3 @@ test:
 /* 00000017 0017  E8 00 00 00 00 */	call __CIfmod
 /* 0000001C 001C  DE C1 */	faddp st(1)
 /* 0000001E 001E  C3 */	ret
-

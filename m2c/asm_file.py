@@ -21,13 +21,12 @@ from typing import (
 )
 
 from .error import DecompFailure
-from .options import CodingStyle, Options, Target
+from .options import CodingStyle, Options
 from .asm_instruction import (
     Argument,
     AsmGlobalSymbol,
     AsmLiteral,
     AsmState,
-    JumpTarget,
     RegFormatter,
     parse_arg,
     traverse_arg,
@@ -160,7 +159,8 @@ class AsmData:
     values: Dict[str, AsmDataEntry] = field(default_factory=dict)
     mentioned_labels: Set[str] = field(default_factory=set)
     # Symbol -> number of argument bytes the symbol pops on return (stdcall).
-    # Populated from Ghidra-exported `.set sym, "name@N"` decorations; used by
+    # Populated from disassembler-exported `.set sym, "name@N"` decorations
+    # (e.g. from Ghidra); used by
     # the x86 backend to attribute callee stack cleanup.
     stdcall_arg_bytes: Dict[str, int] = field(default_factory=dict)
 
@@ -504,17 +504,9 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
-    # The optional leading underscore accounts for Ghidra exports on platforms
-    # with a symbol prefix (e.g. x86), where local labels look like
-    # _LAB_00401234 or _switchD_0040100d_caseD_1.
     re_local_label = re.compile(
-        "_?(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_)|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
+        "loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
     )
-    # MSVC emits numbered local code labels ($L95) into the COFF symbol
-    # table; they mark jump/switch-case targets and jump tables within a
-    # function, never function starts. x86-only so that other platforms'
-    # (rare) $-prefixed symbols keep starting functions.
-    re_msvc_local_label = re.compile(r"\$L\d+$")
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
     T = TypeVar("T")
@@ -546,14 +538,14 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         return struct.pack(endian + fmt, val)
 
     def ensure_data_label() -> None:
-        # Ghidra's x86 exports can place data (jump tables in particular)
-        # directly after code with no label of its own; without one the data
+        # x86 disassembler exports can place data (jump tables in
+        # particular) directly after code with no label of its own; without one the data
         # would be dropped. Attach it to a synthetic label so that jump table
         # recovery can find it.
         if (
             asm_file.current_data is None
             and curr_section == ".text"
-            and arch.arch == Target.ArchEnum.X86
+            and arch.synthesize_text_data_labels
         ):
             name = f"__m2c_textdata_{len(asm_file.asm_data.values)}"
             asm_file.new_data_label(name, is_readonly=True, is_text=True)
@@ -617,10 +609,15 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         asm_file.new_label(label)
                 elif (
                     re_local_glabel.match(label)
-                    or (kind != LabelKind.GLOBAL and re_local_label.match(label))
                     or (
-                        arch.arch == Target.ArchEnum.X86
-                        and re_msvc_local_label.match(label)
+                        kind != LabelKind.GLOBAL
+                        and (
+                            re_local_label.match(label)
+                            or (
+                                arch.re_arch_local_label is not None
+                                and arch.re_arch_local_label.match(label)
+                            )
+                        )
                     )
                 ) and asm_file.current_function is not None:
                     # Don't treat labels as new functions if they follow a
@@ -741,19 +738,19 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        # Ghidra exports symbol-name decorations as
-                        # `.set mangled, "original"`. When the original name
+                        # Disassembler exports (e.g. Ghidra's) write
+                        # symbol-name decorations as `.set mangled, "original"`. When the original name
                         # carries an `@N` stdcall suffix (`_exit@4`,
                         # `__imp__MessageBoxA@16`), N is the number of argument
                         # bytes the symbol pops on return; record it so the
                         # x86 backend can attribute callee stack cleanup. These
-                        # Ghidra/x86-isms (the `@N` decoration and the tolerance
-                        # of non-integer values below) are gated to x86, so that
-                        # other architectures keep the strict parse failure for
-                        # an unsupported `.set` (L1).
-                        is_x86 = arch.arch == Target.ArchEnum.X86
+                        # Dump-isms (the `@N` decoration and the tolerance
+                        # of non-integer values below) are behind an arch
+                        # capability, so that other architectures keep the
+                        # strict parse failure for an unsupported `.set`.
+                        lenient = arch.lenient_set_directives
                         decorated = (
-                            re.fullmatch(r"(.*)@(\d+)", args[1]) if is_x86 else None
+                            re.fullmatch(r"(.*)@(\d+)", args[1]) if lenient else None
                         )
                         if decorated is not None:
                             arg_bytes = int(decorated.group(2))
@@ -768,10 +765,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             try:
                                 asm_state.defines[args[0]] = parse_int(args[1])
                             except DecompFailure:
-                                if not is_x86:
+                                if not lenient:
                                     # Other architectures keep the hard failure.
                                     raise
-                                # Ghidra emits .set directives with non-integer
+                                # x86 disassembler exports contain .set directives with non-integer
                                 # values (e.g. equating a label with an
                                 # expression like "table[4]+3"); ignore them.
                                 add_warning(
@@ -801,14 +798,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif args_str.strip() == "32":
                         asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
-                    # GNU as treats .long as a 4-byte word, and Ghidra's x86
-                    # exports emit jump tables with it. Other arches have
-                    # historically ignored .long, and handling it would change
-                    # existing outputs, so keep it x86-only for now.
-                    word_directives: Tuple[str, ...] = (".word", ".gpword", ".4byte")
-                    if arch.arch == Target.ArchEnum.X86:
-                        word_directives += (".long",)
-                    if directive in word_directives:
+                    if directive in arch.word_directives:
                         args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 4)
@@ -933,77 +923,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         print("\n".join(warnings))
         print("*/")
 
-    # This normalization is specific to Ghidra-style x86 exports, where a named
-    # code address in the middle of a function is indistinguishable from a new
-    # function's entry. Other architectures' inputs may legitimately contain
-    # conditional branches to another symbol (hand-authored asm, linker labels,
-    # tail-call-like control flow), which must not be silently fused (M2).
-    if arch.arch == Target.ArchEnum.X86:
-        merge_functions_with_cross_jumps(asm_file)
+    arch.postprocess_asm_file(asm_file)
 
     return asm_file
-
-
-def merge_functions_with_cross_jumps(asm_file: AsmFile) -> None:
-    """Rejoin functions that were split apart by mid-function global labels.
-    x86/Ghidra-only; see the gated call site in parse_file.
-
-    Disassemblers let users name arbitrary code addresses, and an exported
-    label in the middle of a function is indistinguishable by name from the
-    start of a new one, so parsing splits the function at that point. The
-    split becomes evident when one chunk branches into another: a branch to a
-    label inside a different chunk, or a conditional branch to another chunk's
-    entry (compilers do not emit conditional tail calls), can only happen if
-    the chunks are really one function. Merge the whole range of chunks
-    between such branches back together, turning the intermediate entry names
-    into plain labels."""
-    functions = asm_file.functions
-
-    def build_label_owner() -> Dict[str, int]:
-        return {
-            name: idx
-            for idx, fn in enumerate(functions)
-            for part in fn.body
-            if isinstance(part, Label)
-            for name in part.names
-        }
-
-    while len(functions) > 1:
-        label_owner = build_label_owner()
-        entry_index = {fn.name: idx for idx, fn in enumerate(functions)}
-        merge_range: Optional[Tuple[int, int]] = None
-        for i, fn in enumerate(functions):
-            lo = hi = i
-            for part in fn.body:
-                if not isinstance(part, Instruction) or not isinstance(
-                    part.jump_target, JumpTarget
-                ):
-                    continue
-                target = part.jump_target.target
-                j = label_owner.get(target)
-                if j is None and part.is_conditional:
-                    j = entry_index.get(target)
-                if j is not None and j != i:
-                    lo = min(lo, j)
-                    hi = max(hi, j)
-            if (lo, hi) != (i, i):
-                merge_range = (lo, hi)
-                break
-        if merge_range is None:
-            return
-        lo, hi = merge_range
-        base = functions[lo]
-        for fn in functions[lo + 1 : hi + 1]:
-            # The absorbed chunk's entry name becomes a plain label. Avoid
-            # creating consecutive Labels: fold the name into the chunk's
-            # leading label if it has one.
-            body = fn.body
-            if body and isinstance(body[0], Label):
-                body = [Label([fn.name] + body[0].names)] + body[1:]
-            else:
-                body = [Label([fn.name])] + body
-            if base.body and isinstance(base.body[-1], Label) and isinstance(body[0], Label):
-                base.body[-1:] = [Label(base.body[-1].names + body[0].names)]
-                body = body[1:]
-            base.body.extend(body)
-        del functions[lo + 1 : hi + 1]

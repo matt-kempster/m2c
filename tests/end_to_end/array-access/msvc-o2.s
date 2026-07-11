@@ -20,4 +20,3 @@ test:
 /* 00000049 0049  A3 00 00 00 00 */	mov dword ptr [_glob], eax
 /* 0000004E 004E  5E */	pop esi
 /* 0000004F 004F  C3 */	ret
-

@@ -19,4 +19,3 @@ test:
 .section .rdata
 _real_40a00000:
 	.float 5.0
-

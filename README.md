@@ -1,5 +1,5 @@
 # `m2c` Decompiler
-`m2c` ("*Machine code to C*") is a decompiler for 32-bit MIPS, ARM and PowerPC assembly that produces C code, with partial support for C++.
+`m2c` ("*Machine code to C*") is a decompiler for 32-bit MIPS, ARM, PowerPC and x86 assembly that produces C code, with partial support for C++.
 
 This project, initially named `mips_to_c`, has the goal to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
 It originally targeted popular compilers of the late 1990's, but it also works well with newer compilers or hand-written assembly.
@@ -9,6 +9,7 @@ Its focus on finding "matching" C source differentiates it from other decompilat
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
 
 The input is expected to match the GNU `as` assembly format, produced by tools like [`spimdisasm`](https://github.com/Decompollaborate/spimdisasm).
+For x86, the input is Intel-syntax assembly as exported by Ghidra or IDA (`byte ptr [esp + 0xc]`-style operands), targeting 32-bit MSVC-compiled code.
 See the `tests/` directory for some example input and output.
 
 [An online version is also available](https://simonsoftware.se/other/m2c.html).
@@ -25,7 +26,7 @@ Context files provided with `--context` are parsed and cached, so subsequent run
 
 ### Target Architecture / Compiler / Language
 
-`m2c` has support for MIPS, ARM and PowerPC assembly.
+`m2c` has support for MIPS, ARM, PowerPC and x86 assembly.
 It also has some compiler-specific heuristics and language-specific behavior.
 For example, it can demangle C++ symbol names as used by CodeWarrior.
 
@@ -39,11 +40,13 @@ The following platforms are supported:
 - `ppc`: PowerPC (big endian)
 - `arm`: ARM (little endian)
 - `gba`: ARM (with APCS, little endian)
+- `x86`: x86 (32-bit, cdecl/stdcall)
 
 The following compilers are supported:
 - `ido`: Integrated Development Option (MIPS compiler from SGI)
 - `gcc`: GNU C Compiler
 - `mwcc`: MetroWerks CodeWarrior toolchain (`mwccecpp.exe`)
+- `msvc`: Microsoft Visual C++ (x86)
 
 Supported languages are `c` and `c++`.
 
@@ -394,6 +397,9 @@ git add tests/end_to_end/my-new-test
 
 For PowerPC, the `MWCC_CC` environment variable should be set to point to a PPC cc binary (mwcceppc.exe),
 and on non-Windows, `WINE` set to point to wine or equivalent ([wibo](https://github.com/decompals/wibo) also works).
+
+For x86, the `MSVC_CL` environment variable should be set to point to an MSVC `CL.EXE`, with `WINE` set as above on non-Windows.
+The generated `msvc-o2.s` files are disassembled from the compiled object files with `tests/msvc_disasm.py`.
 
 ### Installation as Python Package
 

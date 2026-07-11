@@ -52,4 +52,3 @@ _real_40b570a4:
 .section .bss
 _D_410170:
 	.space 0xC
-

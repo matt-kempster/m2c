@@ -308,4 +308,3 @@ $L110:
 	.byte 0x08
 	.byte 0x08
 	.byte 0x03
-

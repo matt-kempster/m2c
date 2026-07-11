@@ -126,6 +126,12 @@ class Arch(ArchFlowGraph, ArchC):
         overrides it (see X86Arch)."""
         return False
 
+    def load_context(self, typemap: TypeMap) -> None:
+        """Hook called once after the user context is parsed, for
+        architectures that mine it for ABI facts (x86 reads stdcall
+        stack-cleanup byte counts and x87 float-return stack deltas from
+        context prototypes). Default: no-op."""
+
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
 
@@ -2132,7 +2138,10 @@ class SwitchControl:
         # value selects the jump table entry (`movzx r, byte [x + map];
         # jmp [r*4 + table]`). Recognize `*(&map + x)` as the control and
         # compose the two tables, switching on `x` directly: in-range value
-        # `x = i` selects jump table entry `map[i]`.
+        # `x = i` selects jump table entry `map[i]`. This is deliberately not
+        # arch-gated: the structure is specific enough that a match on any
+        # architecture means the same two-level lowering, though in practice
+        # only MSVC/x86 input produces it (no non-x86 test output changes).
         case_map: Optional[bytes] = None
         map_expr = early_unwrap_ints(control_expr)
         if (
@@ -2177,9 +2186,7 @@ class SwitchControl:
             if isinstance(offset_lit, Literal):
                 control_expr = uw_control_expr.left
                 offset = (
-                    -offset_lit.value
-                    if uw_control_expr.op == "+"
-                    else offset_lit.value
+                    -offset_lit.value if uw_control_expr.op == "+" else offset_lit.value
                 )
 
         # Check that it is really a jump table
@@ -2188,7 +2195,9 @@ class SwitchControl:
         if jump_table.asm_data_entry is None or not jump_table.asm_data_entry.is_jtbl:
             return error_expr
 
-        return SwitchControl(control_expr, num_cases, jump_table, offset, case_map=case_map)
+        return SwitchControl(
+            control_expr, num_cases, jump_table, offset, case_map=case_map
+        )
 
 
 @dataclass
@@ -2619,8 +2628,9 @@ class InstrArgs:
         reg = self.reg_ref(index)
         if self.stack_info.global_info.arch.arch == Target.ArchEnum.X86:
             raise DecompFailure(
-                "x86 does not use paired registers for doubles; "
-                "x87 FPU support is not implemented yet"
+                "x86 does not use paired registers for doubles; they live on "
+                "the x87 stack, which the FPU prepass rewrites before "
+                "translation, so dreg should be unreachable here"
             )
         if (
             self.stack_info.global_info.arch.arch != Target.ArchEnum.ARM
