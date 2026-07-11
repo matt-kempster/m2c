@@ -21,6 +21,18 @@ already frame-resolved and every `call` already carries its argument-window
 annotation. It emits fictive instructions carrying explicit virtual-register
 arguments (e.g. `fadd $f1, $f0`, `fstp.s [m], $f2`); their semantics live in
 `X86Arch._parse_fpu`.
+
+Control-flow merges require equal depths because the same flat register must
+name the same live value on every incoming edge. A mismatch is therefore a
+call-delta inference fault, not a phi opportunity. Direct-call deltas are keyed
+by callee symbol so all sites agree; indirect calls are keyed by site because
+unrelated function pointers need not share an ABI.
+
+`X87StackError.index` attributes a fault to the instruction where it surfaces,
+while `kind` distinguishes underflow, overflow, and merge conflicts. Inference
+uses breadth-first search so assignments with the fewest changes are tried
+first. Competing guesses remain separate queue states, and context-derived
+deltas override inferred values when they conflict.
 """
 
 from __future__ import annotations
@@ -273,7 +285,7 @@ def _is_ftol_shaped(body: List[BodyPart], index: int) -> bool:
 
 
 def _candidate_moves(
-    body: List[BodyPart], err: X87StackError, call_deltas: Dict[str, int]
+    body: List[BodyPart], fault: X87StackError, call_deltas: Dict[str, int]
 ) -> List[Tuple[str, int]]:
     """Delta adjustments worth exploring to repair a dataflow failure: the
     calls nearest the fault, each toward the failure-appropriate sign first
@@ -282,8 +294,8 @@ def _candidate_moves(
     ftol-shaped call anywhere in the body toward -1. Feeds a BFS, so a wrong
     guess is explored in parallel with the right one rather than committed."""
     keyed = [(i, _call_key(body, i)) for i in range(len(body)) if _call_key(body, i)]
-    keyed.sort(key=lambda p: (abs(p[0] - err.index), p[0]))
-    signs = [-1, 1] if err.kind == "overflow" else [1, -1]
+    keyed.sort(key=lambda p: (abs(p[0] - fault.index), p[0]))
+    signs = [-1, 1] if fault.kind == "overflow" else [1, -1]
     moves: List[Tuple[str, int]] = []
 
     def offer(key: str, delta: int) -> None:
@@ -298,6 +310,37 @@ def _candidate_moves(
         if key is not None and _is_ftol_shaped(body, i):
             offer(key, -1)
     return moves
+
+
+def infer_call_deltas(
+    body: List[BodyPart],
+    seed: Dict[str, int],
+    arch: ArchAsm,
+    asm_data: AsmData,
+    labels: Set[str],
+) -> Dict[str, int]:
+    """Find the smallest call-delta assignment with consistent x87 dataflow."""
+    queue: List[Dict[str, int]] = [seed]
+    visited: Set[FrozenSet[Tuple[str, int]]] = {frozenset(seed.items())}
+    last_fault: Optional[X87StackError] = None
+    states_tried = 0
+    while queue and states_tried < MAX_FPU_INFER_STATES:
+        call_deltas = queue.pop(0)
+        states_tried += 1
+        try:
+            rewrite_fpu_ops(body, arch, asm_data, labels, call_deltas)
+            return call_deltas
+        except X87StackError as fault:
+            last_fault = fault
+            for sym, delta in _candidate_moves(body, fault, call_deltas):
+                nxt = dict(call_deltas)
+                nxt[sym] = delta
+                key = frozenset(nxt.items())
+                if key not in visited:
+                    visited.add(key)
+                    queue.append(nxt)
+    assert last_fault is not None
+    raise last_fault
 
 
 class X86FpuRewritePattern(AsmPattern):
@@ -336,33 +379,21 @@ class X86FpuRewritePattern(AsmPattern):
             )
         ):
             return None
-        queue: List[Dict[str, int]] = [seed]
-        visited: Set[FrozenSet[Tuple[str, int]]] = {frozenset(seed.items())}
-        last_err: Optional[X87StackError] = None
-        states_tried = 0
-        while queue and states_tried < MAX_FPU_INFER_STATES:
-            call_deltas = queue.pop(0)
-            states_tried += 1
-            try:
-                new_body = rewrite_fpu_ops(
-                    matcher.input,
-                    matcher.arch,
-                    matcher.asm_data,
-                    matcher.labels,
-                    call_deltas,
-                )
-                return Replacement(new_body, len(matcher.input), clobbers=[])
-            except X87StackError as e:
-                last_err = e
-                for sym, delta in _candidate_moves(matcher.input, e, call_deltas):
-                    nxt = dict(call_deltas)
-                    nxt[sym] = delta
-                    key = frozenset(nxt.items())
-                    if key not in visited:
-                        visited.add(key)
-                        queue.append(nxt)
-        assert last_err is not None
-        raise last_err
+        call_deltas = infer_call_deltas(
+            matcher.input,
+            seed,
+            matcher.arch,
+            matcher.asm_data,
+            matcher.labels,
+        )
+        new_body = rewrite_fpu_ops(
+            matcher.input,
+            matcher.arch,
+            matcher.asm_data,
+            matcher.labels,
+            call_deltas,
+        )
+        return Replacement(new_body, len(matcher.input), clobbers=[])
 
 
 def rewrite_fpu_ops(
