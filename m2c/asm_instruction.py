@@ -200,11 +200,6 @@ class ArchAsmParsing(abc.ABC):
     # (_LAB_00401234, _switchD_..._caseD_...).
     re_arch_local_label: Optional[Pattern[str]] = None
 
-    # Capability hook: attach a synthetic label to unlabeled data appearing
-    # in .text (disassembler exports place jump tables directly after code),
-    # so the data is kept instead of dropped. Only x86 sets this.
-    synthesize_text_data_labels: bool = False
-
     def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
         """Hook that allows an arch to rewrite an instruction line before its
         arguments are parsed. `mnemonic` is already lowercased. Used by x86 to
@@ -376,9 +371,7 @@ def parse_intel_address_mode(
             flatten(arg.lhs)
             flatten(arg.rhs)
         elif (
-            isinstance(arg, BinOp)
-            and arg.op == "-"
-            and isinstance(arg.rhs, AsmLiteral)
+            isinstance(arg, BinOp) and arg.op == "-" and isinstance(arg.rhs, AsmLiteral)
         ):
             flatten(arg.lhs)
             terms.append(AsmLiteral(-arg.rhs.value))

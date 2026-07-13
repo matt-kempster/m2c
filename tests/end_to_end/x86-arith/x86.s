@@ -1,4 +1,4 @@
-# Arithmetic: add/sub/neg, immediate imul (Ghidra prints the imul r,r/m,imm
+# Arithmetic: add/sub/neg, immediate imul (Intel's imul r,r/m,imm
 # encoding with three operands), cdq + idiv (/ and %), and unsigned mul
 # through edx:eax. Real MSVC6 /O1 output: each of / and % gets its own
 # cdq + idiv pair (MSVC never reuses one idiv for both), *0x8c stays an

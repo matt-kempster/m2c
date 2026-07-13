@@ -178,9 +178,8 @@ class ArchAsm(ArchAsmParsing):
     saved_regs: List[Register]
 
     def postprocess_asm_file(self, asm_file: AsmFile) -> None:
-        """Hook called once after a file is fully parsed, for arch-specific
-        whole-file normalization (x86 rejoins functions that disassembler
-        exports split at mid-function named labels). Default: no-op."""
+        """Hook called once after a file is fully parsed for architecture-specific
+        whole-file normalization. Default: no-op."""
 
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]: ...

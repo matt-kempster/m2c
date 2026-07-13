@@ -5,9 +5,10 @@ from pathlib import Path
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from m2c.asm_pattern import BodyPart
+from m2c.asm_pattern import AsmMatcher, BodyPart
 
-from m2c.arch_x86 import X86Arch
+from m2c.arch_x86 import X86Arch, X86RawJumpTablePattern
+from m2c.asm_file import AsmData
 from m2c.error import DecompFailure
 from m2c.asm_instruction import (
     AsmAddressMode,
@@ -125,7 +126,7 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(asm.args, [AsmGlobalSymbol("_FUN_0040e440")])
 
     def test_branch_distance_hints(self) -> None:
-        # IDA/MASM-style branch-distance keywords are pure syntax.
+        # Intel/MASM-style branch-distance keywords are pure syntax.
         asm, _ = self.parse_asm("jl short loc_685729")
         self.assertEqual(asm.mnemonic, "jl")
         self.assertEqual(asm.args, [AsmGlobalSymbol("loc_685729")])
@@ -489,6 +490,17 @@ class TestX86Parsing(unittest.TestCase):
         self.assertTrue(instr.is_load)
         self.assertEqual(instr.jump_target, Register("eax"))
         self.assertEqual(instr.inputs, [Register("eax")])
+
+    def test_raw_jump_table_detection_does_not_require_labels(self) -> None:
+        instr = self.parse_instruction("JMP dword ptr [EAX*0x4 + 0x401040]")
+        matcher = AsmMatcher(self.arch, AsmData(), [instr], set(), index=0)
+        with self.assertRaisesRegex(DecompFailure, "raw-address jump table"):
+            X86RawJumpTablePattern().match(matcher)
+
+    def test_absolute_indirect_tail_call_is_not_a_jump_table(self) -> None:
+        instr = self.parse_instruction("JMP dword ptr [0x401040]")
+        matcher = AsmMatcher(self.arch, AsmData(), [instr], set(), index=0)
+        self.assertIsNone(X86RawJumpTablePattern().match(matcher))
 
     def test_conditional_jumps(self) -> None:
         # x86 condition codes map onto ARM-style flag pseudo-registers.

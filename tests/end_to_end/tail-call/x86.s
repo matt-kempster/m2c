@@ -1,6 +1,6 @@
 # A tail call: `jmp` to a label outside the function becomes a
 # return-with-call. The `_LAB_...` label name keeps the fall-through block in
-# the function (Ghidra x86 export convention).
+# the function (a common assembly-export convention).
 test:
     MOV EAX, dword ptr [ESP + 0x4]
     TEST EAX, EAX

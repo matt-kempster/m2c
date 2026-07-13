@@ -1,5 +1,4 @@
-"""i386 (x86) architecture support, for disassembler-exported (Ghidra,
-IDA) Intel-syntax asm.
+"""i386 (x86) architecture support for Intel-syntax asm.
 
 The module provides registration, parsing, and structural instruction
 information (inputs/outputs/jump targets), plus semantics (eval_fns) for the
@@ -192,7 +191,7 @@ PTR_WIDTHS: Dict[str, int] = {"byte": 1, "word": 2, "dword": 4, "qword": 8}
 
 RE_PTR = re.compile(r"\b(byte|word|dword|qword)\s+ptr\s+", re.IGNORECASE)
 RE_OFFSET = re.compile(r"\boffset\s+", re.IGNORECASE)
-# Branch-distance operand hints (IDA/MASM style: `jmp short loc_1`,
+# Branch-distance operand hints (Intel/MASM style: `jmp short loc_1`,
 # `call near ptr foo`). Pure syntax; the target that follows is all we need.
 RE_DISTANCE = re.compile(r"\b(short|near\s+ptr|far\s+ptr)\s+", re.IGNORECASE)
 RE_ST_REG = re.compile(r"\bst\((\d)\)", re.IGNORECASE)
@@ -250,8 +249,9 @@ def mem_target(
     accesses)."""
     arg = a.raw_arg(index)
     if not isinstance(arg, AsmAddressMode):
-        # IDA writes a direct memory operand without brackets when it is a
-        # bare symbol (`fld _FastAtanTable+0x4004`, `fadd _real`). This
+        # Some Intel-syntax inputs write a direct memory operand without
+        # brackets when it is a bare symbol (`fld _FastAtanTable+0x4004`,
+        # `fadd _real`). This
         # function is only ever called on known memory operands, so such an
         # operand is an absolute [symbol (+ offset)] access.
         ref = parse_symbol_ref(arg)
@@ -609,75 +609,6 @@ def callee_cleanup_bytes(
     return None
 
 
-def merge_functions_with_cross_jumps(asm_file: AsmFile) -> None:
-    """Rejoin functions that were split apart by mid-function global labels
-    (X86Arch.postprocess_asm_file).
-
-    Disassemblers let users name arbitrary code addresses, and an exported
-    label in the middle of a function is indistinguishable by name from the
-    start of a new one, so parsing splits the function at that point. The
-    split becomes evident when one chunk branches into another: a branch to a
-    label inside a different chunk, or a conditional branch to another chunk's
-    entry (compilers do not emit conditional tail calls), can only happen if
-    the chunks are really one function. Merge the whole range of chunks
-    between such branches back together, turning the intermediate entry names
-    into plain labels."""
-    functions = asm_file.functions
-
-    def build_label_owner() -> Dict[str, int]:
-        return {
-            name: idx
-            for idx, fn in enumerate(functions)
-            for part in fn.body
-            if isinstance(part, Label)
-            for name in part.names
-        }
-
-    while len(functions) > 1:
-        label_owner = build_label_owner()
-        entry_index = {fn.name: idx for idx, fn in enumerate(functions)}
-        merge_range: Optional[Tuple[int, int]] = None
-        for i, fn in enumerate(functions):
-            lo = hi = i
-            for part in fn.body:
-                if not isinstance(part, Instruction) or not isinstance(
-                    part.jump_target, JumpTarget
-                ):
-                    continue
-                target = part.jump_target.target
-                j = label_owner.get(target)
-                if j is None and part.is_conditional:
-                    j = entry_index.get(target)
-                if j is not None and j != i:
-                    lo = min(lo, j)
-                    hi = max(hi, j)
-            if (lo, hi) != (i, i):
-                merge_range = (lo, hi)
-                break
-        if merge_range is None:
-            return
-        lo, hi = merge_range
-        base = functions[lo]
-        for fn in functions[lo + 1 : hi + 1]:
-            # The absorbed chunk's entry name becomes a plain label. Avoid
-            # creating consecutive Labels: fold the name into the chunk's
-            # leading label if it has one.
-            body = fn.body
-            if body and isinstance(body[0], Label):
-                body = [Label([fn.name] + body[0].names)] + body[1:]
-            else:
-                body = [Label([fn.name])] + body
-            if (
-                base.body
-                and isinstance(base.body[-1], Label)
-                and isinstance(body[0], Label)
-            ):
-                base.body[-1:] = [Label(base.body[-1].names + body[0].names)]
-                body = body[1:]
-            base.body.extend(body)
-        del functions[lo + 1 : hi + 1]
-
-
 # The ESP-delta dataflow state at one program point: the (nonpositive) offset
 # of esp relative to its value at function entry, plus the offset ebp holds
 # when it is a copy of esp (`push ebp; mov ebp, esp` frames), or None if ebp
@@ -924,12 +855,8 @@ class X86SehEpiloguePattern(SimpleAsmPattern):
         return Replacement([], len(m.body), clobbers=[])
 
 
-RE_SWITCHD = re.compile(r"^_switchD_(\w+?)_switchD$")
-RE_SWITCHD_TARGET = re.compile(r"^_switchD_(\w+?)_(?:caseD_\w+|default)$")
-
-
-class X86JumpTablePattern(AsmPattern):
-    """Reject raw-address Ghidra jump tables that need source cleanup."""
+class X86RawJumpTablePattern(AsmPattern):
+    """Reject raw-address jump tables, independently of label spelling."""
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         part = matcher.input[matcher.index]
@@ -939,38 +866,23 @@ class X86JumpTablePattern(AsmPattern):
             or not isinstance(part.args[0], AsmAddressMode)
         ):
             return None
-        # Only fire when Ghidra's switch labels sit next to the jmp -- the
-        # label on the jmp itself (`_switchD_<id>_switchD`, when it survived
-        # label pruning), or the first case label after it (MSVC places the
-        # first case body directly after the switch dispatch). This just
-        # confirms the jmp is a switch dispatch before erroring; the id value
-        # itself is not used.
-        switch_id: Optional[str] = None
-        if matcher.index > 0:
-            prev = matcher.input[matcher.index - 1]
-            if isinstance(prev, Label):
-                for name in prev.names:
-                    m = RE_SWITCHD.match(name)
-                    if m:
-                        switch_id = m.group(1)
-                        break
-        if switch_id is None:
-            for j in range(
-                matcher.index + 1, min(matcher.index + 3, len(matcher.input))
-            ):
-                nxt = matcher.input[j]
-                if isinstance(nxt, Label):
-                    for name in nxt.names:
-                        m = RE_SWITCHD_TARGET.match(name)
-                        if m:
-                            switch_id = m.group(1)
-                            break
-                    break
-        if switch_id is None:
-            return None
-        # The table must be referenced by a raw address (a literal in the
-        # address mode's addend); labeled tables are already handled.
         addr = part.args[0]
+        # A jump table has an indexed address with pointer-sized (4-byte)
+        # entries. Requiring this scaled-index term avoids mistaking
+        # `jmp [absolute_address]` tail calls for switches.
+        has_scaled_index = any(
+            isinstance(sub, BinOp)
+            and sub.op == "*"
+            and isinstance(sub.lhs, Register)
+            and isinstance(sub.rhs, AsmLiteral)
+            and sub.rhs.value == 4
+            for sub in traverse_arg(addr.addend)
+        )
+        if not has_scaled_index:
+            return None
+        # Symbolic tables are handled by the normal switch machinery. A raw
+        # address cannot be associated with input data without address/section
+        # metadata, so reject it explicitly instead of guessing from labels.
         literals = [
             sub for sub in traverse_arg(addr.addend) if isinstance(sub, AsmLiteral)
         ]
@@ -978,8 +890,8 @@ class X86JumpTablePattern(AsmPattern):
         if len(table_addrs) != 1:
             return None
         raise DecompFailure(
-            "raw-address Ghidra jump table requires preprocessing with "
-            "tools/ghidra_fix_jumptables.py"
+            "raw-address jump table is unsupported; give the table a symbol "
+            "and use that symbol in the jump operand"
         )
 
 
@@ -2145,9 +2057,7 @@ def fnstsw_operands_store_stable(operands: Tuple[Expression, Expression]) -> boo
     return all(_operand_stable_across_store(o) for o in operands)
 
 
-def fnstsw_operands_can_be_marker(
-    operands: Tuple[Expression, Expression]
-) -> bool:
+def fnstsw_operands_can_be_marker(operands: Tuple[Expression, Expression]) -> bool:
     """Whether a status-word marker needs no materialization across a store."""
     return fnstsw_operands_store_stable(operands) and not any(
         uses_expr(operand, lambda expr: isinstance(expr, FuncCall))
@@ -2360,7 +2270,9 @@ class X86HighBytePattern(AsmPattern):
         if not read:
             return None
         if len(read) > 2:
-            raise DecompFailure("x86 instruction reads more than two high-byte registers")
+            raise DecompFailure(
+                "x86 instruction reads more than two high-byte registers"
+            )
 
         replacements = dict(zip(read, (HI8A, HI8B)))
         new_body: List[ReplacementPart] = [
@@ -2382,9 +2294,7 @@ class X86ContextFacts:
     fpu_call_deltas: Mapping[str, int]
 
 
-EMPTY_X86_CONTEXT_FACTS = X86ContextFacts(
-    MappingProxyType({}), MappingProxyType({})
-)
+EMPTY_X86_CONTEXT_FACTS = X86ContextFacts(MappingProxyType({}), MappingProxyType({}))
 _X86_CONTEXT_FACTS_CACHE: WeakKeyDictionary[TypeMap, X86ContextFacts] = (
     WeakKeyDictionary()
 )
@@ -2447,24 +2357,12 @@ class X86Arch(Arch):
     re_comment = r"[#;].*"
     supports_dollar_regs = False
     supports_intel_addressing = True
-    # Disassembler exports place jump tables unlabeled directly after code
-    # (see ArchAsmParsing).
-    synthesize_text_data_labels = True
     # MSVC's numbered COFF code labels ($L95) and disassembler-export label
     # spellings behind the platform's `_` symbol prefix (_LAB_00401234,
     # _switchD_..._caseD_...) mark jump targets, never function starts.
     re_arch_local_label = re.compile(
         r"\$L\d+$|_(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_)"
     )
-
-    def postprocess_asm_file(self, asm_file: AsmFile) -> None:
-        # Named code addresses in the middle of a function are
-        # indistinguishable from new functions' entries when parsing, so
-        # parse_file splits at each; rejoin the pieces. Other architectures'
-        # inputs may legitimately contain conditional branches to another
-        # symbol (hand-authored asm, linker labels, tail-call-like control
-        # flow), which must not be silently fused, so this is x86-only.
-        merge_functions_with_cross_jumps(asm_file)
 
     home_space_size = 0
     base_struct_align = 4
@@ -2517,7 +2415,7 @@ class X86Arch(Arch):
         X86PushAllocPattern(),
         X86SehPattern(),
         X86SehEpiloguePattern(),
-        X86JumpTablePattern(),
+        X86RawJumpTablePattern(),
         X86StackRewritePattern(),
         X86FpuRewritePattern(),
         X86HighBytePattern(),
@@ -2548,7 +2446,7 @@ class X86Arch(Arch):
         # (movsd/cmpsd are also SSE2 scalar-double instructions).
         mn = mnemonic  # already lowercased by the parser
         if mn == "retn":
-            # IDA spells near returns "retn"; identical to "ret".
+            # Intel syntax may spell near returns "retn"; identical to "ret".
             mnemonic = mn = "ret"
         if mn in ("rep", "repe", "repne", "repz", "repnz"):
             parts = args.split(None, 1)
@@ -2568,7 +2466,7 @@ class X86Arch(Arch):
         # Rewrite st(N) FPU registers into parseable names.
         args = RE_ST_REG.sub(lambda m: f"st{m.group(1)}", args)
         # Segment override prefixes. cs/ds/es/ss address the flat default
-        # segments in 32-bit code and carry no semantics (IDA decorates
+        # segments in 32-bit code and carry no semantics (some inputs decorate
         # absolute operands with "ds:"), so they are simply stripped. fs/gs
         # genuinely change the address space (on Win32, fs: is the Thread
         # Information Block, e.g. the fs:[0] accesses in SEH prologues), so

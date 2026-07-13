@@ -1,4 +1,6 @@
-// This generates a switch with two jump tables and two if checks
+// MSVC /O2 lowers the central range to two tables: a byte map from input
+// values to unique cases, followed by a pointer table for those cases.
+// The outlying cases are handled with separate comparisons.
 int glob;
 
 int test(int x) {

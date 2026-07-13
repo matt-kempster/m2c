@@ -536,26 +536,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         endian = ">" if options.target.is_big_endian() else "<"
         return struct.pack(endian + fmt, val)
 
-    def ensure_data_label() -> None:
-        # x86 disassembler exports can place data (jump tables in particular)
-        # directly after code with no label of its own; attach a synthetic
-        # label so the data is kept and jump table recovery can find it.
-        if (
-            asm_file.current_data is None
-            and curr_section == ".text"
-            and arch.synthesize_text_data_labels
-        ):
-            stem = re.sub(r"\W", "_", Path(asm_file.filename).stem)
-            name = f"__m2c_textdata_{stem}_{len(asm_file.asm_data.values)}"
-            asm_file.new_data_label(name, is_readonly=True, is_text=True)
-
     def emit_bytes(data: bytes, *, is_string: bool = False) -> None:
-        ensure_data_label()
         asm_file.new_data_bytes(data, is_string=is_string)
         section_sizes[curr_section] += len(data)
 
     def emit_word(w: str, size: int) -> None:
-        ensure_data_label()
         value = try_parse(lambda: parse_arg(w, arch, asm_state))
         if isinstance(value, AsmLiteral):
             ival = value.value & ((1 << (size * 8)) - 1)
