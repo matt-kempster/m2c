@@ -41,7 +41,6 @@ from .translate import (
     Lwl,
     NodeState,
     RawSymbolRef,
-    ReadonlyDataLiteral,
     RegExpression,
     RegInfo,
     StackInfo,
@@ -529,7 +528,7 @@ def load_rodata_constant(
         fmt = "I" if size == 4 else "Q"
         val: int = struct.unpack(endian + fmt, data)[0]
         if fixed:
-            return ReadonlyDataLiteral(value=val, type=type)
+            return Literal(value=val, type=type, type_is_fixed=True)
         return Literal(value=val, type=type)
 
     if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
@@ -556,9 +555,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
     assert size is not None
     output_reg = args.reg_ref(0)
     expr = deref(args.memory_ref(1), args.regs, args.stack_info, size=size)
-    const = load_rodata_constant(
-        args, expr, type, raw_index=1, output_reg=output_reg
-    )
+    const = load_rodata_constant(args, expr, type, raw_index=1, output_reg=output_reg)
     if const is not None:
         return const
 

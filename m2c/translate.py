@@ -151,14 +151,18 @@ def as_type(
     expr: Expression, type: Type, silent: bool, *, unify: bool = True
 ) -> Expression:
     type = type.weaken_void_ptr()
-    if isinstance(expr, Literal):
+    if isinstance(expr, Literal) and not expr.type_is_fixed:
         # In an interesting twist from how types behave everywhere else, for
         # literals we (try to) avoid ever propagating information backwards,
         # by creating a clone of the literal before casting it. This helps
         # avoid casts when literals are used in multiple unrelated places.
         # Importantly, we do keep information about maybe-floatness and
         # 64-bitness of values.
-        expr = Literal(expr.value, expr.type.clone_literal_type())
+        expr = Literal(
+            expr.value,
+            expr.type.clone_literal_type(),
+            elide_cast=expr.elide_cast,
+        )
         unify = True
     ptr_target_type = type.get_pointer_target()
     if unify and expr.type.unify(type):
@@ -1753,6 +1757,7 @@ class Literal(Expression):
     value: int
     type: Type = field(compare=False, default_factory=Type.any)
     elide_cast: bool = field(compare=False, default=False)
+    type_is_fixed: bool = field(compare=False, default=False)
 
     def dependencies(self) -> List[Expression]:
         return []
@@ -1797,21 +1802,6 @@ class Literal(Expression):
             value = fmt.format_int(v, size_bits=size_bits)
 
         return prefix + value + suffix
-
-
-@dataclass(frozen=True, eq=True)
-class ReadonlyDataLiteral(Expression):
-    """A typed data-section scalar that formats as a literal without acting
-    as a freely coercible immediate during type inference."""
-
-    value: int
-    type: Type = field(compare=False)
-
-    def dependencies(self) -> List[Expression]:
-        return []
-
-    def format(self, fmt: Formatter) -> str:
-        return Literal(self.value, self.type).format(fmt)
 
 
 @dataclass(frozen=True, eq=True)
@@ -2780,7 +2770,7 @@ def is_trivial_expression(expr: Expression) -> bool:
     # NaivePhiExpr could be made trivial, but it's better to keep it symmetric
     # with PlannedPhiExpr to avoid different deduplication between passes,
     # since that can cause naive phis to end up in the final output.
-    if isinstance(expr, (Literal, ReadonlyDataLiteral, GlobalSymbol, SecondF64Half)):
+    if isinstance(expr, (Literal, GlobalSymbol, SecondF64Half)):
         return True
     if isinstance(expr, AddressOf):
         return all(is_trivial_expression(e) for e in expr.dependencies())
@@ -2794,7 +2784,6 @@ def should_wrap_transparently(expr: Expression) -> bool:
         expr,
         (
             Literal,
-            ReadonlyDataLiteral,
             LocalVar,
             PassedInArg,
             NaivePhiExpr,
@@ -3668,6 +3657,19 @@ class NodeState:
             if not force and uses_expr(write, expr_filter):
                 self.local_var_writes[loc] = (reg, write, True)
 
+        # Pending call arguments are expressions too. In particular, an x86
+        # push may capture a call result here before an intervening store;
+        # force its once-variable so the call cannot move past that store.
+        for value in self.subroutine_args.values():
+            if not uses_expr(value, expr_filter):
+                continue
+            expr = value
+            while isinstance(expr, Cast):
+                expr = expr.expr
+            if not isinstance(expr, EvalOnceExpr):
+                assert_never(expr)
+            expr.force()
+
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
         subexpression."""
@@ -3679,9 +3681,7 @@ class NodeState:
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
-        self._prevent_later_uses(
-            lambda e: isinstance(e, FuncCall) and not e.is_marker
-        )
+        self._prevent_later_uses(lambda e: isinstance(e, FuncCall) and not e.is_marker)
 
     def prevent_later_reads(self) -> None:
         """Prevent later uses of registers that recursively contain a read."""

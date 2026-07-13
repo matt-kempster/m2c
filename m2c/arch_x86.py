@@ -279,31 +279,6 @@ def mem_store(
     return make_store_real(value, source_raw, target, a.regs, a.stack_info, type)
 
 
-def store_memory(s: NodeState, store: StoreStmt, reg: Register) -> None:
-    """Emit an x86 memory store, first flushing pending stack call arguments
-    (see flush_pending_call_args). Use this for every real memory store instead
-    of calling s.store_memory directly."""
-    flush_pending_call_args(s)
-    s.store_memory(store, reg)
-
-
-def flush_pending_call_args(s: NodeState) -> None:
-    """Force materialization of pending stack call arguments that contain a
-    function call, mirroring the shared `store_memory`'s
-    `prevent_later_function_calls`. x86 captures call-result arguments in
-    `subroutine_args` (not registers) at the push, which that logic does not
-    scan; without this, the inlined call would be reordered past an
-    intervening store."""
-    for value in s.subroutine_args.values():
-        if not uses_expr(value, lambda e: isinstance(e, FuncCall)):
-            continue
-        expr = value
-        while isinstance(expr, Cast):
-            expr = expr.expr
-        if isinstance(expr, EvalOnceExpr):
-            expr.force()
-
-
 def op_value(
     a: InstrArgs,
     index: int,
@@ -2788,7 +2763,7 @@ class X86Arch(Arch):
                 # The register argument to store_memory is only used for
                 # stack spill/restore bookkeeping; fall back to EAX for
                 # register-less sources (immediates).
-                store_memory(s, store, src_reg if src_reg is not None else EAX)
+                s.store_memory(store, src_reg if src_reg is not None else EAX)
             return None
 
         if base == "hibyte.fictive":
@@ -3444,7 +3419,7 @@ class X86Arch(Arch):
                         src_reg = other if isinstance(other, Register) else None
                         store = mem_store(a, i, val, src_reg, width_type(width))
                         if store is not None:
-                            store_memory(
+                            s.store_memory(
                                 s, store, src_reg if src_reg is not None else EAX
                             )
 
@@ -3750,7 +3725,7 @@ class X86Arch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 store = mem_store(a, 0, a.regs[src], src, ftype)
                 if store is not None:
-                    store_memory(s, store, src)
+                    s.store_memory(store, src)
                 if pop:
                     del s.regs[src]
 
@@ -3911,7 +3886,7 @@ class X86Arch(Arch):
                 casted = handle_convert(a.regs[src], itype, Type.floatish())
                 store = mem_store(a, 0, casted, None, itype)
                 if store is not None:
-                    store_memory(s, store, src)
+                    s.store_memory(store, src)
                 del s.regs[src]
 
         # --- Integer-operand arithmetic: top op (float)int_load ---
@@ -3956,7 +3931,7 @@ class X86Arch(Arch):
                     a, 0, fn_op("M2C_FSTCW", [], Type.u16()), None, Type.u16()
                 )
                 if store is not None:
-                    store_memory(s, store, EAX)
+                    s.store_memory(store, EAX)
 
         # --- Two-operand transcendentals (fpatan/fyl2x/fscale/fprem/...) ---
         elif base in FPU_BINARY_OPS:
