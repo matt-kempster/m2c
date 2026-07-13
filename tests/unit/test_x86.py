@@ -1276,12 +1276,13 @@ class TestX86FpuRewrite(unittest.TestCase):
         out = self.rewrite(
             """
             FLD dword ptr [ESP + 0x4]
-            FSTPARG 0x0
+            FSTP dword ptr [ESP]
             CALL _foo, 0x0, 0x4
             RET
             """
         )
-        self.assertEqual(out[1], "fstparg 0x0, $f0")
+        self.assertEqual(out[1], "storearg.fictive 0x0, $f0")
+        self.assertEqual(out[2], "fpop $f0")
 
     def test_transcendental_pop(self) -> None:
         # fpatan consumes st0 (depth 2 -> 1); operands are passed as (st0, st1).

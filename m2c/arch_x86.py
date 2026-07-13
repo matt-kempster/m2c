@@ -1471,55 +1471,6 @@ def rewrite_stack_ops(
             alloc_pushes.add(i)
             alloc_pushes.add(i + 1)
 
-    def fpu_arg_window_offset(index: int, addr: Argument) -> Optional[int]:
-        """Return the fixed-frame location when an x87 store fills the next
-        call's outgoing argument window."""
-        state = states[index]
-        if not (
-            state is not None
-            and isinstance(addr, AsmAddressMode)
-            and addr.base == ESP
-            and isinstance(addr.addend, AsmLiteral)
-        ):
-            return None
-        offset = frame_size + state[0] + addr.addend.value
-        for j in range(index + 1, len(body)):
-            nxt = body[j]
-            if not isinstance(nxt, Instruction):
-                return None
-            nxt_state = states[j]
-            if nxt_state is None:
-                return None
-            nbase, _ = split_width_suffix(nxt.mnemonic)
-            win_base: Optional[int] = None
-            win_bytes = -1
-            if nbase == "call" and nxt.function_target is not None:
-                win_base = frame_size + nxt_state[0]
-                win_bytes = call_cleanup.get(j, 0)
-                if win_bytes == 0:
-                    win_bytes = cdecl_arg_bytes(j)
-            elif (
-                nbase == "jmp"
-                and isinstance(nxt.jump_target, JumpTarget)
-                and nxt.jump_target.target not in label_pos
-            ):
-                win_base = frame_size + nxt_state[0]
-            if win_base is not None:
-                in_window = offset >= win_base and (
-                    win_bytes < 0 or offset < win_base + win_bytes
-                )
-                return offset if in_window else None
-            if (
-                nxt.jump_target is not None
-                or nxt.is_return
-                or nxt.is_conditional
-                or (nbase != "push" and ESP in nxt.outputs)
-                or (nbase != "push" and ESP in nxt.clobbers)
-                or nbase in ("pop", "add", "sub", "call")
-            ):
-                return None
-        return None
-
     # Pass 3: emit the rewritten body.
     # When ebp is used as a frame pointer, its save/setup/restore
     # (`push ebp; mov ebp, esp; ...; mov esp, ebp; pop ebp` / `leave`) are pure
@@ -1629,16 +1580,6 @@ def rewrite_stack_ops(
         elif base == "leave":
             # `leave` = `mov esp, ebp; pop ebp`; pure frame teardown.
             pass
-        elif base in ("fst", "fstp"):
-            win_off = fpu_arg_window_offset(i, args[0])
-            if win_off is not None:
-                _, width = split_width_suffix(part.mnemonic)
-                stem = "fstparg" if base == "fstp" else "fstarg"
-                mnemonic = stem if width == 4 else stem + WIDTH_SUFFIXES[width]
-                emit(mnemonic, [AsmLiteral(win_off)], part.meta)
-            else:
-                new_args = [rewrite_operand(arg) for arg in args]
-                emit(part.mnemonic, new_args, part.meta)
         elif part.function_target is not None and base == "call":
             # Annotate the call with the base of its stack argument region and
             # the number of argument bytes belonging to it, so translation can
@@ -2581,8 +2522,6 @@ class X86Arch(Arch):
             "fst",
             "fstp",
             "fistp",
-            "fstparg",
-            "fstarg",
             "fadd",
             "fsub",
             "fsubr",
@@ -3668,25 +3607,6 @@ class X86Arch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(dst, a.regs[src])
-                if pop:
-                    del s.regs[src]
-
-        # --- Float call arguments: fstp/fst into the next call's argument
-        # window, routed to subroutine_args like a rewritten push. ---
-        elif base in ("fstparg", "fstarg"):
-            assert isinstance(args[0], AsmLiteral) and isinstance(args[1], Register)
-            arg_loc = args[0].value
-            src = args[1]
-            inputs = [src]
-            outputs = [StackLocation(offset=arg_loc, symbolic_offset=None)]
-            is_store = True
-            pop = base == "fstparg"
-            if pop:
-                clobbers = [src]
-            ftype = fpu_float_type(width)
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.subroutine_args[arg_loc] = as_type(a.regs[src], ftype, silent=True)
                 if pop:
                     del s.regs[src]
 

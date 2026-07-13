@@ -42,6 +42,7 @@ from typing import Dict, FrozenSet, List, Mapping, Optional, Set, Tuple
 from .asm_file import AsmData
 from .asm_instruction import (
     Argument,
+    AsmAddressMode,
     AsmLiteral,
     JumpTarget,
     Register,
@@ -70,7 +71,6 @@ FPU_PUSH: Set[str] = {
 }
 FPU_POP1: Set[str] = {
     "fstp",
-    "fstparg",
     "fistp",
     "fcomp",
     "fucomp",
@@ -104,7 +104,6 @@ FPU_NEUTRAL: Set[str] = {
     "ficom",
     "ftst",
     "fst",
-    "fstarg",
     "fist",
     "fchs",
     "fabs",
@@ -256,8 +255,6 @@ def _is_ftol_shaped(body: List[BodyPart], index: int) -> bool:
             return base not in (
                 "fst",
                 "fstp",
-                "fstarg",
-                "fstparg",
                 "fistp",
                 "fcom",
                 "fcomp",
@@ -382,6 +379,41 @@ def rewrite_fpu_ops(
 
     def instr_str(item: Instruction) -> str:
         return f"`{item}` {item.meta.loc_str()}"
+
+    def call_arg_window_offset(index: int, addr: Argument) -> Optional[int]:
+        """Find a fixed stack store belonging to the next annotated call."""
+        if not (
+            isinstance(addr, AsmAddressMode)
+            and addr.base == Register("esp")
+            and isinstance(addr.addend, AsmLiteral)
+        ):
+            return None
+        offset = addr.addend.value
+        for nxt in body[index + 1 :]:
+            if not isinstance(nxt, Instruction):
+                return None
+            nbase, _ = split_width_suffix(nxt.mnemonic)
+            if nbase == "call" and nxt.function_target is not None:
+                if not (
+                    len(nxt.args) >= 3
+                    and isinstance(nxt.args[1], AsmLiteral)
+                    and isinstance(nxt.args[2], AsmLiteral)
+                ):
+                    return None
+                win_base = nxt.args[1].value
+                win_bytes = nxt.args[2].value
+                in_window = offset >= win_base and (
+                    win_bytes < 0 or offset < win_base + win_bytes
+                )
+                return offset if in_window else None
+            if (
+                nxt.jump_target is not None
+                or nxt.is_return
+                or nxt.is_conditional
+                or nbase in ("pop", "add", "sub", "call")
+            ):
+                return None
+        return None
 
     def call_delta(index: int, item: Instruction, base: str) -> int:
         """The FPU stack effect of a call: +1 if the callee returns a float in
@@ -588,10 +620,14 @@ def rewrite_fpu_ops(
             emit(base, [Register(f"f{depth}")], meta)
 
         # --- Stores from the top of stack. ---
-        elif base in ("fst", "fstp", "fistp", "fstarg", "fstparg"):
+        elif base in ("fst", "fstp", "fistp"):
             st_i = _st_index(args[0])
-            if base in ("fstarg", "fstparg"):
-                emit(mnemonic, [args[0], flat(0)], meta)
+            arg_offset = call_arg_window_offset(i, args[0])
+            if base in ("fst", "fstp") and arg_offset is not None:
+                src = flat(0)
+                emit("storearg.fictive", [AsmLiteral(arg_offset), src], meta)
+                if base == "fstp":
+                    emit("fpop", [src], meta)
             elif st_i is not None:
                 # Register store form (`fst st(i)` / `fstp st(i)`).
                 if base == "fstp" and st_i == 0:
