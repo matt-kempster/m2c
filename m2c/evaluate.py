@@ -124,21 +124,17 @@ def deref(
 
     var.type.unify(Type.ptr())
     stack_info.record_struct_access(var, offset)
-    # Key the shared offset-0 access type by size as well: the same location
-    # may be accessed at multiple widths (e.g. MSVC narrows an `int` test to a
-    # byte load), and unifying those into a single type would force the
-    # first-seen width onto every other access -- including the variable's
-    # declared type, which `resolve_types_late` derives from the offset-0
-    # access type. Nonzero offsets never drive declarations, so they keep a
-    # single shared type (a constant size key); the unification conflict from
-    # a mixed-width access then still renders as a width-marking cast.
-    # Generalizing this beyond x86 currently regresses other targets: on
-    # big-endian, offset 0 holds the high bits so the cast rendering would be
-    # wrong, and on little-endian ARM the store path renders invalid lvalue
-    # casts ((u8) x = ...); it needs store-side support first.
+    # On little-endian targets, offset 0 can be accessed at several widths
+    # while still referring to one scalar (for example, a byte test of an int).
+    # Keep a native-word access separate from sub-word accesses;
+    # resolve_types_late uses it for the declaration and StructAccess renders
+    # narrower reads/stores. Multiple sub-word accesses still share inference,
+    # which avoids inventing a halfword declaration for packed bitfields.
     size_key = (
-        size
-        if offset == 0 and stack_info.global_info.arch.arch == Target.ArchEnum.X86
+        4
+        if offset == 0
+        and size == 4
+        and not stack_info.global_info.target.is_big_endian()
         else 0
     )
     type: Type = stack_info.unique_type_for(

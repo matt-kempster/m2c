@@ -1587,6 +1587,13 @@ class StructAccess(Expression):
         return False
 
     def format(self, fmt: Formatter) -> str:
+        return self._format(fmt, lvalue=False)
+
+    def format_lvalue(self, fmt: Formatter) -> str:
+        """Format a potentially narrow scalar access as a valid C lvalue."""
+        return self._format(fmt, lvalue=True)
+
+    def _format(self, fmt: Formatter, *, lvalue: bool) -> str:
         var = late_unwrap(self.struct_var)
         has_nonzero_access = False
         if self.stack_info is not None:
@@ -1594,7 +1601,7 @@ class StructAccess(Expression):
 
         field_path: Optional[AccessPath] = self.late_field_path()
 
-        narrow_cast = ""
+        narrow_access = False
         if field_path is not None and field_path != [0]:
             has_nonzero_access = True
         elif (
@@ -1612,23 +1619,18 @@ class StructAccess(Expression):
             and self.offset == 0
             and self.target_size is not None
             and self.stack_info is not None
-            and self.stack_info.global_info.arch.arch == Target.ArchEnum.X86
+            and not self.stack_info.global_info.target.is_big_endian()
             and not (fmt.valid_syntax and has_nonzero_access)
             and var.type.data().array_dim is None
             and (pointee := var.type.get_pointer_target()) is not None
             and pointee.is_int()
-            and pointee.get_size_bytes() not in (None, self.target_size)
+            and (pointee_size := pointee.get_size_bytes()) is not None
+            and pointee_size > self.target_size
         ):
-            # An access at the start of a scalar int, with a different width
-            # than the int itself (e.g. MSVC reading the low byte of an `int`
-            # global with a byte load). On a little-endian target, making the
-            # access width visible with a truncating cast of the variable
-            # itself (`(s8) glob`, or `(s8) x->unk0` when other offsets are
-            # accessed too) is faithful. The real precondition is little-
-            # endianness (offset 0 = low bits), but gating on x86 for now:
-            # little-endian ARM can reach this via context types and renders
-            # an invalid lvalue cast, needing store-side support first.
-            narrow_cast = f"({self.type.format(fmt)}) "
+            # Offset zero is the low bits on a little-endian target. Reads can
+            # use a truncating cast; stores need a pointer cast so the left
+            # hand side remains an lvalue (`*(u8 *)&x`).
+            narrow_access = True
             prefix = "unk" + ("_" if fmt.coding_style.unknown_underscore else "")
             field_path = [0, prefix + format_hex(self.offset)]
         elif fmt.valid_syntax and (self.offset != 0 or has_nonzero_access):
@@ -1655,9 +1657,16 @@ class StructAccess(Expression):
 
         # Rewrite `x->unk0` to `*x` and `x.unk0` to `x`, unless has_nonzero_access
         if self.offset == 0 and not has_nonzero_access:
-            return f"{narrow_cast}{'*' if deref else ''}{var.format(fmt)}"
+            rendered = f"{'*' if deref else ''}{var.format(fmt)}"
+        else:
+            rendered = f"{parenthesize_for_struct_access(var, fmt)}{field_name}"
 
-        return f"{narrow_cast}{parenthesize_for_struct_access(var, fmt)}{field_name}"
+        if narrow_access:
+            access_type = self.type.format(fmt)
+            if lvalue:
+                return f"*({access_type} *)&{rendered}"
+            return f"({access_type}) {rendered}"
+        return rendered
 
 
 @dataclass(frozen=True, eq=True)
@@ -2259,6 +2268,10 @@ class StoreStmt(Statement):
         ) or isinstance(dest, (ArrayAccess, LocalVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_literal_casts(source)
+        if isinstance(dest, StructAccess):
+            lvalue = dest.format_lvalue(fmt)
+            if lvalue != dest.format(fmt):
+                return f"{lvalue} = {format_expr(source, fmt)};"
         return format_assignment(dest, source, fmt)
 
 
@@ -4329,7 +4342,14 @@ def resolve_types_late(stack_info: StackInfo) -> None:
             # access is the best guess for the underlying type; the narrower
             # accesses then render as truncating casts.
             types_by_size = offset_type_map[0]
-            for size in sorted(types_by_size, reverse=True):
+            sizes = list(types_by_size)
+            # Mixed sub-word accesses usually describe one 32-bit scalar; use
+            # that full-width access as its declaration. Do not extrapolate
+            # from byte+halfword accesses (often packed bitfields), or from
+            # wider SIMD aliases, where first-access behavior is less lossy.
+            if 4 in sizes and max(sizes) == 4:
+                sizes.sort(reverse=True)
+            for size in sizes:
                 if var.type.unify(Type.ptr(types_by_size[size])):
                     break
 

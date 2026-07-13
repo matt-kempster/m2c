@@ -30,7 +30,7 @@ s32 test(struct Vec *v) {
     var_eax = v;
     temp_ecx = var_eax->unk0 + var_eax->unk4;
     v = (struct Vec *) temp_ecx;
-    temp_esi = var_eax->unk8 + var_eax->unk0;
+    temp_esi = var_eax->unk8 + (s16) var_eax->unk0;
     temp_edx = var_eax->z;
     temp_edi = var_eax->y;
     e = temp_ecx * var_eax->x;
