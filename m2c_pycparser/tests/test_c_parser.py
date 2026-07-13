@@ -297,6 +297,12 @@ class TestCParser_fundamentals(TestCParser_base):
                 ['ArrayDecl', '15', [],
                     ['TypeDecl', ['IdentifierType', ['long', 'long']]]]])
 
+        self.assertEqual(self.get_decl('__int64 value;'),
+            ['Decl', 'value', ['TypeDecl', ['IdentifierType', ['long', 'long']]]])
+        self.assertEqual(self.get_decl('unsigned __int64 value;'),
+            ['Decl', 'value',
+                ['TypeDecl', ['IdentifierType', ['unsigned', 'long', 'long']]]])
+
         self.assertEqual(self.get_decl('unsigned ar[];'),
             ['Decl', 'ar',
                 ['ArrayDecl', '', [],

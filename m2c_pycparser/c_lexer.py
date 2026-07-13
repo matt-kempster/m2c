@@ -95,7 +95,7 @@ class CLexer(object):
         'REGISTER', 'OFFSETOF',
         'RESTRICT', 'RETURN', 'SHORT', 'SIGNED', 'SIZEOF', 'STATIC', 'STRUCT',
         'SWITCH', 'TYPEDEF', 'UNION', 'UNSIGNED', 'VOID',
-        'VOLATILE', 'WHILE', '__INT128',
+        'VOLATILE', 'WHILE', '__INT64', '__INT128',
         'TYPEOF',
         '__ATTRIBUTE__', 'ASM',
     )

@@ -921,9 +921,11 @@ class CParser(PLYParser):
                                       | _COMPLEX
                                       | SIGNED
                                       | UNSIGNED
+                                      | __INT64
                                       | __INT128
         """
-        p[0] = c_ast.IdentifierType([p[1]], coord=self._token_coord(p, 1))
+        names = ["long", "long"] if p.slice[1].type == "__INT64" else [p[1]]
+        p[0] = c_ast.IdentifierType(names, coord=self._token_coord(p, 1))
 
     def p_type_specifier(self, p):
         """ type_specifier  : typedef_name

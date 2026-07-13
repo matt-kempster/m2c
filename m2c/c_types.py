@@ -775,10 +775,7 @@ def strip_macro_defs(text: str) -> str:
         r"^[ \t]*#[ \t]*(?:define|undef)[ \t](\\\n|.)*", flags=re.MULTILINE
     )
     text = re.sub(pattern, lambda m: m.group(0).count("\n") * "\n", text)
-    # MSVC's spelling is not understood by pycparser. Context files are
-    # controlled input, so normalize it before parsing.
-    text = re.sub(r"\bunsigned\s+__int64\b", "unsigned long long", text)
-    return re.sub(r"\b__int64\b", "long long", text)
+    return text
 
 
 def remove_backslashes_at_eol(text: str) -> str:
