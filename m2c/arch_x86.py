@@ -5,13 +5,13 @@ information (inputs/outputs/jump targets), plus semantics (eval_fns) for the
 data operations, flags, and conditionals: mov/movsx/movzx/lea/xchg, the ALU
 (incl. mul/imul/div/idiv/cdq and shifts), cmp/test, all jcc and setcc, and
 loads/stores through all addressing modes. x86's moving stack is handled by
-an ESP-delta prepass (X86StackRewritePattern / rewrite_stack_ops) that
+an ESP-delta prepass (X86RewritePattern / rewrite_stack_ops) that
 computes esp's offset from function entry at every instruction and rewrites
 push/pop/call-argument/ebp-frame accesses into fixed frame offsets, so the
 rest of m2c (which assumes a constant post-prologue stack pointer) works
 unchanged. This recovers call arguments (cdecl and stdcall), tail calls, and
 jump-table switches, plus rep string ops, loop, and rdtsc. x87 FPU support
-lives in a second whole-body prepass (X86FpuRewritePattern in m2c/x86_fpu.py)
+lives in the same whole-body prepass (with its implementation in m2c/x86_fpu.py)
 that eliminates the FPU register stack into flat virtual registers f0..f7,
 with the per-instruction semantics in X86Arch._parse_fpu (float arithmetic/
 compares/conversions, the fnstsw/test-ah compare idiom, and the float call
@@ -49,7 +49,6 @@ from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
 from typing import Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
-from weakref import WeakKeyDictionary
 
 from .error import DecompFailure
 from .options import Target
@@ -144,7 +143,7 @@ from .evaluate import (
     void_fn_op,
 )
 from .types import FunctionSignature
-from .x86_fpu import X86FpuRewritePattern
+from .x86_fpu import rewrite_fpu_stack
 from .x86_utils import (
     WIDTH_SUFFIXES,
     call_target_symbol,
@@ -852,8 +851,8 @@ class X86RawJumpTablePattern(AsmPattern):
         )
 
 
-class X86StackRewritePattern(AsmPattern):
-    """Whole-body rewrite that eliminates x86 stack pointer motion.
+class X86RewritePattern(AsmPattern):
+    """Whole-body rewrite eliminating x86's moving integer and x87 stacks.
 
     m2c's stack machinery assumes a stack pointer that is fixed after the
     prologue, which x86 code violates constantly (push/pop, caller-side
@@ -881,7 +880,7 @@ class X86StackRewritePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
             return None
-        context_facts = x86_context_facts(matcher.typemap)
+        context_facts = compute_x86_context_facts(matcher.typemap)
         try:
             new_body = rewrite_stack_ops(
                 matcher.input,
@@ -908,6 +907,13 @@ class X86StackRewritePattern(AsmPattern):
                 )
             except DecompFailure:
                 raise e from None
+        new_body = rewrite_fpu_stack(
+            new_body,
+            matcher.arch,
+            matcher.asm_data,
+            matcher.labels,
+            context_facts.fpu_call_deltas,
+        )
         return Replacement(new_body, len(matcher.input), clobbers=[])
 
 
@@ -1712,7 +1718,7 @@ class FlagsKind(Enum):
 
 # --- x87 FPU eval helpers (used by X86Arch._parse_fpu) ---
 #
-# The x87 register stack is eliminated by X86FpuRewritePattern (m2c/x86_fpu.py),
+# The x87 register stack is eliminated by X86RewritePattern (m2c/x86_fpu.py),
 # which rewrites every reachable x87 instruction into a fictive form carrying
 # explicit flat virtual registers f0..f7 (e.g. `fadd $f1, $f0`, `fstp.s [m],
 # $f2`). The handlers below give those fictive forms their semantics. Virtual
@@ -2252,9 +2258,6 @@ class X86ContextFacts:
 
 
 EMPTY_X86_CONTEXT_FACTS = X86ContextFacts(MappingProxyType({}), MappingProxyType({}))
-_X86_CONTEXT_FACTS_CACHE: WeakKeyDictionary[TypeMap, X86ContextFacts] = (
-    WeakKeyDictionary()
-)
 
 
 def _ctype_is_float(ret_type: CType, typemap: TypeMap) -> bool:
@@ -2266,12 +2269,9 @@ def _ctype_is_float(ret_type: CType, typemap: TypeMap) -> bool:
     )
 
 
-def x86_context_facts(typemap: Optional[TypeMap]) -> X86ContextFacts:
+def compute_x86_context_facts(typemap: Optional[TypeMap]) -> X86ContextFacts:
     if typemap is None:
         return EMPTY_X86_CONTEXT_FACTS
-    cached = _X86_CONTEXT_FACTS_CACHE.get(typemap)
-    if cached is not None:
-        return cached
 
     stdcall_arg_bytes: Dict[str, int] = {}
     fpu_call_deltas: Dict[str, int] = {}
@@ -2304,7 +2304,6 @@ def x86_context_facts(typemap: Optional[TypeMap]) -> X86ContextFacts:
     facts = X86ContextFacts(
         MappingProxyType(stdcall_arg_bytes), MappingProxyType(fpu_call_deltas)
     )
-    _X86_CONTEXT_FACTS_CACHE[typemap] = facts
     return facts
 
 
@@ -2343,7 +2342,7 @@ class X86Arch(Arch):
     temp_regs = [EAX] + simple_temp_regs + flag_regs + [fsw_reg, HI8A, HI8B]
     saved_regs = [EBX, ESI, EDI, EBP, EIP]
     # Raw x87 stack-register names (`st(0)`..`st(7)`, spelled `st0`..`st7`).
-    # These reach `parse` only during initial parsing; X86FpuRewritePattern
+    # These reach `parse` only during initial parsing; X86RewritePattern
     # rewrites every reachable use into a flat virtual register before
     # translation, so they never carry real semantics.
     fpu_regs = [Register(f"st{i}") for i in range(8)]
@@ -2373,8 +2372,7 @@ class X86Arch(Arch):
         X86SehPattern(),
         X86SehEpiloguePattern(),
         X86RawJumpTablePattern(),
-        X86StackRewritePattern(),
-        X86FpuRewritePattern(),
+        X86RewritePattern(),
         X86HighBytePattern(),
     ]
 
@@ -2562,7 +2560,7 @@ class X86Arch(Arch):
         "repe.cmpsw": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
         "repe.cmpsd": ([ESI, EDI, ECX], [ESI, EDI, ECX, Register("z")], True, False),
     }
-    # Fictive x87 mnemonics produced by X86FpuRewritePattern, dispatched to
+    # Fictive x87 mnemonics produced by X86RewritePattern, dispatched to
     # _parse_fpu. (Raw x87 forms -- which use st(i) names, never f0..f7 --
     # reach `parse` only during initial parsing and fall through to the
     # unknown-instruction handler; the FPU prepass then rewrites them.)
@@ -3546,7 +3544,7 @@ class X86Arch(Arch):
             base in cls.instrs_fpu
             and any(isinstance(a, Register) and a.is_float() for a in args)
         ):
-            # A fictive x87 instruction emitted by X86FpuRewritePattern (raw
+            # A fictive x87 instruction emitted by X86RewritePattern (raw
             # x87 forms name st(i), never f0..f7, so the f-register gate
             # excludes them). The status/control-word ops have no f-register
             # operand, so they are dispatched by name.

@@ -3,7 +3,7 @@
 The x87 FPU is a register *stack*: instructions name registers relative to the
 current top (`st(0)`..`st(7)`), and push/pop operations shift what each name
 refers to. m2c's translation layer assumes fixed registers, so -- exactly as
-`X86StackRewritePattern` does for the moving `esp` -- a whole-body prepass
+`X86RewritePattern` does for the moving `esp` -- a whole-body prepass
 computes the x87 stack depth at every instruction by linear dataflow and
 rewrites the stack-relative `st(i)` names into fixed virtual registers before
 translation. The rest of m2c then never learns that x87 exists.
@@ -16,7 +16,7 @@ for its whole lifetime regardless of pushes/pops above it, and `fld` at depth
 stops existing), which is what makes float-return detection sound: `f0` is set
 at a return block iff the stack is non-empty there.
 
-This pass runs after `X86StackRewritePattern`, so every x87 memory operand is
+The x87 phase runs after the integer-stack phase, so every memory operand is
 already frame-resolved and every `call` already carries its argument-window
 annotation. It emits fictive instructions carrying explicit virtual-register
 arguments (e.g. `fadd $f1, $f0`, `fstp.s [m], $f2`); their semantics live in
@@ -37,7 +37,7 @@ deltas override inferred values when they conflict.
 
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Mapping, Optional, Set, Tuple
 
 from .asm_file import AsmData
 from .asm_instruction import (
@@ -46,7 +46,7 @@ from .asm_instruction import (
     JumpTarget,
     Register,
 )
-from .asm_pattern import AsmMatcher, AsmPattern, BodyPart, Replacement
+from .asm_pattern import BodyPart
 from .error import DecompFailure
 from .instruction import ArchAsm, Instruction, InstructionMeta
 from .x86_utils import (
@@ -210,7 +210,7 @@ def _st_index(arg: Argument) -> Optional[int]:
 
 class X87StackError(DecompFailure):
     """A dataflow inconsistency that per-callee depth-delta inference can try
-    to repair (see X86FpuRewritePattern.match). Carries the faulting body
+    to repair (see rewrite_fpu_stack). Carries the faulting body
     index and the failure kind so the retry loop can attribute it to a call."""
 
     def __init__(self, message: str, index: int, kind: str) -> None:
@@ -318,7 +318,7 @@ def infer_call_deltas(
     arch: ArchAsm,
     asm_data: AsmData,
     labels: Set[str],
-) -> Dict[str, int]:
+) -> List[BodyPart]:
     """Find the smallest call-delta assignment with consistent x87 dataflow."""
     queue: List[Dict[str, int]] = [seed]
     visited: Set[FrozenSet[Tuple[str, int]]] = {frozenset(seed.items())}
@@ -328,8 +328,7 @@ def infer_call_deltas(
         call_deltas = queue.pop(0)
         states_tried += 1
         try:
-            rewrite_fpu_ops(body, arch, asm_data, labels, call_deltas)
-            return call_deltas
+            return rewrite_fpu_ops(body, arch, asm_data, labels, call_deltas)
         except X87StackError as fault:
             last_fault = fault
             for sym, delta in _candidate_moves(body, fault, call_deltas):
@@ -343,57 +342,27 @@ def infer_call_deltas(
     raise last_fault
 
 
-class X86FpuRewritePattern(AsmPattern):
-    """Whole-body rewrite eliminating the x87 register stack (see module doc).
-
-    Mirrors `X86StackRewritePattern`: matches only at index 0 and computes the
-    entire rewritten body. In the presence of float-returning or
-    stack-consuming callees, it searches (breadth-first, minimal changes first)
-    for a per-callee depth-delta assignment that makes the dataflow consistent,
-    keyed per-symbol so all call sites of a callee agree."""
-
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        if matcher.index != 0:
-            return None
-        # Seed per-callee deltas from the known stack-consuming CRT helpers and
-        # the user context (float/double-returning functions leave their result
-        # on the FPU stack), then infer the rest structurally by BFS over delta
-        # assignments. Context deltas win on conflict.
-        from .arch_x86 import x86_context_facts
-
-        seed: Dict[str, int] = dict(X86_FPU_HELPER_DELTAS)
-        seed.update(x86_context_facts(matcher.typemap).fpu_call_deltas)
-        # Cheap early-out: functions with no x87 instructions pay only this scan.
-        # A function still needs the pass, though, if it calls a context-known
-        # float/double-returning function -- even with no x87 instruction of
-        # its own (a forwarding wrapper like `call _returns_float; ret`), the
-        # call must be annotated as producing st(0).
-        if not any(
-            isinstance(part, Instruction)
-            and is_fpu_mnemonic(split_width_suffix(part.mnemonic)[0])
-            for part in matcher.input
-        ) and not (
-            seed
-            and any(
-                _call_key(matcher.input, i) in seed for i in range(len(matcher.input))
-            )
-        ):
-            return None
-        call_deltas = infer_call_deltas(
-            matcher.input,
-            seed,
-            matcher.arch,
-            matcher.asm_data,
-            matcher.labels,
-        )
-        new_body = rewrite_fpu_ops(
-            matcher.input,
-            matcher.arch,
-            matcher.asm_data,
-            matcher.labels,
-            call_deltas,
-        )
-        return Replacement(new_body, len(matcher.input), clobbers=[])
+def rewrite_fpu_stack(
+    body: List[BodyPart],
+    arch: ArchAsm,
+    asm_data: AsmData,
+    labels: Set[str],
+    context_call_deltas: Mapping[str, int],
+) -> List[BodyPart]:
+    """Eliminate the x87 stack after x86 stack operands have been resolved."""
+    seed: Dict[str, int] = dict(X86_FPU_HELPER_DELTAS)
+    seed.update(context_call_deltas)
+    # A forwarding wrapper can need annotation solely because its context-known
+    # callee returns through st(0), even if the wrapper has no x87 instruction.
+    has_fpu = any(
+        isinstance(part, Instruction)
+        and is_fpu_mnemonic(split_width_suffix(part.mnemonic)[0])
+        for part in body
+    )
+    has_known_call = seed and any(_call_key(body, i) in seed for i in range(len(body)))
+    if not has_fpu and not has_known_call:
+        return body
+    return infer_call_deltas(body, seed, arch, asm_data, labels)
 
 
 def rewrite_fpu_ops(

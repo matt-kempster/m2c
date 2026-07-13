@@ -158,9 +158,7 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(asm.args, [Register("st2"), Register("st0")])
 
     def test_intel_pattern_parser_uses_x86_syntax(self) -> None:
-        [(pattern, optional)] = make_pattern(
-            "mov dword ptr fs:[0], $x", intel=True
-        )
+        [(pattern, optional)] = make_pattern("mov dword ptr fs:[0], $x", intel=True)
         assert isinstance(pattern, AsmInstruction)
         self.assertFalse(optional)
         self.assertEqual(pattern.mnemonic, "mov.fs")
@@ -918,10 +916,10 @@ class TestX86FpuRewrite(unittest.TestCase):
         return [str(p) for p in out if isinstance(p, Instruction)]
 
     def infer(self, lines: str, *, context: bool = False) -> List[str]:
-        """Run the whole FPU pattern (with structural call-delta inference)."""
+        """Run the FPU rewrite with structural call-delta inference."""
         from m2c.asm_file import AsmData
-        from m2c.asm_pattern import AsmMatcher
-        from m2c.x86_fpu import X86FpuRewritePattern
+        from m2c.arch_x86 import compute_x86_context_facts
+        from m2c.x86_fpu import rewrite_fpu_stack
 
         body, labels = self._build_body(lines)
         typemap = None
@@ -933,10 +931,11 @@ class TestX86FpuRewrite(unittest.TestCase):
                 / "tests/end_to_end/x86-fpu-wrapper-float/orig.c"
             )
             typemap = build_typemap([context_path], self.arch, use_cache=False)
-        matcher = AsmMatcher(self.arch, AsmData(), body, labels, typemap=typemap)
-        repl = X86FpuRewritePattern().match(matcher)
-        assert repl is not None
-        return [str(p) for p in repl.new_body if isinstance(p, Instruction)]
+        facts = compute_x86_context_facts(typemap)
+        out = rewrite_fpu_stack(
+            body, self.arch, AsmData(), labels, facts.fpu_call_deltas
+        )
+        return [str(p) for p in out if isinstance(p, Instruction)]
 
     def test_straight_line_depth(self) -> None:
         # A push defines f{depth}; arithmetic keeps the top's name.
@@ -1231,8 +1230,7 @@ class TestX86FpuRewrite(unittest.TestCase):
         # A plain integer wrapper with no x87 and no context float delta is
         # left completely untouched (the cheap early-out still holds).
         from m2c.asm_file import AsmData
-        from m2c.asm_pattern import AsmMatcher
-        from m2c.x86_fpu import X86FpuRewritePattern
+        from m2c.x86_fpu import rewrite_fpu_stack
 
         body, labels = self._build_body(
             """
@@ -1240,8 +1238,8 @@ class TestX86FpuRewrite(unittest.TestCase):
             RET
             """
         )
-        matcher = AsmMatcher(self.arch, AsmData(), body, labels)
-        self.assertIsNone(X86FpuRewritePattern().match(matcher))
+        out = rewrite_fpu_stack(body, self.arch, AsmData(), labels, {})
+        self.assertIs(out, body)
 
     def test_infer_float_return_call(self) -> None:
         # Without a seed, the underflow at `fadd` (depth 0) is attributed to
