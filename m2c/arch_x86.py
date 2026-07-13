@@ -92,6 +92,7 @@ from .instruction import (
     Location,
     StackLocation,
 )
+from .intel_syntax import preprocess_intel_instruction
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -185,21 +186,6 @@ HIGH_BYTE_REGS: Dict[Register, Register] = {
     Register("bh"): EBX,
     Register("ch"): ECX,
     Register("dh"): EDX,
-}
-
-PTR_WIDTHS: Dict[str, int] = {"byte": 1, "word": 2, "dword": 4, "qword": 8}
-
-RE_PTR = re.compile(r"\b(byte|word|dword|qword)\s+ptr\s+", re.IGNORECASE)
-RE_OFFSET = re.compile(r"\boffset\s+", re.IGNORECASE)
-# Branch-distance operand hints (Intel/MASM style: `jmp short loc_1`,
-# `call near ptr foo`). Pure syntax; the target that follows is all we need.
-RE_DISTANCE = re.compile(r"\b(short|near\s+ptr|far\s+ptr)\s+", re.IGNORECASE)
-RE_ST_REG = re.compile(r"\bst\((\d)\)", re.IGNORECASE)
-RE_SEGMENT = re.compile(r"\b([cdefgs]s):", re.IGNORECASE)
-
-# x86 string instructions, whose operands are implicit (esi/edi/eax/ecx).
-STRING_OP_MNEMONICS = {
-    f"{op}{width}" for op in ("movs", "stos", "scas", "lods", "cmps") for width in "bwd"
 }
 
 
@@ -817,37 +803,33 @@ class X86SehPattern(SimpleAsmPattern):
     16-byte frame allocation and the epilogue store is dropped. Nonstandard
     fs: accesses are left alone and fail translation with a clear error."""
 
-    @property
-    def pattern(self) -> Pattern:
-        return make_pattern(
-            "push N",
-            "push _",
-            "push _",
-            "mov $x, fs:[0]",
-            "push $x",
-            "mov fs:[0], $esp",
-            intel=True,
-        )
+    pattern = make_pattern(
+        "push N",
+        "push _",
+        "push _",
+        "mov $x, fs:[0]",
+        "push $x",
+        "mov fs:[0], $esp",
+        intel=True,
+    )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
         handler = m.body[2]
+        assert isinstance(handler, Instruction)
         if not (
             m.literals["N"] in (-1, 0xFFFFFFFF)
-            and isinstance(handler, Instruction)
             and isinstance(handler.args[0], AsmGlobalSymbol)
             and "except_handler" in handler.args[0].symbol_name
         ):
             return None
         sub = AsmInstruction("sub", [ESP, AsmLiteral(16)])
-        return Replacement([sub], len(m.body), clobbers=[m.regs["x"]])
+        return Replacement([sub], len(m.body))
 
 
 class X86SehEpiloguePattern(SimpleAsmPattern):
     """Remove stores that restore or update the canonical fs:[0] SEH head."""
 
-    @property
-    def pattern(self) -> Pattern:
-        return make_pattern("mov fs:[0], $x", intel=True)
+    pattern = make_pattern("mov fs:[0], $x", intel=True)
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
         if m.regs["x"] == ESP:
@@ -2438,50 +2420,7 @@ class X86Arch(Arch):
         return [self.parse("ret", [], InstructionMeta.missing())]
 
     def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
-        # String instructions: disassemblers (e.g. capstone) often render the
-        # implicit operands explicitly ("rep stosd dword ptr es:[edi], eax").
-        # The operands are fixed by the mnemonic, so drop them before the
-        # width/segment folding below would mangle the mnemonic. The es:
-        # segment marker distinguishes the string form of ambiguous mnemonics
-        # (movsd/cmpsd are also SSE2 scalar-double instructions).
-        mn = mnemonic  # already lowercased by the parser
-        if mn == "retn":
-            # Intel syntax may spell near returns "retn"; identical to "ret".
-            mnemonic = mn = "ret"
-        if mn in ("rep", "repe", "repne", "repz", "repnz"):
-            parts = args.split(None, 1)
-            if parts and parts[0].lower() in STRING_OP_MNEMONICS:
-                return mnemonic, parts[0].lower()
-        elif mn in STRING_OP_MNEMONICS and "es:" in args.lower():
-            return mnemonic, ""
-
-        # Fold "<size> ptr" memory operand prefixes into the mnemonic as a
-        # width suffix, and strip syntactic sugar the generic argument parser
-        # should not see ("offset symbol" just means the symbol's address,
-        # which is how bare symbols are treated anyway).
-        widths = [PTR_WIDTHS[m.lower()] for m in RE_PTR.findall(args)]
-        args = RE_PTR.sub("", args)
-        args = RE_OFFSET.sub("", args)
-        args = RE_DISTANCE.sub("", args)
-        # Rewrite st(N) FPU registers into parseable names.
-        args = RE_ST_REG.sub(lambda m: f"st{m.group(1)}", args)
-        # Segment override prefixes. cs/ds/es/ss address the flat default
-        # segments in 32-bit code and carry no semantics (some inputs decorate
-        # absolute operands with "ds:"), so they are simply stripped. fs/gs
-        # genuinely change the address space (on Win32, fs: is the Thread
-        # Information Block, e.g. the fs:[0] accesses in SEH prologues), so
-        # they move into the mnemonic: the result (e.g. "mov.fs") is either
-        # handled explicitly or fails translation with a clear error.
-        segments = [m.lower() for m in RE_SEGMENT.findall(args)]
-        args = RE_SEGMENT.sub("", args)
-        for seg in segments:
-            if seg in ("fs", "gs"):
-                mnemonic += f".{seg}"
-        if widths:
-            # x86 has no instructions with two memory operands of different
-            # widths, so all prefixes agree.
-            mnemonic += WIDTH_SUFFIXES[min(widths)]
-        return mnemonic, args
+        return preprocess_intel_instruction(mnemonic, args)
 
     def normalize_instruction(
         self, instr: AsmInstruction, asm_state: AsmState
@@ -2619,7 +2558,7 @@ class X86Arch(Arch):
     instrs_shift: Set[str] = {"shl", "sal", "shr", "sar", "rol", "ror", "shrd", "shld"}
 
     # single operand, read and written.
-    instrs_unary: Dict[str, Tuple[str, UnaryBuilder]] = {
+    instrs_unary: Dict[str, Tuple[FlagsKind, UnaryBuilder]] = {
         "inc": (FlagsKind.KEEP_C, inc_expr),
         "dec": (FlagsKind.KEEP_C, lambda a, v: sub_expr(v, Literal(1))),
         # neg's flags are those of `cmp 0, v`, computed in the eval fn (in

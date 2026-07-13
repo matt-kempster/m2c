@@ -5,7 +5,7 @@ from pathlib import Path
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from m2c.asm_pattern import AsmMatcher, BodyPart
+from m2c.asm_pattern import AsmMatcher, BodyPart, make_pattern
 
 from m2c.arch_x86 import X86Arch, X86RawJumpTablePattern
 from m2c.asm_file import AsmData
@@ -156,6 +156,16 @@ class TestX86Parsing(unittest.TestCase):
     def test_st_registers(self) -> None:
         asm, _ = self.parse_asm("FADDP ST(2), ST(0)")
         self.assertEqual(asm.args, [Register("st2"), Register("st0")])
+
+    def test_intel_pattern_parser_uses_x86_syntax(self) -> None:
+        [(pattern, optional)] = make_pattern(
+            "mov dword ptr fs:[0], $x", intel=True
+        )
+        assert isinstance(pattern, AsmInstruction)
+        self.assertFalse(optional)
+        self.assertEqual(pattern.mnemonic, "mov.fs")
+        self.assertIsInstance(pattern.args[0], AsmAddressMode)
+        self.assertEqual(pattern.args[1], Register("x"))
 
     # Sub-register aliasing & width preservation
 

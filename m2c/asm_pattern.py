@@ -2,7 +2,17 @@ from __future__ import annotations
 import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 from .asm_file import AsmData, Label
 from .asm_instruction import (
@@ -16,6 +26,7 @@ from .asm_instruction import (
     BinOp,
     JumpTarget,
     Macro,
+    NaiveIntelParsingArch,
     NaiveParsingArch,
     Register,
     RegisterList,
@@ -40,7 +51,7 @@ Pattern = List[Tuple[PatternPart, bool]]
 
 def make_pattern(*parts: str, intel: bool = False) -> Pattern:
     ret: Pattern = []
-    arch = NaiveParsingArch(intel=intel)
+    arch = NaiveIntelParsingArch() if intel else NaiveParsingArch()
     for part in parts:
         optional = part.endswith("?")
         part = part.rstrip("?")
@@ -76,9 +87,7 @@ class AsmPattern(abc.ABC):
 
 
 class SimpleAsmPattern(AsmPattern):
-    @property
-    @abc.abstractmethod
-    def pattern(self) -> Pattern: ...
+    pattern: Pattern
 
     @abc.abstractmethod
     def replace(self, m: AsmMatch) -> Optional[Replacement]: ...
