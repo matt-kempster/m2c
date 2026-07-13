@@ -187,7 +187,6 @@ def run(options: Options) -> int:
                 global_info.asm_data,
                 arch,
                 typemap,
-                fragment=False,
                 print_warnings=options.debug,
                 debug_patterns=options.debug_patterns,
             )

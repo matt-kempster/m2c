@@ -1682,21 +1682,16 @@ def nodes_to_flowgraph(
     return flow_graph
 
 
-def build_flowgraph(
+def _build_flowgraph(
     function: Function,
     asm_data: AsmData,
     arch: ArchFlowGraph,
-    typemap: Optional[TypeMap] = None,
+    typemap: Optional[TypeMap],
     *,
     fragment: bool,
     print_warnings: bool = False,
     debug_patterns: bool = False,
 ) -> FlowGraph:
-    """
-    Build the FlowGraph for the given Function.
-    If `fragment` is True, do not treat the asm as a full function: this is used
-    for analyzing IR patterns which do not need to be normalized in the same way.
-    """
     blocks = build_blocks(
         function,
         asm_data,
@@ -1723,3 +1718,39 @@ def build_flowgraph(
         arch.simplify_ir(flow_graph)
 
     return flow_graph
+
+
+def build_flowgraph(
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+    typemap: TypeMap,
+    *,
+    print_warnings: bool = False,
+    debug_patterns: bool = False,
+) -> FlowGraph:
+    """Build and normalize the flow graph for a complete function."""
+    return _build_flowgraph(
+        function,
+        asm_data,
+        arch,
+        typemap,
+        fragment=False,
+        print_warnings=print_warnings,
+        debug_patterns=debug_patterns,
+    )
+
+
+def build_flowgraph_fragment(
+    function: Function,
+    asm_data: AsmData,
+    arch: ArchFlowGraph,
+) -> FlowGraph:
+    """Build a fall-through flow graph for an instruction fragment."""
+    return _build_flowgraph(
+        function,
+        asm_data,
+        arch,
+        None,
+        fragment=True,
+    )
