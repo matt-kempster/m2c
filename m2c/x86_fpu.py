@@ -314,7 +314,6 @@ def infer_call_deltas(
     seed: Dict[str, int],
     arch: ArchAsm,
     asm_data: AsmData,
-    labels: Set[str],
 ) -> List[BodyPart]:
     """Find the smallest call-delta assignment with consistent x87 dataflow."""
     queue: List[Dict[str, int]] = [seed]
@@ -325,7 +324,7 @@ def infer_call_deltas(
         call_deltas = queue.pop(0)
         states_tried += 1
         try:
-            return rewrite_fpu_ops(body, arch, asm_data, labels, call_deltas)
+            return rewrite_fpu_ops(body, arch, asm_data, call_deltas)
         except X87StackError as fault:
             last_fault = fault
             for sym, delta in _candidate_moves(body, fault, call_deltas):
@@ -343,7 +342,6 @@ def rewrite_fpu_stack(
     body: List[BodyPart],
     arch: ArchAsm,
     asm_data: AsmData,
-    labels: Set[str],
     context_call_deltas: Mapping[str, int],
 ) -> List[BodyPart]:
     """Eliminate the x87 stack after x86 stack operands have been resolved."""
@@ -359,14 +357,13 @@ def rewrite_fpu_stack(
     has_known_call = seed and any(_call_key(body, i) in seed for i in range(len(body)))
     if not has_fpu and not has_known_call:
         return body
-    return infer_call_deltas(body, seed, arch, asm_data, labels)
+    return infer_call_deltas(body, seed, arch, asm_data)
 
 
 def rewrite_fpu_ops(
     body: List[BodyPart],
     arch: ArchAsm,
     asm_data: AsmData,
-    labels: Set[str],
     call_deltas: Optional[Dict[str, int]] = None,
 ) -> List[BodyPart]:
     call_deltas = call_deltas or {}

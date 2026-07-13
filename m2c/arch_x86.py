@@ -900,7 +900,6 @@ class X86RewritePattern(AsmPattern):
             new_body,
             matcher.arch,
             matcher.asm_data,
-            matcher.labels,
             context_facts.fpu_call_deltas,
         )
         return Replacement(new_body, len(matcher.input), clobbers=[])
@@ -987,10 +986,9 @@ def rewrite_stack_ops(
             j -= 1
         return total
 
-    # Callee cleanup information beyond name decoration, kept in separate
+    # Callee cleanup information beyond inline name decoration, kept in
     # precedence tiers (see callee_cleanup_bytes): user-context stdcall
-    # prototypes (highest), and disassembler-exported `.set sym, "name@N"`
-    # decorations for this file.
+    # prototypes (highest), then file-level `.set sym, "name@N"` metadata.
     context_arg_bytes = (
         dict(context_facts.stdcall_arg_bytes) if context_facts is not None else {}
     )

@@ -488,9 +488,7 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(instr.inputs, [Register("eax")])
 
     def test_jmp_jump_table(self) -> None:
-        instr = self.parse_instruction(
-            "JMP dword ptr [EAX*0x4 + jump_table]"
-        )
+        instr = self.parse_instruction("JMP dword ptr [EAX*0x4 + jump_table]")
         self.assertTrue(instr.is_jump())
         self.assertTrue(instr.is_conditional)
         self.assertTrue(instr.is_load)
@@ -919,7 +917,7 @@ class TestX86FpuRewrite(unittest.TestCase):
         from m2c.x86_fpu import rewrite_fpu_ops
 
         body, labels = self._build_body(lines)
-        out = rewrite_fpu_ops(body, self.arch, AsmData(), labels, call_deltas or {})
+        out = rewrite_fpu_ops(body, self.arch, AsmData(), call_deltas or {})
         return [str(p) for p in out if isinstance(p, Instruction)]
 
     def infer(self, lines: str, *, context: bool = False) -> List[str]:
@@ -939,9 +937,7 @@ class TestX86FpuRewrite(unittest.TestCase):
             )
             typemap = build_typemap([context_path], self.arch, use_cache=False)
         facts = compute_x86_context_facts(typemap)
-        out = rewrite_fpu_stack(
-            body, self.arch, AsmData(), labels, facts.fpu_call_deltas
-        )
+        out = rewrite_fpu_stack(body, self.arch, AsmData(), facts.fpu_call_deltas)
         return [str(p) for p in out if isinstance(p, Instruction)]
 
     def test_straight_line_depth(self) -> None:
@@ -1166,7 +1162,7 @@ class TestX86FpuRewrite(unittest.TestCase):
         body.append(self.arch.parse("ret", [], InstructionMeta.missing()))
         out = [
             str(p)
-            for p in rewrite_fpu_ops(body, self.arch, AsmData(), labels, {})
+            for p in rewrite_fpu_ops(body, self.arch, AsmData(), {})
             if isinstance(p, Instruction)
         ]
         self.assertEqual(out[2], "ci_pow.fictive $f1, $f0")
@@ -1189,7 +1185,7 @@ class TestX86FpuRewrite(unittest.TestCase):
         )
         body.append(self.arch.parse("ret", [], InstructionMeta.missing()))
         with self.assertRaises(DecompFailure) as cm:
-            rewrite_fpu_ops(body, self.arch, AsmData(), labels, {})
+            rewrite_fpu_ops(body, self.arch, AsmData(), {})
         self.assertIn("x87 stack underflow", str(cm.exception))
 
     def test_ci_unknown_helper_fails_loud(self) -> None:
@@ -1245,7 +1241,7 @@ class TestX86FpuRewrite(unittest.TestCase):
             RET
             """
         )
-        out = rewrite_fpu_stack(body, self.arch, AsmData(), labels, {})
+        out = rewrite_fpu_stack(body, self.arch, AsmData(), {})
         self.assertIs(out, body)
 
     def test_infer_float_return_call(self) -> None:
