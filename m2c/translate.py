@@ -3641,11 +3641,36 @@ class NodeState:
     def _prevent_later_uses(self, expr_filter: Callable[[Expression], bool]) -> None:
         """Prevent later uses of registers that recursively contain something that
         matches a callback filter."""
+
+        def force_marker_dependencies(expr: Expression) -> bool:
+            """Force matching values nested in a marker without emitting the marker."""
+            if not (
+                isinstance(expr, EvalOnceExpr)
+                and isinstance(expr.wrapped_expr, FuncCall)
+                and expr.wrapped_expr.is_marker
+            ):
+                return False
+
+            def visit(value: Expression) -> None:
+                if isinstance(value, EvalOnceExpr):
+                    if expr_filter(value.wrapped_expr):
+                        value.force()
+                    else:
+                        visit(value.wrapped_expr)
+                    return
+                for dependency in value.dependencies():
+                    visit(dependency)
+
+            visit(expr.wrapped_expr)
+            return True
+
         for r, data in self.regs.contents.items():
             expr = data.value
             if isinstance(expr, (PlannedPhiExpr, NaivePhiExpr)):
                 continue
             if not data.meta.force and uses_expr(expr, expr_filter):
+                if force_marker_dependencies(expr):
+                    continue
                 # Mark the register as "if used, emit the expression's once var".
                 if not isinstance(expr, EvalOnceExpr):
                     assert_never(expr)

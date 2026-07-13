@@ -92,6 +92,8 @@ from .instruction import (
     StackLocation,
 )
 from .intel_syntax import preprocess_intel_instruction
+from .ir_pattern import IrMatch, IrPattern
+from .flow_graph import ArchFlowGraph, FlowGraph
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -1880,12 +1882,10 @@ def set_x86_flags_from_add(
 FNSTSW_MARKER = "M2C_FNSTSW"
 
 
-def _unwrap_fnstsw_marker(expr: Expression) -> Tuple[Expression, bool]:
+def _unwrap_fnstsw_marker(expr: Expression) -> Expression:
     """Remove high-byte extraction and eval-once wrappers around a marker."""
-    forced = False
     while True:
         if isinstance(expr, EvalOnceExpr):
-            forced |= expr.forced_emit or expr.emit_exactly_once
             expr = expr.wrapped_expr
         elif isinstance(expr, Cast) and expr.type.is_int():
             expr = expr.expr
@@ -1900,7 +1900,7 @@ def _unwrap_fnstsw_marker(expr: Expression) -> Tuple[Expression, bool]:
         ):
             expr = expr.left
         else:
-            return expr, forced
+            return expr
 
 
 def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expression]]:
@@ -1912,7 +1912,7 @@ def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expre
     operands to reconstruct `x < 0.0f`. The returned operands keep their own
     (possibly forced) wrappers, so a compare operand that genuinely depends on
     the intervening store stays correctly materialized before it."""
-    uw, _ = _unwrap_fnstsw_marker(expr)
+    uw = _unwrap_fnstsw_marker(expr)
     if (
         isinstance(uw, FuncCall)
         and isinstance(uw.function, GlobalSymbol)
@@ -1921,80 +1921,6 @@ def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expre
     ):
         return uw.args[0], uw.args[1]
     return None
-
-
-def fnstsw_marker_is_forced(expr: Optional[Expression]) -> bool:
-    """Whether the marker sits past a forced EvalOnceExpr boundary (see
-    fnstsw_marker_operands)."""
-    if expr is None:
-        return False
-    _, forced = _unwrap_fnstsw_marker(expr)
-    return forced
-
-
-def _operand_stable_across_store(operand: Expression) -> bool:
-    """Whether one folded compare operand keeps its fcomp-time value at the
-    (post-store) branch. Register/stack/phi values and literals were snapshotted
-    before the store, so they are stable. A *direct* memory read is stable only
-    when it targets read-only data (a constant like an `_real_*` compare literal)
-    that the store cannot have modified; a writable global or a pointer/indexed
-    read might alias the store and would re-read its current value."""
-    uw = early_unwrap(operand)
-    if not isinstance(uw, StructAccess):
-        # ArrayAccess (indexed/pointer read) is treated conservatively as
-        # unstable; anything else is a snapshotted value or literal.
-        return not isinstance(uw, ArrayAccess)
-    base = early_unwrap(uw.struct_var)
-    if isinstance(base, AddressOf):
-        inner = early_unwrap(base.expr)
-        if (
-            isinstance(inner, GlobalSymbol)
-            and inner.asm_data_entry is not None
-            and inner.asm_data_entry.is_readonly
-        ):
-            return True
-    return False
-
-
-def fnstsw_operands_store_stable(operands: Tuple[Expression, Expression]) -> bool:
-    """Whether all operands are stable per _operand_stable_across_store."""
-    return all(_operand_stable_across_store(o) for o in operands)
-
-
-def fnstsw_operands_can_be_marker(operands: Tuple[Expression, Expression]) -> bool:
-    """Whether a status-word marker needs no materialization across a store."""
-    return fnstsw_operands_store_stable(operands) and not any(
-        uses_expr(operand, lambda expr: isinstance(expr, FuncCall))
-        for operand in operands
-    )
-
-
-def suppress_forced_fnstsw_marker(expr: Optional[Expression]) -> None:
-    """Drop the dead `temp = M2C_FNSTSW(...)` assignment left behind by a fold.
-
-    Slow-path markers remain ordinary calls so nested call operands are
-    materialized before an intervening store. Only the outer marker is dead;
-    its operand temporaries remain load-bearing."""
-    while expr is not None:
-        if isinstance(expr, EvalOnceExpr):
-            if expr.forced_emit:
-                expr.forced_emit = False
-                expr.var.is_emitted = False
-            expr = expr.wrapped_expr
-        elif isinstance(expr, Cast) and expr.type.is_int():
-            expr = expr.expr
-        elif (
-            isinstance(expr, BinaryOp)
-            and expr.op in ("&", ">>")
-            and isinstance(expr.right, Literal)
-            and (
-                (expr.op == "&" and expr.right.value == 0xFF)
-                or (expr.op == ">>" and expr.right.value == 8)
-            )
-        ):
-            expr = expr.left
-        else:
-            return
 
 
 def fpu_compare_condition(lhs: Expression, rhs: Expression, op: str) -> Condition:
@@ -2173,14 +2099,13 @@ class X86HighBytePattern(AsmPattern):
                 read.append(reg)
         if not read:
             return None
-        if len(read) > 2:
-            raise DecompFailure(
-                "x86 instruction reads more than two high-byte registers"
-            )
+        assert len(read) <= 2, "x86 instructions have at most two operands"
 
         replacements = dict(zip(read, (HI8A, HI8B)))
         new_body: List[ReplacementPart] = [
-            AsmInstruction("hibyte.fictive", [replacements[reg], HIGH_BYTE_REGS[reg]])
+            AsmInstruction(
+                "extract_high_byte.fictive", [replacements[reg], HIGH_BYTE_REGS[reg]]
+            )
             for reg in read
         ]
         new_body.append(
@@ -2190,6 +2115,16 @@ class X86HighBytePattern(AsmPattern):
             )
         )
         return Replacement(new_body, 1)
+
+
+class X86FnstswTestPattern(IrPattern):
+    """Give masked byte tests an IR-level x87-status folding opportunity."""
+
+    replacement = "fnstsw_test.fictive v, K"
+    parts = ["test.b v, K"]
+
+    def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
+        return isinstance(m.symbolic_args["K"], AsmLiteral)
 
 
 @dataclass(frozen=True)
@@ -2280,7 +2215,7 @@ class X86Arch(Arch):
     # A temp reg so calls clobber it; not a flag reg so it is not swept by the
     # integer-flag machinery.
     fsw_reg = Register("fsw")
-    temp_regs = [EAX] + simple_temp_regs + flag_regs + [fsw_reg, HI8A, HI8B]
+    temp_regs = [EAX] + simple_temp_regs + flag_regs + [fsw_reg]
     saved_regs = [EBX, ESI, EDI, EBP, EIP]
     # Raw x87 stack-register names (`st(0)`..`st(7)`, spelled `st0`..`st7`).
     # These reach `parse` only during initial parsing; X86RewritePattern
@@ -2316,6 +2251,7 @@ class X86Arch(Arch):
         X86RewritePattern(),
         X86HighBytePattern(),
     ]
+    ir_patterns = [X86FnstswTestPattern()]
 
     def return_reg_always_meaningful(self, reg: Register) -> bool:
         # The x87 ABI requires the register stack to be empty at every
@@ -2703,7 +2639,18 @@ class X86Arch(Arch):
                 s.store_memory(store, src_reg if src_reg is not None else EAX)
             return None
 
-        if base == "hibyte.fictive":
+        if base == "move.fictive":
+            assert len(args) == 2
+            dst, src = args
+            assert isinstance(dst, Register) and isinstance(src, Register)
+            inputs = [src]
+            outputs = [dst]
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(dst, a.regs[src])
+
+        elif base == "extract_high_byte.fictive":
             assert len(args) == 2
             dst, src = args
             assert isinstance(dst, Register) and isinstance(src, Register)
@@ -3161,6 +3108,29 @@ class X86Arch(Arch):
                     set_unary_flags(val)
                     write_dst(s, a, val, width_type(width))
 
+        elif base == "fnstsw_test.fictive":
+            assert len(args) == 2
+            status_reg, mask = args
+            assert isinstance(status_reg, Register)
+            assert isinstance(mask, (AsmLiteral, AsmGlobalSymbol))
+            inputs = [status_reg]
+            outputs = list(cls.flag_regs)
+            is_effectful = False
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                assert isinstance(mask, AsmLiteral)
+                status = a.regs[status_reg]
+                operands = fnstsw_marker_operands(status)
+                op = FNSTSW_MASK_OPS.get(mask.value & 0xFF)
+                if operands is not None and op is not None:
+                    cond = fpu_compare_condition(operands[0], operands[1], op)
+                    for flag in cls.flag_regs:
+                        s.set_reg(flag, cond)
+                    return
+                high = shift_right_expr(status, Literal(8), signed=False)
+                value = replace_bitand(BinaryOp.int(high, "&", Literal(mask.value)))
+                set_x86_flags_from_result(s, value, 1)
+
         elif base in cls.instrs_cmp:
             assert len(args) == 2
             for arg in args:
@@ -3169,37 +3139,6 @@ class X86Arch(Arch):
             is_effectful = False
 
             def eval_cmp(s: NodeState, a: InstrArgs) -> None:
-                if (
-                    base == "test"
-                    and width == 1
-                    and args[0] in (EAX, HI8A, HI8B)
-                    and isinstance(args[1], AsmLiteral)
-                    and args[0] in s.regs
-                ):
-                    # `test ah, mask` after `fnstsw ax`: if the extracted AH
-                    # value still contains the x87 status-word marker, translate
-                    # the compare directly to a float condition instead of
-                    # materializing bit arithmetic (see FNSTSW_MASK_OPS).
-                    status_reg = args[0]
-                    assert isinstance(status_reg, Register)
-                    raw_eax = a.regs.get_raw(status_reg)
-                    operands = fnstsw_marker_operands(a.regs[status_reg])
-                    op = FNSTSW_MASK_OPS.get(args[1].value & 0xFF)
-                    forced = fnstsw_marker_is_forced(raw_eax)
-                    # Fold past a forced marker only when the operands cannot
-                    # have changed across the intervening store (see
-                    # fnstsw_marker_operands).
-                    if (
-                        operands is not None
-                        and op is not None
-                        and (not forced or fnstsw_operands_store_stable(operands))
-                    ):
-                        cond = fpu_compare_condition(operands[0], operands[1], op)
-                        for flag in cls.flag_regs:
-                            s.set_reg(flag, cond)
-                        if forced:
-                            suppress_forced_fnstsw_marker(raw_eax)
-                        return
                 lhs = op_value(a, 0, width)
                 if base == "test":
                     # CF = OF = 0; other flags are based on lhs & rhs. The
@@ -3760,7 +3699,7 @@ class X86Arch(Arch):
                         FNSTSW_MARKER,
                         list(operands),
                         Type.u16(),
-                        marker=fnstsw_operands_can_be_marker(operands),
+                        marker=True,
                     ),
                 )
                 for reg in popped:
