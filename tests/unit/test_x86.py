@@ -768,12 +768,20 @@ class TestX86StackRewrite(unittest.TestCase):
             )
         return body, labels
 
-    def rewrite(self, lines: str) -> List[Instruction]:
+    def rewrite(
+        self, lines: str, *, infer_direct_stdcall: bool = False
+    ) -> List[Instruction]:
         from m2c.arch_x86 import rewrite_stack_ops
         from m2c.asm_file import AsmData
 
         body, labels = self._build_body(lines)
-        out = rewrite_stack_ops(body, self.arch, AsmData(), labels)
+        out = rewrite_stack_ops(
+            body,
+            self.arch,
+            AsmData(),
+            labels,
+            infer_direct_stdcall=infer_direct_stdcall,
+        )
         return [p for p in out if isinstance(p, Instruction)]
 
     def call_cleanup_bytes(self, instrs: List[Instruction]) -> int:
@@ -845,14 +853,15 @@ class TestX86StackRewrite(unittest.TestCase):
         self.assertEqual(self.call_cleanup_bytes(instrs), 8)
 
     def test_stdcall_dll_import_pops_arguments(self) -> None:
-        # A genuine Win32-style stdcall DLL import (`_LIB_DLL_Func`) with no
-        # caller cleanup after the call pops its own arguments.
+        # An undecorated direct callee with no caller cleanup is classified by
+        # the structurally validated retry, independent of its label spelling.
         instrs = self.rewrite(
             """
             PUSH EAX
             CALL _USER32_DLL_Foo
             RET
-            """
+            """,
+            infer_direct_stdcall=True,
         )
         self.assertEqual(self.call_cleanup_bytes(instrs), 4)
 

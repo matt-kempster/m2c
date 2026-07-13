@@ -514,19 +514,6 @@ def eval_math_helper(
 RE_STDCALL_IMPORT = re.compile(r"^__imp__.*_(\d+)$")
 
 
-# Undecorated stdcall imports appear as `_<LIB>_DLL_<Func>` or
-# `_<LIB>_DRV_<Func>` (e.g. `_USER32_DLL_ShowWindow`), a disassembler naming for
-# imports whose thunks it resolved to a library.
-RE_DLL_IMPORT = re.compile(r"^_[A-Za-z0-9]+_(?:DLL|DRV)_(\w+)$")
-
-
-def is_stdcall_import(target: Argument) -> bool:
-    """Whether a call target is an undecorated Win32-style DLL import, which
-    uses the stdcall convention (callee pops arguments)."""
-    sym = call_target_symbol(target)
-    return sym is not None and bool(RE_DLL_IMPORT.match(sym))
-
-
 def is_register_indirect_call(target: Argument) -> bool:
     """Whether a call target is an indirect call through a register (a COM /
     virtual method call, e.g. `call eax` or `call [ecx + 0x7c]`), as opposed
@@ -1074,15 +1061,11 @@ def rewrite_stack_ops(
         # calls' arguments at once) always have the caller restore esp. We
         # treat a call as self-cleaning when no caller cleanup follows and
         # either:
-        #  - its name marks it as a Win32/DirectX DLL import
-        #    (`_<LIB>_DLL_<Func>`), or
         #  - it is an indirect call through a register (`call [ecx+0x7c]`,
         #    `call eax`), i.e. a COM/virtual method, or
         #  - `infer_direct_stdcall` is set: the retry pass extends the same
         #    inference to direct calls (undecorated stdcall callees), relying
         #    on the dataflow consistency check to validate the result.
-        if is_stdcall_import(target) and not caller_cleans_up(call_index):
-            return call_arg_bytes(call_index)
         if is_register_indirect_call(target) and not caller_cleans_up(call_index):
             return call_arg_bytes(call_index)
         if (
