@@ -9,14 +9,14 @@ test:
     FCOMP dword ptr [ESP + 0x8]
     FNSTSW AX
     TEST AH, 0x41
-    JNZ _LAB_zero
+    JNZ .Lzero
     FLD dword ptr [ESP + 0x4]
     FCOMP dword ptr [ESP + 0xc]
     FNSTSW AX
     TEST AH, 0x1
-    JZ _LAB_zero
+    JZ .Lzero
     MOV EAX, 0x1
     RET
-_LAB_zero:
+.Lzero:
     XOR EAX, EAX
     RET

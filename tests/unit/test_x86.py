@@ -104,9 +104,7 @@ class TestX86Parsing(unittest.TestCase):
         )
 
     def test_scaled_index_symbol_address_mode(self) -> None:
-        asm, _ = self.parse_asm(
-            "JMP dword ptr [EAX*0x4 + _switchD_0040100d_switchdataD_00401058]"
-        )
+        asm, _ = self.parse_asm("JMP dword ptr [EAX*0x4 + jump_table]")
         self.assertEqual(asm.mnemonic, "jmp")
         addr = asm.args[0]
         assert isinstance(addr, AsmAddressMode)
@@ -116,7 +114,7 @@ class TestX86Parsing(unittest.TestCase):
             BinOp(
                 "+",
                 BinOp("*", Register("eax"), AsmLiteral(4)),
-                AsmGlobalSymbol("_switchD_0040100d_switchdataD_00401058"),
+                AsmGlobalSymbol("jump_table"),
             ),
         )
 
@@ -491,7 +489,7 @@ class TestX86Parsing(unittest.TestCase):
 
     def test_jmp_jump_table(self) -> None:
         instr = self.parse_instruction(
-            "JMP dword ptr [EAX*0x4 + _switchD_0040100d_switchdataD_00401058]"
+            "JMP dword ptr [EAX*0x4 + jump_table]"
         )
         self.assertTrue(instr.is_jump())
         self.assertTrue(instr.is_conditional)
@@ -596,20 +594,20 @@ class TestX86AsmFile(unittest.TestCase):
     """File-level parsing: labels, functions, and .long jump tables."""
 
     ASM = """
-_switch_func_00401000:
+switch_func:
     MOV EAX, dword ptr [ESP + 0xc]
     CMP EAX, 0x6
-    JA _switchD_0040100d_caseD_2
-_switchD_0040100d_switchD:
-    JMP dword ptr [EAX*0x4 + _switchD_0040100d_switchdataD_00401058]
-_switchD_0040100d_caseD_1:
+    JA .Lcase2
+.Lswitch:
+    JMP dword ptr [EAX*0x4 + .Ltable]
+.Lcase1:
     MOV EDX, dword ptr [ESP + 0xc]
     RET
-_switchD_0040100d_caseD_2:
+.Lcase2:
     MOV EDX, dword ptr [ESP + 0x4]
     RET
-_switchD_0040100d_switchdataD_00401058:
-    .long _switchD_0040100d_caseD_1, _switchD_0040100d_caseD_2
+.Ltable:
+    .long .Lcase1, .Lcase2
 """
 
     def test_parse_file_with_long_jump_table(self) -> None:
@@ -624,17 +622,17 @@ _switchD_0040100d_switchdataD_00401058:
         asm_file = parse_file(f, X86Arch(), options)
 
         self.assertEqual(len(asm_file.functions), 1)
-        self.assertEqual(asm_file.functions[0].name, "_switch_func_00401000")
+        self.assertEqual(asm_file.functions[0].name, "switch_func")
 
         # The .long directive produced 4-byte symbolic jump table entries.
-        entry = asm_file.asm_data.values["_switchD_0040100d_switchdataD_00401058"]
+        entry = asm_file.asm_data.values[".Ltable"]
         symbols = [
             d.as_symbol_without_addend() if isinstance(d, AsmSymbolicData) else None
             for d in entry.data
         ]
         self.assertEqual(
             symbols,
-            ["_switchD_0040100d_caseD_1", "_switchD_0040100d_caseD_2"],
+            [".Lcase1", ".Lcase2"],
         )
 
 

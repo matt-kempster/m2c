@@ -1,11 +1,10 @@
 # A tail call: `jmp` to a label outside the function becomes a
-# return-with-call. The `_LAB_...` label name keeps the fall-through block in
-# the function (a common assembly-export convention).
+# return-with-call. The fall-through block uses a normal local label.
 test:
     MOV EAX, dword ptr [ESP + 0x4]
     TEST EAX, EAX
-    JZ _LAB_00401010
+    JZ .Lreturn_zero
     JMP _other_function
-_LAB_00401010:
+.Lreturn_zero:
     XOR EAX, EAX
     RET

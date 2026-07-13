@@ -13,12 +13,12 @@ test:
     PUSH ESI
     MOV ESI, dword ptr [ESP + 0xc]
     XOR EDI, EDI
-_LAB_00401000:
+.Lloop:
     PUSH ESI
     CALL _GlobalFree
     ADD EDI, 0x1
     CMP EDI, 0xA
-    JL _LAB_00401000
+    JL .Lloop
     POP ESI
     POP EDI
     RET

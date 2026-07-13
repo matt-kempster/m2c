@@ -2172,12 +2172,8 @@ class X86Arch(Arch):
     re_comment = r"[#;].*"
     supports_dollar_regs = False
     supports_intel_addressing = True
-    # MSVC's numbered COFF code labels ($L95) and disassembler-export label
-    # spellings behind the platform's `_` symbol prefix (_LAB_00401234,
-    # _switchD_..._caseD_...) mark jump targets, never function starts.
-    re_arch_local_label = re.compile(
-        r"\$L\d+$|_(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_)"
-    )
+    # Numbered local code labels emitted by MSVC's COFF tooling.
+    re_arch_local_label = re.compile(r"\$L\d+$")
 
     home_space_size = 0
     base_struct_align = 4
