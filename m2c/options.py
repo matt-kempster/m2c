@@ -59,7 +59,7 @@ class Target:
             elif self == Target.PlatformEnum.GBA:
                 return Target.ArchEnum.ARM
             elif self == Target.PlatformEnum.SH2:
-                return Target.ArchEnum.SH
+                return Target.ArchEnum.SH2
             else:
                 assert_never(self)
 
@@ -67,7 +67,7 @@ class Target:
         MIPS = "mips"
         PPC = "ppc"
         ARM = "arm"
-        SH = "sh"
+        SH2 = "sh2"
 
     class EndianEnum(ChoicesEnum):
         LITTLE = "little"

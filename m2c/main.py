@@ -99,7 +99,7 @@ def run(options: Options) -> int:
             arch = ArmGbaArch()
         else:
             arch = ArmArch()
-    elif options.target.arch == Target.ArchEnum.SH:
+    elif options.target.arch == Target.ArchEnum.SH2:
         arch = Sh2Arch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")

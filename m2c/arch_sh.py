@@ -28,7 +28,7 @@ from .types import FunctionSignature, Type
 
 
 class Sh2Arch(Arch):
-    arch = Target.ArchEnum.SH
+    arch = Target.ArchEnum.SH2
 
     re_comment = r"!.*"
     supports_dollar_regs = False
@@ -39,14 +39,15 @@ class Sh2Arch(Arch):
     frame_pointer_regs = [Register("r14")]
     return_address_reg = Register("pr")
 
-    base_return_regs = [(Register("r0"), False), (Register("r1"), False)]
+    base_return_regs = [(Register("r0"), False)]
     all_return_regs = [Register("r0"), Register("r1")]
 
     argument_regs = [Register(r) for r in ["r4", "r5", "r6", "r7"]]
-    simple_temp_regs = [Register(r) for r in ["r8", "r9", "r10", "r11", "r12", "r13"]]
+    simple_temp_regs = [Register(r) for r in ["r0", "r1", "r2", "r3"]]
     temp_regs = argument_regs + simple_temp_regs
+
     saved_regs = [
-        Register(r) for r in ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"]
+        Register(r) for r in ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "pr"]
     ]
 
     all_regs = (
@@ -113,7 +114,7 @@ class Sh2Arch(Arch):
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
-            return f"arg{loc.offset // 4}"
+            return f"arg{loc.offset // 4 + 4}"
         assert loc.reg is not None
         reg_num = int(loc.reg.register_name[1:])
         return f"arg{reg_num - 4}"
