@@ -747,6 +747,7 @@ class MipsArch(Arch):
 
     re_comment = r"[#;].*"
     supports_dollar_regs = True
+    has_delay_slots = True
 
     home_space_size = 0x10
 

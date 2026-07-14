@@ -37,6 +37,7 @@ class Sh2Arch(Arch):
     re_comment = r"!.*"
     supports_dollar_regs = False
     supports_at_addressing = True
+    has_delay_slots = True
 
     home_space_size = 0
 
@@ -127,6 +128,7 @@ class Sh2Arch(Arch):
                 assert args[0].writeback == Writeback.POST
                 inputs = [args[0].base]
                 outputs = [args[1]]
+                is_load = True
         else:
             raise DecompFailure(f"Unable to parse instruction: {mnemonic}")
 

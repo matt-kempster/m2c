@@ -433,7 +433,7 @@ def build_blocks(
     branch_likely_counts: CounterPy38[str] = Counter()
     cond_return_target: Optional[str] = None
 
-    def process_mips(item: Union[Instruction, Label]) -> None:
+    def process_delay_slots(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
@@ -567,7 +567,7 @@ def build_blocks(
             block_builder.new_block()
 
         for item in process_after:
-            process_mips(item)
+            process_delay_slots(item)
 
     def process_no_delay_slots(item: Union[Instruction, Label]) -> None:
         nonlocal cond_return_target
@@ -606,8 +606,8 @@ def build_blocks(
             block_builder.new_block()
 
     for item in body_iter:
-        if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.SH2):
-            process_mips(item)
+        if arch.has_delay_slots:
+            process_delay_slots(item)
         else:
             process_no_delay_slots(item)
 
