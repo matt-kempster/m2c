@@ -58,7 +58,6 @@ void func_004007C0(u32 arg0) {
     u32 var_a0_3;
     u32 var_a0_4;
     u32 var_a0_5;
-    u32 var_a0_6;
 
     foo(arg0);
     foo((u32) ((s32) (arg0 + (arg0 >> 0x1F)) >> 1));
@@ -135,11 +134,7 @@ void func_004007C0(u32 arg0) {
     foo(arg0 / -10);
     foo(arg0 / -7);
     foo(arg0 / -5);
-    var_a0_6 = arg0;
-    if ((s32) var_a0_6 < 0) {
-        var_a0_6 += 3;
-    }
-    foo((u32) -((s32) var_a0_6 >> 2));
+    foo((u32) -((s32) arg0 / 4));
     foo(arg0 / -3);
     foo((u32) -((s32) arg0 / 2));
     foo((u32) -(s32) arg0);
