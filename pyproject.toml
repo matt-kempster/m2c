@@ -25,7 +25,7 @@ m2c = "m2c.main:main"
 [dependency-groups]
 dev = [
 	"pre-commit ~= 2.21",
-	"mypy ~= 1.10",
+	"mypy ~= 2.0",
 	"coverage ~= 7.5",
 	"black == 24.4.2",
 ]
@@ -34,7 +34,7 @@ dev = [
 packages = [{include = "m2c"}, {include = "m2c_pycparser"}]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.10"
 
 [tool.black]
 force-exclude = "/m2c_pycparser/"
