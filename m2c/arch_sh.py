@@ -47,7 +47,8 @@ class Sh2Arch(Arch):
     temp_regs = argument_regs + simple_temp_regs
 
     saved_regs = [
-        Register(r) for r in ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "pr"]
+        Register(r)
+        for r in ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "pr"]
     ]
 
     all_regs = (
