@@ -584,18 +584,18 @@ def parse_arg_elems(
             if value is None and arch.supports_at_addressing:
                 # SuperH indirect addressing: @Rn, @-Rn, and @Rn+.
                 expect("@")
-                writeback: Optional[Writeback] = None
+                sh_writeback: Optional[Writeback] = None
                 if arg_elems and arg_elems[0] == "-":
                     expect("-")
-                    writeback = Writeback.PRE
+                    sh_writeback = Writeback.PRE
                 word = parse_word(arg_elems)
                 base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
                 assert isinstance(base, Register)
                 if arg_elems and arg_elems[0] == "+":
-                    assert writeback is None
+                    assert sh_writeback is None
                     expect("+")
-                    writeback = Writeback.POST
-                value = AsmAddressMode(base, AsmLiteral(0), writeback)
+                    sh_writeback = Writeback.POST
+                value = AsmAddressMode(base, AsmLiteral(0), sh_writeback)
             elif not top_level:
                 # Parse a+b@l as (a+b)@l, not a+(b@l)
                 break

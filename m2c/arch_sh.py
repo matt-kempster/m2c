@@ -24,6 +24,7 @@ from .translate import (
     ArgLoc,
     Cast,
     Expression,
+    InstrArgs,
     Literal,
     NodeState,
 )
@@ -95,7 +96,7 @@ class Sh2Arch(Arch):
         is_return = False
         is_store = False
         has_delay_slot = False
-        eval_fn: Optional[Callable[[NodeState, object], object]] = None
+        eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         if mnemonic == "rts":
             assert len(args) == 0
