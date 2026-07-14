@@ -118,7 +118,7 @@ class Target:
                 compiler = Target.CompilerEnum.MWCC
             elif arch == Target.ArchEnum.ARM:
                 compiler = Target.CompilerEnum.GCC
-            elif arch == Target.ArchEnum.SH:
+            elif arch == Target.ArchEnum.SH2:
                 compiler = Target.CompilerEnum.GCC
             else:
                 compiler = Target.CompilerEnum.IDO

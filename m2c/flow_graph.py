@@ -413,8 +413,10 @@ def build_blocks(
     fragment: bool,
     debug_patterns: bool,
 ) -> List[Block]:
-    if arch.arch == Target.ArchEnum.MIPS:
+    if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.SH2):
         verify_no_trailing_delay_slot(function)
+
+    if arch.arch == Target.ArchEnum.MIPS:
         function = minimize_labels(function, asm_data)
         function = normalize_gcc_likely_branches(function, arch)
         function = normalize_ido_likely_branches(function, arch)
@@ -604,7 +606,7 @@ def build_blocks(
             block_builder.new_block()
 
     for item in body_iter:
-        if arch.arch == Target.ArchEnum.MIPS:
+        if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.SH2):
             process_mips(item)
         else:
             process_no_delay_slots(item)

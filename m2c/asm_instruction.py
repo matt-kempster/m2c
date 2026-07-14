@@ -579,15 +579,31 @@ def parse_arg_elems(
                 else:
                     value = BinOp(op, value, rhs)
         elif tok == "@":
+            if value is None and getattr(arch, "supports_at_addressing", False):
+                # SuperH indirect addressing: @Rn, @-Rn, and @Rn+.
+                expect("@")
+                writeback: Optional[Writeback] = None
+                if arg_elems and arg_elems[0] == "-":
+                    expect("-")
+                    writeback = Writeback.PRE
+                word = parse_word(arg_elems)
+                base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+                assert isinstance(base, Register)
+                if arg_elems and arg_elems[0] == "+":
+                    assert writeback is None
+                    expect("+")
+                    writeback = Writeback.POST
+                value = AsmAddressMode(base, AsmLiteral(0), writeback)
             # A relocation (e.g. (...)@ha or (...)@l).
-            if not top_level:
+            elif not top_level:
                 # Parse a+b@l as (a+b)@l, not a+(b@l)
                 break
-            arg_elems.pop(0)
-            reloc_name = parse_word(arg_elems)
-            assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
-            assert value
-            value = Macro(reloc_name, value)
+            else:
+                arg_elems.pop(0)
+                reloc_name = parse_word(arg_elems)
+                assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
+                assert value
+                value = Macro(reloc_name, value)
         elif tok == "=":
             # ARM reference to symbol
             assert top_level

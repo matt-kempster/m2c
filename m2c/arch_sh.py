@@ -5,9 +5,12 @@ from .error import DecompFailure
 from .options import Target
 from .asm_instruction import (
     Argument,
+    AsmAddressMode,
     AsmInstruction,
+    AsmLiteral,
     AsmState,
     Register,
+    Writeback,
 )
 from .instruction import (
     Instruction,
@@ -21,6 +24,7 @@ from .translate import (
     ArgLoc,
     Cast,
     Expression,
+    Literal,
     NodeState,
 )
 
@@ -32,6 +36,7 @@ class Sh2Arch(Arch):
 
     re_comment = r"!.*"
     supports_dollar_regs = False
+    supports_at_addressing = True
 
     home_space_size = 0
 
@@ -49,6 +54,7 @@ class Sh2Arch(Arch):
     saved_regs = [
         Register(r) for r in ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "pr"]
     ]
+
 
     all_regs = (
         saved_regs
@@ -87,6 +93,7 @@ class Sh2Arch(Arch):
         clobbers: List[Location] = []
         outputs: List[Location] = []
         is_return = False
+        is_store = False
         has_delay_slot = False
         eval_fn: Optional[Callable[[NodeState, object], object]] = None
 
@@ -97,6 +104,30 @@ class Sh2Arch(Arch):
             has_delay_slot = True
         elif mnemonic == "nop":
             assert len(args) == 0
+        elif mnemonic == "mov":
+            assert len(args) == 2 and isinstance(args[1], Register)
+            outputs = [args[1]]
+            if isinstance(args[0], Register):
+                inputs = [args[0]]
+                eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.reg(0))
+            else:
+                assert isinstance(args[0], AsmLiteral)
+                eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), Literal(a.imm_value(0)))
+        elif mnemonic == "mov.l":
+            assert len(args) == 2
+            if isinstance(args[0], Register):
+                assert isinstance(args[1], AsmAddressMode)
+                assert args[1].base == cls.stack_pointer_reg
+                assert args[1].writeback == Writeback.PRE
+                inputs = [args[0], args[1].base]
+                is_store = True
+            else:
+                assert isinstance(args[0], AsmAddressMode)
+                assert isinstance(args[1], Register)
+                assert args[0].base == cls.stack_pointer_reg
+                assert args[0].writeback == Writeback.POST
+                inputs = [args[0].base]
+                outputs = [args[1]]
         else:
             raise DecompFailure(f"Unable to parse instruction: {mnemonic}")
 
@@ -109,6 +140,7 @@ class Sh2Arch(Arch):
             outputs=outputs,
             eval_fn=eval_fn,
             is_return=is_return,
+            is_store=is_store,
             has_delay_slot=has_delay_slot,
         )
 
