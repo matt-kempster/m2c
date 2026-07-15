@@ -163,7 +163,36 @@ class Sh2Arch(Arch):
         for_call: bool,
     ) -> Abi:
         known_slots: List[AbiArgSlot] = []
+        candidate_slots: List[AbiArgSlot] = []
         possible_slots: List[AbiArgSlot] = []
+
+        if fn_sig.params_known:
+            for i, param in enumerate(fn_sig.params):
+                param_type = param.type.decay()
+                reg = Register(f"r{i + 4}") if i < 4 else None
+                stack_offset = None if reg is not None else (i - 4) * 4
+                known_slots.append(
+                    AbiArgSlot(
+                        ArgLoc(stack_offset, i, reg),
+                        param_type,
+                        name=param.name,
+                    )
+                )
+        else:
+            candidate_slots = [
+                AbiArgSlot(ArgLoc(None, i, Register(f"r{i + 4}")), Type.intptr())
+                for i in range(4)
+            ]
+
+        # argument registers are filled in order, so using a higher register implies
+        # that the preceding registers may also contain arguments
+        highest_used = -1
+        for i, reg in enumerate(self.argument_regs):
+            if likely_regs.get(reg, False):
+                highest_used = i
+        for i, slot in enumerate(candidate_slots):
+            if i <= highest_used:
+                possible_slots.append(slot)
 
         return Abi(
             arg_slots=known_slots,

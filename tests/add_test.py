@@ -26,6 +26,7 @@ class PathsToBinaries:
     IDO_CC: Optional[Path]
     MWCC_CC: Optional[Path]
     AGBCC: Optional[Path]
+    SH_CC: Optional[Path]
     WINE: Optional[Path]
 
 
@@ -49,10 +50,20 @@ def get_environment_variables() -> PathsToBinaries:
         "MWCC_CC", "env variable MWCC_CC should point to a PPC cc binary (mwcceppc.exe)"
     )
     AGBCC = load("AGBCC", "env variable AGBCC should point to an AGBCC cc binary")
+    SH_CC = load(
+        "SH_CC",
+        "env variable SH_CC should point to SHGCC",
+    )
     WINE = None
     if MWCC_CC and sys.platform.startswith("linux"):
         WINE = load("WINE", "env variable WINE should point to wine or wibo binary")
-    return PathsToBinaries(IDO_CC=IDO_CC, MWCC_CC=MWCC_CC, AGBCC=AGBCC, WINE=WINE)
+    return PathsToBinaries(
+        IDO_CC=IDO_CC,
+        MWCC_CC=MWCC_CC,
+        AGBCC=AGBCC,
+        SH_CC=SH_CC,
+        WINE=WINE,
+    )
 
 
 @dataclass
@@ -142,11 +153,23 @@ def get_agbcc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     return []
 
 
+def get_sh_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
+    if paths.SH_CC is not None:
+        sh_gcc = Compiler(
+            name="sh-gcc",
+            cc_command=[str(paths.SH_CC)],
+        )
+        return [("sh2-gcc-o2", sh_gcc.with_cc_flags(["-O2"]))]
+    logger.warning("SH compiler not found; skipping")
+    return []
+
+
 def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     compilers: List[Tuple[str, Compiler]] = []
     compilers.extend(get_ido_compilers(paths))
     compilers.extend(get_mwcc_compilers(paths))
     compilers.extend(get_agbcc_compilers(paths))
+    compilers.extend(get_sh_compilers(paths))
     return compilers
 
 
@@ -177,13 +200,15 @@ def do_compilation_step(
         temp_o_file,
         in_file,
     ]
-    subprocess.run(args)
+    subprocess.run(args, check=True)
 
 
 def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
     flags_str = " ".join(compiler.cc_command)
     logger.info(f"Compiling {in_file} to {out_file} using: {flags_str}")
-    if compiler.name == "agbcc":
+    if compiler.name == "sh-gcc":
+        do_compilation_step(str(out_file), str(in_file), compiler)
+    elif compiler.name == "agbcc":
         with NamedTemporaryFile(suffix=".i") as temp_i_file:
             subprocess.run(
                 ["cpp", "-P", "-o", temp_i_file.name, str(in_file)], check=True
@@ -214,12 +239,17 @@ def add_test_from_file(
         asm_file_path = test_dir / (asm_filename + ".s")
         try:
             run_compile(orig_file, asm_file_path, compiler)
-            if compiler.name in ("mwcc", "agbcc"):
+            if compiler.name in ("mwcc", "agbcc", "sh-gcc"):
                 # If the flags file doesn't exist, initialize it with the correct --target
-                ppc_flags = test_dir / (asm_filename + "-flags.txt")
-                if not ppc_flags.exists():
-                    target = "ppc-mwcc-c" if compiler.name == "mwcc" else "gba"
-                    ppc_flags.write_text(f"--target {target}\n")
+                flags_path = test_dir / (asm_filename + "-flags.txt")
+                if not flags_path.exists():
+                    if compiler.name == "mwcc":
+                        target = "ppc-mwcc-c"
+                    elif compiler.name == "agbcc":
+                        target = "gba"
+                    else:
+                        target = "sh2-gcc-c"
+                    flags_path.write_text(f"--target {target}\n")
         except Exception:
             logger.exception(f"Failed to compile {asm_file_path}")
 
