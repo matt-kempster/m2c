@@ -178,6 +178,8 @@ class ArchAsmParsing(abc.ABC):
     all_regs: List[Register]
     aliased_regs: Dict[str, Register]
     supports_dollar_regs: bool
+    supports_at_addressing = False
+    has_delay_slots = False
 
     @abc.abstractmethod
     def normalize_instruction(
@@ -579,15 +581,31 @@ def parse_arg_elems(
                 else:
                     value = BinOp(op, value, rhs)
         elif tok == "@":
-            # A relocation (e.g. (...)@ha or (...)@l).
-            if not top_level:
-                # Parse a+b@l as (a+b)@l, not a+(b@l)
-                break
-            arg_elems.pop(0)
-            reloc_name = parse_word(arg_elems)
-            assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
-            assert value
-            value = Macro(reloc_name, value)
+            if value is None and arch.supports_at_addressing:
+                # SuperH indirect addressing: @Rn, @-Rn, and @Rn+.
+                expect("@")
+                sh_writeback: Optional[Writeback] = None
+                if arg_elems and arg_elems[0] == "-":
+                    expect("-")
+                    sh_writeback = Writeback.PRE
+                word = parse_word(arg_elems)
+                base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+                assert isinstance(base, Register)
+                if arg_elems and arg_elems[0] == "+":
+                    assert sh_writeback is None
+                    expect("+")
+                    sh_writeback = Writeback.POST
+                value = AsmAddressMode(base, AsmLiteral(0), sh_writeback)
+            else:
+                # A relocation (e.g. (...)@ha or (...)@l).
+                if not top_level:
+                    # Parse a+b@l as (a+b)@l, not a+(b@l)
+                    break
+                arg_elems.pop(0)
+                reloc_name = parse_word(arg_elems)
+                assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
+                assert value
+                value = Macro(reloc_name, value)
         elif tok == "=":
             # ARM reference to symbol
             assert top_level
