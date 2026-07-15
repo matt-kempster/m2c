@@ -230,7 +230,7 @@ class RegFormatter:
 @dataclass
 class AsmState:
     # None means "explicitly undefined"
-    defines: Dict[str, Optional[int]] = field(default_factory=dict)
+    defines: Dict[str, Optional[Argument]] = field(default_factory=dict)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
     is_thumb: bool = False
     is_unified: bool = False
@@ -270,7 +270,7 @@ def constant_fold(arg: Argument, asm_state: AsmState) -> Argument:
     if isinstance(arg, AsmGlobalSymbol):
         value = asm_state.defines.get(arg.symbol_name)
         if value is not None:
-            return AsmLiteral(value)
+            return constant_fold(value, asm_state)
     if not isinstance(arg, BinOp):
         return arg
     lhs = constant_fold(arg.lhs, asm_state)

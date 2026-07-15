@@ -7,6 +7,7 @@
     "\label":
         .ent "\label"
 .endm
+.set zeroreg, $zero
 
 glabel
 loc_whatever:
@@ -32,7 +33,7 @@ addiu $sp, $sp, 0x34
 
 func_other:
 jr $ra
-sw $zero, ($zero)
+sw zeroreg, (zeroreg)
 
 yet_another_func:
 jr $ra

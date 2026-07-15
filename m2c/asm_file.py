@@ -440,7 +440,9 @@ def eval_cpp_if(
             if value is None:
                 check_ifdef(tok, asm_state, warnings, directive)
                 return False
-            return bool(value)
+            if not isinstance(value, AsmLiteral):
+                raise DecompFailure(f"Unable to evaluate if condition: {value}")
+            return bool(value.value)
 
     def parse2() -> bool:
         nonlocal i
@@ -473,14 +475,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     curr_section = ".text"
     section_sizes: Dict[str, int] = defaultdict(int)
     warnings: List[str] = []
-    asm_state = AsmState(
-        defines={
-            # NULL is a non-standard but common asm macro that expands to 0
-            "NULL": 0,
-            **options.preproc_defines,
-        },
-        reg_formatter=reg_formatter,
-    )
+    preproc_defines: Dict[str, Optional[Argument]] = {
+        key: None if value is None else AsmLiteral(value)
+        for key, value in options.preproc_defines.items()
+    }
+    # NULL is a non-standard but common asm macro that expands to 0
+    preproc_defines["NULL"] = AsmLiteral(0)
+    asm_state = AsmState(defines=preproc_defines, reg_formatter=reg_formatter)
 
     # Each nested ifdef has an associated level which is 0 (active), 1 (inactive)
     # or 2 (inactive, but was active previously). Lines are only processed if the
@@ -708,15 +709,15 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                         # ".set noreorder" or similar, just ignore
                         pass
                     elif len(args) == 2:
-                        asm_state.defines[args[0]] = parse_int(args[1])
+                        asm_state.defines[args[0]] = parse_arg(args[1], arch, asm_state)
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
                     args = args_str.split(None, 1)
                     if len(args) == 2:
-                        asm_state.defines[args[0]] = parse_int(args[1])
+                        asm_state.defines[args[0]] = parse_arg(args[1], arch, asm_state)
                     else:
-                        asm_state.defines[args[0]] = 1
+                        asm_state.defines[args[0]] = AsmLiteral(1)
                 elif directive == ".syntax":
                     if args_str.strip() == "unified":
                         asm_state.is_unified = True
