@@ -596,11 +596,11 @@ def parse_arg_elems(
                     expect("+")
                     sh_writeback = Writeback.POST
                 value = AsmAddressMode(base, AsmLiteral(0), sh_writeback)
-            elif not top_level:
-                # Parse a+b@l as (a+b)@l, not a+(b@l)
-                break
             else:
                 # A relocation (e.g. (...)@ha or (...)@l).
+                if not top_level:
+                    # Parse a+b@l as (a+b)@l, not a+(b@l)
+                    break
                 arg_elems.pop(0)
                 reloc_name = parse_word(arg_elems)
                 assert reloc_name in ("h", "ha", "l", "sda2", "sda21")

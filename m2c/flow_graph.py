@@ -413,7 +413,7 @@ def build_blocks(
     fragment: bool,
     debug_patterns: bool,
 ) -> List[Block]:
-    if arch.arch in (Target.ArchEnum.MIPS, Target.ArchEnum.SH2):
+    if arch.has_delay_slots:
         verify_no_trailing_delay_slot(function)
 
     if arch.arch == Target.ArchEnum.MIPS:

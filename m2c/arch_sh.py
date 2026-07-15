@@ -94,6 +94,7 @@ class Sh2Arch(Arch):
         clobbers: List[Location] = []
         outputs: List[Location] = []
         is_return = False
+        is_load = False
         is_store = False
         has_delay_slot = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
@@ -142,6 +143,7 @@ class Sh2Arch(Arch):
             outputs=outputs,
             eval_fn=eval_fn,
             is_return=is_return,
+            is_load=is_load,
             is_store=is_store,
             has_delay_slot=has_delay_slot,
         )
