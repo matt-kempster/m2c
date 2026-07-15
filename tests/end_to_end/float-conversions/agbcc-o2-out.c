@@ -24,7 +24,7 @@ void test(void) {
     var_r0 = temp_ret;
     var_r1 = SECOND_REG(temp_ret);
     if (temp_r4 < 0) {
-        temp_ret_2 = __adddf3(var_r0, var_r1, .L7.unkC, .L7.unk10);
+        temp_ret_2 = __adddf3(var_r0, var_r1, 0x41F00000, 0);
         var_r0 = temp_ret_2;
         var_r1 = SECOND_REG(temp_ret_2);
     }

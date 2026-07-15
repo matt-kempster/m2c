@@ -1,16 +1,13 @@
 extern s32 a;
 extern ? b;
 extern ? c;
-extern ? d;
+extern ? *d;
 
 void test(void) {
-    ? *temp_r2;
-
     a = 0x3F99999A;
-    b.unk0 = &c;
-    b.unk4 = &d;
-    temp_r2 = "\"hello\"\n\x01";
-    temp_r2->unk0 = (s32) .L3.unk18;
-    temp_r2->unk4 = (s32) .L3.unk1C;
-    *.L3.unk20 = .L3.unk24;
+    b.unk0 = 0x402A0000;
+    b.unk4 = 0;
+    c.unk0 = 0x420A13B8;
+    c.unk4 = 0x60000000;
+    d = "\"hello\"\n\x01";
 }

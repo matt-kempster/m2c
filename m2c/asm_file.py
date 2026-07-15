@@ -733,7 +733,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif args_str.strip() == "32":
                         asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
-                    if directive in (".word", ".gpword", ".4byte"):
+                    if directive in (".word", ".gpword", ".4byte", ".long"):
                         args = split_arg_list(args_str)
                         for w in args:
                             emit_word(w, 4)
