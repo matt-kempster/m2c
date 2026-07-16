@@ -195,6 +195,80 @@ class DivisionHelperPattern(SimpleAsmPattern):
         return Replacement([delay_slot, division], 3)
 
 
+class ShModuloPattern(AsmPattern):
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        body = matcher.input[matcher.index : matcher.index + 11]
+        if len(body) < 10 or not all(isinstance(x, Instruction) for x in body):
+            return None
+        instrs = [x for x in body if isinstance(x, Instruction)]
+        if [x.mnemonic for x in instrs[:9]] != [
+            "mov",
+            "mov.l",
+            "jsr",
+            "mov",
+            "mul.l",
+            "lds.l",
+            "mov.l",
+            "sts",
+            "sub",
+        ]:
+            return None
+        save_lhs, load, call, save_rhs, mul, restore_pr, restore_fp, sts, sub = instrs[
+            :9
+        ]
+        replacement_tail: List[AsmInstruction] = []
+        if instrs[9].mnemonic == "mov" and instrs[9].args == [
+            save_lhs.args[1],
+            Register("r0"),
+        ]:
+            consumed = 10
+        elif (
+            len(instrs) == 11
+            and instrs[9].mnemonic == "rts"
+            and instrs[10].mnemonic == "mov"
+            and instrs[10].args == [save_lhs.args[1], Register("r0")]
+        ):
+            consumed = 11
+            replacement_tail = [
+                AsmInstruction("rts", []),
+                AsmInstruction("nop", []),
+            ]
+        else:
+            return None
+        if (
+            len(save_lhs.args) != 2
+            or not all(isinstance(arg, Register) for arg in save_lhs.args)
+            or len(load.args) != 2
+            or not isinstance(load.args[0], AsmGlobalSymbol)
+            or not isinstance(load.args[1], Register)
+            or len(call.args) != 1
+            or not isinstance(call.args[0], AsmAddressMode)
+            or call.args[0].base != load.args[1]
+            or len(save_rhs.args) != 2
+            or not all(isinstance(arg, Register) for arg in save_rhs.args)
+            or mul.args != [save_rhs.args[1], Register("r0")]
+            or len(sts.args) != 2
+            or sts.args[0] != Register("macl")
+            or sub.args != [sts.args[1], save_lhs.args[1]]
+        ):
+            return None
+        mnemonic = (
+            "smod.fictive" if save_lhs.args[1] in Sh2Arch.saved_regs else "umod.fictive"
+        )
+        return Replacement(
+            [
+                AsmInstruction(
+                    mnemonic,
+                    [Register("r0"), save_lhs.args[0], save_rhs.args[0]],
+                ),
+                AsmInstruction(restore_pr.mnemonic, restore_pr.args),
+                AsmInstruction(restore_fp.mnemonic, restore_fp.args),
+                *replacement_tail,
+            ],
+            consumed,
+        )
+
+
 class Sh2Arch(Arch):
     arch = Target.ArchEnum.SH2
 
@@ -562,6 +636,21 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("r0"), op(a.reg(0), "/", a.reg(1))
             )
+        elif mnemonic in ("smod.fictive", "umod.fictive"):
+            assert (
+                len(args) == 3
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+                and isinstance(args[2], Register)
+            )
+            inputs = [args[1], args[2]]
+            outputs = [args[0]]
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(0),
+                (BinaryOp.sint if mnemonic == "smod.fictive" else BinaryOp.uint)(
+                    a.reg(1), "%", a.reg(2)
+                ),
+            )
         elif mnemonic == "tablejmp.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
@@ -686,6 +775,7 @@ class Sh2Arch(Arch):
     }
 
     asm_patterns = [
+        ShModuloPattern(),
         DivisionHelperPattern(),
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
