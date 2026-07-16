@@ -1,0 +1,12 @@
+signed char test(signed char *ptr);
+signed short test_loadw_disp(signed short *ptr);
+signed test_loadl_disp(signed *ptr);
+void test_storeb_disp(signed char *ptr, signed char value);
+void test_storew_disp(signed short *ptr, signed short value);
+void test_storel_disp(signed *ptr, signed value);
+signed char test_loadb_indexed(signed char *ptr, unsigned index);
+signed short test_loadw_indexed(signed short *ptr, unsigned index);
+signed test_loadl_indexed(signed *ptr, unsigned index);
+void test_storeb_indexed(signed char *ptr, unsigned index, signed char value);
+void test_storew_indexed(signed short *ptr, unsigned index, signed short value);
+void test_storel_indexed(signed *ptr, unsigned index, signed value);

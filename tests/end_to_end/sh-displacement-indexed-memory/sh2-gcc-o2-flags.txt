@@ -1,0 +1,1 @@
+--context context.c --target sh2-gcc-c --function test_loadw_disp --function test_loadl_disp --function test_storeb_disp --function test_storew_disp --function test_storel_disp --function test_loadb_indexed --function test_loadw_indexed --function test_loadl_indexed --function test_storeb_indexed --function test_storew_indexed --function test_storel_indexed
