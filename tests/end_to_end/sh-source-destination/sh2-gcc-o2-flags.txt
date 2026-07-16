@@ -1,0 +1,1 @@
+--context orig.c --target sh2-gcc-c --function test_or --function test_xor --function test_not --function test_neg --function test_eq --function test_ge --function test_gt --function test_hs --function test_hi --function test_extsb --function test_extsw --function test_extub --function test_extuw --function test_swapw

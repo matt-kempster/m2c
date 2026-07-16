@@ -40,6 +40,8 @@ from .translate import (
     NodeState,
     StoreStmt,
     SubroutineArg,
+    UnaryOp,
+    as_type,
     as_u32,
 )
 
@@ -47,7 +49,9 @@ from .evaluate import (
     condition_from_expr,
     handle_add,
     handle_addi,
+    handle_bitinv,
     handle_load,
+    handle_or,
     handle_sub,
     make_store,
 )
@@ -274,6 +278,19 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(1), cls.instrs_arithmetic[mnemonic](a)
             )
+        elif mnemonic in cls.instrs_source_dest:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0]]
+            if mnemonic in ("and", "or", "xor"):
+                inputs.append(args[1])
+            outputs = [args[1]]
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(1), cls.instrs_source_dest[mnemonic](a)
+            )
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
@@ -365,7 +382,7 @@ class Sh2Arch(Arch):
             is_conditional = True
             has_delay_slot = True
             eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
-        elif mnemonic in ("cmp/eq", "cmp/gt", "cmp/hi"):
+        elif mnemonic in ("cmp/eq", "cmp/ge", "cmp/gt", "cmp/hi", "cmp/hs"):
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
             if isinstance(args[0], Register):
@@ -377,12 +394,23 @@ class Sh2Arch(Arch):
                 rhs = a.reg_or_imm(0)
                 if mnemonic == "cmp/eq":
                     condition = BinaryOp.icmp(lhs, "==", rhs)
+                elif mnemonic == "cmp/ge":
+                    condition = BinaryOp.scmp(lhs, ">=", rhs)
                 elif mnemonic == "cmp/gt":
                     condition = BinaryOp.scmp(lhs, ">", rhs)
+                elif mnemonic == "cmp/hs":
+                    condition = BinaryOp.ucmp(lhs, ">=", rhs)
                 else:
                     condition = BinaryOp.ucmp(lhs, ">", rhs)
                 s.set_reg(Register("condition_bit"), condition)
 
+        elif mnemonic == "movt":
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [Register("condition_bit")]
+            outputs = [args[0]]
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(0), a.regs[Register("condition_bit")]
+            )
         else:
             instr_str = str(AsmInstruction(mnemonic, args))
 
@@ -414,6 +442,23 @@ class Sh2Arch(Arch):
             handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
+    }
+
+    instrs_source_dest: InstrMap = {
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(0)),
+        "or": lambda a: handle_or(a.reg(1), a.reg(0)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(0)),
+        "not": lambda a: handle_bitinv(a.reg(0)),
+        "neg": lambda a: UnaryOp.sint("-", a.reg(0)),
+        "exts.b": lambda a: as_type(a.reg(0), Type.s8(), silent=False),
+        "exts.w": lambda a: as_type(a.reg(0), Type.s16(), silent=False),
+        "extu.b": lambda a: as_type(a.reg(0), Type.u8(), silent=False),
+        "extu.w": lambda a: as_type(a.reg(0), Type.u16(), silent=False),
+        "swap.w": lambda a: BinaryOp.int(
+            BinaryOp.uint(a.reg(0), "<<", Literal(16)),
+            "|",
+            BinaryOp.uint(a.reg(0), ">>", Literal(16)),
+        ),
     }
 
     instrs_shift: InstrMap = {
