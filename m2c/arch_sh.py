@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import replace
 from typing import Callable, Dict, List, Optional
 
 from .error import DecompFailure
@@ -26,12 +27,13 @@ from .translate import (
     BinaryOp,
     Cast,
     Expression,
+    InstrMap,
     InstrArgs,
     Literal,
     NodeState,
 )
 
-from .evaluate import condition_from_expr
+from .evaluate import condition_from_expr, handle_add, handle_sub
 
 from .types import FunctionSignature, Type
 
@@ -137,7 +139,7 @@ class Sh2Arch(Arch):
                 inputs = [args[0].base]
                 outputs = [args[1]]
                 is_load = True
-        elif mnemonic in ("add", "sub"):
+        elif mnemonic in cls.instrs_arithmetic:
             assert (
                 len(args) == 2
                 and isinstance(args[0], Register)
@@ -145,9 +147,8 @@ class Sh2Arch(Arch):
             )
             inputs = [args[0], args[1]]
             outputs = [args[1]]
-            op = "+" if mnemonic == "add" else "-"
             eval_fn = lambda s, a: s.set_reg(
-                a.reg_ref(1), BinaryOp.intptr(a.reg(1), op, a.reg(0))
+                a.reg_ref(1), cls.instrs_arithmetic[mnemonic](a)
             )
         elif mnemonic == "tst":
             assert (
@@ -201,6 +202,18 @@ class Sh2Arch(Arch):
             is_store=is_store,
             has_delay_slot=has_delay_slot,
         )
+
+    instrs_arithmetic: InstrMap = {
+        # sh2 format is src, dst
+        # add handler is dest, left, right
+        "add": lambda a: handle_add(
+            replace(
+                a,
+                raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)],
+            )
+        ),
+        "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
+    }
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
