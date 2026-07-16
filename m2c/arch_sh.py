@@ -38,6 +38,8 @@ from .translate import (
     InstrArgs,
     Literal,
     NodeState,
+    StoreStmt,
+    SubroutineArg,
     as_u32,
 )
 
@@ -202,6 +204,19 @@ class Sh2Arch(Arch):
                         store = make_store(a, Type.reg32(likely_float=False))
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
+
+                elif (
+                    args[1].writeback == Writeback.PRE and args[0] not in cls.saved_regs
+                ):
+
+                    def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                        s.store_memory(
+                            StoreStmt(
+                                source=a.reg(0),
+                                dest=SubroutineArg(0, type=Type.any_reg()),
+                            ),
+                            a.reg_ref(0),
+                        )
 
                 else:
                     # otherwise we have a writeback
