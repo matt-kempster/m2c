@@ -1,0 +1,1 @@
+--context context.c --target sh2-gcc-c -f test_umul -f test_mulsw -f test_muluw -f test_sdiv -f test_udiv
