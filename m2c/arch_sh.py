@@ -161,6 +161,7 @@ class Sh2Arch(Arch):
         has_delay_slot = False
         is_conditional = False
         jump_target = None
+        function_target: Optional[Argument] = None
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         if mnemonic == "rts":
@@ -218,6 +219,27 @@ class Sh2Arch(Arch):
                             type=load_type,
                         ),
                     )
+        elif mnemonic == "sts.l":
+            assert (
+                len(args) == 2
+                and args[0] == Register("pr")
+                and isinstance(args[1], AsmAddressMode)
+                and args[1].base == cls.stack_pointer_reg
+                and args[1].writeback == Writeback.PRE
+            )
+            inputs = [args[0], args[1].base]
+            is_store = True
+        elif mnemonic == "lds.l":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], AsmAddressMode)
+                and args[0].base == cls.stack_pointer_reg
+                and args[0].writeback == Writeback.POST
+                and args[1] == Register("pr")
+            )
+            inputs = [args[0].base]
+            outputs = [args[1]]
+            is_load = True
         elif mnemonic in cls.instrs_arithmetic:
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
@@ -277,6 +299,21 @@ class Sh2Arch(Arch):
                 assert isinstance(address, AsmAddressMode)
                 s.set_switch_expr(a.regs[address.base])
 
+        elif mnemonic == "jsr":
+            assert (
+                len(args) == 1
+                and isinstance(args[0], AsmAddressMode)
+                and args[0].addend == AsmLiteral(0)
+            )
+            target_reg = args[0].base
+            inputs = [*cls.argument_regs, target_reg]
+            outputs = [reg for reg, _ in cls.base_return_regs]
+            clobbers = list(cls.temp_regs)
+            function_target = target_reg
+            has_delay_slot = True
+            eval_fn = lambda s, a: s.make_function_call(
+                a.regs[target_reg], outputs
+            )
         elif mnemonic == "tablejmp.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
@@ -322,6 +359,7 @@ class Sh2Arch(Arch):
             outputs=outputs,
             eval_fn=eval_fn,
             jump_target=jump_target,
+            function_target=function_target,
             is_conditional=is_conditional,
             is_return=is_return,
             is_load=is_load,

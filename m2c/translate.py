@@ -669,7 +669,7 @@ def get_stack_info(
         ):
             info.allocated_stack_size += -inst.args[0].value
         elif (
-            arch_mnemonic == "sh2:mov.l"
+            arch_mnemonic in ("sh2:mov.l", "sh2:sts.l")
             and isinstance(inst.args[0], Register)
             and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)

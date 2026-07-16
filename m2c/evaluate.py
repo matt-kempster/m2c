@@ -508,7 +508,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
                 val -= 1 << (size * 8)
             return Literal(value=val, type=type)
 
-        if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
+        if (is_arm or is_sh) and ent.is_text and isinstance(data, AsmSymbolicData):
             sym = data.data
             addend = 0
             if (
