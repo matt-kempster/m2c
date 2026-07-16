@@ -468,13 +468,17 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
         if not isinstance(expr, StructAccess):
             return None
 
-        is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
+        arch = args.stack_info.global_info.arch.arch
+        is_arm = arch == Target.ArchEnum.ARM
+        is_sh = arch == Target.ArchEnum.SH2
         if is_arm and isinstance(args.raw_arg(1), AsmAddressMode):
             # For ARM, only allow constants loaded through `ldr pool`.
             # Do allow non-zero offsets: they occur in raw agbcc output which
             # we use for tests.
             return None
-        if not is_arm and (not type.is_likely_float() or expr.offset != 0):
+        if not is_arm and not is_sh and (
+            not type.is_likely_float() or expr.offset != 0
+        ):
             # For non-ARM, only allow float constants and offset 0.
             return None
 
@@ -493,11 +497,13 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
         if data is None:
             return None
 
-        if isinstance(data, bytes) and size in (4, 8):
+        if isinstance(data, bytes) and size in (2, 4, 8):
             ent.used_as_literal = True
             endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
-            fmt = "I" if size == 4 else "Q"
+            fmt = {2: "H", 4: "I", 8: "Q"}[size]
             val: int = struct.unpack(endian + fmt, data)[0]
+            if type.is_signed() and val & (1 << (size * 8 - 1)):
+                val -= 1 << (size * 8)
             return Literal(value=val, type=type)
 
         if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
