@@ -1,7 +1,0 @@
-glabel test
-/* 0x0600DE2C 0x2FE6 */ mov.l r14, @-r15
-/* 0x0600DE2E 0x6EF3 */ mov r15, r14
-/* 0x0600DE30 0x6EF6 */ mov.l @r15+, r14
-/* 0x0600DE32 0x000B */ rts
-/* 0x0600DE34 0xE001 */ mov #1, r0
-/* 0x0600DE36 */ .word 0x0009
