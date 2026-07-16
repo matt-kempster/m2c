@@ -633,9 +633,9 @@ class Sh2Arch(Arch):
             handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
-        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(0)),
-        "or": lambda a: handle_or(a.reg(1), a.reg(0)),
-        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(0)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(0)),
+        "or": lambda a: handle_or(a.reg(1), a.reg_or_imm(0)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(0)),
     }
 
     instrs_source_dest: InstrMap = {
