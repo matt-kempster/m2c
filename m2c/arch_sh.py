@@ -11,6 +11,7 @@ from .asm_instruction import (
     AsmState,
     Register,
     Writeback,
+    get_jump_target,
 )
 from .instruction import (
     Instruction,
@@ -22,12 +23,15 @@ from .translate import (
     AbiArgSlot,
     Arch,
     ArgLoc,
+    BinaryOp,
     Cast,
     Expression,
     InstrArgs,
     Literal,
     NodeState,
 )
+
+from .evaluate import condition_from_expr
 
 from .types import FunctionSignature, Type
 
@@ -51,7 +55,7 @@ class Sh2Arch(Arch):
 
     argument_regs = [Register(r) for r in ["r4", "r5", "r6", "r7"]]
     simple_temp_regs = [Register(r) for r in ["r0", "r1", "r2", "r3"]]
-    temp_regs = argument_regs + simple_temp_regs
+    temp_regs = argument_regs + simple_temp_regs + [Register("condition_bit")]
 
     saved_regs = [
         Register(r) for r in ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "pr"]
@@ -97,6 +101,8 @@ class Sh2Arch(Arch):
         is_load = False
         is_store = False
         has_delay_slot = False
+        is_conditional = False
+        jump_target = None
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         if mnemonic == "rts":
@@ -131,6 +137,52 @@ class Sh2Arch(Arch):
                 inputs = [args[0].base]
                 outputs = [args[1]]
                 is_load = True
+        elif mnemonic in ("add", "sub"):
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0], args[1]]
+            outputs = [args[1]]
+            op = "+" if mnemonic == "add" else "-"
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(1), BinaryOp.intptr(a.reg(1), op, a.reg(0))
+            )
+        elif mnemonic == "tst":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0], args[1]]
+            outputs = [Register("condition_bit")]
+            same_reg = args[0] == args[1]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                # tst does '&' but gcc uses it for 'if (x == 0)' as well.
+                # so check if it's the same reg. e.g. 'tst r4, r4'
+                value = (
+                    a.reg(0) if same_reg else BinaryOp.intptr(a.reg(1), "&", a.reg(0))
+                )
+                s.set_reg(
+                    Register("condition_bit"),
+                    BinaryOp.icmp(value, "==", Literal(0)),
+                )
+
+        elif mnemonic == "bt.s":
+            assert len(args) == 1
+            inputs = [Register("condition_bit")]
+            jump_target = get_jump_target(args[0])
+            is_conditional = True
+            has_delay_slot = True
+            eval_fn = lambda s, a: s.set_branch_condition(
+                condition_from_expr(a.regs[Register("condition_bit")])
+            )
+        elif mnemonic == "bra":
+            assert len(args) == 1
+            jump_target = get_jump_target(args[0])
+            has_delay_slot = True
         else:
             raise DecompFailure(f"Unable to parse instruction: {mnemonic}")
 
@@ -142,6 +194,8 @@ class Sh2Arch(Arch):
             clobbers=clobbers,
             outputs=outputs,
             eval_fn=eval_fn,
+            jump_target=jump_target,
+            is_conditional=is_conditional,
             is_return=is_return,
             is_load=is_load,
             is_store=is_store,
