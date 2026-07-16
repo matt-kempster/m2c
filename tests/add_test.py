@@ -206,9 +206,7 @@ def do_compilation_step(
 def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
     flags_str = " ".join(compiler.cc_command)
     logger.info(f"Compiling {in_file} to {out_file} using: {flags_str}")
-    if compiler.name == "sh-gcc":
-        do_compilation_step(str(out_file), str(in_file), compiler)
-    elif compiler.name == "agbcc":
+    if compiler.name in ("agbcc", "sh-gcc"):
         with NamedTemporaryFile(suffix=".i") as temp_i_file:
             subprocess.run(
                 ["cpp", "-P", "-o", temp_i_file.name, str(in_file)], check=True
