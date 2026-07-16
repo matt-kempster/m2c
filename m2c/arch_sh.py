@@ -137,10 +137,12 @@ class Sh2Arch(Arch):
                 inputs = [args[0], args[1].base]
                 is_store = True
                 if args[1].writeback is None:
+
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
                         store = make_store(a, Type.reg32(likely_float=False))
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
+
             else:
                 assert isinstance(args[1], Register)
                 if isinstance(args[0], AsmAddressMode):
@@ -229,12 +231,8 @@ class Sh2Arch(Arch):
         # sh2 format is src, dst
         # add handler is dest, left, right
         "add": lambda a: (
-            handle_add
-            if isinstance(a.raw_arg(0), Register)
-            else handle_addi
-        )(
-            replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])
-        ),
+            handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
+        )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
     }
 

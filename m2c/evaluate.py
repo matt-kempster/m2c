@@ -476,8 +476,10 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             # Do allow non-zero offsets: they occur in raw agbcc output which
             # we use for tests.
             return None
-        if not is_arm and not is_sh and (
-            not type.is_likely_float() or expr.offset != 0
+        if (
+            not is_arm
+            and not is_sh
+            and (not type.is_likely_float() or expr.offset != 0)
         ):
             # For non-ARM, only allow float constants and offset 0.
             return None
