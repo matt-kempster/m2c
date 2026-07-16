@@ -1,0 +1,1 @@
+--context orig.c --target sh2-gcc-c --function test_shal --function test_shlr --function test_shar --function test_shll2 --function test_shlr2 --function test_shll8 --function test_shlr8 --function test_shll16 --function test_shlr16 --function test_rotl --function test_rotr

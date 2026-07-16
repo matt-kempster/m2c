@@ -274,6 +274,23 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(1), cls.instrs_arithmetic[mnemonic](a)
             )
+        elif mnemonic in cls.instrs_shift:
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            outputs = [args[0]]
+            if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+                outputs.append(Register("condition_bit"))
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                original = a.reg(0)
+                if mnemonic in ("shlr", "shar", "rotr"):
+                    carry = BinaryOp.intptr(original, "&", Literal(1))
+                else:
+                    carry = BinaryOp.uint(original, ">>", Literal(31))
+                if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+                    s.set_reg(Register("condition_bit"), carry)
+                s.set_reg(a.reg_ref(0), cls.instrs_shift[mnemonic](a))
+
         elif mnemonic == "tst":
             assert (
                 len(args) == 2
@@ -397,6 +414,27 @@ class Sh2Arch(Arch):
             handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
+    }
+
+    instrs_shift: InstrMap = {
+        "shlr": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(1)),
+        "shar": lambda a: BinaryOp.sint(a.reg(0), ">>", Literal(1)),
+        "shll2": lambda a: BinaryOp.uint(a.reg(0), "<<", Literal(2)),
+        "shlr2": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(2)),
+        "shll8": lambda a: BinaryOp.uint(a.reg(0), "<<", Literal(8)),
+        "shlr8": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(8)),
+        "shll16": lambda a: BinaryOp.uint(a.reg(0), "<<", Literal(16)),
+        "shlr16": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(16)),
+        "rotl": lambda a: BinaryOp.uint(
+            BinaryOp.uint(a.reg(0), "<<", Literal(1)),
+            "|",
+            BinaryOp.uint(a.reg(0), ">>", Literal(31)),
+        ),
+        "rotr": lambda a: BinaryOp.uint(
+            BinaryOp.uint(a.reg(0), ">>", Literal(1)),
+            "|",
+            BinaryOp.uint(a.reg(0), "<<", Literal(31)),
+        ),
     }
 
     asm_patterns = [JumpTablePattern()]
