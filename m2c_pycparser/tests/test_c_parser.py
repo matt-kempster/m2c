@@ -298,10 +298,10 @@ class TestCParser_fundamentals(TestCParser_base):
                     ['TypeDecl', ['IdentifierType', ['long', 'long']]]]])
 
         self.assertEqual(self.get_decl('__int64 value;'),
-            ['Decl', 'value', ['TypeDecl', ['IdentifierType', ['long', 'long']]]])
+            ['Decl', 'value', ['TypeDecl', ['IdentifierType', ['__int64']]]])
         self.assertEqual(self.get_decl('unsigned __int64 value;'),
             ['Decl', 'value',
-                ['TypeDecl', ['IdentifierType', ['unsigned', 'long', 'long']]]])
+                ['TypeDecl', ['IdentifierType', ['unsigned', '__int64']]]])
 
         self.assertEqual(self.get_decl('unsigned ar[];'),
             ['Decl', 'ar',

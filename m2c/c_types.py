@@ -258,6 +258,8 @@ def primitive_size(type: Union[ca.Enum, ca.IdentifierType]) -> int:
         return 8
     if "float" in names:
         return 4
+    if "__int64" in names:
+        return 8
     if "__int128" in names:
         return 16
     if "short" in names:
