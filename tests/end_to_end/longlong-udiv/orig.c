@@ -1,1 +1,1 @@
-unsigned __int64 test(unsigned __int64 a, unsigned __int64 b) { return a / b; }
+unsigned long long test(unsigned long long a, unsigned long long b) { return a / b; }

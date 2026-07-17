@@ -1,1 +1,1 @@
-__int64 test(__int64 a, __int64 b) { return a / b; }
+long long test(long long a, long long b) { return a / b; }
