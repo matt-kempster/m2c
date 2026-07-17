@@ -161,8 +161,8 @@ EBP = Register("ebp")
 ESI = Register("esi")
 EDI = Register("edi")
 EIP = Register("eip")
-HI8A = Register("hi8a")
-HI8B = Register("hi8b")
+HI8A = Register.fictive("hi8a")
+HI8B = Register.fictive("hi8b")
 
 # Sub-register name -> (full register, width in bytes)
 SUB_REGS: Dict[Register, Tuple[Register, int]] = {
@@ -2463,7 +2463,13 @@ class X86Arch(Arch):
     }
 
     # dst is written only (not read), src is read; no flags.
-    instrs_dst_write: Set[str] = {"mov", "movsx", "movzx", "lea"}
+    instrs_dst_write: Set[str] = {
+        "mov",
+        "movsx",
+        "movzx",
+        "lea",
+        "extract_high_byte.fictive",
+    }
     # two operands, both read; only flags written.
     instrs_cmp: Set[str] = {"cmp", "test"}
     # instructions with no operands and no structural effects.
@@ -2698,26 +2704,6 @@ class X86Arch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 s.set_reg(dst, a.regs[src])
 
-        elif base == "extract_high_byte.fictive":
-            assert len(args) == 2
-            dst, src = args
-            assert isinstance(dst, Register) and isinstance(src, Register)
-            inputs = [src]
-            outputs = [dst]
-            is_effectful = False
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                shifted = shift_right_expr(a.regs[src], Literal(8), signed=False)
-                val = replace_bitand(
-                    BinaryOp(
-                        shifted,
-                        "&",
-                        Literal(0xFF),
-                        type=Type.int_of_size(8),
-                    )
-                )
-                s.set_reg(dst, val)
-
         elif base == "ret":
             assert len(args) <= 1, "ret takes at most one (immediate) operand"
             inputs = [cls.stack_pointer_reg]
@@ -2936,6 +2922,19 @@ class X86Arch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 dst, src = args
+                if base == "extract_high_byte.fictive":
+                    assert isinstance(dst, Register) and isinstance(src, Register)
+                    shifted = shift_right_expr(a.regs[src], Literal(8), signed=False)
+                    val = replace_bitand(
+                        BinaryOp(
+                            shifted,
+                            "&",
+                            Literal(0xFF),
+                            type=Type.int_of_size(8),
+                        )
+                    )
+                    s.set_reg(dst, val)
+                    return
                 if base == "lea":
                     assert isinstance(dst, Register) and isinstance(
                         src, AsmAddressMode
