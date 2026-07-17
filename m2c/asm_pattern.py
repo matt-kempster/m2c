@@ -26,7 +26,6 @@ from .asm_instruction import (
     BinOp,
     JumpTarget,
     Macro,
-    NaiveIntelParsingArch,
     NaiveParsingArch,
     Register,
     RegisterList,
@@ -49,9 +48,9 @@ PatternPart = Union[AsmInstruction, Label, None]
 Pattern = List[Tuple[PatternPart, bool]]
 
 
-def make_pattern(*parts: str, intel: bool = False) -> Pattern:
+def make_pattern(*parts: str) -> Pattern:
     ret: Pattern = []
-    arch = NaiveIntelParsingArch() if intel else NaiveParsingArch()
+    arch = NaiveParsingArch()
     for part in parts:
         optional = part.endswith("?")
         part = part.rstrip("?")
@@ -87,7 +86,9 @@ class AsmPattern(abc.ABC):
 
 
 class SimpleAsmPattern(AsmPattern):
-    pattern: Pattern
+    @property
+    @abc.abstractmethod
+    def pattern(self) -> Pattern: ...
 
     @abc.abstractmethod
     def replace(self, m: AsmMatch) -> Optional[Replacement]: ...

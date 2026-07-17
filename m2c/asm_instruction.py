@@ -227,17 +227,6 @@ class NaiveParsingArch(ArchAsmParsing):
         return instr
 
 
-class NaiveIntelParsingArch(NaiveParsingArch):
-    """Stateless pattern parser for Intel operands and syntactic sugar."""
-
-    supports_intel_addressing = True
-
-    def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
-        from .intel_syntax import preprocess_intel_instruction
-
-        return preprocess_intel_instruction(mnemonic, args)
-
-
 @dataclass
 class RegFormatter:
     """Converts register names used in input assembly to the internal register representation,

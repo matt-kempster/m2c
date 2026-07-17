@@ -5,7 +5,7 @@ does not need to import from arch_x86.py, which imports x86_fpu.py."""
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .asm_file import AsmData
 from .asm_instruction import (
@@ -16,7 +16,13 @@ from .asm_instruction import (
     traverse_arg,
 )
 from .instruction import Instruction
-from .intel_syntax import WIDTH_SUFFIXES
+
+
+# Operand-width mnemonic suffixes: parsing/normalization canonicalizes both
+# "<size> ptr" memory prefixes and sub-register operand names into these
+# ARM-style suffixes (see the arch_x86 module docstring). The default 32-bit
+# width has no suffix.
+WIDTH_SUFFIXES: Dict[int, str] = {1: ".b", 2: ".w", 4: "", 8: ".q"}
 
 
 def split_width_suffix(mnemonic: str) -> Tuple[str, int]:
