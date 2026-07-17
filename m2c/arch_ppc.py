@@ -1319,10 +1319,7 @@ class PpcArch(Arch):
                 else:
                     assert isinstance(args[2], AsmAddressMode)
                     size = 8
-                    inputs = make_memory_access(args[2], size) + [
-                        args[1],
-                        args[2].base,
-                    ]
+                    inputs = make_memory_access(args[2], size) + [args[1], args[2].base]
             else:
                 assert not any(isinstance(a, AsmAddressMode) for a in args)
                 inputs = [r for r in args[1:] if isinstance(r, Register)]

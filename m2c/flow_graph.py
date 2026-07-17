@@ -30,7 +30,6 @@ from .asm_instruction import (
     JumpTarget,
     Macro,
     Register,
-    traverse_arg,
 )
 from .instruction import (
     ArchAsm,

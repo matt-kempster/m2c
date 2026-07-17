@@ -175,11 +175,12 @@ class TryMatchState:
             else:
                 return isinstance(a, AsmGlobalSymbol) and a.symbol_name == e.symbol_name
         if isinstance(e, AsmAddressMode):
-            if not isinstance(a, AsmAddressMode):
-                return False
-            if not self.match_reg(a.base, e.base):
-                return False
-            return self.match_arg(a.addend, e.addend) and a.writeback == e.writeback
+            return (
+                isinstance(a, AsmAddressMode)
+                and self.match_reg(a.base, e.base)
+                and self.match_arg(a.addend, e.addend)
+                and a.writeback == e.writeback
+            )
         if isinstance(e, BinOp):
             if e.op in ARM_BARREL_SHIFTER_OPS:
                 return (

@@ -195,9 +195,7 @@ class ArchAsmParsing(abc.ABC):
     # Capability hook: an additional arch-specific local-label pattern.
     # Non-global labels matching it are treated as jump targets inside the
     # current function rather than as new function starts. x86 uses this for
-    # MSVC's numbered COFF code labels ($L95) and for disassembler-export
-    # label spellings behind the platform's `_` symbol prefix
-    # (_LAB_00401234, _switchD_..._caseD_...).
+    # MSVC's numbered COFF code labels ($L95).
     re_arch_local_label: Optional[Pattern[str]] = None
 
     def preprocess_instruction(self, mnemonic: str, args: str) -> Tuple[str, str]:
@@ -345,7 +343,7 @@ def parse_intel_address_mode(
     (`[base + index*scale + disp]`, `[symbol]`, `[index*scale + symbol]`, ...)
     into an AsmAddressMode. The first bare register term of the top-level `+`
     chain becomes the base; everything else (scaled index terms, displacements,
-    symbols) is kept in the addend. Absolute operands get a None base."""
+    symbols) is kept in the addend. Absolute operands get a ZERO base."""
 
     def replace_regs(arg: Argument) -> Argument:
         if isinstance(arg, AsmGlobalSymbol):
