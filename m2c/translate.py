@@ -1906,6 +1906,10 @@ class EvalOnceExpr(Expression):
     # True if this EvalOnceExpr must use a variable (see RegMeta.force)
     forced_emit: bool = False
 
+    # True if this value was invalidated while nested in a marker. It is forced
+    # only if the enclosing marker is later consumed.
+    deferred_force: bool = False
+
     # True if this EvalOnceExpr has been use()d. If `var.is_emitted` is true, this will
     # also be: either because this EvalOnceExpr was used twice and that triggered
     # `var.is_emitted` to be set to true, or because the var is a planned phi, and then
@@ -2406,7 +2410,18 @@ class RegInfo:
                 arg.type.unify(ret.type)
         if meta.force:
             assert isinstance(ret, EvalOnceExpr)
-            ret.force()
+            marker = ret.wrapped_expr
+            if isinstance(marker, FuncCall) and marker.is_marker:
+                # A marker is compile-time bookkeeping, so it must never be
+                # materialized itself. Force only operand capture points that
+                # an intervening store/call marked as invalidated, and only
+                # when the marker is actually consumed.
+                for operand in marker.args:
+                    assert isinstance(operand, EvalOnceExpr)
+                    if operand.deferred_force:
+                        operand.force()
+            else:
+                ret.force()
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -3580,6 +3595,25 @@ class NodeState:
         reg: Register,
         source: Reference,
     ) -> EvalOnceExpr:
+        if isinstance(expr, FuncCall) and expr.is_marker:
+            # Markers defer their operands until a later instruction interprets
+            # them. Give each operand its own lazy capture point so a forced
+            # marker read can preserve direct memory expressions as well as
+            # EvalOnceExpr values that were already nested in the operand.
+            expr = replace(
+                expr,
+                args=[
+                    self._eval_once(
+                        arg,
+                        emit_exactly_once=False,
+                        transparent=should_wrap_transparently(arg),
+                        reg=Register.fictive("marker_arg", str(index)),
+                        source=source,
+                    )
+                    for index, arg in enumerate(expr.args)
+                ],
+            )
+
         planned_var = self.stack_info.get_planned_var(reg, source)
         is_fictive_temp = False
 
@@ -3651,40 +3685,24 @@ class NodeState:
         """Prevent later uses of registers that recursively contain something that
         matches a callback filter."""
 
-        def force_marker_dependencies(expr: Expression) -> bool:
-            """Force matching values nested in a marker without emitting the marker."""
-            if not (
-                isinstance(expr, EvalOnceExpr)
-                and isinstance(expr.wrapped_expr, FuncCall)
-                and expr.wrapped_expr.is_marker
-            ):
-                return False
-
-            def visit(value: Expression) -> None:
-                if isinstance(value, EvalOnceExpr):
-                    if expr_filter(value.wrapped_expr):
-                        value.force()
-                    else:
-                        visit(value.wrapped_expr)
-                    return
-                for dependency in value.dependencies():
-                    visit(dependency)
-
-            visit(expr.wrapped_expr)
-            return True
-
         for r, data in self.regs.contents.items():
             expr = data.value
             if isinstance(expr, (PlannedPhiExpr, NaivePhiExpr)):
                 continue
-            if not data.meta.force and uses_expr(expr, expr_filter):
-                if force_marker_dependencies(expr):
-                    continue
+            if uses_expr(expr, expr_filter):
                 # Mark the register as "if used, emit the expression's once var".
                 if not isinstance(expr, EvalOnceExpr):
                     assert_never(expr)
 
-                self.regs.update_meta(r, replace(data.meta, force=True))
+                marker = expr.wrapped_expr
+                if isinstance(marker, FuncCall) and marker.is_marker:
+                    for operand in marker.args:
+                        assert isinstance(operand, EvalOnceExpr)
+                        if uses_expr(operand, expr_filter):
+                            operand.deferred_force = True
+
+                if not data.meta.force:
+                    self.regs.update_meta(r, replace(data.meta, force=True))
 
         # Do the same for values saved across function calls.
         for loc, (reg, write, force) in self.local_var_writes.items():

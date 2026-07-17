@@ -91,7 +91,7 @@ from .instruction import (
     StackLocation,
 )
 from .ir_pattern import IrMatch, IrPattern
-from .flow_graph import ArchFlowGraph, FlowGraph
+from .flow_graph import ArchFlowGraph, FlowGraph, InstrRef
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -103,7 +103,6 @@ from .translate import (
     BinaryOp,
     Cast,
     Condition,
-    EvalOnceExpr,
     Expression,
     FuncCall,
     GlobalSymbol,
@@ -1876,47 +1875,17 @@ def set_x86_flags_from_add(
 # fcom-family compare through fnstsw ax to the test-ah idiom. Carries the
 # compare's two operands as its arguments.
 FNSTSW_MARKER = "M2C_FNSTSW"
-
-
-def _unwrap_fnstsw_marker(expr: Expression) -> Expression:
-    """Remove high-byte extraction and eval-once wrappers around a marker."""
-    while True:
-        if isinstance(expr, EvalOnceExpr):
-            expr = expr.wrapped_expr
-        elif isinstance(expr, Cast) and expr.type.is_int():
-            expr = expr.expr
-        elif (
-            isinstance(expr, BinaryOp)
-            and expr.op in ("&", ">>")
-            and isinstance(expr.right, Literal)
-            and (
-                (expr.op == "&" and expr.right.value == 0xFF)
-                or (expr.op == ">>" and expr.right.value == 8)
-            )
-        ):
-            expr = expr.left
-        else:
-            return expr
-
-
-def fnstsw_marker_operands(expr: Expression) -> Optional[Tuple[Expression, Expression]]:
-    """If `expr` is an x87 compare status-word marker, its (lhs, rhs) operands;
-    otherwise None. Unwraps EvalOnceExpr's *even past a forced/materialized
-    boundary* (unlike early_unwrap): a store scheduled between the fcomp and the
-    fnstsw/test-ah idiom forces the marker (an fn_op) into a temp via the shared
-    store's prevent_later_function_calls, and the fold must still recover the
-    operands to reconstruct `x < 0.0f`. The returned operands keep their own
-    (possibly forced) wrappers, so a compare operand that genuinely depends on
-    the intervening store stays correctly materialized before it."""
-    uw = _unwrap_fnstsw_marker(expr)
-    if (
-        isinstance(uw, FuncCall)
-        and isinstance(uw.function, GlobalSymbol)
-        and uw.function.symbol_name == FNSTSW_MARKER
-        and len(uw.args) == 2
-    ):
-        return uw.args[0], uw.args[1]
-    return None
+X87_COMPARE_INSTRS = {
+    "fcom",
+    "fcomp",
+    "fucom",
+    "fucomp",
+    "fcompp",
+    "fucompp",
+    "ftst",
+    "ficom",
+    "ficomp",
+}
 
 
 def fpu_compare_condition(lhs: Expression, rhs: Expression, op: str) -> Condition:
@@ -2113,14 +2082,35 @@ class X86HighBytePattern(AsmPattern):
         return Replacement(new_body, 1)
 
 
-class X86FnstswTestPattern(IrPattern):
-    """Give masked byte tests an IR-level x87-status folding opportunity."""
+class X86FnstswPattern(IrPattern):
+    """Fold the fnstsw/test-ah status-word chain into its float comparison."""
 
-    replacement = "fnstsw_test.fictive v, K"
-    parts = ["test.b v, K"]
+    replacement = "fnstsw_test.fictive fsw, K"
+    parts = [
+        "fnstsw v",
+        "extract_high_byte.fictive z, v",
+        "test.b z, K",
+    ]
 
     def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
-        return isinstance(m.symbolic_args["K"], AsmLiteral)
+        mask = m.symbolic_args["K"]
+        if not (isinstance(mask, AsmLiteral) and mask.value & 0xFF in FNSTSW_MASK_OPS):
+            return False
+
+        marker_source = next(
+            (
+                m.try_map_ref(ref)
+                for ref in m.ref_map
+                if isinstance(ref, InstrRef)
+                and ref.instruction.mnemonic == "in.fictive"
+            ),
+            None,
+        )
+        return (
+            isinstance(marker_source, InstrRef)
+            and split_width_suffix(marker_source.instruction.mnemonic)[0]
+            in X87_COMPARE_INSTRS
+        )
 
 
 @dataclass(frozen=True)
@@ -2240,7 +2230,7 @@ class X86Arch(Arch):
         X86RewritePattern(),
         X86HighBytePattern(),
     ]
-    ir_patterns = [X86FnstswTestPattern()]
+    ir_patterns = [X86FnstswPattern()]
 
     def return_reg_always_meaningful(self, reg: Register) -> bool:
         # The x87 ABI requires the register stack to be empty at every
@@ -3163,17 +3153,17 @@ class X86Arch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 assert isinstance(mask, AsmLiteral)
-                status = a.regs[status_reg]
-                operands = fnstsw_marker_operands(status)
-                op = FNSTSW_MASK_OPS.get(mask.value & 0xFF)
-                if operands is not None and op is not None:
-                    cond = fpu_compare_condition(operands[0], operands[1], op)
-                    for flag in cls.flag_regs:
-                        s.set_reg(flag, cond)
-                    return
-                high = shift_right_expr(status, Literal(8), signed=False)
-                value = replace_bitand(BinaryOp.int(high, "&", Literal(mask.value)))
-                set_x86_flags_from_result(s, value, 1)
+                marker = early_unwrap(a.regs[status_reg])
+                assert (
+                    isinstance(marker, FuncCall)
+                    and isinstance(marker.function, GlobalSymbol)
+                    and marker.function.symbol_name == FNSTSW_MARKER
+                    and len(marker.args) == 2
+                )
+                op = FNSTSW_MASK_OPS[mask.value & 0xFF]
+                cond = fpu_compare_condition(marker.args[0], marker.args[1], op)
+                for flag in cls.flag_regs:
+                    s.set_reg(flag, cond)
 
         elif base in cls.instrs_cmp:
             assert len(args) == 2
@@ -3691,17 +3681,7 @@ class X86Arch(Arch):
 
         # --- Compares: store a symbolic status-word marker into `fsw`, killing
         # any popped operands. The fnstsw/test-ah idiom below consumes it. ---
-        elif base in (
-            "fcom",
-            "fcomp",
-            "fucom",
-            "fucomp",
-            "fcompp",
-            "fucompp",
-            "ftst",
-            "ficom",
-            "ficomp",
-        ):
+        elif base in X87_COMPARE_INSTRS:
             top = args[0]
             assert isinstance(top, Register)
             inputs = [top]
