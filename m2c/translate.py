@@ -2265,10 +2265,6 @@ class StoreStmt(Statement):
         ) or isinstance(dest, (ArrayAccess, LocalVar, SubroutineArg)):
             # Known destination; fine to elide some casts.
             source = elide_literal_casts(source)
-        if isinstance(dest, StructAccess):
-            lvalue = dest.format_lvalue(fmt)
-            if lvalue != dest.format(fmt):
-                return f"{lvalue} = {format_expr(source, fmt)};"
         return format_assignment(dest, source, fmt)
 
 
@@ -2938,6 +2934,9 @@ def format_assignment(
         is_dest = lambda e: e == dest
     else:
         is_dest = lambda e: var_for_expr(e) == dest
+    dest_str = (
+        dest.format_lvalue(fmt) if isinstance(dest, StructAccess) else dest.format(fmt)
+    )
     source = late_unwrap(source)
     if isinstance(source, BinaryOp) and source.op in COMPOUND_ASSIGNMENT_OPS:
         source = source.normalize_for_formatting()
@@ -2947,8 +2946,8 @@ def format_assignment(
         elif is_dest(late_unwrap(source.right)) and source.op in ASSOCIATIVE_OPS:
             rhs = source.left
         if rhs is not None:
-            return f"{dest.format(fmt)} {source.op}= {format_expr(rhs, fmt)};"
-    return f"{dest.format(fmt)} = {format_expr(source, fmt)};"
+            return f"{dest_str} {source.op}= {format_expr(rhs, fmt)};"
+    return f"{dest_str} = {format_expr(source, fmt)};"
 
 
 def var_for_expr(expr: Expression) -> Optional[Var]:
