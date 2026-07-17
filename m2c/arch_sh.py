@@ -31,6 +31,8 @@ from .translate import (
     ArgLoc,
     BinaryOp,
     Cast,
+    ErrorExpr,
+    ExprStmt,
     Expression,
     InstrMap,
     InstrArgs,
@@ -55,9 +57,9 @@ class JumpTablePattern(SimpleAsmPattern):
         "mov $x, $i",
         "add $i, $i",
         "mova _, $b",
-        "mov.w",
+        "mov.w",  # "mov.w @($b,$i),$i"
         "add $i, $b",
-        "jmp",
+        "jmp",  # "jmp @$b"
         "nop",
     )
 
@@ -177,13 +179,6 @@ class Sh2Arch(Arch):
             else:
                 assert isinstance(args[0], AsmLiteral)
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), Literal(a.imm_value(0)))
-        elif mnemonic == "mova":
-            assert (
-                len(args) == 2
-                and isinstance(args[0], AsmGlobalSymbol)
-                and isinstance(args[1], Register)
-            )
-            outputs = [args[1]]
         elif mnemonic in ("mov.l", "mov.w"):
             assert len(args) == 2
             if isinstance(args[0], Register):
@@ -312,7 +307,11 @@ class Sh2Arch(Arch):
                 s.set_reg(Register("condition_bit"), condition)
 
         else:
-            raise DecompFailure(f"Unable to parse instruction: {mnemonic}")
+            instr_str = str(AsmInstruction(mnemonic, args))
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                error = ErrorExpr(f"unknown instruction: {instr_str}")
+                s.write_statement(ExprStmt(error))
 
         return Instruction(
             mnemonic=mnemonic,
