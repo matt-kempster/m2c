@@ -639,6 +639,26 @@ def get_stack_info(
                 if reg == Register("lr"):
                     info.is_leaf = False
         elif (
+            arch_mnemonic == "sh2:add"
+            and isinstance(inst.args[0], AsmLiteral)
+            and inst.args[0].value < 0
+            and inst.args[1] == arch.stack_pointer_reg
+        ):
+            info.allocated_stack_size += -inst.args[0].value
+        elif (
+            arch_mnemonic == "sh2:mov.l"
+            and isinstance(inst.args[0], Register)
+            and inst.args[0] in arch.saved_regs
+            and isinstance(inst.args[1], AsmAddressMode)
+            and inst.args[1].base == arch.stack_pointer_reg
+            and inst.args[1].writeback == Writeback.PRE
+        ):
+            info.allocated_stack_size += 4
+            info.callee_save_regs.add(inst.args[0])
+            callee_saved_offsets.append(-info.allocated_stack_size)
+            if inst.args[0] == arch.return_address_reg:
+                info.is_leaf = False
+        elif (
             arch_mnemonic == "arm:sub"
             and inst.args[0] == arch.stack_pointer_reg
             and inst.args[1] == arch.stack_pointer_reg
@@ -727,6 +747,13 @@ def get_stack_info(
                         allowed_callee_save_gaps.add(stack_offset + 4)
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
+        elif (
+            arch_mnemonic == "sh2:mov"
+            and inst.args[0] == arch.stack_pointer_reg
+            and isinstance(inst.args[1], Register)
+            and inst.args[1] in arch.frame_pointer_regs
+        ):
+            info.frame_pointer_reg = inst.args[1]
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
             assert isinstance(inst.args[0], Register)
             assert isinstance(inst.args[1], AsmLiteral)

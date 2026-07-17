@@ -4,16 +4,21 @@ from typing import Callable, Dict, List, Optional
 
 from .error import DecompFailure
 from .options import Target
+from .asm_file import AsmSymbolicData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
+    AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
     AsmState,
+    BinOp,
+    JumpTarget,
     Register,
     Writeback,
     get_jump_target,
 )
+from .asm_pattern import AsmMatcher, AsmPattern, Replacement
 from .instruction import (
     Instruction,
     InstructionMeta,
@@ -43,6 +48,65 @@ from .evaluate import (
 )
 
 from .types import FunctionSignature, Type
+
+
+class ShJumpTablePattern(AsmPattern):
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        body = matcher.input[matcher.index : matcher.index + 7]
+        if len(body) != 7 or not all(isinstance(x, Instruction) for x in body):
+            return None
+        mov, double, mova, load, add, jump, nop = body
+        assert isinstance(mov, Instruction)
+        assert isinstance(double, Instruction)
+        assert isinstance(mova, Instruction)
+        assert isinstance(load, Instruction)
+        assert isinstance(add, Instruction)
+        assert isinstance(jump, Instruction)
+        assert isinstance(nop, Instruction)
+        if [x.mnemonic for x in body] != [
+            "mov",
+            "add",
+            "mova",
+            "mov.w",
+            "add",
+            "jmp",
+            "nop",
+        ]:
+            return None
+        if (
+            len(mov.args) != 2
+            or not isinstance(mov.args[0], Register)
+            or not isinstance(mov.args[1], Register)
+            or double.args != [mov.args[1], mov.args[1]]
+            or len(mova.args) != 2
+            or not isinstance(mova.args[0], AsmGlobalSymbol)
+        ):
+            return None
+
+        table_name = mova.args[0].symbol_name
+        table = matcher.asm_data.values.get(table_name)
+        if table is None:
+            return None
+        targets: List[AsmGlobalSymbol] = []
+        for entry in table.data:
+            if (
+                not isinstance(entry, AsmSymbolicData)
+                or not isinstance(entry.data, BinOp)
+                or entry.data.op != "-"
+                or not isinstance(entry.data.lhs, AsmGlobalSymbol)
+                or entry.data.rhs != AsmGlobalSymbol(table_name)
+            ):
+                return None
+            targets.append(entry.data.lhs)
+        if not targets:
+            return None
+        return Replacement(
+            [
+                AsmInstruction("tablejmp.fictive", [mov.args[0], *targets]),
+                AsmInstruction("nop", []),
+            ],
+            len(body),
+        )
 
 
 class Sh2Arch(Arch):
@@ -130,6 +194,13 @@ class Sh2Arch(Arch):
             else:
                 assert isinstance(args[0], AsmLiteral)
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), Literal(a.imm_value(0)))
+        elif mnemonic == "mova":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], AsmGlobalSymbol)
+                and isinstance(args[1], Register)
+            )
+            outputs = [args[1]]
         elif mnemonic in ("mov.l", "mov.w"):
             assert len(args) == 2
             if isinstance(args[0], Register):
@@ -147,7 +218,6 @@ class Sh2Arch(Arch):
                     # otherwise we have a writeback
                     assert args[1].base == cls.stack_pointer_reg
                     assert args[1].writeback == Writeback.PRE
-
             else:
                 assert isinstance(args[1], Register)
                 if isinstance(args[0], AsmAddressMode):
@@ -213,6 +283,50 @@ class Sh2Arch(Arch):
             assert len(args) == 1
             jump_target = get_jump_target(args[0])
             has_delay_slot = True
+        elif mnemonic == "jmp":
+            assert (
+                len(args) == 1
+                and isinstance(args[0], AsmAddressMode)
+                and args[0].addend == AsmLiteral(0)
+            )
+            inputs = [args[0].base]
+            jump_target = args[0].base
+            is_conditional = True
+            has_delay_slot = True
+            eval_fn = lambda s, a: s.set_switch_expr(
+                a.regs[a.raw_arg(0).base]
+                if isinstance(a.raw_arg(0), AsmAddressMode)
+                else a.reg(0)
+            )
+        elif mnemonic == "tablejmp.fictive":
+            assert len(args) >= 2 and isinstance(args[0], Register)
+            targets = []
+            for arg in args[1:]:
+                assert isinstance(arg, AsmGlobalSymbol)
+                targets.append(JumpTarget(arg.symbol_name))
+            inputs = [args[0]]
+            jump_target = targets
+            is_conditional = True
+            has_delay_slot = True
+            eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
+        elif mnemonic in ("cmp/eq", "cmp/gt", "cmp/hi"):
+            assert len(args) == 2 and isinstance(args[1], Register)
+            inputs = [args[1]]
+            if isinstance(args[0], Register):
+                inputs.insert(0, args[0])
+            outputs = [Register("condition_bit")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.reg(1)
+                rhs = a.reg_or_imm(0)
+                if mnemonic == "cmp/eq":
+                    condition = BinaryOp.icmp(lhs, "==", rhs)
+                elif mnemonic == "cmp/gt":
+                    condition = BinaryOp.scmp(lhs, ">", rhs)
+                else:
+                    condition = BinaryOp.ucmp(lhs, ">", rhs)
+                s.set_reg(Register("condition_bit"), condition)
+
         else:
             raise DecompFailure(f"Unable to parse instruction: {mnemonic}")
 
@@ -240,6 +354,8 @@ class Sh2Arch(Arch):
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
     }
+
+    asm_patterns = [ShJumpTablePattern()]
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
