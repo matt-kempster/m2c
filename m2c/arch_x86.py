@@ -146,6 +146,7 @@ from .x86_fpu import FPU_WIDTHED_MEMORY, rewrite_fpu_stack
 from .x86_utils import (
     WIDTH_SUFFIXES,
     call_target_symbol,
+    parse_jump_table_address,
     split_width_suffix,
     switch_jump_table_labels,
 )
@@ -810,46 +811,6 @@ class X86SehEpiloguePattern(SimpleAsmPattern):
         return Replacement([], len(m.body), clobbers=[])
 
 
-class X86RawJumpTablePattern(AsmPattern):
-    """Reject raw-address jump tables, independently of label spelling."""
-
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        part = matcher.input[matcher.index]
-        if (
-            not isinstance(part, Instruction)
-            or part.mnemonic != "jmp"
-            or not isinstance(part.args[0], AsmAddressMode)
-        ):
-            return None
-        addr = part.args[0]
-        # A jump table has an indexed address with pointer-sized (4-byte)
-        # entries. Requiring this scaled-index term avoids mistaking
-        # `jmp [absolute_address]` tail calls for switches.
-        has_scaled_index = any(
-            isinstance(sub, BinOp)
-            and sub.op == "*"
-            and isinstance(sub.lhs, Register)
-            and isinstance(sub.rhs, AsmLiteral)
-            and sub.rhs.value == 4
-            for sub in traverse_arg(addr.addend)
-        )
-        if not has_scaled_index:
-            return None
-        # Symbolic tables are handled by the normal switch machinery. A raw
-        # address cannot be associated with input data without address/section
-        # metadata, so reject it explicitly instead of guessing from labels.
-        literals = [
-            sub for sub in traverse_arg(addr.addend) if isinstance(sub, AsmLiteral)
-        ]
-        table_addrs = [lit for lit in literals if lit.value > 0xFFFF]
-        if len(table_addrs) != 1:
-            return None
-        raise DecompFailure(
-            "raw-address jump table is unsupported; give the table a symbol "
-            "and use that symbol in the jump operand"
-        )
-
-
 class X86RewritePattern(AsmPattern):
     """Whole-body rewrite eliminating x86's moving integer and x87 stacks.
 
@@ -1224,6 +1185,8 @@ def rewrite_stack_ops(
             # Indirect jump: a jump table.
             targets = switch_jump_table_labels(item, asm_data)
             if targets is None:
+                if isinstance(item.jump_table, AsmLiteral):
+                    return
                 raise DecompFailure(
                     f"Unable to determine jump table for {instr_str(item)}"
                 )
@@ -2226,7 +2189,6 @@ class X86Arch(Arch):
         X86PushAllocPattern(),
         X86SehPattern(),
         X86SehEpiloguePattern(),
-        X86RawJumpTablePattern(),
         X86RewritePattern(),
         X86HighBytePattern(),
     ]
@@ -2619,6 +2581,7 @@ class X86Arch(Arch):
         clobbers: List[Location] = []
         outputs: List[Location] = []
         jump_target: Optional[Union[JumpTarget, Register, List[JumpTarget]]] = None
+        jump_table: Optional[Union[AsmGlobalSymbol, AsmLiteral]] = None
         function_target: Optional[Argument] = None
         is_conditional = False
         is_return = False
@@ -2713,6 +2676,7 @@ class X86Arch(Arch):
                     # a jump table. Treated like an indirect jump through the
                     # index register; the loaded value drives the switch.
                     jump_target = regs[0]
+                    jump_table = parse_jump_table_address(target)
                     is_conditional = True
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
@@ -3489,6 +3453,7 @@ class X86Arch(Arch):
             clobbers=clobbers,
             outputs=outputs,
             jump_target=jump_target,
+            jump_table=jump_table,
             function_target=function_target,
             is_conditional=is_conditional,
             is_return=is_return,

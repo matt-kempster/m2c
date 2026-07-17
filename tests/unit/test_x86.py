@@ -9,10 +9,11 @@ from unittest.mock import call, create_autospec, patch
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from m2c.asm_pattern import AsmMatcher, BodyPart
+from m2c.asm_pattern import BodyPart
 
-from m2c.arch_x86 import X86Arch, X86RawJumpTablePattern
+from m2c.arch_x86 import X86Arch
 from m2c.asm_file import AsmData, Function
+from m2c.c_types import TypeMap
 from m2c.error import DecompFailure
 from m2c.asm_instruction import (
     Argument,
@@ -29,7 +30,7 @@ from m2c.asm_instruction import (
     parse_asm_instruction,
 )
 from m2c.instruction import Instruction, InstructionMeta, StackLocation
-from m2c.flow_graph import build_flowgraph_fragment
+from m2c.flow_graph import SwitchNode, build_flowgraph, build_flowgraph_fragment
 from m2c.ir_pattern import simplify_ir_patterns
 from m2c.types import Type
 
@@ -538,18 +539,30 @@ class TestX86Parsing(unittest.TestCase):
         self.assertTrue(instr.is_conditional)
         self.assertTrue(instr.is_load)
         self.assertEqual(instr.jump_target, Register("eax"))
+        self.assertEqual(instr.jump_table, AsmGlobalSymbol("jump_table"))
         self.assertEqual(instr.inputs, [Register("eax")])
 
-    def test_raw_jump_table_detection_does_not_require_labels(self) -> None:
+    def test_raw_jump_table_hint_is_raised_during_switch_construction(self) -> None:
         instr = self.parse_instruction("JMP dword ptr [EAX*0x4 + 0x401040]")
-        matcher = AsmMatcher(self.arch, AsmData(), [instr], set(), index=0)
-        with self.assertRaisesRegex(DecompFailure, "raw-address jump table"):
-            X86RawJumpTablePattern().match(matcher)
+        self.assertEqual(instr.jump_table, AsmLiteral(0x401040))
+        function = Function("raw_jump_table")
+        function.new_instruction(instr)
+
+        with patch("m2c.flow_graph.SwitchNode", wraps=SwitchNode) as switch_ctor:
+            with self.assertRaisesRegex(DecompFailure, "raw-address jump table"):
+                build_flowgraph(
+                    function,
+                    AsmData(),
+                    self.arch,
+                    TypeMap(source_hash="", base_struct_align=4),
+                )
+
+        switch_ctor.assert_called_once()
 
     def test_absolute_indirect_tail_call_is_not_a_jump_table(self) -> None:
         instr = self.parse_instruction("JMP dword ptr [0x401040]")
-        matcher = AsmMatcher(self.arch, AsmData(), [instr], set(), index=0)
-        self.assertIsNone(X86RawJumpTablePattern().match(matcher))
+        self.assertIsNone(instr.jump_table)
+        self.assertTrue(instr.is_return)
 
     def test_conditional_jumps(self) -> None:
         # x86 condition codes map onto ARM-style flag pseudo-registers.

@@ -553,6 +553,8 @@ def rewrite_fpu_ops(
             # Indirect jump: a jump table.
             targets = switch_jump_table_labels(part, asm_data)
             if targets is None:
+                if isinstance(part.jump_table, AsmLiteral):
+                    continue
                 raise DecompFailure(
                     f"Unable to determine jump table for {instr_str(part)}"
                 )

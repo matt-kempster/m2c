@@ -124,6 +124,10 @@ class Instruction:
     eval_fn: Optional[Callable[..., object]]
 
     jump_target: Optional[Union[JumpTarget, Register, List[JumpTarget]]] = None
+    # Architecture-parsed jump-table operand. A symbolic value names table
+    # data; a literal value lets SwitchNode construction report that raw
+    # addresses need to be labeled.
+    jump_table: Optional[Union[AsmGlobalSymbol, AsmLiteral]] = None
     function_target: Optional[Argument] = None
     is_conditional: bool = False
     is_return: bool = False
