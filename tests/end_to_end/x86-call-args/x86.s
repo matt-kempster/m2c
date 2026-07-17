@@ -1,11 +1,11 @@
-# cdecl call with pushed arguments and an `add esp, N` cleanup.
-# Arguments are pushed right-to-left, so the last push is arg0:
-# _add_two(arg0, arg1).
+# Goal: exercise cdecl right-to-left pushes and caller stack cleanup.
+# Generated from orig.c with MSVC6 /O2 and msvc_disasm.
+.section .text
 test:
-    MOV EAX, dword ptr [ESP + 0x4]
-    MOV ECX, dword ptr [ESP + 0x8]
-    PUSH ECX
-    PUSH EAX
-    CALL _add_two
-    ADD ESP, 0x8
-    RET
+/* 00000000 0000  8B 44 24 08 */	mov eax, dword ptr [esp + 8]
+/* 00000004 0004  8B 4C 24 04 */	mov ecx, dword ptr [esp + 4]
+/* 00000008 0008  50 */	push eax
+/* 00000009 0009  51 */	push ecx
+/* 0000000A 000A  E8 00 00 00 00 */	call _add_two
+/* 0000000F 000F  83 C4 08 */	add esp, 8
+/* 00000012 0012  C3 */	ret

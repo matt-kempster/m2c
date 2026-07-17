@@ -133,6 +133,9 @@ def symbol_name(sym: CoffSymbol) -> str:
 
 def text_symbol_name(sym: CoffSymbol) -> str:
     if sym.section is not None and sym.section.name == ".text":
+        decorated = re.fullmatch(r"[_@]([^@]+)@\d+", sym.name)
+        if decorated is not None:
+            return decorated.group(1)
         if sym.name.startswith("_") and not sym.name.startswith("__"):
             return sym.name[1:]
     return sym.name
@@ -382,6 +385,8 @@ def disassemble_text_section(
         addr = element.address
         symbol = section.symbols.get(addr - section.address)
         if symbol is not None:
+            if re.fullmatch(r"[_@][^@]+@\d+", symbol.name):
+                output.write(f"# MSVC symbol: {asm_name(symbol.name)}\n")
             output.write(f"{asm_name(text_symbol_name(symbol))}:\n")
         if addr in labels:
             output.write(f"{address_label(addr)}:\n")

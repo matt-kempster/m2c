@@ -1,11 +1,8 @@
-# __fastcall register arguments: MSVC passes the first two register-sized
-# arguments in ecx and edx. Reading them before any write registers them as
-# arguments (compiler-generated cdecl/stdcall code never reads these
-# caller-save registers uninitialized), instead of failing with
-# unset-register errors. Extra arguments still come from the stack, after
-# the register ones.
+# Goal: infer the ECX/EDX fastcall arguments before either register is written.
+# Generated from orig.c with MSVC6 /O1 and msvc_disasm.
+.section .text
+# MSVC symbol: "@test@12"
 test:
-    MOV EAX, ECX
-    ADD EAX, EDX
-    ADD EAX, dword ptr [ESP + 0x4]
-    RET 0x4
+/* 00000000 0000  8D 04 11 */	lea eax, [ecx + edx]
+/* 00000003 0003  03 44 24 04 */	add eax, dword ptr [esp + 4]
+/* 00000007 0007  C2 04 00 */	ret 4
