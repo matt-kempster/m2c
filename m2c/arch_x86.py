@@ -2583,7 +2583,7 @@ class X86Arch(Arch):
         esp-relative addresses, since the operand value is also read)."""
         inputs: List[Location] = []
         for sub in traverse_arg(arg):
-            if isinstance(sub, Register) and sub not in inputs:
+            if isinstance(sub, Register) and sub != ZERO and sub not in inputs:
                 inputs.append(sub)
         if isinstance(arg, AsmAddressMode):
             stack_loc = cls._stack_location(arg)
@@ -2595,7 +2595,11 @@ class X86Arch(Arch):
     def _address_regs(cls, arg: AsmAddressMode) -> List[Location]:
         """Registers making up a memory operand's address (the operand's
         value itself is not read)."""
-        return [sub for sub in traverse_arg(arg) if isinstance(sub, Register)]
+        return [
+            sub
+            for sub in traverse_arg(arg)
+            if isinstance(sub, Register) and sub != ZERO
+        ]
 
     @classmethod
     def _flag_outputs(

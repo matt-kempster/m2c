@@ -28,7 +28,6 @@ from .asm_instruction import (
     JumpTarget,
     Register,
     RegisterList,
-    ZERO,
 )
 from .instruction import (
     Instruction,
@@ -248,8 +247,6 @@ class TryIrMatch(IrMatch):
         if isinstance(pat, AsmAddressMode):
             return (
                 isinstance(cand, AsmAddressMode)
-                and pat.base != ZERO
-                and cand.base != ZERO
                 and self.match_arg(pat.base, cand.base)
                 and self.match_arg(pat.addend, cand.addend)
                 and pat.writeback == cand.writeback

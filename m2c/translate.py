@@ -757,9 +757,6 @@ def get_stack_info(
                         or arch_mnemonic.startswith("arm:ldr")
                     )
                     and isinstance(inst.args[1], AsmAddressMode)
-                    # Absolute address modes (base=zero) are never stack
-                    # references.
-                    and inst.args[1].base != ZERO
                     and info.is_stack_reg(inst.args[1].base)
                 ):
                     offset = inst.args[1].addend_as_literal()

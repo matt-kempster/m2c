@@ -758,8 +758,7 @@ def traverse_arg(arg: Argument) -> Iterator[Argument]:
         for reg in arg.regs:
             yield reg
     elif isinstance(arg, AsmAddressMode):
-        if arg.base != ZERO:
-            yield arg.base
+        yield arg.base
         yield from traverse_arg(arg.addend)
     elif isinstance(arg, Macro):
         yield from traverse_arg(arg.argument)
