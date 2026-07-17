@@ -143,6 +143,11 @@ class Sh2Arch(Arch):
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
 
+                else:
+                    # otherwise we have a writeback
+                    assert args[1].base == cls.stack_pointer_reg
+                    assert args[1].writeback == Writeback.PRE
+
             else:
                 assert isinstance(args[1], Register)
                 if isinstance(args[0], AsmAddressMode):
