@@ -1,6 +1,5 @@
 # One-operand register forms of the non-popping x87 arithmetic ops:
-# `fmul st(i)` means `st0 *= st(i)` (likewise fadd/fsub/... st(i)). Intel
-# syntax permits
+# `fmul st(i)` means `st0 *= st(i)` (likewise fadd/fsub/... st(i)). IDA emits
 # these throughout matrix/vector math; they must not be mistaken for the
 # memory-operand form (which would read an unset stack slot).
 test:

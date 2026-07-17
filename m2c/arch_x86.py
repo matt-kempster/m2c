@@ -249,11 +249,10 @@ def mem_target(
     accesses)."""
     arg = a.raw_arg(index)
     if not isinstance(arg, AsmAddressMode):
-        # Some Intel-syntax inputs write a direct memory operand without
-        # brackets when it is a bare symbol (`fld _FastAtanTable+0x4004`,
-        # `fadd _real`). This
-        # function is only ever called on known memory operands, so such an
-        # operand is an absolute [symbol (+ offset)] access.
+        # IDA writes a direct memory operand without brackets when it is a
+        # bare symbol (`fld _FastAtanTable+0x4004`, `fadd _real`). This function
+        # is only ever called on known memory operands, so such an operand is
+        # an absolute [symbol (+ offset)] access.
         ref = parse_symbol_ref(arg)
         if ref is not None:
             return ref
