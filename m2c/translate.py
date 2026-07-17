@@ -747,13 +747,6 @@ def get_stack_info(
                         allowed_callee_save_gaps.add(stack_offset + 4)
         elif arch_mnemonic == "ppc:mflr" and inst.args[0] == Register("r0"):
             info.is_leaf = False
-        elif (
-            arch_mnemonic == "sh2:mov"
-            and inst.args[0] == arch.stack_pointer_reg
-            and isinstance(inst.args[1], Register)
-            and inst.args[1] in arch.frame_pointer_regs
-        ):
-            info.frame_pointer_reg = inst.args[1]
         elif arch_mnemonic == "mips:li" and inst.args[0] in arch.temp_regs:
             assert isinstance(inst.args[0], Register)
             assert isinstance(inst.args[1], AsmLiteral)

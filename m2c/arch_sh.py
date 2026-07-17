@@ -18,7 +18,7 @@ from .asm_instruction import (
     Writeback,
     get_jump_target,
 )
-from .asm_pattern import AsmMatcher, AsmPattern, Replacement
+from .asm_pattern import AsmMatch, Replacement, SimpleAsmPattern, make_pattern
 from .instruction import (
     Instruction,
     InstructionMeta,
@@ -50,35 +50,24 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
-class ShJumpTablePattern(AsmPattern):
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        body = matcher.input[matcher.index : matcher.index + 7]
-        instructions = [x for x in body if isinstance(x, Instruction)]
-        if len(instructions) != 7:
-            return None
-        mov, double, mova, load, add, jump, nop = instructions
-        if [x.mnemonic for x in instructions] != [
-            "mov",
-            "add",
-            "mova",
-            "mov.w",
-            "add",
-            "jmp",
-            "nop",
-        ]:
-            return None
-        if (
-            len(mov.args) != 2
-            or not isinstance(mov.args[0], Register)
-            or not isinstance(mov.args[1], Register)
-            or double.args != [mov.args[1], mov.args[1]]
-            or len(mova.args) != 2
-            or not isinstance(mova.args[0], AsmGlobalSymbol)
-        ):
-            return None
+class JumpTablePattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "mov $x, $i",
+        "add $i, $i",
+        "mova _, $b",
+        "mov.w",
+        "add $i, $b",
+        "jmp",
+        "nop",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        mova = m.body[2]
+        assert isinstance(mova, Instruction)
+        assert isinstance(mova.args[0], AsmGlobalSymbol)
 
         table_name = mova.args[0].symbol_name
-        table = matcher.asm_data.values.get(table_name)
+        table = m.asm_data.values.get(table_name)
         if table is None:
             return None
         targets: List[AsmGlobalSymbol] = []
@@ -96,10 +85,10 @@ class ShJumpTablePattern(AsmPattern):
             return None
         return Replacement(
             [
-                AsmInstruction("tablejmp.fictive", [mov.args[0], *targets]),
+                AsmInstruction("tablejmp.fictive", [m.regs["x"], *targets]),
                 AsmInstruction("nop", []),
             ],
-            len(body),
+            len(m.body),
         )
 
 
@@ -350,7 +339,7 @@ class Sh2Arch(Arch):
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
     }
 
-    asm_patterns = [ShJumpTablePattern()]
+    asm_patterns = [JumpTablePattern()]
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
