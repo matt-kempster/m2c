@@ -43,6 +43,7 @@ from .asm_file import AsmData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
+    AsmGlobalSymbol,
     AsmLiteral,
     JumpTarget,
     Register,
@@ -51,6 +52,7 @@ from .asm_pattern import BodyPart
 from .error import DecompFailure
 from .instruction import ArchAsm, Instruction, InstructionMeta
 from .x86_utils import (
+    WIDTH_SUFFIXES,
     call_target_symbol,
     split_width_suffix,
     switch_jump_table_labels,
@@ -125,6 +127,36 @@ FPU_NEUTRAL: Set[str] = {
 }
 # Depth-neutral no-ops we drop entirely (they carry no value semantics).
 FPU_DROP: Set[str] = {"fwait", "wait", "fnop"}
+
+# Instructions whose single non-register operand is data read or written at
+# the width encoded in the mnemonic. X86Arch preprocessing also uses this
+# inventory to preserve explicit `ptr` operands as address modes.
+FPU_WIDTHED_MEMORY: Set[str] = {
+    "fld",
+    "fild",
+    "fst",
+    "fstp",
+    "fist",
+    "fistp",
+    "fadd",
+    "fsub",
+    "fsubr",
+    "fmul",
+    "fdiv",
+    "fdivr",
+    "fiadd",
+    "fisub",
+    "fisubr",
+    "fimul",
+    "fidiv",
+    "fidivr",
+    "fcom",
+    "fcomp",
+    "fucom",
+    "fucomp",
+    "ficom",
+    "ficomp",
+}
 # Instructions we deliberately do not support; fail loudly rather than emit
 # silently-wrong code (not observed in typical MSVC6 output).
 FPU_UNSUPPORTED: Set[str] = {
@@ -536,6 +568,26 @@ def rewrite_fpu_ops(
     def emit(mnemonic: str, emit_args: List[Argument], meta: InstructionMeta) -> None:
         new_body.append(arch.parse(mnemonic, emit_args, meta.derived()))
 
+    def data_sized_mnemonic(mnemonic: str, args: List[Argument]) -> str:
+        """Apply an unsized bare x87 data symbol's exact declared width."""
+        base, width = split_width_suffix(mnemonic)
+        if base not in FPU_WIDTHED_MEMORY or width != 4 or len(args) != 1:
+            return mnemonic
+        arg = args[0]
+        if not isinstance(arg, AsmGlobalSymbol):
+            return mnemonic
+        entry = asm_data.values.get(arg.symbol_name)
+        if entry is None:
+            return mnemonic
+        min_size, max_size = entry.size_range_bytes()
+        if min_size != max_size:
+            return mnemonic
+        size = min_size
+        suffix = WIDTH_SUFFIXES.get(size)
+        if suffix is None:
+            return mnemonic
+        return base + suffix
+
     for i, part in enumerate(body):
         if not isinstance(part, Instruction):
             new_body.append(part)
@@ -586,7 +638,7 @@ def rewrite_fpu_ops(
             continue
         args = part.args
         meta = part.meta
-        mnemonic = part.mnemonic
+        mnemonic = data_sized_mnemonic(part.mnemonic, args)
 
         def flat(st_i: int, *, at: int = depth, fault: int = i) -> Register:
             """The virtual register for physical `st(st_i)` at depth `at`."""

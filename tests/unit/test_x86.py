@@ -78,6 +78,14 @@ class TestX86Parsing(unittest.TestCase):
         self.assertEqual(addr.base, Register("ebp"))
         self.assertEqual(addr.addend, AsmLiteral(-0x10))
 
+    def test_explicit_dword_bare_symbol_is_memory(self) -> None:
+        asm, _ = self.parse_asm("FADD dword ptr g_double")
+        self.assertEqual(asm.mnemonic, "fadd")
+        self.assertEqual(
+            asm.args,
+            [AsmAddressMode(ZERO, AsmGlobalSymbol("g_double"), None)],
+        )
+
     def test_absolute_symbol_address_mode(self) -> None:
         asm, _ = self.parse_asm("MOV EAX, [_DAT_0079a8b0]")
         self.assertEqual(len(asm.args), 2)

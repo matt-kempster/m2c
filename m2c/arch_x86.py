@@ -143,7 +143,7 @@ from .evaluate import (
     void_fn_op,
 )
 from .types import FunctionSignature
-from .x86_fpu import rewrite_fpu_stack
+from .x86_fpu import FPU_WIDTHED_MEMORY, rewrite_fpu_stack
 from .x86_utils import (
     WIDTH_SUFFIXES,
     call_target_symbol,
@@ -2276,6 +2276,12 @@ class X86Arch(Arch):
         # should not see ("offset symbol" just means the symbol's address,
         # which is how bare symbols are treated anyway).
         widths = [PTR_WIDTHS[m.lower()] for m in RE_PTR.findall(args)]
+        explicit_bare_x87_memory = (
+            mnemonic in FPU_WIDTHED_MEMORY
+            and bool(widths)
+            and "[" not in args
+            and "," not in args
+        )
         args = RE_PTR.sub("", args)
         args = RE_OFFSET.sub("", args)
         args = RE_DISTANCE.sub("", args)
@@ -2290,6 +2296,11 @@ class X86Arch(Arch):
         # handled explicitly or fails translation with a clear error.
         segments = [m.lower() for m in RE_SEGMENT.findall(args)]
         args = RE_SEGMENT.sub("", args)
+        if explicit_bare_x87_memory:
+            # Preserve the fact that a `ptr` width was explicit. In particular,
+            # dword has no mnemonic suffix, so the normalized address-mode shape
+            # distinguishes it from an unsized IDA bare-symbol operand.
+            args = f"[{args.strip()}]"
         for seg in segments:
             if seg in ("fs", "gs"):
                 mnemonic += f".{seg}"
