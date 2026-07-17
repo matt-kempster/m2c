@@ -33,7 +33,14 @@ from .translate import (
     NodeState,
 )
 
-from .evaluate import condition_from_expr, handle_add, handle_sub
+from .evaluate import (
+    condition_from_expr,
+    handle_add,
+    handle_addi,
+    handle_load,
+    handle_sub,
+    make_store,
+)
 
 from .types import FunctionSignature, Type
 
@@ -123,29 +130,51 @@ class Sh2Arch(Arch):
             else:
                 assert isinstance(args[0], AsmLiteral)
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), Literal(a.imm_value(0)))
-        elif mnemonic == "mov.l":
+        elif mnemonic in ("mov.l", "mov.w"):
             assert len(args) == 2
             if isinstance(args[0], Register):
                 assert isinstance(args[1], AsmAddressMode)
-                assert args[1].base == cls.stack_pointer_reg
-                assert args[1].writeback == Writeback.PRE
                 inputs = [args[0], args[1].base]
                 is_store = True
+                if args[1].writeback is None:
+
+                    def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                        store = make_store(a, Type.reg32(likely_float=False))
+                        if store is not None:
+                            s.store_memory(store, a.reg_ref(0))
+
+                else:
+                    # otherwise we have a writeback
+                    assert args[1].base == cls.stack_pointer_reg
+                    assert args[1].writeback == Writeback.PRE
+
             else:
-                assert isinstance(args[0], AsmAddressMode)
                 assert isinstance(args[1], Register)
-                assert args[0].base == cls.stack_pointer_reg
-                assert args[0].writeback == Writeback.POST
-                inputs = [args[0].base]
+                if isinstance(args[0], AsmAddressMode):
+                    inputs = [args[0].base]
                 outputs = [args[1]]
                 is_load = True
+                if not (
+                    isinstance(args[0], AsmAddressMode)
+                    and args[0].writeback is not None
+                ):
+                    load_type = (
+                        Type.s16()
+                        if mnemonic == "mov.w"
+                        else Type.reg32(likely_float=False)
+                    )
+                    eval_fn = lambda s, a: s.set_reg(
+                        a.reg_ref(1),
+                        handle_load(
+                            replace(a, raw_args=[a.raw_arg(1), a.raw_arg(0)]),
+                            type=load_type,
+                        ),
+                    )
         elif mnemonic in cls.instrs_arithmetic:
-            assert (
-                len(args) == 2
-                and isinstance(args[0], Register)
-                and isinstance(args[1], Register)
-            )
-            inputs = [args[0], args[1]]
+            assert len(args) == 2 and isinstance(args[1], Register)
+            inputs = [args[1]]
+            if isinstance(args[0], Register):
+                inputs.insert(0, args[0])
             outputs = [args[1]]
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(1), cls.instrs_arithmetic[mnemonic](a)
@@ -206,12 +235,9 @@ class Sh2Arch(Arch):
     instrs_arithmetic: InstrMap = {
         # sh2 format is src, dst
         # add handler is dest, left, right
-        "add": lambda a: handle_add(
-            replace(
-                a,
-                raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)],
-            )
-        ),
+        "add": lambda a: (
+            handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
+        )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
     }
 
@@ -234,6 +260,19 @@ class Sh2Arch(Arch):
         possible_slots: List[AbiArgSlot] = []
 
         if fn_sig.params_known:
+            if (
+                fn_sig.return_type.is_struct()
+                and fn_sig.return_type.get_parameter_size_align_bytes()[0] > 8
+            ):
+                known_slots.append(
+                    AbiArgSlot(
+                        ArgLoc(None, -1, Register("r2")),
+                        Type.ptr(fn_sig.return_type),
+                        name="__return__",
+                        comment="return",
+                    )
+                )
+
             for i, param in enumerate(fn_sig.params):
                 param_type = param.type.decay()
                 reg = Register(f"r{i + 4}") if i < 4 else None

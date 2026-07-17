@@ -582,8 +582,24 @@ def parse_arg_elems(
                     value = BinOp(op, value, rhs)
         elif tok == "@":
             if value is None and arch.supports_at_addressing:
-                # SuperH indirect addressing: @Rn, @-Rn, and @Rn+.
+                # SuperH indirect addressing: @Rn, @-Rn, @Rn+, and @(disp,Rn).
                 expect("@")
+                if arg_elems and arg_elems[0] == "(":
+                    expect("(")
+                    addend = parse_arg_elems(
+                        arg_elems,
+                        arch,
+                        asm_state,
+                        top_level=False,
+                        do_replace_bare_reg=False,
+                    )
+                    expect(",")
+                    word = parse_word(arg_elems)
+                    base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+                    assert isinstance(base, Register)
+                    expect(")")
+                    value = AsmAddressMode(base, addend, None)
+                    continue
                 sh_writeback: Optional[Writeback] = None
                 if arg_elems and arg_elems[0] == "-":
                     expect("-")
