@@ -53,17 +53,11 @@ from .types import FunctionSignature, Type
 class ShJumpTablePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         body = matcher.input[matcher.index : matcher.index + 7]
-        if len(body) != 7 or not all(isinstance(x, Instruction) for x in body):
+        instructions = [x for x in body if isinstance(x, Instruction)]
+        if len(instructions) != 7:
             return None
-        mov, double, mova, load, add, jump, nop = body
-        assert isinstance(mov, Instruction)
-        assert isinstance(double, Instruction)
-        assert isinstance(mova, Instruction)
-        assert isinstance(load, Instruction)
-        assert isinstance(add, Instruction)
-        assert isinstance(jump, Instruction)
-        assert isinstance(nop, Instruction)
-        if [x.mnemonic for x in body] != [
+        mov, double, mova, load, add, jump, nop = instructions
+        if [x.mnemonic for x in instructions] != [
             "mov",
             "add",
             "mova",
@@ -293,11 +287,12 @@ class Sh2Arch(Arch):
             jump_target = args[0].base
             is_conditional = True
             has_delay_slot = True
-            eval_fn = lambda s, a: s.set_switch_expr(
-                a.regs[a.raw_arg(0).base]
-                if isinstance(a.raw_arg(0), AsmAddressMode)
-                else a.reg(0)
-            )
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                address = a.raw_arg(0)
+                assert isinstance(address, AsmAddressMode)
+                s.set_switch_expr(a.regs[address.base])
+
         elif mnemonic == "tablejmp.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
