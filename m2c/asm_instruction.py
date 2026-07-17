@@ -598,7 +598,7 @@ def parse_arg_elems(
                     base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
                     assert isinstance(base, Register)
                     expect(")")
-                    value = AsmAddressMode(base, constant_fold(addend, asm_state), None)
+                    value = AsmAddressMode(base, addend, None)
                     continue
                 sh_writeback: Optional[Writeback] = None
                 if arg_elems and arg_elems[0] == "-":

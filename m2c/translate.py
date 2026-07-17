@@ -639,6 +639,22 @@ def get_stack_info(
                 if reg == Register("lr"):
                     info.is_leaf = False
         elif (
+            arch_mnemonic == "arm:sub"
+            and inst.args[0] == arch.stack_pointer_reg
+            and inst.args[1] == arch.stack_pointer_reg
+            and isinstance(inst.args[2], AsmLiteral)
+        ):
+            info.allocated_stack_size += inst.args[2].value
+        elif (
+            arch_mnemonic in ("mips:move", "arm:mov", "ppc:mr")
+            and isinstance(inst.args[0], Register)
+            and inst.args[0] in arch.frame_pointer_regs
+            and inst.args[1] == arch.stack_pointer_reg
+        ):
+            # "move fp, sp" very likely means the code is compiled with frame
+            # pointers enabled; thus fp should be treated the same as sp.
+            info.frame_pointer_reg = inst.args[0]
+        elif (
             arch_mnemonic == "sh2:add"
             and isinstance(inst.args[0], AsmLiteral)
             and inst.args[0].value < 0
@@ -658,22 +674,6 @@ def get_stack_info(
             callee_saved_offsets.append(-info.allocated_stack_size)
             if inst.args[0] == arch.return_address_reg:
                 info.is_leaf = False
-        elif (
-            arch_mnemonic == "arm:sub"
-            and inst.args[0] == arch.stack_pointer_reg
-            and inst.args[1] == arch.stack_pointer_reg
-            and isinstance(inst.args[2], AsmLiteral)
-        ):
-            info.allocated_stack_size += inst.args[2].value
-        elif (
-            arch_mnemonic in ("mips:move", "arm:mov", "ppc:mr")
-            and isinstance(inst.args[0], Register)
-            and inst.args[0] in arch.frame_pointer_regs
-            and inst.args[1] == arch.stack_pointer_reg
-        ):
-            # "move fp, sp" very likely means the code is compiled with frame
-            # pointers enabled; thus fp should be treated the same as sp.
-            info.frame_pointer_reg = inst.args[0]
         elif (
             arch_mnemonic
             in [

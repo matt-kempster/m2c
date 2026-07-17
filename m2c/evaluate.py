@@ -481,7 +481,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
             and not is_sh
             and (not type.is_likely_float() or expr.offset != 0)
         ):
-            # For non-ARM, only allow float constants and offset 0.
+            # Outside of ARM/SH, only allow float constants and offset 0.
             return None
 
         target = early_unwrap(expr.struct_var)
