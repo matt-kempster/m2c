@@ -1906,8 +1906,8 @@ class EvalOnceExpr(Expression):
     # True if this EvalOnceExpr must use a variable (see RegMeta.force)
     forced_emit: bool = False
 
-    # True if this value was invalidated while nested in a marker. It is forced
-    # only if the enclosing marker is later consumed.
+    # True if this value was invalidated while held by lazy bookkeeping. It is
+    # forced only if the enclosing marker or pending call argument is consumed.
     deferred_force: bool = False
 
     # True if this EvalOnceExpr has been use()d. If `var.is_emitted` is true, this will
@@ -3712,14 +3712,21 @@ class NodeState:
         # Pending call arguments are expressions too. In particular, an x86
         # push may capture a call result here before an intervening store;
         # force its once-variable so the call cannot move past that store.
-        for value in self.subroutine_args.values():
+        for loc, value in self.subroutine_args.items():
             if not uses_expr(value, expr_filter):
                 continue
             expr = value
             while isinstance(expr, Cast):
                 expr = expr.expr
             if not isinstance(expr, EvalOnceExpr):
-                assert_never(expr)
+                expr = self._eval_once(
+                    value,
+                    emit_exactly_once=False,
+                    transparent=should_wrap_transparently(value),
+                    reg=Register.fictive("call_arg", str(loc)),
+                    source=self.regs.current_instr_ref(),
+                )
+                self.subroutine_args[loc] = expr
             expr.force()
 
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
@@ -3738,6 +3745,34 @@ class NodeState:
     def prevent_later_reads(self) -> None:
         """Prevent later uses of registers that recursively contain a read."""
         self._prevent_later_uses(lambda e: isinstance(e, (StructAccess, ArrayAccess)))
+
+    def defer_pending_reads(self) -> None:
+        """Capture pending memory arguments lazily if their later call is consumed."""
+        for loc, value in self.subroutine_args.items():
+            if not uses_expr(
+                value, lambda e: isinstance(e, (StructAccess, ArrayAccess))
+            ):
+                continue
+            expr = value
+            while isinstance(expr, Cast):
+                expr = expr.expr
+            if not isinstance(expr, EvalOnceExpr):
+                expr = self._eval_once(
+                    value,
+                    emit_exactly_once=False,
+                    transparent=should_wrap_transparently(value),
+                    reg=Register.fictive("call_arg", str(loc)),
+                    source=self.regs.current_instr_ref(),
+                )
+                self.subroutine_args[loc] = expr
+            expr.deferred_force = True
+
+    @staticmethod
+    def _force_deferred_pending_arg(expr: Expression) -> None:
+        while isinstance(expr, Cast):
+            expr = expr.expr
+        if isinstance(expr, EvalOnceExpr) and expr.deferred_force:
+            expr.force()
 
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
         assert meta.initial
@@ -3986,6 +4021,7 @@ class NodeState:
                 assert offset is not None
                 if offset in self.subroutine_args:
                     expr = self.subroutine_args.pop(offset)
+                    self._force_deferred_pending_arg(expr)
                 else:
                     expr = ErrorExpr(f"Unable to find stack arg {offset:#x} in block")
             func_args.append(
@@ -4000,6 +4036,7 @@ class NodeState:
         # TODO: limit this based on abi.arg_slots. If the function type is known
         # and not variadic, this list should be empty.
         for _, arg in sorted(self.subroutine_args.items()):
+            self._force_deferred_pending_arg(arg)
             if fn_sig.params_known and not fn_sig.is_variadic:
                 func_args.append(CommentExpr.wrap(arg, prefix="extra?"))
             else:

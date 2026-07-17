@@ -2825,8 +2825,10 @@ class X86Arch(Arch):
                 s.subroutine_args.update(selected)
                 s.make_function_call(fn, outputs)
                 # Argument stores for a later call (pushed before this call's
-                # arguments) stay pending.
+                # arguments) stay pending. Mark their memory reads for lazy
+                # capture now that the intervening call may have changed them.
                 s.subroutine_args.update(leftover)
+                s.defer_pending_reads()
 
         elif base == "storearg.fictive":
             # A rewritten `push` that passes a stack argument to the next
