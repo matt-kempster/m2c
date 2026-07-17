@@ -4,16 +4,21 @@ from typing import Callable, Dict, List, Optional
 
 from .error import DecompFailure
 from .options import Target
+from .asm_file import AsmSymbolicData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
+    AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
     AsmState,
+    BinOp,
+    JumpTarget,
     Register,
     Writeback,
     get_jump_target,
 )
+from .asm_pattern import AsmMatch, Replacement, SimpleAsmPattern, make_pattern
 from .instruction import (
     Instruction,
     InstructionMeta,
@@ -26,6 +31,8 @@ from .translate import (
     ArgLoc,
     BinaryOp,
     Cast,
+    ErrorExpr,
+    ExprStmt,
     Expression,
     InstrMap,
     InstrArgs,
@@ -43,6 +50,48 @@ from .evaluate import (
 )
 
 from .types import FunctionSignature, Type
+
+
+class JumpTablePattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "mov $x, $i",
+        "add $i, $i",
+        "mova _, $b",
+        "mov.w",  # "mov.w @($b,$i),$i"
+        "add $i, $b",
+        "jmp",  # "jmp @$b"
+        "nop",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        mova = m.body[2]
+        assert isinstance(mova, Instruction)
+        assert isinstance(mova.args[0], AsmGlobalSymbol)
+
+        table_name = mova.args[0].symbol_name
+        table = m.asm_data.values.get(table_name)
+        if table is None:
+            return None
+        targets: List[AsmGlobalSymbol] = []
+        for entry in table.data:
+            if (
+                not isinstance(entry, AsmSymbolicData)
+                or not isinstance(entry.data, BinOp)
+                or entry.data.op != "-"
+                or not isinstance(entry.data.lhs, AsmGlobalSymbol)
+                or entry.data.rhs != AsmGlobalSymbol(table_name)
+            ):
+                return None
+            targets.append(entry.data.lhs)
+        if not targets:
+            return None
+        return Replacement(
+            [
+                AsmInstruction("tablejmp.fictive", [m.regs["x"], *targets]),
+                AsmInstruction("nop", []),
+            ],
+            len(m.body),
+        )
 
 
 class Sh2Arch(Arch):
@@ -147,7 +196,6 @@ class Sh2Arch(Arch):
                     # otherwise we have a writeback
                     assert args[1].base == cls.stack_pointer_reg
                     assert args[1].writeback == Writeback.PRE
-
             else:
                 assert isinstance(args[1], Register)
                 if isinstance(args[0], AsmAddressMode):
@@ -213,8 +261,57 @@ class Sh2Arch(Arch):
             assert len(args) == 1
             jump_target = get_jump_target(args[0])
             has_delay_slot = True
+        elif mnemonic == "jmp":
+            assert (
+                len(args) == 1
+                and isinstance(args[0], AsmAddressMode)
+                and args[0].addend == AsmLiteral(0)
+            )
+            inputs = [args[0].base]
+            jump_target = args[0].base
+            is_conditional = True
+            has_delay_slot = True
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                address = a.raw_arg(0)
+                assert isinstance(address, AsmAddressMode)
+                s.set_switch_expr(a.regs[address.base])
+
+        elif mnemonic == "tablejmp.fictive":
+            assert len(args) >= 2 and isinstance(args[0], Register)
+            targets = []
+            for arg in args[1:]:
+                assert isinstance(arg, AsmGlobalSymbol)
+                targets.append(JumpTarget(arg.symbol_name))
+            inputs = [args[0]]
+            jump_target = targets
+            is_conditional = True
+            has_delay_slot = True
+            eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
+        elif mnemonic in ("cmp/eq", "cmp/gt", "cmp/hi"):
+            assert len(args) == 2 and isinstance(args[1], Register)
+            inputs = [args[1]]
+            if isinstance(args[0], Register):
+                inputs.insert(0, args[0])
+            outputs = [Register("condition_bit")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.reg(1)
+                rhs = a.reg_or_imm(0)
+                if mnemonic == "cmp/eq":
+                    condition = BinaryOp.icmp(lhs, "==", rhs)
+                elif mnemonic == "cmp/gt":
+                    condition = BinaryOp.scmp(lhs, ">", rhs)
+                else:
+                    condition = BinaryOp.ucmp(lhs, ">", rhs)
+                s.set_reg(Register("condition_bit"), condition)
+
         else:
-            raise DecompFailure(f"Unable to parse instruction: {mnemonic}")
+            instr_str = str(AsmInstruction(mnemonic, args))
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                error = ErrorExpr(f"unknown instruction: {instr_str}")
+                s.write_statement(ExprStmt(error))
 
         return Instruction(
             mnemonic=mnemonic,
@@ -240,6 +337,8 @@ class Sh2Arch(Arch):
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
     }
+
+    asm_patterns = [JumpTablePattern()]
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:

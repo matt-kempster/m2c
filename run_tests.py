@@ -141,21 +141,13 @@ def create_e2e_tests(
         output_file = asm_file.parent.joinpath(asm_file.stem + "-out.c")
         flags_path = asm_file.parent.joinpath(asm_file.stem + "-flags.txt")
         name = f"e2e:{asm_file.relative_to(e2e_top_dir)}"
-        asm_text = asm_file.read_text()
-        default_function = (
-            # superh compiler always adds _ so match on either one
-            "_test"
-            if re.search(r"(?m)^\s*_test:\s*$", asm_text)
-            else "test"
-        )
-
         cases.append(
             TestCase(
                 name=name,
                 asm_file=asm_file,
                 output_file=output_file,
                 flags_path=flags_path,
-                flags=["--function", default_function],
+                flags=["--function", "test"],
             )
         )
     cases.sort()

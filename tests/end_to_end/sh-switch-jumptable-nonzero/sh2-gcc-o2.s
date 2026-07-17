@@ -15,12 +15,39 @@ ___gnu_compiled_c:
 	.global	test
 test:
 	mov.l	r14,@-r15
+	mov	#3,r1
+	add	#-10,r4
+	cmp/hi	r1,r4
+	bt.s	L7
 	mov	r15,r14
-	mov	r4,r0
-	add	r5,r0
-	add	r6,r0
-	add	r7,r0
-	mov.l	@(4,r14),r1
-	mov.l	@r15+,r14
-	rts
+	mov	r4,r1
+	add	r1,r1
+	mova	L8,r0
+	mov.w	@(r0,r1),r1
 	add	r1,r0
+	jmp        @r0
+	nop
+	.align 2
+L8:
+	.word	L3-L8
+	.word	L4-L8
+	.word	L5-L8
+	.word	L6-L8
+L3:
+	bra	L9
+	mov	#11,r0
+L4:
+	bra	L9
+	mov	#42,r0
+L5:
+	bra	L9
+	mov	#19,r0
+L6:
+	bra	L9
+	mov	#73,r0
+L7:
+	mov	#-7,r0
+L9:
+	mov	r14,r15
+	rts
+	mov.l	@r15+,r14

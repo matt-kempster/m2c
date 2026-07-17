@@ -1,3 +1,3 @@
-void _test(void) {
+void test(void) {
 
 }

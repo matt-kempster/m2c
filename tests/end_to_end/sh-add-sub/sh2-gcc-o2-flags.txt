@@ -1,2 +1,2 @@
 --target sh2-gcc-c
---function _minus
+--function minus

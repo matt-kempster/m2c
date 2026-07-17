@@ -63,6 +63,7 @@ class AsmMatch:
     regs: Dict[str, Register]
     literals: Dict[str, int]
     labels: Dict[str, Label]
+    asm_data: AsmData
 
 
 class AsmPattern(abc.ABC):
@@ -260,6 +261,7 @@ class AsmMatcher:
             state.symbolic_registers,
             state.symbolic_literals,
             state.symbolic_labels_def,
+            self.asm_data,
         )
 
     def derived_meta(self) -> InstructionMeta:
