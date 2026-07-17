@@ -2265,9 +2265,6 @@ class X86Arch(Arch):
         # width/segment folding below would mangle the mnemonic. The es:
         # segment marker distinguishes the string form of ambiguous mnemonics
         # (movsd/cmpsd are also SSE2 scalar-double instructions).
-        if mnemonic == "retn":
-            # IDA spells near returns "retn"; it is identical to "ret".
-            mnemonic = "ret"
         if mnemonic in ("rep", "repe", "repne", "repz", "repnz"):
             parts = args.split(None, 1)
             if parts and parts[0].lower() in STRING_OP_MNEMONICS:
@@ -2307,6 +2304,10 @@ class X86Arch(Arch):
     def normalize_instruction(
         self, instr: AsmInstruction, asm_state: AsmState
     ) -> AsmInstruction:
+        # IDA spells near returns "retn"; it is identical to "ret".
+        if instr.mnemonic == "retn":
+            instr = AsmInstruction("ret", instr.args)
+
         # rep/repne/repe prefixes: fold the string instruction into the
         # mnemonic ("rep movsd" -> "rep.movsd").
         if instr.mnemonic in ("rep", "repe", "repne", "repz", "repnz"):

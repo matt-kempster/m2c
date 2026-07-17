@@ -155,6 +155,11 @@ class TestX86Parsing(unittest.TestCase):
         asm, _ = self.parse_asm("FADDP ST(2), ST(0)")
         self.assertEqual(asm.args, [Register("st2"), Register("st0")])
 
+    def test_retn_is_normalized(self) -> None:
+        asm, _ = self.parse_asm("RETN 8")
+        self.assertEqual(asm.mnemonic, "ret")
+        self.assertEqual(asm.args, [AsmLiteral(8)])
+
     def test_memory_width_prefixes_must_agree(self) -> None:
         with self.assertRaises(AssertionError):
             self.parse_asm("MOV byte ptr [EAX], word ptr [EBX]")
