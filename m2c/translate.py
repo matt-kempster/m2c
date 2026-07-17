@@ -3561,8 +3561,8 @@ class NodeState:
     stack_info: StackInfo = field(repr=False)
     regs: RegInfo = field(repr=False)
 
-    local_var_writes: Dict[LocalVar, Tuple[Register, Expression, bool]] = field(
-        default_factory=dict
+    local_var_writes: Dict[LocalVar, Tuple[Optional[Register], Expression, bool]] = (
+        field(default_factory=dict)
     )
     subroutine_args: Dict[int, Expression] = field(default_factory=dict)
     in_pattern: bool = False
@@ -3840,7 +3840,7 @@ class NodeState:
     def write_statement(self, stmt: Statement) -> None:
         self.to_write.append(stmt)
 
-    def store_memory(self, store: StoreStmt, reg: Register) -> None:
+    def store_memory(self, store: StoreStmt, reg: Optional[Register]) -> None:
         source = store.source
         dest = store.dest
         if isinstance(dest, SubroutineArg):

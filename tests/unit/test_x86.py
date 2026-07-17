@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import call, create_autospec, patch
 
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -270,6 +272,35 @@ class TestX86Parsing(unittest.TestCase):
         self.assertTrue(instr.is_store)
         self.assertCountEqual(
             instr.inputs, [Register("ecx"), Register("esi"), Register("ebx")]
+        )
+
+    def test_xchg_memory_evaluation(self) -> None:
+        instr = self.parse_instruction("XCHG dword ptr [EAX], ECX")
+        self.assertIsNotNone(instr.eval_fn)
+        memory_value = object()
+        register_value = object()
+        store = object()
+        state = SimpleNamespace(
+            set_reg=create_autospec(lambda reg, value: None),
+            store_memory=create_autospec(lambda stmt, reg: None),
+        )
+        with (
+            patch(
+                "m2c.arch_x86.op_value",
+                side_effect=[memory_value, register_value],
+            ),
+            patch("m2c.arch_x86.mem_store", return_value=store),
+        ):
+            assert instr.eval_fn is not None
+            instr.eval_fn(state, object())
+
+        self.assertEqual(
+            state.set_reg.call_args_list,
+            [call(Register("ecx"), memory_value)],
+        )
+        self.assertEqual(
+            state.store_memory.call_args_list,
+            [call(store, Register("ecx"))],
         )
 
     def test_push_register(self) -> None:

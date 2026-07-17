@@ -2687,10 +2687,7 @@ class X86Arch(Arch):
             )
             store = mem_store(a, 0, val, src_reg, store_type)
             if store is not None:
-                # The register argument to store_memory is only used for
-                # stack spill/restore bookkeeping; fall back to EAX for
-                # register-less sources (immediates).
-                s.store_memory(store, src_reg if src_reg is not None else EAX)
+                s.store_memory(store, src_reg)
             return None
 
         if base == "move.fictive":
@@ -3342,9 +3339,7 @@ class X86Arch(Arch):
                         src_reg = other if isinstance(other, Register) else None
                         store = mem_store(a, i, val, src_reg, width_type(width))
                         if store is not None:
-                            s.store_memory(
-                                s, store, src_reg if src_reg is not None else EAX
-                            )
+                            s.store_memory(store, src_reg)
 
         elif base == "mov.fs" and len(args) == 2:
             # An fs-segment absolute access (on Win32, the Thread Information
@@ -3835,7 +3830,7 @@ class X86Arch(Arch):
                     a, 0, fn_op("M2C_FSTCW", [], Type.u16()), None, Type.u16()
                 )
                 if store is not None:
-                    s.store_memory(store, EAX)
+                    s.store_memory(store, None)
 
         # --- Two-operand transcendentals (fpatan/fyl2x/fscale/fprem/...) ---
         elif base in FPU_BINARY_OPS:
