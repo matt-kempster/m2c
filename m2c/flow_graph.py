@@ -401,7 +401,7 @@ def simplify_standard_patterns(
     function: Function,
     asm_data: AsmData,
     arch: ArchFlowGraph,
-    typemap: Optional[TypeMap],
+    typemap: TypeMap,
     debug_patterns: bool,
 ) -> Function:
     new_body = simplify_patterns(
@@ -419,25 +419,10 @@ def simplify_standard_patterns(
 
 def build_blocks(
     function: Function,
-    asm_data: AsmData,
     arch: ArchFlowGraph,
-    typemap: Optional[TypeMap],
     *,
     fragment: bool,
-    debug_patterns: bool,
 ) -> List[Block]:
-    if arch.arch == Target.ArchEnum.MIPS:
-        verify_no_trailing_delay_slot(function)
-        function = minimize_labels(function, asm_data)
-        function = normalize_gcc_likely_branches(function, arch)
-        function = normalize_ido_likely_branches(function, arch)
-
-    function = minimize_labels(function, asm_data)
-    function = simplify_standard_patterns(
-        function, asm_data, arch, typemap, debug_patterns=debug_patterns
-    )
-    function = minimize_labels(function, asm_data)
-
     block_builder = BlockBuilder()
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
@@ -1682,44 +1667,6 @@ def nodes_to_flowgraph(
     return flow_graph
 
 
-def _build_flowgraph(
-    function: Function,
-    asm_data: AsmData,
-    arch: ArchFlowGraph,
-    typemap: Optional[TypeMap],
-    *,
-    fragment: bool,
-    print_warnings: bool = False,
-    debug_patterns: bool = False,
-) -> FlowGraph:
-    blocks = build_blocks(
-        function,
-        asm_data,
-        arch,
-        typemap,
-        fragment=fragment,
-        debug_patterns=debug_patterns,
-    )
-    verify_no_duplicate_instructions(blocks)
-
-    nodes = build_nodes(function, blocks, asm_data, arch, fragment=fragment)
-    warn_on_safeguard_use(function, nodes, arch)
-    if not fragment:
-        nodes = duplicate_premature_returns(nodes, arch)
-
-    compute_relations(nodes)
-    if not fragment:
-        terminate_infinite_loops(nodes)
-
-    flow_graph = nodes_to_flowgraph(
-        nodes, function, arch, print_warnings=print_warnings or fragment
-    )
-    if not fragment:
-        arch.simplify_ir(flow_graph)
-
-    return flow_graph
-
-
 def build_flowgraph(
     function: Function,
     asm_data: AsmData,
@@ -1730,15 +1677,34 @@ def build_flowgraph(
     debug_patterns: bool = False,
 ) -> FlowGraph:
     """Build and normalize the flow graph for a complete function."""
-    return _build_flowgraph(
-        function,
-        asm_data,
-        arch,
-        typemap,
-        fragment=False,
-        print_warnings=print_warnings,
-        debug_patterns=debug_patterns,
+    if arch.arch == Target.ArchEnum.MIPS:
+        verify_no_trailing_delay_slot(function)
+        function = minimize_labels(function, asm_data)
+        function = normalize_gcc_likely_branches(function, arch)
+        function = normalize_ido_likely_branches(function, arch)
+
+    function = minimize_labels(function, asm_data)
+    function = simplify_standard_patterns(
+        function, asm_data, arch, typemap, debug_patterns=debug_patterns
     )
+    function = minimize_labels(function, asm_data)
+
+    blocks = build_blocks(function, arch, fragment=False)
+    verify_no_duplicate_instructions(blocks)
+
+    nodes = build_nodes(function, blocks, asm_data, arch, fragment=False)
+    warn_on_safeguard_use(function, nodes, arch)
+    nodes = duplicate_premature_returns(nodes, arch)
+
+    compute_relations(nodes)
+    terminate_infinite_loops(nodes)
+
+    flow_graph = nodes_to_flowgraph(
+        nodes, function, arch, print_warnings=print_warnings
+    )
+    arch.simplify_ir(flow_graph)
+
+    return flow_graph
 
 
 def build_flowgraph_fragment(
@@ -1747,10 +1713,10 @@ def build_flowgraph_fragment(
     arch: ArchFlowGraph,
 ) -> FlowGraph:
     """Build a fall-through flow graph for an instruction fragment."""
-    return _build_flowgraph(
-        function,
-        asm_data,
-        arch,
-        None,
-        fragment=True,
-    )
+    blocks = build_blocks(function, arch, fragment=True)
+    verify_no_duplicate_instructions(blocks)
+
+    nodes = build_nodes(function, blocks, asm_data, arch, fragment=True)
+    compute_relations(nodes)
+
+    return nodes_to_flowgraph(nodes, function, arch, print_warnings=True)
