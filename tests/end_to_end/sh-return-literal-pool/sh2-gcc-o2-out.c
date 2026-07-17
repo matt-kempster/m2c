@@ -1,3 +1,3 @@
-s32 _test(void) {
+s32 test(void) {
     return 0x929;
 }

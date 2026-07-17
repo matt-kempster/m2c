@@ -4,4 +4,4 @@ typedef struct {
     int c;
 } Large;
 
-Large _test(int value);
+Large test(int value);

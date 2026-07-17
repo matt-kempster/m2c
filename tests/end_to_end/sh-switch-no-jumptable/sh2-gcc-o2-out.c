@@ -1,4 +1,4 @@
-s32 _test(s32 value) {
+s32 test(s32 value) {
     s32 var_r0;
 
     if (value != 1) {

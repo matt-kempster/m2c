@@ -1,4 +1,4 @@
-s32 _test(s32 value) {
+s32 test(s32 value) {
     switch (value) {
     case 0:
         return 0xB;

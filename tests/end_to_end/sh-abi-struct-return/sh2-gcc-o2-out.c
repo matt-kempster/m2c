@@ -1,4 +1,4 @@
-Large _test(Large *__return__, s32 value) {
+Large test(Large *__return__, s32 value) {
     s32 sp0;
     s32 sp4;
     s32 sp8;

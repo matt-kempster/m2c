@@ -1,1 +1,1 @@
-int _test(int value);
+int test(int value);

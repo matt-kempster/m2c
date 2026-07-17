@@ -1,4 +1,4 @@
-s32 _test(s32 value) {
+s32 test(s32 value) {
     u32 temp_r4;
 
     temp_r4 = value - 0xA;
