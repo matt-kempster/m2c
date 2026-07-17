@@ -2,7 +2,7 @@ from __future__ import annotations
 import abc
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Union
+from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
 from .options import Target
@@ -17,9 +17,6 @@ from .asm_instruction import (
     Register,
     parse_asm_instruction,
 )
-
-if TYPE_CHECKING:
-    from .asm_file import AsmFile
 
 
 @dataclass(frozen=True)
@@ -176,10 +173,6 @@ class ArchAsm(ArchAsmParsing):
     simple_temp_regs: List[Register]
     temp_regs: List[Register]
     saved_regs: List[Register]
-
-    def postprocess_asm_file(self, asm_file: AsmFile) -> None:
-        """Hook called once after a file is fully parsed for architecture-specific
-        whole-file normalization. Default: no-op."""
 
     @abc.abstractmethod
     def missing_return(self) -> List[Instruction]: ...

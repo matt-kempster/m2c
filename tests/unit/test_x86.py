@@ -932,7 +932,7 @@ class TestX86FpuRewrite(unittest.TestCase):
     def infer(self, lines: str, *, context: bool = False) -> List[str]:
         """Run the FPU rewrite with structural call-delta inference."""
         from m2c.asm_file import AsmData
-        from m2c.arch_x86 import compute_x86_context_facts
+        from m2c.arch_x86 import EMPTY_X86_CONTEXT_FACTS, compute_x86_context_facts
         from m2c.x86_fpu import rewrite_fpu_stack
 
         body, labels = self._build_body(lines)
@@ -945,7 +945,11 @@ class TestX86FpuRewrite(unittest.TestCase):
                 / "tests/end_to_end/x86-fpu-wrapper-float/orig.c"
             )
             typemap = build_typemap([context_path], self.arch, use_cache=False)
-        facts = compute_x86_context_facts(typemap)
+        facts = (
+            compute_x86_context_facts(typemap)
+            if typemap is not None
+            else EMPTY_X86_CONTEXT_FACTS
+        )
         out = rewrite_fpu_stack(body, self.arch, AsmData(), facts.fpu_call_deltas)
         return [str(p) for p in out if isinstance(p, Instruction)]
 

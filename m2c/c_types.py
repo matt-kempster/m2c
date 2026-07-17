@@ -774,8 +774,7 @@ def strip_macro_defs(text: str) -> str:
     pattern = re.compile(
         r"^[ \t]*#[ \t]*(?:define|undef)[ \t](\\\n|.)*", flags=re.MULTILINE
     )
-    text = re.sub(pattern, lambda m: m.group(0).count("\n") * "\n", text)
-    return text
+    return re.sub(pattern, lambda m: m.group(0).count("\n") * "\n", text)
 
 
 def remove_backslashes_at_eol(text: str) -> str:

@@ -892,6 +892,4 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
         print("\n".join(warnings))
         print("*/")
 
-    arch.postprocess_asm_file(asm_file)
-
     return asm_file
