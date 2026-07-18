@@ -12,8 +12,8 @@ gcc2_compiled.:
 ___gnu_compiled_c:
 	.text
 	.align 2
-	.global	test
-test:
+	.global	_test
+_test:
 	mov.l	r14,@-r15
 	mov	r15,r14
 	mov	r4,r0
@@ -21,8 +21,8 @@ test:
 	rts
 	add	r5,r0
 	.align 2
-	.global	minus
-minus:
+	.global	_minus
+_minus:
 	mov.l	r14,@-r15
 	mov	r15,r14
 	mov	r4,r0

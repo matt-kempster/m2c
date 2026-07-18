@@ -12,8 +12,8 @@ gcc2_compiled.:
 ___gnu_compiled_c:
 	.text
 	.align 2
-	.global	test
-test:
+	.global	_test
+_test:
 	mov.l	r14,@-r15
 	mov	#3,r1
 	add	#-10,r4

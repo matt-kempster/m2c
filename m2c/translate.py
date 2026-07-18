@@ -120,6 +120,10 @@ class Arch(ArchFlowGraph, ArchC):
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
 
+    def c_symbol_name(self, asm_name: str) -> str:
+        """Convert an assembler symbol name to its C spelling."""
+        return asm_name
+
     def simplify_ir(self, flow_graph: FlowGraph) -> None:
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
@@ -432,12 +436,12 @@ class StackInfo:
     def saved_reg_symbol(self, reg_name: str) -> GlobalSymbol:
         sym_name = "saved_reg_" + reg_name
         type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
-        return GlobalSymbol(symbol_name=sym_name, type=type)
+        return GlobalSymbol(c_symbol_name=sym_name, type=type)
 
     def should_save(self, expr: Expression, offset: Optional[int]) -> bool:
         expr = early_unwrap(expr)
         if isinstance(expr, GlobalSymbol) and (
-            expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
+            expr.c_symbol_name.startswith("saved_reg_") or expr.c_symbol_name == "sp"
         ):
             return True
         if (
@@ -669,7 +673,7 @@ def get_stack_info(
         ):
             info.allocated_stack_size += -inst.args[0].value
         elif (
-            arch_mnemonic == "sh2:mov.l"
+            arch_mnemonic in ("sh2:mov.l", "sh2:sts.l")
             and isinstance(inst.args[0], Register)
             and inst.args[0] in arch.saved_regs
             and isinstance(inst.args[1], AsmAddressMode)
@@ -1644,7 +1648,7 @@ class ArrayAccess(Expression):
 
 @dataclass(eq=False)
 class GlobalSymbol(Expression):
-    symbol_name: str
+    c_symbol_name: str
     type: Type
     asm_data_entry: Optional[AsmDataEntry] = None
     symbol_in_context: bool = False
@@ -1679,7 +1683,7 @@ class GlobalSymbol(Expression):
         return ret
 
     def format(self, fmt: Formatter) -> str:
-        return self.symbol_name
+        return self.c_symbol_name
 
     def potential_array_dim(self, element_size: int) -> Tuple[int, int]:
         """
@@ -4230,6 +4234,7 @@ class GlobalInfo:
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
+            c_sym_name = self.arch.c_symbol_name(sym_name)
             demangled_symbol: Optional[CxxSymbol] = None
             demangled_str: Optional[str] = None
             if (
@@ -4244,7 +4249,7 @@ class GlobalInfo:
                     demangled_str = str(demangled_symbol)
 
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
-                symbol_name=sym_name,
+                c_symbol_name=c_sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
                 demangled_str=demangled_str,
@@ -4259,24 +4264,24 @@ class GlobalInfo:
             ):
                 sym.type.unify(self.vtable_type(sym_name, sym.asm_data_entry))
 
-            fn = self.typemap.functions.get(sym_name)
+            fn = self.typemap.functions.get(c_sym_name)
             ctype: Optional[CType]
             if fn is not None:
                 ctype = fn.type
             else:
-                ctype = self.typemap.var_types.get(sym_name)
+                ctype = self.typemap.var_types.get(c_sym_name)
 
             if ctype is not None:
                 sym.symbol_in_context = True
                 sym.initializer_in_typemap = (
-                    sym_name in self.typemap.vars_with_initializers
+                    c_sym_name in self.typemap.vars_with_initializers
                 )
                 if self.typepool.unk_inference and is_unk_type(ctype, self.typemap):
                     type = Type.gsym_unk_ctype(ctype, self.typemap, self.typepool)
                 else:
                     type = Type.ctype(ctype, self.typemap, self.typepool)
                 sym.type.unify(type)
-                if sym_name not in self.typepool.unknown_decls:
+                if c_sym_name not in self.typepool.unknown_decls:
                     sym.type_provided = True
             elif sym_name in self.local_functions:
                 sym.type.unify(Type.function())

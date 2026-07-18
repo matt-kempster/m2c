@@ -15,12 +15,22 @@ ___gnu_compiled_c:
 	.global	_test
 _test:
 	mov.l	r14,@-r15
+	sts.l	pr,@-r15
 	mov	r15,r14
-	mov	r4,r0
-	add	r5,r0
-	add	r6,r0
-	add	r7,r0
-	mov.l	@(4,r14),r1
+	mov	r4,r5
+	mov.l	L2,r0
+	jsr	@r0
+	add	#1,r5
+	mov	r14,r15
+	lds.l	@r15+,pr
+	mov.l	L3,r1
+	mov.l	@r1,r1
 	mov.l	@r15+,r14
 	rts
 	add	r1,r0
+L4:
+	.align 2
+L2:
+	.long	_callee
+L3:
+	.long	_global
