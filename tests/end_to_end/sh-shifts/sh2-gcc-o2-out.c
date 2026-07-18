@@ -63,11 +63,11 @@ s32 test_shal3(s32 value) {
 }
 
 s32 test_shar2(s32 value) {
-    return (s32) (value >> 1) >> 1;
+    return value >> 2;
 }
 
 s32 test_shar3(s32 value) {
-    return (s32) ((s32) (value >> 1) >> 1) >> 1;
+    return value >> 3;
 }
 
 s32 test_mul3(s32 value) {

@@ -996,7 +996,7 @@ def fold_mul_chains(expr: Expression, *, allow_sll_chains: bool = False) -> Expr
                     if toplevel and lnum == 1 and not (1 <= rhs <= 4):
                         return (expr, 1)
                     return (lbase, lnum << rhs)
-                if expr.op == "*" and (allow_sll or rhs % 2 != 0):
+                if expr.op == "*" and (allow_sll or allow_sll_chains or rhs % 2 != 0):
                     # If we don't allow << to be expanded into multiplication
                     # because the outer layer is already <<'ing, don't allow
                     # multiplication by even numbers either, because the power
@@ -1028,6 +1028,22 @@ def fold_mul_chains(expr: Expression, *, allow_sll_chains: bool = False) -> Expr
     if allow_sll_chains and num > 16 and num & (num - 1) == 0:
         return BinaryOp.int(base, "<<", Literal(num.bit_length() - 1))
     return BinaryOp.int(left=base, op="*", right=Literal(num))
+
+
+def fold_shift_right(expr: Expression, shift: int, *, signed: bool) -> Expression:
+    inner = early_unwrap_ints(expr)
+    if (
+        isinstance(inner, BinaryOp)
+        and inner.op == ">>"
+        and inner.type.is_signed() == signed
+        and isinstance(inner.right, Literal)
+        and inner.right.value + shift < 32
+    ):
+        expr = inner.left
+        shift += inner.right.value
+    if signed:
+        return BinaryOp.sint(expr, ">>", Literal(shift))
+    return BinaryOp.uint(expr, ">>", Literal(shift))
 
 
 def array_access_from_add(

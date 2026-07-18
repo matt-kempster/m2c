@@ -47,6 +47,7 @@ from .translate import (
 from .evaluate import (
     condition_from_expr,
     fold_mul_chains,
+    fold_shift_right,
     handle_add,
     handle_addi,
     handle_bitinv,
@@ -454,20 +455,20 @@ class Sh2Arch(Arch):
     }
 
     instrs_shift: InstrMap = {
-        "shlr": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(1)),
-        "shar": lambda a: BinaryOp.sint(a.reg(0), ">>", Literal(1)),
+        "shlr": lambda a: fold_shift_right(a.reg(0), 1, signed=False),
+        "shar": lambda a: fold_shift_right(a.reg(0), 1, signed=True),
         "shll2": lambda a: fold_mul_chains(
             BinaryOp.int(a.reg(0), "<<", Literal(2)), allow_sll_chains=True
         ),
-        "shlr2": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(2)),
+        "shlr2": lambda a: fold_shift_right(a.reg(0), 2, signed=False),
         "shll8": lambda a: fold_mul_chains(
             BinaryOp.int(a.reg(0), "<<", Literal(8)), allow_sll_chains=True
         ),
-        "shlr8": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(8)),
+        "shlr8": lambda a: fold_shift_right(a.reg(0), 8, signed=False),
         "shll16": lambda a: fold_mul_chains(
             BinaryOp.int(a.reg(0), "<<", Literal(16)), allow_sll_chains=True
         ),
-        "shlr16": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(16)),
+        "shlr16": lambda a: fold_shift_right(a.reg(0), 16, signed=False),
         "rotl": lambda a: BinaryOp.uint(
             BinaryOp.uint(a.reg(0), "<<", Literal(1)),
             "|",
