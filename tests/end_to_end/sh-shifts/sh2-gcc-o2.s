@@ -119,3 +119,95 @@ _test_rotr:
 	mov.l	@r15+,r14
 	rts
 	rotr	r0
+	.align 2
+	.global	_test_shll3
+_test_shll3:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	mov.l	@r15+,r14
+	shll2	r0
+	rts
+	add	r0,r0
+	.align 2
+	.global	_test_shll10
+_test_shll10:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	mov.l	@r15+,r14
+	shll8	r0
+	rts
+	shll2	r0
+	.align 2
+	.global	_test_shll18
+_test_shll18:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	mov.l	@r15+,r14
+	shll16	r0
+	rts
+	shll2	r0
+	.align 2
+	.global	_test_shal3
+_test_shal3:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	mov.l	@r15+,r14
+	shll2	r0
+	rts
+	add	r0,r0
+	.align 2
+	.global	_test_shar2
+_test_shar2:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	shar	r0
+	mov.l	@r15+,r14
+	rts
+	shar	r0
+	.align 2
+	.global	_test_shar3
+_test_shar3:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	shar	r0
+	shar	r0
+	mov.l	@r15+,r14
+	rts
+	shar	r0
+	.align 2
+	.global	_test_mul3
+_test_mul3:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	add	r0,r0
+	mov.l	@r15+,r14
+	rts
+	add	r4,r0
+	.align 2
+	.global	_test_mul5
+_test_mul5:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	shll2	r0
+	mov.l	@r15+,r14
+	rts
+	add	r4,r0
+	.align 2
+	.global	_test_mul10
+_test_mul10:
+	mov.l	r14,@-r15
+	mov	r15,r14
+	mov	r4,r0
+	shll2	r0
+	add	r4,r0
+	mov.l	@r15+,r14
+	rts
+	add	r0,r0

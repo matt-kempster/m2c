@@ -975,11 +975,12 @@ def replace_bitand(expr: BinaryOp) -> Expression:
     return expr
 
 
-def fold_mul_chains(expr: Expression) -> Expression:
+def fold_mul_chains(expr: Expression, *, allow_sll_chains: bool = False) -> Expression:
     """Simplify an expression involving +, -, * and << to a single multiplication,
     e.g. 4*x - x -> 3*x, or x<<2 -> x*4. This includes some logic for preventing
     folds of consecutive sll, and keeping multiplications by large powers of two
-    as bitshifts at the top layer."""
+    as bitshifts at the top layer. Set allow_sll_chains for architectures that
+    implement larger shifts as consecutive fixed-size shift instructions."""
 
     def fold(
         expr: Expression, toplevel: bool, allow_sll: bool
@@ -988,7 +989,7 @@ def fold_mul_chains(expr: Expression) -> Expression:
             if expr.op in ("<<", "*") and isinstance(expr.right, Literal):
                 lbase, lnum = fold(expr.left, False, (expr.op != "<<"))
                 rhs = expr.right.value
-                if expr.op == "<<" and allow_sll:
+                if expr.op == "<<" and (allow_sll or allow_sll_chains):
                     # At top level, keep left shifts, unless they are by such
                     # small numbers that they are easier to understand as
                     # multiplications (they compile to the same thing).
@@ -1024,6 +1025,8 @@ def fold_mul_chains(expr: Expression) -> Expression:
     base, num = fold(expr, True, True)
     if num == 1:
         return expr
+    if allow_sll_chains and num > 16 and num & (num - 1) == 0:
+        return BinaryOp.int(base, "<<", Literal(num.bit_length() - 1))
     return BinaryOp.int(left=base, op="*", right=Literal(num))
 
 

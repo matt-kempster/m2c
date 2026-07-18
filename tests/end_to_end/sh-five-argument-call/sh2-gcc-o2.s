@@ -37,3 +37,96 @@ L3:
 	.align 2
 L2:
 	.long	_callee
+	.align 2
+	.global	_test6
+_test6:
+	mov.l	r14,@-r15
+	sts.l	pr,@-r15
+	mov	r15,r14
+	mov	r4,r7
+	add	#3,r7
+	mov	r4,r6
+	add	#2,r6
+	mov	r4,r5
+	add	#1,r5
+	mov	r4,r1
+	add	#5,r1
+	mov.l	r1,@-r15
+	mov	r4,r1
+	add	#4,r1
+	mov.l	L5,r0
+	jsr	@r0
+	mov.l	r1,@-r15
+	mov	r14,r15
+	lds.l	@r15+,pr
+	rts
+	mov.l	@r15+,r14
+L6:
+	.align 2
+L5:
+	.long	_callee6
+	.align 2
+	.global	_test7
+_test7:
+	mov.l	r14,@-r15
+	sts.l	pr,@-r15
+	mov	r15,r14
+	mov	r4,r7
+	add	#3,r7
+	mov	r4,r6
+	add	#2,r6
+	mov	r4,r5
+	add	#1,r5
+	mov	r4,r1
+	add	#6,r1
+	mov.l	r1,@-r15
+	mov	r4,r1
+	add	#5,r1
+	mov.l	r1,@-r15
+	mov	r4,r1
+	add	#4,r1
+	mov.l	L8,r0
+	jsr	@r0
+	mov.l	r1,@-r15
+	mov	r14,r15
+	lds.l	@r15+,pr
+	rts
+	mov.l	@r15+,r14
+L9:
+	.align 2
+L8:
+	.long	_callee7
+	.align 2
+	.global	_test8
+_test8:
+	mov.l	r14,@-r15
+	sts.l	pr,@-r15
+	mov	r15,r14
+	mov	r4,r7
+	add	#3,r7
+	mov	r4,r6
+	add	#2,r6
+	mov	r4,r5
+	add	#1,r5
+	mov	r4,r1
+	add	#7,r1
+	mov.l	r1,@-r15
+	mov	r4,r1
+	add	#6,r1
+	mov.l	r1,@-r15
+	mov	r4,r1
+	add	#5,r1
+	mov.l	r1,@-r15
+	mov	r4,r1
+	add	#4,r1
+	mov.l	L11,r0
+	jsr	@r0
+	mov.l	r1,@-r15
+	mov	r14,r15
+	lds.l	@r15+,pr
+	rts
+	mov.l	@r15+,r14
+L12:
+	.align 2
+L11:
+	.long	_callee8

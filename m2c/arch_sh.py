@@ -39,7 +39,6 @@ from .translate import (
     Literal,
     NodeState,
     StoreStmt,
-    SubroutineArg,
     UnaryOp,
     as_type,
     as_u32,
@@ -47,6 +46,7 @@ from .translate import (
 
 from .evaluate import (
     condition_from_expr,
+    fold_mul_chains,
     handle_add,
     handle_addi,
     handle_bitinv,
@@ -214,13 +214,7 @@ class Sh2Arch(Arch):
                 ):
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                        s.store_memory(
-                            StoreStmt(
-                                source=a.reg(0),
-                                dest=SubroutineArg(0, type=Type.any_reg()),
-                            ),
-                            a.reg_ref(0),
-                        )
+                        s.push_subroutine_arg(a.reg(0))
 
                 else:
                     # otherwise we have a writeback
@@ -269,14 +263,14 @@ class Sh2Arch(Arch):
             inputs = [args[0].base]
             outputs = [args[1]]
             is_load = True
-        elif mnemonic in cls.instrs_arithmetic:
+        elif mnemonic in cls.instrs_read_modify_write:
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
             if isinstance(args[0], Register):
                 inputs.insert(0, args[0])
             outputs = [args[1]]
             eval_fn = lambda s, a: s.set_reg(
-                a.reg_ref(1), cls.instrs_arithmetic[mnemonic](a)
+                a.reg_ref(1), cls.instrs_read_modify_write[mnemonic](a)
             )
         elif mnemonic in cls.instrs_source_dest:
             assert (
@@ -285,8 +279,6 @@ class Sh2Arch(Arch):
                 and isinstance(args[1], Register)
             )
             inputs = [args[0]]
-            if mnemonic in ("and", "or", "xor"):
-                inputs.append(args[1])
             outputs = [args[1]]
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(1), cls.instrs_source_dest[mnemonic](a)
@@ -435,19 +427,19 @@ class Sh2Arch(Arch):
             has_delay_slot=has_delay_slot,
         )
 
-    instrs_arithmetic: InstrMap = {
+    instrs_read_modify_write: InstrMap = {
         # sh2 format is src, dst
         # add handler is dest, left, right
         "add": lambda a: (
             handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
-    }
-
-    instrs_source_dest: InstrMap = {
         "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(0)),
         "or": lambda a: handle_or(a.reg(1), a.reg(0)),
         "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(0)),
+    }
+
+    instrs_source_dest: InstrMap = {
         "not": lambda a: handle_bitinv(a.reg(0)),
         "neg": lambda a: UnaryOp.sint("-", a.reg(0)),
         "exts.b": lambda a: as_type(a.reg(0), Type.s8(), silent=False),
@@ -464,11 +456,17 @@ class Sh2Arch(Arch):
     instrs_shift: InstrMap = {
         "shlr": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(1)),
         "shar": lambda a: BinaryOp.sint(a.reg(0), ">>", Literal(1)),
-        "shll2": lambda a: BinaryOp.uint(a.reg(0), "<<", Literal(2)),
+        "shll2": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(2)), allow_sll_chains=True
+        ),
         "shlr2": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(2)),
-        "shll8": lambda a: BinaryOp.uint(a.reg(0), "<<", Literal(8)),
+        "shll8": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(8)), allow_sll_chains=True
+        ),
         "shlr8": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(8)),
-        "shll16": lambda a: BinaryOp.uint(a.reg(0), "<<", Literal(16)),
+        "shll16": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(16)), allow_sll_chains=True
+        ),
         "shlr16": lambda a: BinaryOp.uint(a.reg(0), ">>", Literal(16)),
         "rotl": lambda a: BinaryOp.uint(
             BinaryOp.uint(a.reg(0), "<<", Literal(1)),

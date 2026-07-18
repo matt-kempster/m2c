@@ -3747,6 +3747,12 @@ class NodeState:
         self.prevent_later_function_calls()
         self.write_statement(store)
 
+    def push_subroutine_arg(self, source: Expression) -> None:
+        self.subroutine_args = {
+            offset + 4: arg for offset, arg in self.subroutine_args.items()
+        }
+        self.subroutine_args[0] = source
+
     def _reg_probably_meant_as_function_argument(
         self, reg: Register, call_instr: InstrRef
     ) -> bool:

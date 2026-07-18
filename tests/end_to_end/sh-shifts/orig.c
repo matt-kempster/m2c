@@ -45,3 +45,39 @@ unsigned test_rotl(unsigned value) {
 unsigned test_rotr(unsigned value) {
     return (value >> 1) | (value << 31);
 }
+
+unsigned test_shll3(unsigned value) {
+    return value << 3;
+}
+
+unsigned test_shll10(unsigned value) {
+    return value << 10;
+}
+
+unsigned test_shll18(unsigned value) {
+    return value << 18;
+}
+
+signed test_shal3(signed value) {
+    return value << 3;
+}
+
+signed test_shar2(signed value) {
+    return value >> 2;
+}
+
+signed test_shar3(signed value) {
+    return value >> 3;
+}
+
+signed test_mul3(signed value) {
+    return value * 3;
+}
+
+signed test_mul5(signed value) {
+    return value * 5;
+}
+
+signed test_mul10(signed value) {
+    return value * 10;
+}
