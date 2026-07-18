@@ -436,12 +436,12 @@ class StackInfo:
     def saved_reg_symbol(self, reg_name: str) -> GlobalSymbol:
         sym_name = "saved_reg_" + reg_name
         type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
-        return GlobalSymbol(symbol_name=sym_name, type=type)
+        return GlobalSymbol(c_symbol_name=sym_name, type=type)
 
     def should_save(self, expr: Expression, offset: Optional[int]) -> bool:
         expr = early_unwrap(expr)
         if isinstance(expr, GlobalSymbol) and (
-            expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
+            expr.c_symbol_name.startswith("saved_reg_") or expr.c_symbol_name == "sp"
         ):
             return True
         if (
@@ -1648,7 +1648,7 @@ class ArrayAccess(Expression):
 
 @dataclass(eq=False)
 class GlobalSymbol(Expression):
-    symbol_name: str
+    c_symbol_name: str
     type: Type
     asm_data_entry: Optional[AsmDataEntry] = None
     symbol_in_context: bool = False
@@ -1683,7 +1683,7 @@ class GlobalSymbol(Expression):
         return ret
 
     def format(self, fmt: Formatter) -> str:
-        return self.symbol_name
+        return self.c_symbol_name
 
     def potential_array_dim(self, element_size: int) -> Tuple[int, int]:
         """
@@ -4249,7 +4249,7 @@ class GlobalInfo:
                     demangled_str = str(demangled_symbol)
 
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
-                symbol_name=c_sym_name,
+                c_symbol_name=c_sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
                 demangled_str=demangled_str,

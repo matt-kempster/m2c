@@ -139,7 +139,7 @@ class SwitchStatement:
         elif self.jump.num_cases is None:
             comments.append("unable to parse jump table")
         elif self.jump.jump_table is not None and body_is_empty:
-            comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
+            comments.append(f"jump table: {self.jump.jump_table.c_symbol_name}")
         head = f"switch ({format_expr(self.jump.control_expr, fmt)})"
         if body_is_empty:
             lines.append(fmt.with_comments(f"{head};", comments))
@@ -1447,7 +1447,7 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         if line:
             function_lines.append(line)
 
-    fn_name = function_info.symbol.symbol_name
+    fn_name = function_info.symbol.c_symbol_name
     arg_strs = []
     for i, arg in enumerate(function_info.stack_info.arguments):
         if i == 0 and function_info.stack_info.replace_first_arg is not None:

@@ -38,6 +38,7 @@ from .translate import (
     InstrArgs,
     Literal,
     NodeState,
+    as_u32,
 )
 
 from .evaluate import (
@@ -316,7 +317,7 @@ class Sh2Arch(Arch):
             )
             target_reg = args[0].base
             inputs = [*cls.argument_regs, target_reg]
-            outputs = [reg for reg, _ in cls.base_return_regs]
+            outputs = list(cls.all_return_regs)
             clobbers = list(cls.temp_regs)
             function_target = target_reg
             has_delay_slot = True
@@ -454,5 +455,8 @@ class Sh2Arch(Arch):
         return {
             Register("r0"): Cast(
                 expr, reinterpret=True, silent=True, type=Type.intptr()
+            ),
+            Register("r1"): as_u32(
+                Cast(expr, reinterpret=True, silent=False, type=Type.u64())
             ),
         }

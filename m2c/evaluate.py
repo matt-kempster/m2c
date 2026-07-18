@@ -173,7 +173,7 @@ def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
         is_variadic=False,
     )
     return FuncCall(
-        function=GlobalSymbol(symbol_name=fn_name, type=Type.function(fn_sig)),
+        function=GlobalSymbol(c_symbol_name=fn_name, type=Type.function(fn_sig)),
         args=args,
         type=type,
     )
@@ -490,8 +490,7 @@ def handle_load(args: InstrArgs, type: Type) -> Expression:
         ):
             return None
 
-        sym_name = target.expr.symbol_name
-        ent = args.stack_info.global_info.asm_data_value(sym_name)
+        ent = target.expr.asm_data_entry
         if ent is None or not ent.is_readonly:
             return None
 
@@ -1106,7 +1105,7 @@ def array_access_from_add(
             # Make up a struct with a tag name based on the symbol & struct size.
             # Although `scale = 8` could indicate an array of longs/doubles, it seems more
             # common to be an array of structs.
-            struct_name = f"_struct_{uw_base.expr.symbol_name}_0x{scale:X}"
+            struct_name = f"_struct_{uw_base.expr.c_symbol_name}_0x{scale:X}"
             struct = typepool.get_struct_by_tag_name(
                 struct_name, stack_info.global_info.typemap
             )
