@@ -97,6 +97,15 @@ class JumpTablePattern(SimpleAsmPattern):
 class Sh2Arch(Arch):
     arch = Target.ArchEnum.SH2
 
+    def c_symbol_name(self, asm_name: str) -> str:
+        if (
+            len(asm_name) >= 2
+            and asm_name[0] == "_"
+            and (asm_name[1].isalpha() or asm_name[1] == "_")
+        ):
+            return asm_name[1:]
+        return asm_name
+
     re_comment = r"!.*"
     supports_dollar_regs = False
     supports_at_addressing = True
@@ -311,9 +320,7 @@ class Sh2Arch(Arch):
             clobbers = list(cls.temp_regs)
             function_target = target_reg
             has_delay_slot = True
-            eval_fn = lambda s, a: s.make_function_call(
-                a.regs[target_reg], outputs
-            )
+            eval_fn = lambda s, a: s.make_function_call(a.regs[target_reg], outputs)
         elif mnemonic == "tablejmp.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []

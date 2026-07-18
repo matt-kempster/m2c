@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import subprocess
 import sys
 from contextlib import ExitStack
@@ -204,17 +203,6 @@ def do_compilation_step(
     subprocess.run(args, check=True)
 
 
-def demangle_sh_asm(asm_text: str) -> str:
-    symbols = re.findall(r"(?m)^\s*\.global\s+(_[A-Za-z][A-Za-z0-9_]*)\s*$", asm_text)
-    for symbol in symbols:
-        asm_text = re.sub(
-            rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])",
-            symbol[1:],
-            asm_text,
-        )
-    return re.sub(r"[ \t]+(?=\r?$)", "", asm_text, flags=re.MULTILINE)
-
-
 def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
     flags_str = " ".join(compiler.cc_command)
     logger.info(f"Compiling {in_file} to {out_file} using: {flags_str}")
@@ -225,7 +213,8 @@ def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
             )
             do_compilation_step(str(out_file), temp_i_file.name, compiler)
             if compiler.name == "sh-gcc":
-                out_file.write_text(demangle_sh_asm(out_file.read_text()))
+                lines = out_file.read_text().splitlines()
+                out_file.write_text("\n".join(line.rstrip() for line in lines) + "\n")
     else:
         with NamedTemporaryFile(suffix=".o") as temp_o_file:
             do_compilation_step(temp_o_file.name, str(in_file), compiler)

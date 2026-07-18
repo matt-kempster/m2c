@@ -130,6 +130,10 @@ def run(options: Options) -> int:
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())
     else:
+        functions_by_c_name = {
+            arch.c_symbol_name(name): function
+            for name, function in all_functions.items()
+        }
         functions = []
         for index_or_name in options.function_indexes_or_names:
             if isinstance(index_or_name, int):
@@ -142,10 +146,13 @@ def run(options: Options) -> int:
                     return 1
                 functions.append(list(all_functions.values())[index_or_name])
             else:
-                if index_or_name not in all_functions:
+                function = all_functions.get(index_or_name)
+                if function is None:
+                    function = functions_by_c_name.get(index_or_name)
+                if function is None:
                     print(f"Function {index_or_name} not found.", file=sys.stderr)
                     return 1
-                functions.append(all_functions[index_or_name])
+                functions.append(function)
 
     fmt = options.formatter()
     function_names = set(all_functions.keys())

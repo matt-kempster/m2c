@@ -120,6 +120,10 @@ class Arch(ArchFlowGraph, ArchC):
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
 
+    def c_symbol_name(self, asm_name: str) -> str:
+        """Convert an assembler symbol name to its C spelling."""
+        return asm_name
+
     def simplify_ir(self, flow_graph: FlowGraph) -> None:
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
 
@@ -4230,6 +4234,7 @@ class GlobalInfo:
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
+            c_sym_name = self.arch.c_symbol_name(sym_name)
             demangled_symbol: Optional[CxxSymbol] = None
             demangled_str: Optional[str] = None
             if (
@@ -4244,7 +4249,7 @@ class GlobalInfo:
                     demangled_str = str(demangled_symbol)
 
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
-                symbol_name=sym_name,
+                symbol_name=c_sym_name,
                 type=Type.any(),
                 asm_data_entry=self.asm_data_value(sym_name),
                 demangled_str=demangled_str,
@@ -4259,24 +4264,24 @@ class GlobalInfo:
             ):
                 sym.type.unify(self.vtable_type(sym_name, sym.asm_data_entry))
 
-            fn = self.typemap.functions.get(sym_name)
+            fn = self.typemap.functions.get(c_sym_name)
             ctype: Optional[CType]
             if fn is not None:
                 ctype = fn.type
             else:
-                ctype = self.typemap.var_types.get(sym_name)
+                ctype = self.typemap.var_types.get(c_sym_name)
 
             if ctype is not None:
                 sym.symbol_in_context = True
                 sym.initializer_in_typemap = (
-                    sym_name in self.typemap.vars_with_initializers
+                    c_sym_name in self.typemap.vars_with_initializers
                 )
                 if self.typepool.unk_inference and is_unk_type(ctype, self.typemap):
                     type = Type.gsym_unk_ctype(ctype, self.typemap, self.typepool)
                 else:
                     type = Type.ctype(ctype, self.typemap, self.typepool)
                 sym.type.unify(type)
-                if sym_name not in self.typepool.unknown_decls:
+                if c_sym_name not in self.typepool.unknown_decls:
                     sym.type_provided = True
             elif sym_name in self.local_functions:
                 sym.type.unify(Type.function())
