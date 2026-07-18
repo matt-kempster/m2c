@@ -1,0 +1,1 @@
+--context orig.c --target sh2-gcc-c -f test_shal -f test_shlr -f test_shar -f test_shll2 -f test_shlr2 -f test_shll8 -f test_shlr8 -f test_shll16 -f test_shlr16 -f test_rotl -f test_rotr -f test_shll3 -f test_shll10 -f test_shll18 -f test_shal3 -f test_shar2 -f test_shar3 -f test_mul3 -f test_mul5 -f test_mul10

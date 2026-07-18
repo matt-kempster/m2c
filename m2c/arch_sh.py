@@ -38,14 +38,21 @@ from .translate import (
     InstrArgs,
     Literal,
     NodeState,
+    StoreStmt,
+    UnaryOp,
+    as_type,
     as_u32,
 )
 
 from .evaluate import (
     condition_from_expr,
+    fold_mul_chains,
+    fold_shift_right,
     handle_add,
     handle_addi,
+    handle_bitinv,
     handle_load,
+    handle_or,
     handle_sub,
     make_store,
 )
@@ -203,6 +210,13 @@ class Sh2Arch(Arch):
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
 
+                elif (
+                    args[1].writeback == Writeback.PRE and args[0] not in cls.saved_regs
+                ):
+
+                    def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                        s.push_subroutine_arg(a.reg(0))
+
                 else:
                     # otherwise we have a writeback
                     assert args[1].base == cls.stack_pointer_reg
@@ -250,15 +264,43 @@ class Sh2Arch(Arch):
             inputs = [args[0].base]
             outputs = [args[1]]
             is_load = True
-        elif mnemonic in cls.instrs_arithmetic:
+        elif mnemonic in cls.instrs_read_modify_write:
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
             if isinstance(args[0], Register):
                 inputs.insert(0, args[0])
             outputs = [args[1]]
             eval_fn = lambda s, a: s.set_reg(
-                a.reg_ref(1), cls.instrs_arithmetic[mnemonic](a)
+                a.reg_ref(1), cls.instrs_read_modify_write[mnemonic](a)
             )
+        elif mnemonic in cls.instrs_source_dest:
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0]]
+            outputs = [args[1]]
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(1), cls.instrs_source_dest[mnemonic](a)
+            )
+        elif mnemonic in cls.instrs_shift:
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            outputs = [args[0]]
+            if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+                outputs.append(Register("condition_bit"))
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                original = a.reg(0)
+                if mnemonic in ("shlr", "shar", "rotr"):
+                    carry = BinaryOp.intptr(original, "&", Literal(1))
+                else:
+                    carry = BinaryOp.uint(original, ">>", Literal(31))
+                if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+                    s.set_reg(Register("condition_bit"), carry)
+                s.set_reg(a.reg_ref(0), cls.instrs_shift[mnemonic](a))
+
         elif mnemonic == "tst":
             assert (
                 len(args) == 2
@@ -333,7 +375,7 @@ class Sh2Arch(Arch):
             is_conditional = True
             has_delay_slot = True
             eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
-        elif mnemonic in ("cmp/eq", "cmp/gt", "cmp/hi"):
+        elif mnemonic in ("cmp/eq", "cmp/ge", "cmp/gt", "cmp/hi", "cmp/hs"):
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
             if isinstance(args[0], Register):
@@ -345,12 +387,23 @@ class Sh2Arch(Arch):
                 rhs = a.reg_or_imm(0)
                 if mnemonic == "cmp/eq":
                     condition = BinaryOp.icmp(lhs, "==", rhs)
+                elif mnemonic == "cmp/ge":
+                    condition = BinaryOp.scmp(lhs, ">=", rhs)
                 elif mnemonic == "cmp/gt":
                     condition = BinaryOp.scmp(lhs, ">", rhs)
+                elif mnemonic == "cmp/hs":
+                    condition = BinaryOp.ucmp(lhs, ">=", rhs)
                 else:
                     condition = BinaryOp.ucmp(lhs, ">", rhs)
                 s.set_reg(Register("condition_bit"), condition)
 
+        elif mnemonic == "movt":
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [Register("condition_bit")]
+            outputs = [args[0]]
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(0), a.regs[Register("condition_bit")]
+            )
         else:
             instr_str = str(AsmInstruction(mnemonic, args))
 
@@ -375,13 +428,57 @@ class Sh2Arch(Arch):
             has_delay_slot=has_delay_slot,
         )
 
-    instrs_arithmetic: InstrMap = {
+    instrs_read_modify_write: InstrMap = {
         # sh2 format is src, dst
         # add handler is dest, left, right
         "add": lambda a: (
             handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
+        "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg(0)),
+        "or": lambda a: handle_or(a.reg(1), a.reg(0)),
+        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(0)),
+    }
+
+    instrs_source_dest: InstrMap = {
+        "not": lambda a: handle_bitinv(a.reg(0)),
+        "neg": lambda a: UnaryOp.sint("-", a.reg(0)),
+        "exts.b": lambda a: as_type(a.reg(0), Type.s8(), silent=False),
+        "exts.w": lambda a: as_type(a.reg(0), Type.s16(), silent=False),
+        "extu.b": lambda a: as_type(a.reg(0), Type.u8(), silent=False),
+        "extu.w": lambda a: as_type(a.reg(0), Type.u16(), silent=False),
+        "swap.w": lambda a: BinaryOp.int(
+            BinaryOp.uint(a.reg(0), "<<", Literal(16)),
+            "|",
+            BinaryOp.uint(a.reg(0), ">>", Literal(16)),
+        ),
+    }
+
+    instrs_shift: InstrMap = {
+        "shlr": lambda a: fold_shift_right(a.reg(0), 1, signed=False),
+        "shar": lambda a: fold_shift_right(a.reg(0), 1, signed=True),
+        "shll2": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(2)), allow_sll_chains=True
+        ),
+        "shlr2": lambda a: fold_shift_right(a.reg(0), 2, signed=False),
+        "shll8": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(8)), allow_sll_chains=True
+        ),
+        "shlr8": lambda a: fold_shift_right(a.reg(0), 8, signed=False),
+        "shll16": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(16)), allow_sll_chains=True
+        ),
+        "shlr16": lambda a: fold_shift_right(a.reg(0), 16, signed=False),
+        "rotl": lambda a: BinaryOp.uint(
+            BinaryOp.uint(a.reg(0), "<<", Literal(1)),
+            "|",
+            BinaryOp.uint(a.reg(0), ">>", Literal(31)),
+        ),
+        "rotr": lambda a: BinaryOp.uint(
+            BinaryOp.uint(a.reg(0), ">>", Literal(1)),
+            "|",
+            BinaryOp.uint(a.reg(0), "<<", Literal(31)),
+        ),
     }
 
     asm_patterns = [JumpTablePattern()]

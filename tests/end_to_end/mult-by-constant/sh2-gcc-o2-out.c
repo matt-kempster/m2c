@@ -1,0 +1,48 @@
+extern u32 _y;
+
+void test(u32 arg0, u32 arg2) {
+    y = arg0;
+    y = arg0 * 2;
+    y = arg0 * 3;
+    y = arg0 * 4;
+    y = arg0 * 5;
+    y = arg0 * 6;
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    y = arg2;
+    y = arg0 * 8;
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    y = arg2;
+    y = arg0 * 0xA;
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg0 * 0xC;
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    y = arg2;
+    y = arg0 * 0x10;
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    M2C_ERROR(/* unknown instruction: mul.l $r1, $r4 */);
+    y = arg0 * 0x14;
+    y = arg2;
+    M2C_ERROR(/* unknown instruction: sts $macl, $r6 */);
+    y = arg2;
+}
