@@ -336,12 +336,14 @@ def parse_arg_elems(
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
 
-    def parse_arg_elem() -> Argument:
-        consume_ws()
+    def parse_sh_register() -> Register:
         word = parse_word(arg_elems)
-        if word.startswith("$") and arch.supports_dollar_regs and "$" not in word[1:]:
+        if word.startswith("$"):
+            assert arch.supports_dollar_regs
             return asm_state.reg_formatter.parse_and_store(word[1:], arch)
-        return replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+        reg = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+        assert isinstance(reg, Register)
+        return reg
 
     while True:
         consume_ws()
@@ -353,7 +355,13 @@ def parse_arg_elems(
         elif tok == "$" and arch.supports_dollar_regs:
             # Register.
             assert value is None
-            value = parse_arg_elem()
+            word = parse_word(arg_elems)
+            reg = word[1:]
+            if "$" in reg:
+                # If there is a second $ in the word, it's a symbol
+                value = AsmGlobalSymbol(word)
+            else:
+                value = asm_state.reg_formatter.parse_and_store(reg, arch)
         elif tok == "#":
             # ARM immediate.
             assert value is None
@@ -595,8 +603,8 @@ def parse_arg_elems(
                         top_level=False,
                     )
                     expect(",")
-                    base = parse_arg_elem()
-                    assert isinstance(base, Register)
+                    consume_ws()
+                    base = parse_sh_register()
                     expect(")")
                     value = AsmAddressMode(base, addend, None)
                     continue
@@ -604,8 +612,7 @@ def parse_arg_elems(
                 if arg_elems and arg_elems[0] == "-":
                     expect("-")
                     sh_writeback = Writeback.PRE
-                base = parse_arg_elem()
-                assert isinstance(base, Register)
+                base = parse_sh_register()
                 if arg_elems and arg_elems[0] == "+":
                     assert sh_writeback is None
                     expect("+")

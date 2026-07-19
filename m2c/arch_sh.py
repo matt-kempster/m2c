@@ -105,12 +105,15 @@ class JumpTablePattern(SimpleAsmPattern):
 
 
 class DivisionHelperPattern(SimpleAsmPattern):
-    pattern = make_pattern("mov.l _, $t", "jsr @$t")
+    pattern = make_pattern("mov.l _, $t", "jsr @$t", "*")
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
         load = m.body[0]
+        delay_slot = m.wildcard_items[0]
         assert isinstance(load, Instruction)
         assert isinstance(load.args[0], AsmGlobalSymbol)
+        if not isinstance(delay_slot, Instruction):
+            return None
 
         entry = m.asm_data.values.get(load.args[0].symbol_name)
         if entry is None:
@@ -127,9 +130,8 @@ class DivisionHelperPattern(SimpleAsmPattern):
         }.get(target_name)
         if mnemonic is None:
             return None
-        return Replacement(
-            [AsmInstruction(mnemonic, [Register("r4"), Register("r5")])], 2
-        )
+        division = AsmInstruction(mnemonic, [Register("r4"), Register("r5")])
+        return Replacement([delay_slot, division], 3)
 
 
 class Sh2Arch(Arch):
@@ -422,7 +424,6 @@ class Sh2Arch(Arch):
             assert args == [Register("r4"), Register("r5")]
             inputs = [Register("r4"), Register("r5")]
             outputs = [Register("r0")]
-            has_delay_slot = True
             op = BinaryOp.sint if mnemonic == "sdiv.fictive" else BinaryOp.uint
             eval_fn = lambda s, a: s.set_reg(
                 Register("r0"), op(a.reg(0), "/", a.reg(1))
