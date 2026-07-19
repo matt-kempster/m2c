@@ -338,8 +338,7 @@ def parse_arg_elems(
 
     def parse_sh_register() -> Register:
         word = parse_word(arg_elems)
-        if word.startswith("$"):
-            assert arch.supports_dollar_regs
+        if word.startswith("$") and arch.supports_dollar_regs:
             return asm_state.reg_formatter.parse_and_store(word[1:], arch)
         reg = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
         assert isinstance(reg, Register)
