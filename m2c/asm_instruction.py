@@ -194,6 +194,7 @@ class NaiveParsingArch(ArchAsmParsing):
     all_regs: List[Register] = []
     aliased_regs: Dict[str, Register] = {}
     supports_dollar_regs = True
+    supports_at_addressing = True
 
     def normalize_instruction(
         self, instr: AsmInstruction, asm_state: AsmState
@@ -335,6 +336,13 @@ def parse_arg_elems(
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
 
+    def parse_arg_elem() -> Argument:
+        consume_ws()
+        word = parse_word(arg_elems)
+        if word.startswith("$") and arch.supports_dollar_regs and "$" not in word[1:]:
+            return asm_state.reg_formatter.parse_and_store(word[1:], arch)
+        return replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+
     while True:
         consume_ws()
         if not arg_elems:
@@ -345,13 +353,7 @@ def parse_arg_elems(
         elif tok == "$" and arch.supports_dollar_regs:
             # Register.
             assert value is None
-            word = parse_word(arg_elems)
-            reg = word[1:]
-            if "$" in reg:
-                # If there is a second $ in the word, it's a symbol
-                value = AsmGlobalSymbol(word)
-            else:
-                value = asm_state.reg_formatter.parse_and_store(reg, arch)
+            value = parse_arg_elem()
         elif tok == "#":
             # ARM immediate.
             assert value is None
@@ -591,11 +593,9 @@ def parse_arg_elems(
                         arch,
                         asm_state,
                         top_level=False,
-                        do_replace_bare_reg=False,
                     )
                     expect(",")
-                    word = parse_word(arg_elems)
-                    base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+                    base = parse_arg_elem()
                     assert isinstance(base, Register)
                     expect(")")
                     value = AsmAddressMode(base, addend, None)
@@ -604,8 +604,7 @@ def parse_arg_elems(
                 if arg_elems and arg_elems[0] == "-":
                     expect("-")
                     sh_writeback = Writeback.PRE
-                word = parse_word(arg_elems)
-                base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+                base = parse_arg_elem()
                 assert isinstance(base, Register)
                 if arg_elems and arg_elems[0] == "+":
                     assert sh_writeback is None

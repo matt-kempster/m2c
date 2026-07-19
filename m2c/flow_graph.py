@@ -458,7 +458,7 @@ def build_blocks(
 
             assert isinstance(next_item, Instruction), "Cannot have two labels in a row"
 
-            if item.is_branch_likely or item.function_target is not None:
+            if item.is_branch_likely or not item.is_jump():
                 # (we could handle these cases too with some care, they're just very
                 # rare so we don't bother)
                 msg = [
@@ -547,10 +547,14 @@ def build_blocks(
             block_builder.new_block()
             block_builder.set_label(Label([temp_label]))
             block_builder.add_instruction(nop.clone())
-        elif item.function_target is not None:
+        elif not item.is_jump():
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
-            if len(item.args) >= 2 and item.args[1] in next_item.outputs:
+            if (
+                item.function_target is not None
+                and len(item.args) >= 2
+                and item.args[1] in next_item.outputs
+            ):
                 raise DecompFailure(
                     f"Instruction after {item.mnemonic} clobbers its source\n"
                     "register, which is currently not supported.\n\n"

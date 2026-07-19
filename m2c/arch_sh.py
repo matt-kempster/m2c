@@ -40,7 +40,9 @@ from .translate import (
     NodeState,
     StoreStmt,
     UnaryOp,
+    as_s16,
     as_type,
+    as_u16,
     as_u32,
 )
 
@@ -65,9 +67,9 @@ class JumpTablePattern(SimpleAsmPattern):
         "mov $x, $i",
         "add $i, $i",
         "mova _, $b",
-        "mov.w",  # "mov.w @($b,$i),$i"
+        "mov.w @($b,$i),$i",
         "add $i, $b",
-        "jmp",  # "jmp @$b"
+        "jmp @$b",
         "nop",
     )
 
@@ -103,17 +105,12 @@ class JumpTablePattern(SimpleAsmPattern):
 
 
 class DivisionHelperPattern(SimpleAsmPattern):
-    pattern = make_pattern("mov.l _, $t", "jsr")
+    pattern = make_pattern("mov.l _, $t", "jsr @$t")
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        load, call = m.body
-        assert isinstance(load, Instruction) and isinstance(call, Instruction)
+        load = m.body[0]
+        assert isinstance(load, Instruction)
         assert isinstance(load.args[0], AsmGlobalSymbol)
-        if not (
-            isinstance(call.args[0], AsmAddressMode)
-            and call.args[0].base == m.regs["t"]
-        ):
-            return None
 
         entry = m.asm_data.values.get(load.args[0].symbol_name)
         if entry is None:
@@ -196,7 +193,11 @@ class Sh2Arch(Arch):
     def normalize_instruction(
         cls, instr: AsmInstruction, asm_state: AsmState
     ) -> AsmInstruction:
-        return instr
+        mnemonic = {
+            "muls.w": "muls",
+            "mulu.w": "mulu",
+        }.get(instr.mnemonic, instr.mnemonic)
+        return replace(instr, mnemonic=mnemonic)
 
     @classmethod
     def parse(
@@ -518,8 +519,8 @@ class Sh2Arch(Arch):
 
     instrs_multiply: InstrMap = {
         "mul.l": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(0)),
-        "muls": lambda a: BinaryOp.sint(a.reg(1), "*", a.reg(0)),
-        "mulu": lambda a: BinaryOp.uint(a.reg(1), "*", a.reg(0)),
+        "muls": lambda a: BinaryOp.sint(as_s16(a.reg(1)), "*", as_s16(a.reg(0))),
+        "mulu": lambda a: BinaryOp.uint(as_u16(a.reg(1)), "*", as_u16(a.reg(0))),
     }
 
     instrs_shift: InstrMap = {
