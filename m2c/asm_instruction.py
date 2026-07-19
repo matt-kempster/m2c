@@ -194,6 +194,7 @@ class NaiveParsingArch(ArchAsmParsing):
     all_regs: List[Register] = []
     aliased_regs: Dict[str, Register] = {}
     supports_dollar_regs = True
+    supports_at_addressing = True
 
     def normalize_instruction(
         self, instr: AsmInstruction, asm_state: AsmState
@@ -334,6 +335,14 @@ def parse_arg_elems(
         g = arg_elems.pop(0)
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
+
+    def parse_sh_register() -> Register:
+        word = parse_word(arg_elems)
+        if word.startswith("$") and arch.supports_dollar_regs:
+            return asm_state.reg_formatter.parse_and_store(word[1:], arch)
+        reg = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+        assert isinstance(reg, Register)
+        return reg
 
     while True:
         consume_ws()
@@ -591,12 +600,10 @@ def parse_arg_elems(
                         arch,
                         asm_state,
                         top_level=False,
-                        do_replace_bare_reg=False,
                     )
                     expect(",")
-                    word = parse_word(arg_elems)
-                    base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
-                    assert isinstance(base, Register)
+                    consume_ws()
+                    base = parse_sh_register()
                     expect(")")
                     value = AsmAddressMode(base, addend, None)
                     continue
@@ -604,9 +611,7 @@ def parse_arg_elems(
                 if arg_elems and arg_elems[0] == "-":
                     expect("-")
                     sh_writeback = Writeback.PRE
-                word = parse_word(arg_elems)
-                base = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
-                assert isinstance(base, Register)
+                base = parse_sh_register()
                 if arg_elems and arg_elems[0] == "+":
                     assert sh_writeback is None
                     expect("+")

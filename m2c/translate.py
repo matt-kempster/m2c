@@ -195,6 +195,14 @@ def as_uintish(expr: Expression) -> Expression:
     return as_type(expr, Type.uintish(), False)
 
 
+def as_s16(expr: Expression) -> Expression:
+    return as_type(expr, Type.s16(), False)
+
+
+def as_u16(expr: Expression) -> Expression:
+    return as_type(expr, Type.u16(), False)
+
+
 def as_u32(expr: Expression) -> Expression:
     return as_type(expr, Type.u32(), False)
 
