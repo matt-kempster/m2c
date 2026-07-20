@@ -492,10 +492,10 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/#;@! \t":
-            return " "
-        else:
+        if s[0] == '"':
             return s
+        else:
+            return " "
 
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
