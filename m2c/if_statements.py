@@ -1488,9 +1488,8 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
         formatted_body = body.format(fmt)
 
         local_vars = function_info.stack_info.local_vars
-        # GCC's and MSVC's stacks are ordered low-to-high (e.g. `int sp10;
-        # int sp14;`). IDO's and MWCC's stack is ordered high-to-low
-        # (e.g. `int sp14; int sp10;`).
+        # GCC's and MSVC's stacks are ordered low-to-high (e.g. `int sp10; int sp14;`).
+        # IDO's and MWCC's stacks are ordered high-to-low (e.g. `int sp14; int sp10;`).
         if options.target.compiler not in (
             Target.CompilerEnum.GCC,
             Target.CompilerEnum.MSVC,
