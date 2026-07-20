@@ -103,7 +103,8 @@ def deref(
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             arch = stack_info.global_info.arch
             if isinstance(addend, Literal) and (
-                arch.is_likely_partial_offset(addend.value) or offset == 0
+                arch.is_likely_partial_offset(addend.value)
+                or (offset == 0 and addend.value >= 0)
             ):
                 offset += addend.value
                 var = base
@@ -1064,6 +1065,9 @@ def array_access_from_add(
     addend = expr.right
     if addend.type.is_pointer_or_array() and not base.type.is_pointer_or_array():
         base, addend = addend, base
+
+    if isinstance(addend, Literal):
+        return None
 
     uw_addend = early_unwrap(addend)
     if isinstance(uw_addend, BinaryOp) and uw_addend.op == "+":

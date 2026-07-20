@@ -115,7 +115,7 @@ class Arch(ArchFlowGraph, ArchC):
         ...
 
     def is_likely_partial_offset(self, addend: int) -> bool:
-        return addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
+        return 0 <= addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
 
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
