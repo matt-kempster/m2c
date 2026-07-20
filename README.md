@@ -9,7 +9,7 @@ Its focus on finding "matching" C source differentiates it from other decompilat
 Right now the decompiler is fairly functional, though it sometimes generates suboptimal code (especially for loops).
 
 The input is expected to match the GNU `as` assembly format, produced by tools like [`spimdisasm`](https://github.com/Decompollaborate/spimdisasm).
-For x86, the input is Intel-syntax assembly as exported by Ghidra or IDA (`byte ptr [esp + 0xc]`-style operands), targeting 32-bit MSVC-compiled code.
+For x86, the input is Intel-syntax assembly as exported by Ghidra or IDA (`byte ptr [esp + 0xc]`-style operands).
 See the `tests/` directory for some example input and output.
 
 [An online version is also available](https://simonsoftware.se/other/m2c.html).
