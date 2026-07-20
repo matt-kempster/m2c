@@ -492,7 +492,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/#;@ \t":
+        if s[0] in "/#;@! \t":
             return " "
         else:
             return s
