@@ -1945,10 +1945,6 @@ class EvalOnceExpr(Expression):
     # True if this EvalOnceExpr must use a variable (see RegMeta.force)
     forced_emit: bool = False
 
-    # True if this value was invalidated while held by lazy bookkeeping. It is
-    # forced only if the enclosing marker or pending call argument is consumed.
-    deferred_force: bool = False
-
     # True if this EvalOnceExpr has been use()d. If `var.is_emitted` is true, this will
     # also be: either because this EvalOnceExpr was used twice and that triggered
     # `var.is_emitted` to be set to true, or because the var is a planned phi, and then
@@ -2392,6 +2388,34 @@ RegExpression = Union[EvalOnceExpr, PlannedPhiExpr, NaivePhiExpr]
 class RegData:
     value: RegExpression
     meta: RegMeta
+
+
+@dataclass(eq=False)
+class PendingArg(Expression):
+    """A pending stack argument and force state on its NodeState value edge."""
+
+    value: Expression
+    force: bool = False
+    type: Type = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.type = self.value.type
+
+    def dependencies(self) -> List[Expression]:
+        return [self.value]
+
+    def use(self) -> None:
+        if not self.force:
+            self.value.use()
+            return
+        value = self.value
+        while isinstance(value, Cast):
+            value = value.expr
+        assert isinstance(value, EvalOnceExpr)
+        value.force()
+
+    def format(self, fmt: Formatter) -> str:
+        return self.value.format(fmt)
 
 
 @dataclass
@@ -3606,7 +3630,7 @@ class NodeState:
     local_var_writes: Dict[LocalVar, Tuple[Optional[Register], Expression, bool]] = (
         field(default_factory=dict)
     )
-    subroutine_args: Dict[int, Expression] = field(default_factory=dict)
+    subroutine_args: Dict[int, PendingArg] = field(default_factory=dict)
     in_pattern: bool = False
 
     to_write: List[Statement] = field(default_factory=list)
@@ -3714,22 +3738,22 @@ class NodeState:
         # Pending call arguments are expressions too. In particular, an x86
         # push may capture a call result here before an intervening store;
         # force its once-variable so the call cannot move past that store.
-        for loc, value in self.subroutine_args.items():
-            if not uses_expr(value, expr_filter):
+        for loc, pending in self.subroutine_args.items():
+            if not uses_expr(pending.value, expr_filter):
                 continue
-            pending_expr: Expression = value
+            pending_expr: Expression = pending.value
             while isinstance(pending_expr, Cast):
                 pending_expr = pending_expr.expr
             if not isinstance(pending_expr, EvalOnceExpr):
                 pending_expr = self._eval_once(
-                    value,
+                    pending.value,
                     emit_exactly_once=False,
-                    transparent=should_wrap_transparently(value),
+                    transparent=should_wrap_transparently(pending.value),
                     reg=Register.fictive("call_arg", str(loc)),
                     source=self.regs.current_instr_ref(),
                 )
-                self.subroutine_args[loc] = pending_expr
-            pending_expr.force()
+                pending.value = pending_expr
+            pending.force = True
 
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given
@@ -3750,31 +3774,27 @@ class NodeState:
 
     def defer_pending_reads(self) -> None:
         """Capture pending memory arguments lazily if their later call is consumed."""
-        for loc, value in self.subroutine_args.items():
+        for loc, pending in self.subroutine_args.items():
             if not uses_expr(
-                value, lambda e: isinstance(e, (StructAccess, ArrayAccess))
+                pending.value, lambda e: isinstance(e, (StructAccess, ArrayAccess))
             ):
                 continue
-            expr = value
+            expr = pending.value
             while isinstance(expr, Cast):
                 expr = expr.expr
             if not isinstance(expr, EvalOnceExpr):
                 expr = self._eval_once(
-                    value,
+                    pending.value,
                     emit_exactly_once=False,
-                    transparent=should_wrap_transparently(value),
+                    transparent=should_wrap_transparently(pending.value),
                     reg=Register.fictive("call_arg", str(loc)),
                     source=self.regs.current_instr_ref(),
                 )
-                self.subroutine_args[loc] = expr
-            expr.deferred_force = True
+                pending.value = expr
+            pending.force = True
 
-    @staticmethod
-    def _force_deferred_pending_arg(expr: Expression) -> None:
-        while isinstance(expr, Cast):
-            expr = expr.expr
-        if isinstance(expr, EvalOnceExpr) and expr.deferred_force:
-            expr.force()
+    def set_subroutine_arg(self, loc: int, value: Expression) -> None:
+        self.subroutine_args[loc] = PendingArg(value)
 
     def set_initial_reg(self, reg: Register, expr: Expression, meta: RegMeta) -> None:
         assert meta.initial
@@ -3901,7 +3921,7 @@ class NodeState:
             # About to call a subroutine with this argument. Skip arguments for the
             # first four stack slots; they are also passed in registers.
             if dest.value >= self.stack_info.global_info.arch.home_space_size:
-                self.subroutine_args[dest.value] = source
+                self.set_subroutine_arg(dest.value, source)
             return
 
         raw_value = source
@@ -3948,7 +3968,7 @@ class NodeState:
         self.subroutine_args = {
             offset + 4: arg for offset, arg in self.subroutine_args.items()
         }
-        self.subroutine_args[0] = source
+        self.set_subroutine_arg(0, source)
 
     def _reg_probably_meant_as_function_argument(
         self, reg: Register, call_instr: InstrRef
@@ -4029,7 +4049,6 @@ class NodeState:
                 assert offset is not None
                 if offset in self.subroutine_args:
                     expr = self.subroutine_args.pop(offset)
-                    self._force_deferred_pending_arg(expr)
                 else:
                     expr = ErrorExpr(f"Unable to find stack arg {offset:#x} in block")
             func_args.append(
@@ -4044,7 +4063,6 @@ class NodeState:
         # TODO: limit this based on abi.arg_slots. If the function type is known
         # and not variadic, this list should be empty.
         for _, arg in sorted(self.subroutine_args.items()):
-            self._force_deferred_pending_arg(arg)
             if fn_sig.params_known and not fn_sig.is_variadic:
                 func_args.append(CommentExpr.wrap(arg, prefix="extra?"))
             else:

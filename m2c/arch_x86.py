@@ -2867,8 +2867,9 @@ class X86Arch(Arch):
                     # helper called with both a float and a double would narrow
                     # the double argument to f32 and lose precision.
                     consumed = Register(f"f{fconsume}")
-                    s.subroutine_args[arg_base] = as_type(
-                        a.regs[consumed], Type.f64(), silent=True
+                    s.set_subroutine_arg(
+                        arg_base,
+                        as_type(a.regs[consumed], Type.f64(), silent=True),
                     )
                     del s.regs[consumed]
                 if arg_base is None:
@@ -2909,7 +2910,7 @@ class X86Arch(Arch):
             is_store = True
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.subroutine_args[arg_loc] = op_value(a, 1, 4)
+                s.set_subroutine_arg(arg_loc, op_value(a, 1, 4))
 
         elif base == "push":
             assert len(args) == 1
