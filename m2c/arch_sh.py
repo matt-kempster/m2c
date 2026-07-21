@@ -18,7 +18,14 @@ from .asm_instruction import (
     Writeback,
     get_jump_target,
 )
-from .asm_pattern import AsmMatch, Replacement, SimpleAsmPattern, make_pattern
+from .asm_pattern import (
+    AsmMatch,
+    AsmMatcher,
+    AsmPattern,
+    Replacement,
+    SimpleAsmPattern,
+    make_pattern,
+)
 from .instruction import (
     Instruction,
     InstructionMeta,
@@ -38,7 +45,6 @@ from .translate import (
     InstrArgs,
     Literal,
     NodeState,
-    StoreStmt,
     UnaryOp,
     as_s16,
     as_type,
@@ -101,6 +107,65 @@ class JumpTablePattern(SimpleAsmPattern):
                 AsmInstruction("nop", []),
             ],
             len(m.body),
+        )
+
+
+class Sh2AddrModeWritebackPattern(AsmPattern):
+    """Replace writebacks in mov address modes by separate add instructions."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        instr = matcher.input[matcher.index]
+        if not isinstance(instr, Instruction) or not instr.args:
+            return None
+        if instr.mnemonic not in ("mov.b", "mov.w", "mov.l"):
+            return None
+
+        if isinstance(instr.args[0], AsmAddressMode):
+            addr = instr.args[0]
+            addr_arg = 0
+        elif isinstance(instr.args[1], AsmAddressMode):
+            addr = instr.args[1]
+            addr_arg = 1
+        else:
+            return None
+
+        if addr.writeback is None:
+            return None
+        if addr.base == Sh2Arch.stack_pointer_reg:
+            return None
+
+        if addr.base in (instr.args[0], instr.args[1]):
+            raise DecompFailure(
+                "Writeback with base register also used as load/store value, "
+                f"for instruction: {instr}"
+            )
+
+        new_args = list(instr.args)
+        new_args[addr_arg] = replace(addr, writeback=None, addend=AsmLiteral(0))
+        if addr.writeback == Writeback.PRE:
+            return Replacement(
+                [
+                    AsmInstruction(
+                        "add",
+                        [
+                            AsmLiteral(-Sh2Arch.mov_stride(instr.mnemonic)),
+                            addr.base,
+                        ],
+                    ),
+                    AsmInstruction(instr.mnemonic, new_args),
+                ],
+                1,
+            )
+
+        return Replacement(
+            [
+                AsmInstruction(instr.mnemonic, new_args),
+                AsmInstruction(
+                    "add",
+                    [AsmLiteral(Sh2Arch.mov_stride(instr.mnemonic)), addr.base],
+                ),
+            ],
+            1,
         )
 
 
@@ -181,6 +246,22 @@ class Sh2Arch(Arch):
         ]
     )
 
+    @classmethod
+    def mov_type(cls, mnemonic: str) -> Type:
+        return {
+            "mov.b": Type.s8(),
+            "mov.w": Type.s16(),
+            "mov.l": Type.reg32(likely_float=False),
+        }[mnemonic]
+
+    @classmethod
+    def mov_stride(cls, mnemonic: str) -> int:
+        return {
+            "mov.b": 1,
+            "mov.w": 2,
+            "mov.l": 4,
+        }[mnemonic]
+
     aliased_regs: Dict[str, Register] = {}
 
     @classmethod
@@ -233,7 +314,7 @@ class Sh2Arch(Arch):
             else:
                 assert isinstance(args[0], AsmLiteral)
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), Literal(a.imm_value(0)))
-        elif mnemonic in ("mov.l", "mov.w"):
+        elif mnemonic in ("mov.b", "mov.l", "mov.w"):
             assert len(args) == 2
             if isinstance(args[0], Register):
                 assert isinstance(args[1], AsmAddressMode)
@@ -242,19 +323,22 @@ class Sh2Arch(Arch):
                 if args[1].writeback is None:
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                        store = make_store(a, Type.reg32(likely_float=False))
+                        store_type = cls.mov_type(mnemonic)
+                        store = make_store(a, store_type)
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
 
                 elif (
-                    args[1].writeback == Writeback.PRE and args[0] not in cls.saved_regs
+                    args[1].writeback == Writeback.PRE
+                    and args[1].base == cls.stack_pointer_reg
                 ):
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                        s.push_subroutine_arg(a.reg(0))
+                        source_raw = a.regs.get_raw(a.reg_ref(0))
+                        assert source_raw is not None
+                        if not s.stack_info.should_save(source_raw, None):
+                            s.push_subroutine_arg(a.reg(0))
 
-                else:
-                    # otherwise we have a writeback
                     assert args[1].base == cls.stack_pointer_reg
                     assert args[1].writeback == Writeback.PRE
             else:
@@ -263,22 +347,14 @@ class Sh2Arch(Arch):
                     inputs = [args[0].base]
                 outputs = [args[1]]
                 is_load = True
-                if not (
-                    isinstance(args[0], AsmAddressMode)
-                    and args[0].writeback is not None
-                ):
-                    load_type = (
-                        Type.s16()
-                        if mnemonic == "mov.w"
-                        else Type.reg32(likely_float=False)
-                    )
-                    eval_fn = lambda s, a: s.set_reg(
-                        a.reg_ref(1),
-                        handle_load(
-                            replace(a, raw_args=[a.raw_arg(1), a.raw_arg(0)]),
-                            type=load_type,
-                        ),
-                    )
+                load_type = cls.mov_type(mnemonic)
+                eval_fn = lambda s, a: s.set_reg(
+                    a.reg_ref(1),
+                    handle_load(
+                        replace(a, raw_args=[a.raw_arg(1), a.raw_arg(0)]),
+                        type=load_type,
+                    ),
+                )
         elif mnemonic == "sts.l":
             assert (
                 len(args) == 2
@@ -551,7 +627,11 @@ class Sh2Arch(Arch):
         ),
     }
 
-    asm_patterns = [DivisionHelperPattern(), JumpTablePattern()]
+    asm_patterns = [
+        DivisionHelperPattern(),
+        JumpTablePattern(),
+        Sh2AddrModeWritebackPattern(),
+    ]
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
