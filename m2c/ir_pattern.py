@@ -146,7 +146,6 @@ class IrMatch:
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
     ref_map: Dict[Reference, RefSet] = field(default_factory=dict)
-    renamed_registers: Dict[Register, Register] = field(default_factory=dict)
 
     @staticmethod
     def _is_symbolic_reg(arg: Register) -> bool:
@@ -189,8 +188,6 @@ class IrMatch:
             assert False, f"bad pattern expr: {pat}"
 
     def map_reg(self, key: Register) -> Register:
-        if key in self.renamed_registers:
-            return self.renamed_registers[key]
         if self._is_symbolic_reg(key):
             return self.symbolic_registers[key.register_name]
         return key
@@ -311,11 +308,8 @@ class TryIrMatch(IrMatch):
         return True
 
     def rename_reg(self, pat: Register, new_reg: Register) -> None:
-        if self._is_symbolic_reg(pat):
-            assert pat.register_name in self.symbolic_registers, pat.register_name
-            self.symbolic_registers[pat.register_name] = new_reg
-        else:
-            self.renamed_registers[pat] = new_reg
+        assert pat.register_name in self.symbolic_registers, pat.register_name
+        self.symbolic_registers[pat.register_name] = new_reg
 
 
 def simplify_ir_patterns(
