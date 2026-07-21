@@ -28,17 +28,18 @@ from .arch_arm import ArmArch, ArmGbaArch
 from .arch_mips import MipsArch, MipseeArch
 from .arch_ppc import PpcArch
 from .arch_x86 import X86Arch
+from .arch_sh import Sh2Arch
 
 
 @dataclass
 class DecompilationState:
     @dataclass
-    class Inner:
+    class Valid:
         flow_graph: FlowGraph
         info: Optional[FunctionInfo] = None
 
     function: Function
-    state: Union[Inner, Exception]
+    state: Union[Valid, Exception]
 
 
 def print_exception(exc: Exception, sanitize: bool) -> None:
@@ -102,6 +103,8 @@ def run(options: Options) -> int:
             arch = ArmArch()
     elif options.target.arch == Target.ArchEnum.X86:
         arch = X86Arch()
+    elif options.target.arch == Target.ArchEnum.SH2:
+        arch = Sh2Arch()
     else:
         raise ValueError(f"Invalid target arch: {options.target.arch}")
 
@@ -131,6 +134,10 @@ def run(options: Options) -> int:
     if not options.function_indexes_or_names:
         functions = list(all_functions.values())
     else:
+        functions_by_c_name = {
+            arch.c_symbol_name(name): function
+            for name, function in all_functions.items()
+        }
         functions = []
         for index_or_name in options.function_indexes_or_names:
             if isinstance(index_or_name, int):
@@ -143,10 +150,13 @@ def run(options: Options) -> int:
                     return 1
                 functions.append(list(all_functions.values())[index_or_name])
             else:
-                if index_or_name not in all_functions:
+                function = all_functions.get(index_or_name)
+                if function is None:
+                    function = functions_by_c_name.get(index_or_name)
+                if function is None:
                     print(f"Function {index_or_name} not found.", file=sys.stderr)
                     return 1
-                functions.append(all_functions[index_or_name])
+                functions.append(function)
 
     fmt = options.formatter()
     function_names = set(all_functions.keys())
@@ -179,7 +189,7 @@ def run(options: Options) -> int:
 
     decompilations: List[DecompilationState] = []
     for function in functions:
-        state: Union[DecompilationState.Inner, Exception]
+        state: Union[DecompilationState.Valid, Exception]
         try:
             narrow_func_call_outputs(function, global_info)
             flow_graph = build_flowgraph(
@@ -190,7 +200,7 @@ def run(options: Options) -> int:
                 print_warnings=options.debug,
                 debug_patterns=options.debug_patterns,
             )
-            state = DecompilationState.Inner(flow_graph)
+            state = DecompilationState.Valid(flow_graph)
         except Exception as e:
             # Store the exception for later, to preserve the order in the output
             state = e

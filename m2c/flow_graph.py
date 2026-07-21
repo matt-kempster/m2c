@@ -429,7 +429,7 @@ def build_blocks(
     branch_likely_counts: CounterPy38[str] = Counter()
     cond_return_target: Optional[str] = None
 
-    def process_mips(item: Union[Instruction, Label]) -> None:
+    def process_delay_slots(item: Union[Instruction, Label]) -> None:
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
@@ -563,7 +563,7 @@ def build_blocks(
             block_builder.new_block()
 
         for item in process_after:
-            process_mips(item)
+            process_delay_slots(item)
 
     def process_no_delay_slots(item: Union[Instruction, Label]) -> None:
         nonlocal cond_return_target
@@ -602,8 +602,8 @@ def build_blocks(
             block_builder.new_block()
 
     for item in body_iter:
-        if arch.arch == Target.ArchEnum.MIPS:
-            process_mips(item)
+        if arch.has_delay_slots:
+            process_delay_slots(item)
         else:
             process_no_delay_slots(item)
 
@@ -1667,8 +1667,10 @@ def build_flowgraph(
     debug_patterns: bool = False,
 ) -> FlowGraph:
     """Build and normalize the flow graph for a complete function."""
-    if arch.arch == Target.ArchEnum.MIPS:
+    if arch.has_delay_slots:
         verify_no_trailing_delay_slot(function)
+
+    if arch.arch == Target.ArchEnum.MIPS:
         function = minimize_labels(function, asm_data)
         function = normalize_gcc_likely_branches(function, arch)
         function = normalize_ido_likely_branches(function, arch)

@@ -1,0 +1,1 @@
+--context orig.c --target sh2-gcc-c --function test6 --function test7 --function test8

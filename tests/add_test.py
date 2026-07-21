@@ -26,6 +26,7 @@ class PathsToBinaries:
     MWCC_CC: Optional[Path]
     AGBCC: Optional[Path]
     MSVC_CL: Optional[Path]
+    SH_CC: Optional[Path]
     WINE: Optional[Path]
 
 
@@ -50,6 +51,10 @@ def get_environment_variables() -> PathsToBinaries:
     )
     AGBCC = load("AGBCC", "env variable AGBCC should point to an AGBCC cc binary")
     MSVC_CL = load("MSVC_CL", "env variable MSVC_CL should point to CL.EXE")
+    SH_CC = load(
+        "SH_CC",
+        "env variable SH_CC should point to SHGCC",
+    )
     WINE = None
     if (MWCC_CC and sys.platform.startswith("linux")) or (
         MSVC_CL
@@ -58,7 +63,12 @@ def get_environment_variables() -> PathsToBinaries:
     ):
         WINE = load("WINE", "env variable WINE should point to wine or wibo binary")
     return PathsToBinaries(
-        IDO_CC=IDO_CC, MWCC_CC=MWCC_CC, AGBCC=AGBCC, MSVC_CL=MSVC_CL, WINE=WINE
+        IDO_CC=IDO_CC,
+        MWCC_CC=MWCC_CC,
+        AGBCC=AGBCC,
+        MSVC_CL=MSVC_CL,
+        SH_CC=SH_CC,
+        WINE=WINE,
     )
 
 
@@ -173,12 +183,24 @@ def get_msvc_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     return []
 
 
+def get_sh_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
+    if paths.SH_CC is not None:
+        sh_gcc = Compiler(
+            name="sh-gcc",
+            cc_command=[str(paths.SH_CC)],
+        )
+        return [("sh2-gcc-o2", sh_gcc.with_cc_flags(["-O2"]))]
+    logger.warning("SH compiler not found; skipping")
+    return []
+
+
 def get_compilers(paths: PathsToBinaries) -> List[Tuple[str, Compiler]]:
     compilers: List[Tuple[str, Compiler]] = []
     compilers.extend(get_ido_compilers(paths))
     compilers.extend(get_mwcc_compilers(paths))
     compilers.extend(get_agbcc_compilers(paths))
     compilers.extend(get_msvc_compilers(paths))
+    compilers.extend(get_sh_compilers(paths))
     return compilers
 
 
@@ -221,12 +243,15 @@ def do_compilation_step(
 def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
     flags_str = " ".join(compiler.cc_command)
     logger.info(f"Compiling {in_file} to {out_file} using: {flags_str}")
-    if compiler.name == "agbcc":
+    if compiler.name in ("agbcc", "sh-gcc"):
         with NamedTemporaryFile(suffix=".i") as temp_i_file:
             subprocess.run(
                 ["cpp", "-P", "-o", temp_i_file.name, str(in_file)], check=True
             )
             do_compilation_step(str(out_file), temp_i_file.name, compiler)
+            if compiler.name == "sh-gcc":
+                lines = out_file.read_text().splitlines()
+                out_file.write_text("\n".join(line.rstrip() for line in lines) + "\n")
     else:
         with NamedTemporaryFile(suffix=".o") as temp_o_file:
             do_compilation_step(temp_o_file.name, str(in_file), compiler)
@@ -256,7 +281,7 @@ def add_test_from_file(orig_file: Path, compilers: List[Tuple[str, Compiler]]) -
         asm_file_path = test_dir / (asm_filename + ".s")
         try:
             run_compile(orig_file, asm_file_path, compiler)
-            if compiler.name in ("mwcc", "agbcc", "msvc"):
+            if compiler.name in ("mwcc", "agbcc", "msvc", "sh-gcc"):
                 # If the flags file doesn't exist, initialize it with the correct --target
                 flags_path = test_dir / (asm_filename + "-flags.txt")
                 if not flags_path.exists():
@@ -265,7 +290,10 @@ def add_test_from_file(orig_file: Path, compilers: List[Tuple[str, Compiler]]) -
                     elif compiler.name == "agbcc":
                         target = "gba"
                     else:
-                        target = "x86"
+                        if compiler.name == "msvc":
+                            target = "x86"
+                        else:
+                            target = "sh2-gcc-c"
                     flags_path.write_text(f"--target {target}\n")
         except Exception:
             logger.exception(f"Failed to compile {asm_file_path}")

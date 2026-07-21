@@ -55,6 +55,7 @@ from .asm_instruction import (
     Macro,
     Register,
     RegisterList,
+    Writeback,
     ZERO,
 )
 from .instruction import (
@@ -116,7 +117,7 @@ class Arch(ArchFlowGraph, ArchC):
         ...
 
     def is_likely_partial_offset(self, addend: int) -> bool:
-        return addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
+        return 0 <= addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
 
     def return_reg_always_meaningful(self, reg: Register) -> bool:
         """Whether the platform ABI guarantees that a value left in `reg` at
@@ -130,6 +131,10 @@ class Arch(ArchFlowGraph, ArchC):
 
     # These are defined here to avoid a circular import in flow_graph.py
     ir_patterns: List[IrPattern] = []
+
+    def c_symbol_name(self, asm_name: str) -> str:
+        """Convert an assembler symbol name to its C spelling."""
+        return asm_name
 
     def simplify_ir(self, flow_graph: FlowGraph) -> None:
         simplify_ir_patterns(self, flow_graph, self.ir_patterns)
@@ -204,6 +209,14 @@ def as_sintish(expr: Expression, *, silent: bool = False) -> Expression:
 
 def as_uintish(expr: Expression) -> Expression:
     return as_type(expr, Type.uintish(), False)
+
+
+def as_s16(expr: Expression) -> Expression:
+    return as_type(expr, Type.s16(), False)
+
+
+def as_u16(expr: Expression) -> Expression:
+    return as_type(expr, Type.u16(), False)
 
 
 def as_u32(expr: Expression) -> Expression:
@@ -447,12 +460,12 @@ class StackInfo:
     def saved_reg_symbol(self, reg_name: str) -> GlobalSymbol:
         sym_name = "saved_reg_" + reg_name
         type = self.unique_type_for("saved_reg", sym_name, Type.any_reg())
-        return GlobalSymbol(symbol_name=sym_name, type=type)
+        return GlobalSymbol(c_symbol_name=sym_name, type=type)
 
     def should_save(self, expr: Expression, offset: Optional[int]) -> bool:
         expr = early_unwrap(expr)
         if isinstance(expr, GlobalSymbol) and (
-            expr.symbol_name.startswith("saved_reg_") or expr.symbol_name == "sp"
+            expr.c_symbol_name.startswith("saved_reg_") or expr.c_symbol_name == "sp"
         ):
             return True
         if (
@@ -677,6 +690,33 @@ def get_stack_info(
             # pointers enabled; thus fp should be treated the same as sp.
             info.frame_pointer_reg = inst.args[0]
         elif (
+            arch_mnemonic == "sh2:mov"
+            and inst.args[0] == arch.stack_pointer_reg
+            and isinstance(inst.args[1], Register)
+            and inst.args[1] in arch.frame_pointer_regs
+        ):
+            info.frame_pointer_reg = inst.args[1]
+        elif (
+            arch_mnemonic == "sh2:add"
+            and isinstance(inst.args[0], AsmLiteral)
+            and inst.args[0].value < 0
+            and inst.args[1] == arch.stack_pointer_reg
+        ):
+            info.allocated_stack_size += -inst.args[0].value
+        elif (
+            arch_mnemonic in ("sh2:mov.l", "sh2:sts.l")
+            and isinstance(inst.args[0], Register)
+            and inst.args[0] in arch.saved_regs
+            and isinstance(inst.args[1], AsmAddressMode)
+            and inst.args[1].base == arch.stack_pointer_reg
+            and inst.args[1].writeback == Writeback.PRE
+        ):
+            info.allocated_stack_size += 4
+            info.callee_save_regs.add(inst.args[0])
+            callee_saved_offsets.append(-info.allocated_stack_size)
+            if inst.args[0] == arch.return_address_reg:
+                info.is_leaf = False
+        elif (
             arch_mnemonic
             in [
                 "mips:sw",
@@ -735,9 +775,9 @@ def get_stack_info(
             assert isinstance(inst.args[2], AsmLiteral)
             temp_reg_values[inst.args[0]] |= inst.args[2].value
 
-    if arch.arch == Target.ArchEnum.ARM:
-        # On ARM we don't know the stack size up front, so callee_saved_offsets needs
-        # to be adjusted after scanning the full first block.
+    if arch.arch in (Target.ArchEnum.ARM, Target.ArchEnum.SH2):
+        # On ARM and SH we don't know the stack size up front, so
+        # callee_saved_offsets needs to be adjusted after scanning the full first block.
         for i in range(len(callee_saved_offsets)):
             callee_saved_offsets[i] += info.allocated_stack_size
 
@@ -1684,7 +1724,7 @@ class ArrayAccess(Expression):
 
 @dataclass(eq=False)
 class GlobalSymbol(Expression):
-    symbol_name: str
+    c_symbol_name: str
     type: Type
     c_name: Optional[str] = None
     asm_data_entry: Optional[AsmDataEntry] = None
@@ -1720,7 +1760,7 @@ class GlobalSymbol(Expression):
         return ret
 
     def format(self, fmt: Formatter) -> str:
-        return self.c_name or self.symbol_name
+        return self.c_name or self.c_symbol_name
 
     def potential_array_dim(self, element_size: int) -> Tuple[int, int]:
         """
@@ -2591,7 +2631,7 @@ def visualize_flowgraph(
         attr_text = f" [{', '.join(attr_strs)}]" if attr_strs else ""
         lines.append(f"  {quote(source)} -> {quote(target)}{attr_text};")
     lines.append("}")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 def get_block_info_for_block(block: Block) -> BlockInfo:
@@ -3942,6 +3982,12 @@ class NodeState:
         self.prevent_later_function_calls()
         self.write_statement(store)
 
+    def push_subroutine_arg(self, source: Expression) -> None:
+        self.subroutine_args = {
+            offset + 4: arg for offset, arg in self.subroutine_args.items()
+        }
+        self.subroutine_args[0] = source
+
     def _reg_probably_meant_as_function_argument(
         self, reg: Register, call_instr: InstrRef
     ) -> bool:
@@ -4439,11 +4485,7 @@ class GlobalInfo:
         self.symbol_name_map = {}
         claimed: Set[str] = set()
         for name in sorted(self.asm_symbol_names):
-            candidate = name
-            if self.target.arch == Target.ArchEnum.X86:
-                if candidate.startswith("_"):
-                    candidate = candidate[1:]
-                candidate = re.sub(r"@\d+$", "", candidate)
+            candidate = self.arch.c_symbol_name(name)
             if candidate != name and candidate in self.asm_symbol_names:
                 candidate = name
             if candidate in claimed:
@@ -4459,11 +4501,7 @@ class GlobalInfo:
         # asm_symbol_names exhaustively, so this is rare). It uses a weaker
         # collision check than __post_init__'s deterministic sorted pass:
         # first-come-first-served against names claimed so far.
-        candidate = asm_name
-        if self.target.arch == Target.ArchEnum.X86:
-            if candidate.startswith("_"):
-                candidate = candidate[1:]
-            candidate = re.sub(r"@\d+$", "", candidate)
+        candidate = self.arch.c_symbol_name(asm_name)
         if candidate in self.symbol_name_map.values():
             candidate = asm_name
         self.symbol_name_map[asm_name] = candidate
@@ -4479,6 +4517,7 @@ class GlobalInfo:
         if sym_name in self.global_symbol_map:
             sym = self.global_symbol_map[sym_name]
         else:
+            c_sym_name = self.arch.c_symbol_name(sym_name)
             demangled_symbol: Optional[CxxSymbol] = None
             demangled_str: Optional[str] = None
             if (
@@ -4493,7 +4532,7 @@ class GlobalInfo:
                     demangled_str = str(demangled_symbol)
 
             sym = self.global_symbol_map[sym_name] = GlobalSymbol(
-                symbol_name=sym_name,
+                c_symbol_name=c_sym_name,
                 type=Type.any(),
                 c_name=self.c_symbol_name(sym_name),
                 asm_data_entry=self.asm_data_value(sym_name),
@@ -4590,17 +4629,16 @@ class GlobalInfo:
     def context_symbol_name(self, sym_name: str) -> str:
         """The name under which `sym_name` appears in the context, if any.
 
-        x86 asm symbols carry a leading-underscore platform prefix (`_array`
-        for C `array`); when the decorated name is not itself declared in the
-        context, fall back to the undecorated one."""
+        Some architectures use decorated asm names (e.g. x86's leading
+        underscore `_array` for C `array`); when the decorated name is not
+        itself declared in the context, fall back to the undecorated one."""
+        c_name = self.arch.c_symbol_name(sym_name)
         if (
-            self.target.arch == Target.ArchEnum.X86
-            and sym_name.startswith("_")
-            and not sym_name.startswith("__")
+            c_name != sym_name
             and sym_name not in self.typemap.functions
             and sym_name not in self.typemap.var_types
         ):
-            return sym_name[1:]
+            return c_name
         return sym_name
 
     def is_function_known_void(self, sym_name: str) -> bool:

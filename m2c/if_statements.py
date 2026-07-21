@@ -139,7 +139,7 @@ class SwitchStatement:
         elif self.jump.num_cases is None:
             comments.append("unable to parse jump table")
         elif self.jump.jump_table is not None and body_is_empty:
-            comments.append(f"jump table: {self.jump.jump_table.symbol_name}")
+            comments.append(f"jump table: {self.jump.jump_table.c_symbol_name}")
         head = f"switch ({format_expr(self.jump.control_expr, fmt)})"
         if body_is_empty:
             lines.append(fmt.with_comments(f"{head};", comments))

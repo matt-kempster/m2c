@@ -457,7 +457,7 @@ def _second_reg_source(expr: Expression) -> Optional[Expression]:
     if (
         isinstance(uw, FuncCall)
         and isinstance(uw.function, GlobalSymbol)
-        and uw.function.symbol_name == "SECOND_REG"
+        and uw.function.c_symbol_name == "SECOND_REG"
         and len(uw.args) == 1
     ):
         return uw.args[0]
@@ -2133,6 +2133,16 @@ class X86Arch(Arch):
     arch = Target.ArchEnum.X86
 
     re_comment = r"[#;].*"
+
+    def c_symbol_name(self, asm_name: str) -> str:
+        """Strip the leading underscore and trailing @N stdcall decoration
+        that MSVC/Windows compilers prepend/append to C symbols."""
+        candidate = asm_name
+        if candidate.startswith("_"):
+            candidate = candidate[1:]
+        candidate = re.sub(r"@\d+$", "", candidate)
+        return candidate
+
     supports_dollar_regs = False
     supports_intel_addressing = True
     # Numbered local code labels emitted by MSVC's COFF tooling.
@@ -3123,7 +3133,7 @@ class X86Arch(Arch):
                 assert (
                     isinstance(marker, FuncCall)
                     and isinstance(marker.function, GlobalSymbol)
-                    and marker.function.symbol_name == FNSTSW_MARKER
+                    and marker.function.c_symbol_name == FNSTSW_MARKER
                     and len(marker.args) == 2
                 )
                 op = FNSTSW_MASK_OPS[mask.value & 0xFF]

@@ -445,7 +445,9 @@ def eval_cpp_if(
             if value is None:
                 check_ifdef(tok, asm_state, warnings, directive)
                 return False
-            return bool(value)
+            if not isinstance(value, AsmLiteral):
+                raise DecompFailure(f"Unable to evaluate if condition: {value}")
+            return bool(value.value)
 
     def parse2() -> bool:
         nonlocal i
@@ -478,14 +480,13 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     curr_section = ".text"
     section_sizes: Dict[str, int] = defaultdict(int)
     warnings: List[str] = []
-    asm_state = AsmState(
-        defines={
-            # NULL is a non-standard but common asm macro that expands to 0
-            "NULL": 0,
-            **options.preproc_defines,
-        },
-        reg_formatter=reg_formatter,
-    )
+    preproc_defines: Dict[str, Optional[Argument]] = {
+        key: None if value is None else AsmLiteral(value)
+        for key, value in options.preproc_defines.items()
+    }
+    # NULL is a non-standard but common asm macro that expands to 0
+    preproc_defines["NULL"] = AsmLiteral(0)
+    asm_state = AsmState(defines=preproc_defines, reg_formatter=reg_formatter)
 
     # Each nested ifdef has an associated level which is 0 (active), 1 (inactive)
     # or 2 (inactive, but was active previously). Lines are only processed if the
@@ -496,7 +497,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     # https://stackoverflow.com/a/241506
     def re_comment_replacer(match: Match[str]) -> str:
         s = match.group(0)
-        if s[0] in "/#;@ \t":
+        if s[0] in "/#;@! \t":
             return " "
         else:
             return s
@@ -504,7 +505,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
     re_local_label = re.compile(
-        "loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
+        "loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|L[0-9]+$|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
     )
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
@@ -737,21 +738,17 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                                 thunk = decorated.group(1)[len("__imp_") :]
                                 stdcall_map[thunk] = arg_bytes
                         else:
-                            try:
-                                asm_state.defines[args[0]] = parse_int(args[1])
-                            except DecompFailure:
-                                # Disassembler exports contain .set directives
-                                # with non-integer values (label equates like
-                                # "table[4]+3"); ignore them.
-                                pass
+                            asm_state.defines[args[0]] = parse_arg(
+                                args[1], arch, asm_state
+                            )
                     else:
                         raise DecompFailure(f"Could not parse {directive}: {line}")
                 elif directive == "#define":
                     args = args_str.split(None, 1)
                     if len(args) == 2:
-                        asm_state.defines[args[0]] = parse_int(args[1])
+                        asm_state.defines[args[0]] = parse_arg(args[1], arch, asm_state)
                     else:
-                        asm_state.defines[args[0]] = 1
+                        asm_state.defines[args[0]] = AsmLiteral(1)
                 elif directive == ".syntax":
                     if args_str.strip() == "unified":
                         asm_state.is_unified = True

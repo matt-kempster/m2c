@@ -103,7 +103,8 @@ def deref(
         for base, addend in [(uw_var.left, uw_var.right), (uw_var.right, uw_var.left)]:
             arch = stack_info.global_info.arch
             if isinstance(addend, Literal) and (
-                arch.is_likely_partial_offset(addend.value) or offset == 0
+                arch.is_likely_partial_offset(addend.value)
+                or (offset == 0 and addend.value >= 0)
             ):
                 offset += addend.value
                 var = base
@@ -201,7 +202,7 @@ def fn_op(
         is_variadic=False,
     )
     return FuncCall(
-        function=GlobalSymbol(symbol_name=fn_name, type=Type.function(fn_sig)),
+        function=GlobalSymbol(c_symbol_name=fn_name, type=Type.function(fn_sig)),
         args=args,
         type=type,
         is_marker=marker,
@@ -501,33 +502,41 @@ def load_rodata_constant(
     if not isinstance(expr, StructAccess):
         return None
 
-    is_arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
+    arch = args.stack_info.global_info.arch.arch
+    is_arm = arch == Target.ArchEnum.ARM
+    is_sh = arch == Target.ArchEnum.SH2
     if is_arm and isinstance(args.raw_arg(raw_index), AsmAddressMode):
+        # For ARM, only allow constants loaded through `ldr pool`.
+        # Do allow non-zero offsets: they occur in raw agbcc output which
+        # we use for tests.
         return None
-    if not is_arm and (not type.is_likely_float() or expr.offset != 0):
+    if not is_arm and not is_sh and (not type.is_likely_float() or expr.offset != 0):
+        # Outside of ARM/SH, only allow float constants and offset 0.
         return None
 
     target = early_unwrap(expr.struct_var)
     if not isinstance(target, AddressOf) or not isinstance(target.expr, GlobalSymbol):
         return None
 
-    ent = args.stack_info.global_info.asm_data_value(target.expr.symbol_name)
+    ent = target.expr.asm_data_entry
     if ent is None or not ent.is_readonly:
         return None
     data = ent.data_at_offset(expr.offset, size)
     if data is None:
         return None
 
-    if isinstance(data, bytes) and size in (4, 8):
+    if isinstance(data, bytes) and size in (2, 4, 8):
         ent.used_as_literal = True
         endian = ">" if args.stack_info.global_info.target.is_big_endian() else "<"
-        fmt = "I" if size == 4 else "Q"
+        fmt = {2: "H", 4: "I", 8: "Q"}[size]
         val: int = struct.unpack(endian + fmt, data)[0]
+        if type.is_signed() and val & (1 << (size * 8 - 1)):
+            val -= 1 << (size * 8)
         if fixed:
             return Literal(value=val, type=type, type_is_fixed=True)
         return Literal(value=val, type=type)
 
-    if is_arm and ent.is_text and isinstance(data, AsmSymbolicData):
+    if (is_arm or is_sh) and ent.is_text and isinstance(data, AsmSymbolicData):
         assert output_reg is not None
         sym = data.data
         addend = 0
@@ -963,7 +972,7 @@ def fold_divmod(original_expr: BinaryOp) -> BinaryOp:
 def replace_clz_shift(expr: BinaryOp) -> BinaryOp:
     """
     Simplify an expression matching `CLZ(x) >> 5` into `x == 0`,
-    and further simplify `(a - b) == 0` into `a == b`.
+    and further simplify `(a - b) == 0` into `b == a`.
     """
     # Check that the outer expression is `>>`
     if expr.is_floating() or expr.op != ">>":
@@ -1005,11 +1014,12 @@ def replace_bitand(expr: BinaryOp) -> Expression:
     return expr
 
 
-def fold_mul_chains(expr: Expression) -> Expression:
+def fold_mul_chains(expr: Expression, *, allow_sll_chains: bool = False) -> Expression:
     """Simplify an expression involving +, -, * and << to a single multiplication,
     e.g. 4*x - x -> 3*x, or x<<2 -> x*4. This includes some logic for preventing
     folds of consecutive sll, and keeping multiplications by large powers of two
-    as bitshifts at the top layer."""
+    as bitshifts at the top layer. Set allow_sll_chains for architectures that
+    implement larger shifts as consecutive fixed-size shift instructions."""
 
     def fold(
         expr: Expression, toplevel: bool, allow_sll: bool
@@ -1018,14 +1028,14 @@ def fold_mul_chains(expr: Expression) -> Expression:
             if expr.op in ("<<", "*") and isinstance(expr.right, Literal):
                 lbase, lnum = fold(expr.left, False, (expr.op != "<<"))
                 rhs = expr.right.value
-                if expr.op == "<<" and allow_sll:
+                if expr.op == "<<" and (allow_sll or allow_sll_chains):
                     # At top level, keep left shifts, unless they are by such
                     # small numbers that they are easier to understand as
                     # multiplications (they compile to the same thing).
                     if toplevel and lnum == 1 and not (1 <= rhs <= 4):
                         return (expr, 1)
                     return (lbase, lnum << rhs)
-                if expr.op == "*" and (allow_sll or rhs % 2 != 0):
+                if expr.op == "*" and (allow_sll or allow_sll_chains or rhs % 2 != 0):
                     # If we don't allow << to be expanded into multiplication
                     # because the outer layer is already <<'ing, don't allow
                     # multiplication by even numbers either, because the power
@@ -1054,7 +1064,25 @@ def fold_mul_chains(expr: Expression) -> Expression:
     base, num = fold(expr, True, True)
     if num == 1:
         return expr
+    if allow_sll_chains and num > 16 and num & (num - 1) == 0:
+        return BinaryOp.int(base, "<<", Literal(num.bit_length() - 1))
     return BinaryOp.int(left=base, op="*", right=Literal(num))
+
+
+def fold_shift_right(expr: Expression, shift: int, *, signed: bool) -> Expression:
+    inner = early_unwrap_ints(expr)
+    if (
+        isinstance(inner, BinaryOp)
+        and inner.op == ">>"
+        and inner.type.is_signed() == signed
+        and isinstance(inner.right, Literal)
+        and inner.right.value + shift < 32
+    ):
+        expr = inner.left
+        shift += inner.right.value
+    if signed:
+        return BinaryOp.sint(expr, ">>", Literal(shift))
+    return BinaryOp.uint(expr, ">>", Literal(shift))
 
 
 def array_access_from_add(
@@ -1075,6 +1103,9 @@ def array_access_from_add(
     addend = expr.right
     if addend.type.is_pointer_or_array() and not base.type.is_pointer_or_array():
         base, addend = addend, base
+
+    if isinstance(addend, Literal):
+        return None
 
     uw_addend = early_unwrap(addend)
     addend_base, imm = split_imm_addend(addend)
@@ -1136,7 +1167,7 @@ def array_access_from_add(
             # Make up a struct with a tag name based on the symbol & struct size.
             # Although `scale = 8` could indicate an array of longs/doubles, it seems more
             # common to be an array of structs.
-            struct_name = f"_struct_{uw_base.expr.symbol_name}_0x{scale:X}"
+            struct_name = f"_struct_{uw_base.expr.c_symbol_name}_0x{scale:X}"
             struct = typepool.get_struct_by_tag_name(
                 struct_name, stack_info.global_info.typemap
             )

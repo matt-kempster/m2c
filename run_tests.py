@@ -141,7 +141,6 @@ def create_e2e_tests(
         output_file = asm_file.parent.joinpath(asm_file.stem + "-out.c")
         flags_path = asm_file.parent.joinpath(asm_file.stem + "-flags.txt")
         name = f"e2e:{asm_file.relative_to(e2e_top_dir)}"
-
         cases.append(
             TestCase(
                 name=name,

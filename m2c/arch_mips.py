@@ -270,10 +270,13 @@ class DivP2Pattern1(SimpleAsmPattern):
         return Replacement([div], len(m.body) - 1)
 
 
-class DivP2Pattern2(SimpleAsmPattern):
-    """Division by power of two where input reg = output reg."""
+class DivP2Pattern2(AsmPattern):
+    """Division by power of two where input reg = output reg. Pattern 1 is used
+    by IDO, while patterns 2 and 3 have been observed for GCC (although GCC is
+    also able to reorder the last instruction so our detection is not as
+    effective as it should be)."""
 
-    pattern = make_pattern(
+    pattern1 = make_pattern(
         "bgez $x, .A",
         "move $at, $x",
         "addiu $at, $x, M",
@@ -281,12 +284,34 @@ class DivP2Pattern2(SimpleAsmPattern):
         "sra $x, $at, N",
     )
 
-    def replace(self, m: AsmMatch) -> Replacement:
-        shift = m.literals["N"] & 0x1F
-        div = AsmInstruction(
-            "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2**shift)]
-        )
-        return Replacement([div], len(m.body))
+    pattern2 = make_pattern(
+        "bgez $x, .A",
+        "nop",
+        "addiu $x, $x, M",
+        ".A:",
+        "sra $x, $x, N",
+    )
+
+    pattern3 = make_pattern(
+        "bltzl $x, .A",
+        "addiu $x, $x, M",
+        ".A:",
+        "sra $x, $x, N",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        for pattern in (self.pattern1, self.pattern2, self.pattern3):
+            m = matcher.try_match(pattern)
+            if not m:
+                continue
+            shift = m.literals["N"] & 0x1F
+            if m.literals["M"] != 2**shift - 1:
+                continue
+            div = AsmInstruction(
+                "div.fictive", [m.regs["x"], m.regs["x"], AsmLiteral(2**shift)]
+            )
+            return Replacement([div], len(m.body))
+        return None
 
 
 class Div2S16Pattern(SimpleAsmPattern):
@@ -747,6 +772,7 @@ class MipsArch(Arch):
 
     re_comment = r"[#;].*"
     supports_dollar_regs = True
+    has_delay_slots = True
 
     home_space_size = 0x10
 

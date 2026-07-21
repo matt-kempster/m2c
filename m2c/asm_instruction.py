@@ -186,6 +186,8 @@ class ArchAsmParsing(abc.ABC):
     all_regs: List[Register]
     aliased_regs: Dict[str, Register]
     supports_dollar_regs: bool
+    supports_at_addressing = False
+    has_delay_slots = False
 
     # Capability hook: when True, `[...]` operands are parsed as Intel-syntax
     # memory operands (`[base + index*scale + disp]`, `[symbol]`) instead of
@@ -218,6 +220,7 @@ class NaiveParsingArch(ArchAsmParsing):
     all_regs: List[Register] = []
     aliased_regs: Dict[str, Register] = {}
     supports_dollar_regs = True
+    supports_at_addressing = True
 
     def normalize_instruction(
         self, instr: AsmInstruction, asm_state: AsmState
@@ -254,7 +257,7 @@ class RegFormatter:
 @dataclass
 class AsmState:
     # None means "explicitly undefined"
-    defines: Dict[str, Optional[int]] = field(default_factory=dict)
+    defines: Dict[str, Optional[Argument]] = field(default_factory=dict)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
     is_thumb: bool = False
     is_unified: bool = False
@@ -294,7 +297,7 @@ def constant_fold(arg: Argument, asm_state: AsmState) -> Argument:
     if isinstance(arg, AsmGlobalSymbol):
         value = asm_state.defines.get(arg.symbol_name)
         if value is not None:
-            return AsmLiteral(value)
+            return constant_fold(value, asm_state)
     if not isinstance(arg, BinOp):
         return arg
     lhs = constant_fold(arg.lhs, asm_state)
@@ -410,6 +413,14 @@ def parse_arg_elems(
         g = arg_elems.pop(0)
         assert g in n, f"Expected one of {list(n)}, got {g} (rest: {arg_elems})"
         return g
+
+    def parse_sh_register() -> Register:
+        word = parse_word(arg_elems)
+        if word.startswith("$") and arch.supports_dollar_regs:
+            return asm_state.reg_formatter.parse_and_store(word[1:], arch)
+        reg = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
+        assert isinstance(reg, Register)
+        return reg
 
     while True:
         consume_ws()
@@ -670,15 +681,43 @@ def parse_arg_elems(
                 else:
                     value = BinOp(op, value, rhs)
         elif tok == "@":
-            # A relocation (e.g. (...)@ha or (...)@l).
-            if not top_level:
-                # Parse a+b@l as (a+b)@l, not a+(b@l)
-                break
-            arg_elems.pop(0)
-            reloc_name = parse_word(arg_elems)
-            assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
-            assert value
-            value = Macro(reloc_name, value)
+            if value is None and arch.supports_at_addressing:
+                # SuperH indirect addressing: @Rn, @-Rn, @Rn+, and @(disp,Rn).
+                expect("@")
+                if arg_elems and arg_elems[0] == "(":
+                    expect("(")
+                    addend = parse_arg_elems(
+                        arg_elems,
+                        arch,
+                        asm_state,
+                        top_level=False,
+                    )
+                    expect(",")
+                    consume_ws()
+                    base = parse_sh_register()
+                    expect(")")
+                    value = AsmAddressMode(base, addend, None)
+                    continue
+                sh_writeback: Optional[Writeback] = None
+                if arg_elems and arg_elems[0] == "-":
+                    expect("-")
+                    sh_writeback = Writeback.PRE
+                base = parse_sh_register()
+                if arg_elems and arg_elems[0] == "+":
+                    assert sh_writeback is None
+                    expect("+")
+                    sh_writeback = Writeback.POST
+                value = AsmAddressMode(base, AsmLiteral(0), sh_writeback)
+            else:
+                # A relocation (e.g. (...)@ha or (...)@l).
+                if not top_level:
+                    # Parse a+b@l as (a+b)@l, not a+(b@l)
+                    break
+                arg_elems.pop(0)
+                reloc_name = parse_word(arg_elems)
+                assert reloc_name in ("h", "ha", "l", "sda2", "sda21")
+                assert value
+                value = Macro(reloc_name, value)
         elif tok == "=":
             # ARM reference to symbol
             assert top_level

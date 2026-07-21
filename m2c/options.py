@@ -43,6 +43,7 @@ class Target:
         ARM = "arm"
         GBA = "gba"
         X86 = "x86"
+        SH2 = "sh2"
 
         @property
         def arch(self) -> Target.ArchEnum:
@@ -60,6 +61,8 @@ class Target:
                 return Target.ArchEnum.ARM
             elif self == Target.PlatformEnum.X86:
                 return Target.ArchEnum.X86
+            elif self == Target.PlatformEnum.SH2:
+                return Target.ArchEnum.SH2
             else:
                 assert_never(self)
 
@@ -68,6 +71,7 @@ class Target:
         PPC = "ppc"
         ARM = "arm"
         X86 = "x86"
+        SH2 = "sh2"
 
     class EndianEnum(ChoicesEnum):
         LITTLE = "little"
@@ -121,6 +125,8 @@ class Target:
             elif arch == Target.ArchEnum.X86:
                 compiler = Target.CompilerEnum.MSVC
             elif arch == Target.ArchEnum.ARM:
+                compiler = Target.CompilerEnum.GCC
+            elif arch == Target.ArchEnum.SH2:
                 compiler = Target.CompilerEnum.GCC
             else:
                 compiler = Target.CompilerEnum.IDO
