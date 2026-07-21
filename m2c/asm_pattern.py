@@ -3,7 +3,6 @@ import abc
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import (
-    TYPE_CHECKING,
     Dict,
     List,
     Optional,
@@ -15,6 +14,7 @@ from typing import (
 )
 
 from .asm_file import AsmData, Label
+from .c_types import TypeMap
 from .asm_instruction import (
     ARM_BARREL_SHIFTER_OPS,
     Argument,
@@ -36,10 +36,6 @@ from .instruction import (
     Instruction,
     InstructionMeta,
 )
-
-if TYPE_CHECKING:
-    from .c_types import TypeMap
-
 
 BodyPart = Union[Instruction, Label]
 ReplacementPart = Union[AsmInstruction, Instruction, Label]
@@ -254,7 +250,7 @@ class AsmMatcher:
     asm_data: AsmData
     input: List[BodyPart]
     labels: Set[str]
-    typemap: Optional[TypeMap] = None
+    typemap: TypeMap
     output: List[BodyPart] = field(default_factory=list)
     index: int = 0
 
@@ -327,7 +323,7 @@ def simplify_patterns(
     asm_data: AsmData,
     arch: ArchAsm,
     *,
-    typemap: Optional[TypeMap] = None,
+    typemap: TypeMap,
     debug_patterns: bool,
 ) -> List[BodyPart]:
     """Detect and simplify asm standard patterns emitted by known compilers. This is

@@ -3627,8 +3627,8 @@ class NodeState:
     stack_info: StackInfo = field(repr=False)
     regs: RegInfo = field(repr=False)
 
-    local_var_writes: Dict[LocalVar, Tuple[Optional[Register], Expression, bool]] = (
-        field(default_factory=dict)
+    local_var_writes: Dict[LocalVar, Tuple[Register, Expression, bool]] = field(
+        default_factory=dict
     )
     subroutine_args: Dict[int, PendingArg] = field(default_factory=dict)
     in_pattern: bool = False
@@ -3933,7 +3933,10 @@ class NodeState:
             # When preserving values on the stack across function calls,
             # ignore the type of the stack variable. The same stack slot
             # might be used to preserve values of different types.
-            self.local_var_writes[dest] = (reg, raw_value, False)
+            if reg is None:
+                self.local_var_writes.pop(dest, None)
+            else:
+                self.local_var_writes[dest] = (reg, raw_value, False)
 
         if (
             isinstance(dest, (LocalVar, PassedInArg))

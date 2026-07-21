@@ -1033,7 +1033,6 @@ class Type:
             return Type.ptr(Type.ctype(real_ctype.type, typemap, typepool))
         if isinstance(real_ctype, ca.FuncDecl):
             fn = parse_function(real_ctype)
-            assert fn is not None
             fn_sig = FunctionSignature(
                 return_type=Type.void(),
                 is_variadic=fn.is_variadic,

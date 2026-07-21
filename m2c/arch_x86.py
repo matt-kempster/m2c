@@ -840,11 +840,7 @@ class X86RewritePattern(AsmPattern):
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         if matcher.index != 0:
             return None
-        context_facts = (
-            compute_x86_context_facts(matcher.typemap)
-            if matcher.typemap is not None
-            else EMPTY_X86_CONTEXT_FACTS
-        )
+        context_facts = compute_x86_context_facts(matcher.typemap)
         try:
             new_body = rewrite_stack_ops(
                 matcher.input,
@@ -2127,9 +2123,6 @@ class X86FinstswWPattern(X86FnstswPattern):
 class X86ContextFacts:
     stdcall_arg_bytes: Mapping[str, int]
     fpu_call_deltas: Mapping[str, int]
-
-
-EMPTY_X86_CONTEXT_FACTS = X86ContextFacts(MappingProxyType({}), MappingProxyType({}))
 
 
 def _ctype_is_float(ret_type: CType, typemap: TypeMap) -> bool:

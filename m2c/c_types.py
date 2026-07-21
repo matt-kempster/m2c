@@ -322,11 +322,16 @@ def is_unk_type(type: CType, typemap: TypeMap) -> bool:
             return False
 
 
-def parse_function(
-    fn: CType, gcc_attributes: Optional[List[ca.GccAttribute]] = None
-) -> Optional[Function]:
-    if not isinstance(fn, FuncDecl):
-        return None
+def parse_function_decl(decl: ca.Decl) -> Function:
+    assert isinstance(decl.type, FuncDecl)
+    return _parse_function(decl.type, decl.gcc_attributes)
+
+
+def parse_function(fn: FuncDecl) -> Function:
+    return _parse_function(fn, [])
+
+
+def _parse_function(fn: FuncDecl, gcc_attributes: List[ca.GccAttribute]) -> Function:
     params: List[Param] = []
     is_variadic = False
     has_void = False
@@ -356,7 +361,7 @@ def parse_function(
         ret_type=ret_type,
         params=maybe_params,
         is_variadic=is_variadic,
-        is_stdcall=has_stdcall_attr(gcc_attributes or []),
+        is_stdcall=has_stdcall_attr(gcc_attributes),
     )
 
 
@@ -913,15 +918,11 @@ def _build_typemap(
                     typemap.struct_typedefs[item.type.type] = typedef
             if isinstance(item, ca.FuncDef):
                 assert item.decl.name is not None, "cannot define anonymous function"
-                fn = parse_function(
-                    type_of_var_decl(item.decl), item.decl.gcc_attributes
-                )
-                assert fn is not None
+                fn = parse_function_decl(item.decl)
                 typemap.functions[item.decl.name] = fn
             if isinstance(item, ca.Decl) and isinstance(item.type, FuncDecl):
                 assert item.name is not None, "cannot define anonymous function"
-                fn = parse_function(item.type, item.gcc_attributes)
-                assert fn is not None
+                fn = parse_function_decl(item)
                 typemap.functions[item.name] = fn
 
         cur_pack = 0
