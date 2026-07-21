@@ -192,9 +192,7 @@ def split_imm_addend(expr: Expression) -> Tuple[Expression, int]:
     return expr, 0
 
 
-def fn_op(
-    fn_name: str, args: List[Expression], type: Type, *, marker: bool = False
-) -> FuncCall:
+def fn_op(fn_name: str, args: List[Expression], type: Type) -> FuncCall:
     fn_sig = FunctionSignature(
         return_type=type,
         params=[FunctionParam(type=arg.type) for arg in args],
@@ -205,7 +203,6 @@ def fn_op(
         function=GlobalSymbol(c_symbol_name=fn_name, type=Type.function(fn_sig)),
         args=args,
         type=type,
-        is_marker=marker,
     )
 
 

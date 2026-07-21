@@ -662,7 +662,7 @@ class TestX86FnstswPattern(unittest.TestCase):
     @staticmethod
     def base_chain() -> List[Tuple[str, List[Argument]]]:
         return [
-            ("fcomp", [Register("f0"), Register("f1")]),
+            ("fcmp.fictive", [Register("f0"), Register("f1")]),
             ("fnstsw", [Register("eax")]),
             (
                 "extract_high_byte.fictive",
@@ -680,10 +680,10 @@ class TestX86FnstswPattern(unittest.TestCase):
         instrs = self.simplify(parts)
 
         self.assertEqual(
-            [instr.mnemonic for instr in instrs].count("fnstsw_test.fictive"), 1
+            [instr.mnemonic for instr in instrs].count("fcmp_test.fictive"), 1
         )
         self.assertNotIn("extract_high_byte.fictive", [i.mnemonic for i in instrs])
-        self.assertEqual([i.mnemonic for i in instrs].count("nop"), 2)
+        self.assertEqual([i.mnemonic for i in instrs].count("nop"), 3)
 
     def test_fnstsw_pattern_ignores_unrelated_byte_test(self) -> None:
         parts = self.base_chain()
@@ -693,7 +693,7 @@ class TestX86FnstswPattern(unittest.TestCase):
         instrs = self.simplify(parts)
 
         self.assertEqual(
-            [instr.mnemonic for instr in instrs].count("fnstsw_test.fictive"), 1
+            [instr.mnemonic for instr in instrs].count("fcmp_test.fictive"), 1
         )
         unrelated = [
             instr
@@ -712,7 +712,7 @@ class TestX86FnstswPattern(unittest.TestCase):
         fnstsw = [instr for instr in instrs if instr.mnemonic == "fnstsw"]
         self.assertEqual(len(fnstsw), 1)
         self.assertTrue(fnstsw[0].in_pattern)
-        self.assertIn("fnstsw_test.fictive", [instr.mnemonic for instr in instrs])
+        self.assertIn("fcmp_test.fictive", [instr.mnemonic for instr in instrs])
 
     def test_fnstsw_pattern_requires_x87_comparison(self) -> None:
         parts = self.base_chain()[1:]
@@ -720,7 +720,7 @@ class TestX86FnstswPattern(unittest.TestCase):
 
         instrs = self.simplify(parts)
 
-        self.assertNotIn("fnstsw_test.fictive", [instr.mnemonic for instr in instrs])
+        self.assertNotIn("fcmp_test.fictive", [instr.mnemonic for instr in instrs])
         self.assertIn("test.b", [instr.mnemonic for instr in instrs])
 
     def test_fnstsw_pattern_rejects_clobbered_link_register(self) -> None:
@@ -744,7 +744,7 @@ class TestX86FnstswPattern(unittest.TestCase):
                     instrs = self.simplify(parts)
 
                 self.assertNotIn(
-                    "fnstsw_test.fictive", [instr.mnemonic for instr in instrs]
+                    "fcmp_test.fictive", [instr.mnemonic for instr in instrs]
                 )
                 self.assertIn("test.b", [instr.mnemonic for instr in instrs])
                 if name.startswith("fsw"):
@@ -756,7 +756,7 @@ class TestX86FnstswPattern(unittest.TestCase):
 
         instrs = self.simplify(parts)
 
-        self.assertNotIn("fnstsw_test.fictive", [instr.mnemonic for instr in instrs])
+        self.assertNotIn("fcmp_test.fictive", [instr.mnemonic for instr in instrs])
         self.assertIn("test.b", [instr.mnemonic for instr in instrs])
 
     def test_fnstsw_pattern_rejects_merged_status_words(self) -> None:
@@ -768,10 +768,10 @@ class TestX86FnstswPattern(unittest.TestCase):
 
         add("test", [Register("ecx"), Register("ecx")])
         add("jz", [AsmGlobalSymbol(".Lright")])
-        add("fcomp", [Register("f0"), Register("f1")])
+        add("fcmp.fictive", [Register("f0"), Register("f1")])
         add("jmp", [AsmGlobalSymbol(".Ljoin")])
         function.new_label(".Lright")
-        add("fcomp", [Register("f0"), Register("f2")])
+        add("fcmp.fictive", [Register("f0"), Register("f2")])
         function.new_label(".Ljoin")
         add("fnstsw", [Register("eax")])
         add(
@@ -788,7 +788,7 @@ class TestX86FnstswPattern(unittest.TestCase):
             for ref in node.block.instruction_refs
         ]
 
-        self.assertNotIn("fnstsw_test.fictive", mnemonics)
+        self.assertNotIn("fcmp_test.fictive", mnemonics)
         self.assertIn("test.b", mnemonics)
 
     def test_forced_marker_captures_each_invalidated_memory_operand(self) -> None:
@@ -817,10 +817,10 @@ test:
 
         text = output.getvalue()
         lhs_capture = "temp_f0 = lhs;"
-        rhs_capture = "temp_marker_arg = rhs;"
+        rhs_capture = "temp_fcmp_rhs = rhs;"
         lhs_store = "lhs = 0.0f;"
         rhs_store = "rhs = 0.0f;"
-        comparison = "temp_f0 > temp_marker_arg"
+        comparison = "temp_f0 > temp_fcmp_rhs"
         for fragment in (lhs_capture, rhs_capture, lhs_store, rhs_store, comparison):
             self.assertIn(fragment, text)
         self.assertLess(text.index(lhs_capture), text.index(lhs_store))

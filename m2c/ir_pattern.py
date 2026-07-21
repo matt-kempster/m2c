@@ -18,6 +18,7 @@ from .flow_graph import (
 )
 from .asm_file import AsmData, Function
 from .asm_instruction import (
+    ArchAsmParsing,
     Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
@@ -28,13 +29,13 @@ from .asm_instruction import (
     JumpTarget,
     Register,
     RegisterList,
+    parse_asm_instruction,
 )
 from .instruction import (
     Instruction,
     InstructionMeta,
     Location,
     StackLocation,
-    parse_instruction,
 )
 
 
@@ -63,9 +64,13 @@ class IrPattern(abc.ABC):
     def compile(self, arch: ArchFlowGraph) -> CompiledIrPattern:
         missing_meta = InstructionMeta.missing()
         asm_state = AsmState()
-        replacement_instr = parse_instruction(
-            self.replacement, missing_meta, arch, asm_state
-        )
+        pattern_arch = PatternParsingArch(arch)
+
+        def parse_pattern_instruction(line: str) -> Instruction:
+            asm = parse_asm_instruction(line, pattern_arch, asm_state)
+            return arch.parse(asm.mnemonic, asm.args, missing_meta)
+
+        replacement_instr = parse_pattern_instruction(self.replacement)
 
         name = f"__pattern_{self.__class__.__name__}"
         func = Function(name=name)
@@ -88,7 +93,7 @@ class IrPattern(abc.ABC):
                 )
             )
         for part in self.parts:
-            func.new_instruction(parse_instruction(part, missing_meta, arch, asm_state))
+            func.new_instruction(parse_pattern_instruction(part))
 
         asm_data = AsmData()
         flow_graph = build_flowgraph_fragment(func, asm_data, arch)
@@ -97,6 +102,26 @@ class IrPattern(abc.ABC):
             flow_graph=flow_graph,
             replacement_instr=replacement_instr,
         )
+
+
+class PatternParsingArch(ArchAsmParsing):
+    """Parse symbolic `$register` names only while compiling an IR pattern."""
+
+    supports_dollar_regs = True
+
+    def __init__(self, arch: ArchFlowGraph) -> None:
+        self.arch = arch
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.arch, name)
+
+    def preprocess_instruction(self, mnemonic: str, args: str) -> tuple[str, str]:
+        return self.arch.preprocess_instruction(mnemonic, args)
+
+    def normalize_instruction(
+        self, instr: AsmInstruction, asm_state: AsmState
+    ) -> AsmInstruction:
+        return self.arch.normalize_instruction(instr, asm_state)
 
 
 @dataclass(eq=False, frozen=True)

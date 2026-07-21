@@ -1834,10 +1834,6 @@ def set_x86_flags_from_add(
     s.set_reg(Register("gt"), BinaryOp.scmp(sval, ">", Literal(0)))
 
 
-# Name of the symbolic x87 status-word marker (fn_op) threaded from an
-# fcom-family compare through fnstsw ax to the test-ah idiom. Carries the
-# compare's two operands as its arguments.
-FNSTSW_MARKER = "M2C_FNSTSW"
 X87_COMPARE_INSTRS = {
     "fcom",
     "fcomp",
@@ -1849,6 +1845,9 @@ X87_COMPARE_INSTRS = {
     "ficom",
     "ficomp",
 }
+FCMP_LHS = Register.fictive("fcmp_lhs")
+FCMP_RHS = Register.fictive("fcmp_rhs")
+FLAT_FPU_REGS = {Register(f"f{i}") for i in range(8)}
 
 
 def fpu_compare_condition(lhs: Expression, rhs: Expression, op: str) -> Condition:
@@ -2048,35 +2047,80 @@ class X86HighBytePattern(AsmPattern):
         return Replacement(new_body, 1)
 
 
+class X86FcmpPattern(AsmPattern):
+    """Capture a flattened x87 comparison's operands at the compare site."""
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        part = matcher.input[matcher.index]
+        if not isinstance(part, Instruction):
+            return None
+        base, width = split_width_suffix(part.mnemonic)
+        if base not in X87_COMPARE_INSTRS or not part.args:
+            return None
+        top = part.args[0]
+        if not isinstance(top, Register) or top not in FLAT_FPU_REGS:
+            # Unreachable raw st(i) forms deliberately pass through unchanged.
+            return None
+
+        if base == "ftst":
+            assert len(part.args) == 1
+            rhs: Argument = AsmLiteral(0)
+        else:
+            assert len(part.args) == 2
+            rhs = part.args[1]
+
+        is_int = base in ("ficom", "ficomp")
+        suffix = WIDTH_SUFFIXES[width]
+        rhs_capture = (
+            "capture.int.fictive" + suffix
+            if is_int
+            else "capture.float.fictive"
+            + (suffix if not isinstance(rhs, Register) else "")
+        )
+        compare = ("ficmp.fictive" if is_int else "fcmp.fictive") + suffix
+
+        new_body: List[ReplacementPart] = [
+            AsmInstruction("capture.float.fictive", [FCMP_LHS, top]),
+            AsmInstruction(rhs_capture, [FCMP_RHS, rhs]),
+            AsmInstruction(compare, [FCMP_LHS, FCMP_RHS]),
+        ]
+        if base in ("fcomp", "fucomp", "ficomp"):
+            new_body.append(AsmInstruction("fpop", [top]))
+        elif base in ("fcompp", "fucompp"):
+            rhs_reg = part.args[1]
+            assert isinstance(rhs_reg, Register)
+            new_body.extend(
+                [AsmInstruction("fpop", [top]), AsmInstruction("fpop", [rhs_reg])]
+            )
+        return Replacement(new_body, 1)
+
+
 class X86FnstswPattern(IrPattern):
     """Fold the fnstsw/test-ah status-word chain into its float comparison."""
 
-    replacement = "fnstsw_test.fictive fsw, K"
+    replacement = "fcmp_test.fictive $a, $b, K"
     parts = [
-        "fnstsw v",
-        "extract_high_byte.fictive z, v",
-        "test.b z, K",
+        "fcmp.fictive $a, $b",
+        "fnstsw $c",
+        "extract_high_byte.fictive $d, $c",
+        "test.b $d, K",
     ]
 
     def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
         mask = m.symbolic_args["K"]
-        if not (isinstance(mask, AsmLiteral) and mask.value & 0xFF in FNSTSW_MASK_OPS):
-            return False
+        return isinstance(mask, AsmLiteral) and (mask.value & 0xFF in FNSTSW_MASK_OPS)
 
-        marker_source = next(
-            (
-                m.try_map_ref(ref)
-                for ref in m.ref_map
-                if isinstance(ref, InstrRef)
-                and ref.instruction.mnemonic == "in.fictive"
-            ),
-            None,
-        )
-        return (
-            isinstance(marker_source, InstrRef)
-            and split_width_suffix(marker_source.instruction.mnemonic)[0]
-            in X87_COMPARE_INSTRS
-        )
+
+class X86FnstswQPattern(X86FnstswPattern):
+    parts = ["fcmp.fictive.q $a, $b", *X86FnstswPattern.parts[1:]]
+
+
+class X86FinstswPattern(X86FnstswPattern):
+    parts = ["ficmp.fictive $a, $b", *X86FnstswPattern.parts[1:]]
+
+
+class X86FinstswWPattern(X86FnstswPattern):
+    parts = ["ficmp.fictive.w $a, $b", *X86FnstswPattern.parts[1:]]
 
 
 @dataclass(frozen=True)
@@ -2204,8 +2248,14 @@ class X86Arch(Arch):
         X86SehEpiloguePattern(),
         X86RewritePattern(),
         X86HighBytePattern(),
+        X86FcmpPattern(),
     ]
-    ir_patterns = [X86FnstswPattern()]
+    ir_patterns = [
+        X86FnstswPattern(),
+        X86FnstswQPattern(),
+        X86FinstswPattern(),
+        X86FinstswWPattern(),
+    ]
 
     def return_reg_always_meaningful(self, reg: Register) -> bool:
         # The x87 ABI requires the register stack to be empty at every
@@ -2506,6 +2556,10 @@ class X86Arch(Arch):
             "ftst",
             "ficom",
             "ficomp",
+            "capture.float.fictive",
+            "capture.int.fictive",
+            "fcmp.fictive",
+            "ficmp.fictive",
             "frndint",
             "fscale",
             "f2xm1",
@@ -3122,26 +3176,19 @@ class X86Arch(Arch):
                     set_unary_flags(val)
                     write_dst(s, a, val, width_type(width))
 
-        elif base == "fnstsw_test.fictive":
-            assert len(args) == 2
-            status_reg, mask = args
-            assert isinstance(status_reg, Register)
+        elif base == "fcmp_test.fictive":
+            assert len(args) == 3
+            lhs_reg, rhs_reg, mask = args
+            assert isinstance(lhs_reg, Register) and isinstance(rhs_reg, Register)
             assert isinstance(mask, (AsmLiteral, AsmGlobalSymbol))
-            inputs = [status_reg]
+            inputs = [lhs_reg, rhs_reg]
             outputs = list(cls.flag_regs)
             is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 assert isinstance(mask, AsmLiteral)
-                marker = early_unwrap(a.regs[status_reg])
-                assert (
-                    isinstance(marker, FuncCall)
-                    and isinstance(marker.function, GlobalSymbol)
-                    and marker.function.c_symbol_name == FNSTSW_MARKER
-                    and len(marker.args) == 2
-                )
                 op = FNSTSW_MASK_OPS[mask.value & 0xFF]
-                cond = fpu_compare_condition(marker.args[0], marker.args[1], op)
+                cond = fpu_compare_condition(a.regs[lhs_reg], a.regs[rhs_reg], op)
                 for flag in cls.flag_regs:
                     s.set_reg(flag, cond)
 
@@ -3430,7 +3477,15 @@ class X86Arch(Arch):
         elif base in cls.instrs_ignore:
             is_effectful = False
             eval_fn = None
-        elif base in ("fnstsw", "fstsw", "fldcw", "fstcw", "fnstcw") or (
+        elif base in (
+            "fnstsw",
+            "fstsw",
+            "fldcw",
+            "fstcw",
+            "fnstcw",
+            "fcmp.fictive",
+            "ficmp.fictive",
+        ) or (
             base in cls.instrs_fpu
             and any(isinstance(a, Register) and a.is_float() for a in args)
         ):
@@ -3662,55 +3717,58 @@ class X86Arch(Arch):
                 s.set_reg(ra, vb)
                 s.set_reg(rb, va)
 
-        # --- Compares: store a symbolic status-word marker into `fsw`, killing
-        # any popped operands. The fnstsw/test-ah idiom below consumes it. ---
-        elif base in X87_COMPARE_INSTRS:
-            top = args[0]
-            assert isinstance(top, Register)
-            inputs = [top]
-            popped: List[Register] = []
-            if base in ("fcomp", "fucomp", "ficomp"):
-                popped = [top]
-            elif base in ("fcompp", "fucompp"):
-                assert isinstance(args[1], Register)
-                popped = [top, args[1]]
-            clobbers = list(popped)
-            outputs = [cls.fsw_reg]
-            rhs_arg = args[1] if len(args) > 1 else None
-            if isinstance(rhs_arg, Register):
-                if rhs_arg not in inputs:
-                    inputs.append(rhs_arg)
-            elif rhs_arg is not None:
-                add_operand_inputs(rhs_arg)
+        # --- Typed operand captures inserted at each x87 compare site. ---
+        elif base in ("capture.float.fictive", "capture.int.fictive"):
+            assert len(args) == 2 and isinstance(args[0], Register)
+            capture_dst = args[0]
+            capture_src = args[1]
+            outputs = [capture_dst]
+            if isinstance(capture_src, Register):
+                inputs = [capture_src]
+
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    s.set_reg(capture_dst, a.regs[capture_src])
+
+            elif isinstance(capture_src, AsmLiteral):
+                assert base == "capture.float.fictive" and capture_src.value == 0
+
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    s.set_reg(capture_dst, f32_literal(0.0))
+
+            else:
+                add_operand_inputs(capture_src)
                 is_load = True
-            is_int_cmp = base in ("ficom", "ficomp")
-            itype = fpu_int_type(width) if is_int_cmp else None
+                if base == "capture.float.fictive":
+                    capture_type = fpu_float_type(width)
+
+                    def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                        s.set_reg(capture_dst, mem_load(a, 1, capture_type))
+
+                else:
+                    capture_type = fpu_int_type(width)
+
+                    def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                        value = mem_load(a, 1, capture_type)
+                        s.set_reg(
+                            capture_dst,
+                            handle_convert(value, Type.floatish(), capture_type),
+                        )
+
+        # --- Canonical compare: write an ordinary status value to `fsw`. ---
+        elif base in ("fcmp.fictive", "ficmp.fictive"):
+            assert len(args) == 2
+            lhs_reg, rhs_reg = args
+            assert isinstance(lhs_reg, Register) and isinstance(rhs_reg, Register)
+            inputs = [lhs_reg, rhs_reg]
+            outputs = [cls.fsw_reg]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                lhs = a.regs[top]
-                if base == "ftst":
-                    rhs: Expression = f32_literal(0.0)
-                elif is_int_cmp:
-                    assert itype is not None
-                    rhs = handle_convert(mem_load(a, 1, itype), Type.floatish(), itype)
-                elif isinstance(rhs_arg, Register):
-                    rhs = a.regs[rhs_arg]
-                else:
-                    rhs = mem_load(a, 1, fpu_float_type(width))
-                operands = (lhs, rhs)
                 s.set_reg(
                     cls.fsw_reg,
-                    fn_op(
-                        FNSTSW_MARKER,
-                        list(operands),
-                        Type.u16(),
-                        marker=True,
-                    ),
+                    fn_op("M2C_FCMP", [a.regs[lhs_reg], a.regs[rhs_reg]], Type.u16()),
                 )
-                for reg in popped:
-                    del s.regs[reg]
 
-        # --- fnstsw ax: move the status-word marker into eax for the test. ---
+        # --- fnstsw ax: move the status word into eax for the test/fallback. ---
         elif base in ("fnstsw", "fstsw"):
             assert isinstance(args[0], Register)
             eax = args[0]
@@ -3722,7 +3780,7 @@ class X86Arch(Arch):
                     s.set_reg(eax, s.regs[cls.fsw_reg])
                 else:
                     # A stray fnstsw with no preceding compare: surface it.
-                    s.set_reg(eax, fn_op(FNSTSW_MARKER, [], Type.u16()))
+                    s.set_reg(eax, fn_op("M2C_FNSTSW", [], Type.u16()))
 
         # --- fistp: store the top as an integer (truncating cast), then pop.
         # The rounding mode is assumed fixed globally, so a C truncation cast

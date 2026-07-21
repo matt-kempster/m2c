@@ -1418,7 +1418,6 @@ class FuncCall(Expression):
     function: Expression
     args: List[Expression]
     type: Type
-    is_marker: bool = False
 
     def dependencies(self) -> List[Expression]:
         return self.args + [self.function]
@@ -2450,18 +2449,7 @@ class RegInfo:
                 arg.type.unify(ret.type)
         if meta.force:
             assert isinstance(ret, EvalOnceExpr)
-            marker = ret.wrapped_expr
-            if isinstance(marker, FuncCall) and marker.is_marker:
-                # A marker is compile-time bookkeeping, so it must never be
-                # materialized itself. Force only operand capture points that
-                # an intervening store/call marked as invalidated, and only
-                # when the marker is actually consumed.
-                for operand in marker.args:
-                    assert isinstance(operand, EvalOnceExpr)
-                    if operand.deferred_force:
-                        operand.force()
-            else:
-                ret.force()
+            ret.force()
         return ret
 
     def __contains__(self, key: Register) -> bool:
@@ -3635,25 +3623,6 @@ class NodeState:
         reg: Register,
         source: Reference,
     ) -> EvalOnceExpr:
-        if isinstance(expr, FuncCall) and expr.is_marker:
-            # Markers defer their operands until a later instruction interprets
-            # them. Give each operand its own lazy capture point so a forced
-            # marker read can preserve direct memory expressions as well as
-            # EvalOnceExpr values that were already nested in the operand.
-            expr = replace(
-                expr,
-                args=[
-                    self._eval_once(
-                        arg,
-                        emit_exactly_once=False,
-                        transparent=should_wrap_transparently(arg),
-                        reg=Register.fictive("marker_arg", str(index)),
-                        source=source,
-                    )
-                    for index, arg in enumerate(expr.args)
-                ],
-            )
-
         planned_var = self.stack_info.get_planned_var(reg, source)
         is_fictive_temp = False
 
@@ -3734,13 +3703,6 @@ class NodeState:
                 if not isinstance(expr, EvalOnceExpr):
                     assert_never(expr)
 
-                marker = expr.wrapped_expr
-                if isinstance(marker, FuncCall) and marker.is_marker:
-                    for operand in marker.args:
-                        assert isinstance(operand, EvalOnceExpr)
-                        if uses_expr(operand, expr_filter):
-                            operand.deferred_force = True
-
                 if not data.meta.force:
                     self.regs.update_meta(r, replace(data.meta, force=True))
 
@@ -3780,7 +3742,7 @@ class NodeState:
 
     def prevent_later_function_calls(self) -> None:
         """Prevent later uses of registers that recursively contain a function call."""
-        self._prevent_later_uses(lambda e: isinstance(e, FuncCall) and not e.is_marker)
+        self._prevent_later_uses(lambda e: isinstance(e, FuncCall))
 
     def prevent_later_reads(self) -> None:
         """Prevent later uses of registers that recursively contain a read."""
