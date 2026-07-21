@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-import io
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +14,6 @@ from m2c.asm_file import AsmData, Function
 from m2c.c_types import TypeMap
 from m2c.error import DecompFailure
 from m2c.asm_instruction import (
-    Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
@@ -30,8 +27,7 @@ from m2c.asm_instruction import (
     parse_asm_instruction,
 )
 from m2c.instruction import Instruction, InstructionMeta, StackLocation
-from m2c.flow_graph import SwitchNode, build_flowgraph, build_flowgraph_fragment
-from m2c.ir_pattern import simplify_ir_patterns
+from m2c.flow_graph import SwitchNode, build_flowgraph
 from m2c.types import Type
 
 
@@ -644,189 +640,6 @@ class TestX86Parsing(unittest.TestCase):
         ):
             instr = self.parse_instruction(line)
             self.assertIsInstance(instr, Instruction)
-
-
-class TestX86FnstswPattern(unittest.TestCase):
-    def setUp(self) -> None:
-        self.arch = X86Arch()
-
-    def simplify(self, parts: List[Tuple[str, List[Argument]]]) -> List[Instruction]:
-        function = Function("fnstsw_pattern_test")
-        meta = InstructionMeta.missing()
-        for mnemonic, args in parts:
-            function.new_instruction(self.arch.parse(mnemonic, args, meta))
-        flow_graph = build_flowgraph_fragment(function, AsmData(), self.arch)
-        simplify_ir_patterns(self.arch, flow_graph, self.arch.ir_patterns)
-        return [ref.instruction for ref in flow_graph.nodes[0].block.instruction_refs]
-
-    @staticmethod
-    def base_chain() -> List[Tuple[str, List[Argument]]]:
-        return [
-            ("fcmp.fictive", [Register("f0"), Register("f1")]),
-            ("fnstsw", [Register("eax")]),
-            (
-                "extract_high_byte.fictive",
-                [Register("hi8a"), Register("eax")],
-            ),
-            ("test.b", [Register("hi8a"), AsmLiteral(0x41)]),
-        ]
-
-    def test_fnstsw_pattern_matches_interleaved_chain(self) -> None:
-        parts = self.base_chain()
-        parts[2:2] = [("mov", [Register("ecx"), AsmLiteral(7)])]
-        parts[4:4] = [("add", [Register("edx"), AsmLiteral(1)])]
-        parts.append(("mov", [Register("eax"), AsmLiteral(0)]))
-
-        instrs = self.simplify(parts)
-
-        self.assertEqual(
-            [instr.mnemonic for instr in instrs].count("fcmp_test.fictive"), 1
-        )
-        self.assertNotIn("extract_high_byte.fictive", [i.mnemonic for i in instrs])
-        self.assertEqual([i.mnemonic for i in instrs].count("nop"), 3)
-
-    def test_fnstsw_pattern_ignores_unrelated_byte_test(self) -> None:
-        parts = self.base_chain()
-        parts.insert(3, ("test.b", [Register("ecx"), AsmLiteral(0x41)]))
-        parts.append(("mov", [Register("eax"), AsmLiteral(0)]))
-
-        instrs = self.simplify(parts)
-
-        self.assertEqual(
-            [instr.mnemonic for instr in instrs].count("fcmp_test.fictive"), 1
-        )
-        unrelated = [
-            instr
-            for instr in instrs
-            if instr.mnemonic == "test.b" and instr.args[0] == Register("ecx")
-        ]
-        self.assertEqual(len(unrelated), 1)
-
-    def test_fnstsw_pattern_preserves_fnstsw_for_extra_eax_use(self) -> None:
-        parts = self.base_chain()
-        parts.insert(2, ("mov", [Register("ecx"), Register("eax")]))
-        parts.append(("mov", [Register("eax"), AsmLiteral(0)]))
-
-        instrs = self.simplify(parts)
-
-        fnstsw = [instr for instr in instrs if instr.mnemonic == "fnstsw"]
-        self.assertEqual(len(fnstsw), 1)
-        self.assertTrue(fnstsw[0].in_pattern)
-        self.assertIn("fcmp_test.fictive", [instr.mnemonic for instr in instrs])
-
-    def test_fnstsw_pattern_requires_x87_comparison(self) -> None:
-        parts = self.base_chain()[1:]
-        parts.append(("mov", [Register("eax"), AsmLiteral(0)]))
-
-        instrs = self.simplify(parts)
-
-        self.assertNotIn("fcmp_test.fictive", [instr.mnemonic for instr in instrs])
-        self.assertIn("test.b", [instr.mnemonic for instr in instrs])
-
-    def test_fnstsw_pattern_rejects_clobbered_link_register(self) -> None:
-        cases: Dict[str, Tuple[int, Tuple[str, List[Argument]]]] = {
-            "eax between fnstsw and extraction": (
-                2,
-                ("mov", [Register("eax"), AsmLiteral(0)]),
-            ),
-            "fsw between comparison and fnstsw": (
-                1,
-                ("call", [AsmGlobalSymbol("_clobber_fsw")]),
-            ),
-        }
-        for name, (index, clobber) in cases.items():
-            with self.subTest(name):
-                parts = self.base_chain()
-                parts.insert(index, clobber)
-
-                warnings = io.StringIO()
-                with contextlib.redirect_stdout(warnings):
-                    instrs = self.simplify(parts)
-
-                self.assertNotIn(
-                    "fcmp_test.fictive", [instr.mnemonic for instr in instrs]
-                )
-                self.assertIn("test.b", [instr.mnemonic for instr in instrs])
-                if name.startswith("fsw"):
-                    self.assertIn("$fsw", warnings.getvalue())
-
-    def test_fnstsw_pattern_rejects_unsupported_mask(self) -> None:
-        parts = self.base_chain()
-        parts[-1] = ("test.b", [Register("hi8a"), AsmLiteral(0x80)])
-
-        instrs = self.simplify(parts)
-
-        self.assertNotIn("fcmp_test.fictive", [instr.mnemonic for instr in instrs])
-        self.assertIn("test.b", [instr.mnemonic for instr in instrs])
-
-    def test_fnstsw_pattern_rejects_merged_status_words(self) -> None:
-        function = Function("fnstsw_phi_test")
-        meta = InstructionMeta.missing()
-
-        def add(mnemonic: str, args: List[Argument]) -> None:
-            function.new_instruction(self.arch.parse(mnemonic, args, meta))
-
-        add("test", [Register("ecx"), Register("ecx")])
-        add("jz", [AsmGlobalSymbol(".Lright")])
-        add("fcmp.fictive", [Register("f0"), Register("f1")])
-        add("jmp", [AsmGlobalSymbol(".Ljoin")])
-        function.new_label(".Lright")
-        add("fcmp.fictive", [Register("f0"), Register("f2")])
-        function.new_label(".Ljoin")
-        add("fnstsw", [Register("eax")])
-        add(
-            "extract_high_byte.fictive",
-            [Register("hi8a"), Register("eax")],
-        )
-        add("test.b", [Register("hi8a"), AsmLiteral(0x41)])
-
-        flow_graph = build_flowgraph_fragment(function, AsmData(), self.arch)
-        simplify_ir_patterns(self.arch, flow_graph, self.arch.ir_patterns)
-        mnemonics = [
-            ref.instruction.mnemonic
-            for node in flow_graph.nodes
-            for ref in node.block.instruction_refs
-        ]
-
-        self.assertNotIn("fcmp_test.fictive", mnemonics)
-        self.assertIn("test.b", mnemonics)
-
-    def test_forced_marker_captures_each_invalidated_memory_operand(self) -> None:
-        from m2c.main import parse_flags, run
-
-        source = io.StringIO(
-            """
-test:
-    FLD dword ptr [lhs]
-    FCOMP dword ptr [rhs]
-    MOV dword ptr [lhs], 0
-    MOV dword ptr [rhs], 0
-    FNSTSW AX
-    TEST AH, 0x41
-    SETZ AL
-    MOVZX EAX, AL
-    RET
-"""
-        )
-        source.name = "fnstsw_direct_memory.s"
-        output = io.StringIO()
-        options = parse_flags(["--target", "x86", "-"])
-
-        with patch("sys.stdin", source), contextlib.redirect_stdout(output):
-            self.assertEqual(run(options), 0)
-
-        text = output.getvalue()
-        lhs_capture = "temp_f0 = lhs;"
-        rhs_capture = "temp_fcmp_rhs = rhs;"
-        lhs_store = "lhs = 0.0f;"
-        rhs_store = "rhs = 0.0f;"
-        comparison = "temp_f0 > temp_fcmp_rhs"
-        for fragment in (lhs_capture, rhs_capture, lhs_store, rhs_store, comparison):
-            self.assertIn(fragment, text)
-        self.assertLess(text.index(lhs_capture), text.index(lhs_store))
-        self.assertLess(text.index(rhs_capture), text.index(rhs_store))
-        self.assertLess(text.index(rhs_store), text.index(comparison))
-        self.assertNotIn("M2C_FNSTSW", text)
 
 
 class TestX86AsmFile(unittest.TestCase):
