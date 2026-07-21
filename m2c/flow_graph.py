@@ -23,10 +23,12 @@ from .error import DecompFailure
 from .options import Formatter, Options, Target
 from .asm_file import AsmData, AsmSymbolicData, Function, Label
 from .asm_instruction import (
+    Argument,
     AsmAddressMode,
     AsmGlobalSymbol,
     AsmInstruction,
     AsmLiteral,
+    BinOp,
     JumpTarget,
     Macro,
     Register,
@@ -810,6 +812,41 @@ class NaturalLoop:
     backedges: Set[Node] = field(default_factory=set)
 
 
+def arm_jtbl_for_ldr(arg: Argument, asm_data: AsmData) -> Optional[str]:
+    offset = 0
+    if isinstance(arg, BinOp) and arg.op == "+" and isinstance(arg.rhs, AsmLiteral):
+        offset = arg.rhs.value
+        arg = arg.lhs
+
+    if not isinstance(arg, AsmGlobalSymbol):
+        return None
+
+    sym_name = arg.symbol_name
+    ent = asm_data.values.get(sym_name)
+    if ent is None or not ent.is_text:
+        return None
+
+    data = ent.data_at_offset(offset, 4)
+    if not isinstance(data, AsmSymbolicData):
+        return None
+
+    jtbl_name = data.as_symbol_without_addend()
+    if jtbl_name is None:
+        return None
+
+    ent = asm_data.values.get(jtbl_name)
+    if (
+        ent is None
+        or not ent.is_text
+        or not ent.data
+        or not isinstance(ent.data[0], AsmSymbolicData)
+        or ent.data[0].as_symbol_without_addend() is None
+    ):
+        return None
+
+    return jtbl_name
+
+
 def build_graph_from_block(
     block: Block,
     blocks: List[Block],
@@ -890,30 +927,11 @@ def build_graph_from_block(
                             )
                         ):
                             jtbl_names.add(arg.argument.symbol_name)
-                        if (
-                            isinstance(arg, AsmGlobalSymbol)
-                            and ins.arch_mnemonic(arch) == "arm:ldr"
-                        ):
-                            sym_name = arg.symbol_name
-                            ent = asm_data.values.get(sym_name)
-                            if (
-                                ent is not None
-                                and ent.is_text
-                                and ent.data
-                                and isinstance(ent.data[0], AsmSymbolicData)
-                            ):
-                                jtbl_name = ent.data[0].as_symbol_without_addend()
-                                if jtbl_name is not None:
-                                    ent = asm_data.values.get(jtbl_name)
-                                    if (
-                                        ent is not None
-                                        and ent.is_text
-                                        and ent.data
-                                        and isinstance(ent.data[0], AsmSymbolicData)
-                                        and ent.data[0].as_symbol_without_addend()
-                                        is not None
-                                    ):
-                                        jtbl_names.add(jtbl_name)
+
+                        if ins.arch_mnemonic(arch) == "arm:ldr":
+                            jtbl_name = arm_jtbl_for_ldr(arg, asm_data)
+                            if jtbl_name is not None:
+                                jtbl_names.add(jtbl_name)
 
                 if jtbl_names:
                     break
