@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import replace
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 from .error import DecompFailure
 from .options import Target
@@ -213,7 +213,7 @@ class Sh2Arch(Arch):
         is_store = False
         has_delay_slot = False
         is_conditional = False
-        jump_target = None
+        jump_target: Optional[Union[JumpTarget, Register, List[JumpTarget]]] = None
         function_target: Optional[Argument] = None
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 

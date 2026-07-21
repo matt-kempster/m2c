@@ -1239,10 +1239,10 @@ def rewrite_stack_ops(
     # The frame is a fixed-size region covering the deepest stack extent.
     frame_size = 0
     for i, part in enumerate(body):
-        st = states[i]
-        if st is None or not isinstance(part, Instruction):
+        frame_state = states[i]
+        if frame_state is None or not isinstance(part, Instruction):
             continue
-        depth = -st[0]
+        depth = -frame_state[0]
         base, _ = split_width_suffix(part.mnemonic)
         if base == "push":
             depth += 4
@@ -1330,14 +1330,14 @@ def rewrite_stack_ops(
     # read back into the same register, plus `leave`'s implicit pop of ebp.
     pop_locs: Set[Tuple[int, Register]] = set()
     for i, part in enumerate(body):
-        st = states[i]
-        if not isinstance(part, Instruction) or st is None or i in cleanup_pops:
+        pop_state = states[i]
+        if not isinstance(part, Instruction) or pop_state is None or i in cleanup_pops:
             continue
         base, _ = split_width_suffix(part.mnemonic)
         if base == "pop" and isinstance(part.args[0], Register):
-            pop_locs.add((frame_size + st[0], part.args[0]))
-        elif base == "leave" and st[1] is not None:
-            pop_locs.add((frame_size + st[1], EBP))
+            pop_locs.add((frame_size + pop_state[0], part.args[0]))
+        elif base == "leave" and pop_state[1] is not None:
+            pop_locs.add((frame_size + pop_state[1], EBP))
 
     def is_save_push(index: int) -> bool:
         part = body[index]
@@ -1453,12 +1453,12 @@ def rewrite_stack_ops(
         if not isinstance(part, Instruction):
             new_body.append(part)
             continue
-        st = states[i]
-        if st is None:
+        rewrite_state = states[i]
+        if rewrite_state is None:
             # Unreachable code; leave it untouched.
             new_body.append(part)
             continue
-        esp, ebp = st
+        esp, ebp = rewrite_state
         base, _ = split_width_suffix(part.mnemonic)
         args = part.args
 
@@ -2039,7 +2039,10 @@ class X86HighBytePattern(AsmPattern):
         new_body.append(
             AsmInstruction(
                 part.mnemonic,
-                [replacements.get(arg, arg) for arg in part.args],
+                [
+                    replacements.get(arg, arg) if isinstance(arg, Register) else arg
+                    for arg in part.args
+                ],
             )
         )
         return Replacement(new_body, 1)
@@ -2655,14 +2658,14 @@ class X86Arch(Arch):
 
         if base == "move.fictive":
             assert len(args) == 2
-            dst, src = args
-            assert isinstance(dst, Register) and isinstance(src, Register)
-            inputs = [src]
-            outputs = [dst]
+            move_dst, move_src = args
+            assert isinstance(move_dst, Register) and isinstance(move_src, Register)
+            inputs = [move_src]
+            outputs = [move_dst]
             is_effectful = False
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(dst, a.regs[src])
+                s.set_reg(move_dst, a.regs[move_src])
 
         elif base == "ret":
             assert len(args) <= 1, "ret takes at most one (immediate) operand"
@@ -2674,10 +2677,11 @@ class X86Arch(Arch):
             target = args[0]
             if isinstance(target, Register):
                 # Indirect jump through a register (computed goto).
-                inputs = [target]
-                jump_target = target
+                indirect_target = target
+                inputs = [indirect_target]
+                jump_target = indirect_target
                 is_conditional = True
-                eval_fn = lambda s, a: s.set_switch_expr(a.regs[target])
+                eval_fn = lambda s, a: s.set_switch_expr(a.regs[indirect_target])
             elif isinstance(target, AsmAddressMode):
                 src_operand(target)
                 regs = [loc for loc in inputs if isinstance(loc, Register)]
@@ -3515,66 +3519,66 @@ class X86Arch(Arch):
 
         # --- Loads: dst register + memory source ---
         if base in ("fld", "fild"):
-            dst = args[0]
-            assert isinstance(dst, Register)
+            load_dst = args[0]
+            assert isinstance(load_dst, Register)
             add_operand_inputs(args[1])
-            outputs = [dst]
+            outputs = [load_dst]
             is_load = True
             if base == "fld":
                 ftype = fpu_float_type(width)
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                    s.set_reg(dst, mem_load(a, 1, ftype))
+                    s.set_reg(load_dst, mem_load(a, 1, ftype))
 
             else:
 
                 def eval_fn(s: NodeState, a: InstrArgs) -> None:
                     val, itype = load_fild_operand(a, 1, width)
-                    s.set_reg(dst, handle_convert(val, Type.floatish(), itype))
+                    s.set_reg(load_dst, handle_convert(val, Type.floatish(), itype))
 
         # --- Constants: 0/1 as numeric literals, pi/log constants as named
         # macros so matching source can #define them. ---
         elif base in FPU_CONSTANTS:
-            dst = args[0]
-            assert isinstance(dst, Register)
-            outputs = [dst]
+            const_dst = args[0]
+            assert isinstance(const_dst, Register)
+            outputs = [const_dst]
             make_const = FPU_CONSTANTS[base]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(dst, make_const())
+                s.set_reg(const_dst, make_const())
 
         # --- Register moves (fld/fst st(i), fstp st(i) with i>0) ---
         elif base in ("fmov", "fmovpop"):
-            dst, src = args
-            assert isinstance(dst, Register) and isinstance(src, Register)
-            inputs = [src]
-            outputs = [dst]
+            fmove_dst, fmove_src = args
+            assert isinstance(fmove_dst, Register) and isinstance(fmove_src, Register)
+            inputs = [fmove_src]
+            outputs = [fmove_dst]
             pop = base == "fmovpop"
             if pop:
-                clobbers = [src]
+                clobbers = [fmove_src]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(dst, a.regs[src])
+                s.set_reg(fmove_dst, a.regs[fmove_src])
                 if pop:
-                    del s.regs[src]
+                    del s.regs[fmove_src]
 
         # --- Pop-discard (fstp st(0)) ---
         elif base == "fpop":
-            reg = args[0]
-            assert isinstance(reg, Register)
-            inputs = [reg]
-            clobbers = [reg]
+            pop_reg = args[0]
+            assert isinstance(pop_reg, Register)
+            inputs = [pop_reg]
+            clobbers = [pop_reg]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                del s.regs[reg]
+                del s.regs[pop_reg]
 
         # --- Stores (fst/fstp to memory) ---
         elif base in ("fst", "fstp"):
-            src = args[1]
-            assert isinstance(src, Register)
+            store_src = args[1]
+            assert isinstance(store_src, Register)
             add_operand_inputs(args[0])
-            if src not in inputs:
-                inputs.append(src)
+            if store_src not in inputs:
+                inputs.append(store_src)
             stack_loc = (
                 cls._stack_location(args[0])
                 if isinstance(args[0], AsmAddressMode)
@@ -3585,63 +3589,65 @@ class X86Arch(Arch):
             is_store = True
             pop = base == "fstp"
             if pop:
-                clobbers = [src]
+                clobbers = [store_src]
             ftype = fpu_float_type(width)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                store = mem_store(a, 0, a.regs[src], src, ftype)
+                store = mem_store(a, 0, a.regs[store_src], store_src, ftype)
                 if store is not None:
-                    s.store_memory(store, src)
+                    s.store_memory(store, store_src)
                 if pop:
-                    del s.regs[src]
+                    del s.regs[store_src]
 
         # --- Non-popping arithmetic: dst register op src (register or mem) ---
         elif base in ("fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr"):
-            dst, src = args
-            assert isinstance(dst, Register)
-            inputs = [dst]
-            if isinstance(src, Register):
-                if src not in inputs:
-                    inputs.append(src)
+            arith_dst, arith_src = args
+            assert isinstance(arith_dst, Register)
+            inputs = [arith_dst]
+            if isinstance(arith_src, Register):
+                if arith_src not in inputs:
+                    inputs.append(arith_src)
             else:
-                add_operand_inputs(src)
+                add_operand_inputs(arith_src)
                 is_load = True
-            outputs = [dst]
+            outputs = [arith_dst]
             op, reverse = FPU_ARITH_OPS[base]
             ftype = fpu_float_type(width)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                lhs = a.regs[dst]
+                lhs = a.regs[arith_dst]
                 rhs = (
-                    a.regs[src] if isinstance(src, Register) else mem_load(a, 1, ftype)
+                    a.regs[arith_src]
+                    if isinstance(arith_src, Register)
+                    else mem_load(a, 1, ftype)
                 )
-                s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
+                s.set_reg(arith_dst, fpu_binop(op, lhs, rhs, reverse=reverse))
 
         # --- Popping arithmetic (faddp st(i), st): dst op st0, then pop st0 ---
         elif base in ("faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp"):
-            dst, src = args
-            assert isinstance(dst, Register) and isinstance(src, Register)
-            inputs = [dst, src]
-            outputs = [dst]
-            clobbers = [src]
+            pop_dst, pop_src = args
+            assert isinstance(pop_dst, Register) and isinstance(pop_src, Register)
+            inputs = [pop_dst, pop_src]
+            outputs = [pop_dst]
+            clobbers = [pop_src]
             op, reverse = FPU_ARITH_OPS[base]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                lhs = a.regs[dst]
-                rhs = a.regs[src]
-                s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
-                del s.regs[src]
+                lhs = a.regs[pop_dst]
+                rhs = a.regs[pop_src]
+                s.set_reg(pop_dst, fpu_binop(op, lhs, rhs, reverse=reverse))
+                del s.regs[pop_src]
 
         # --- Unary operations on the top of stack ---
         elif base in FPU_UNARY_OPS:
-            reg = args[0]
-            assert isinstance(reg, Register)
-            inputs = [reg]
-            outputs = [reg]
-            builder = FPU_UNARY_OPS[base]
+            unary_reg = args[0]
+            assert isinstance(unary_reg, Register)
+            inputs = [unary_reg]
+            outputs = [unary_reg]
+            unary_builder = FPU_UNARY_OPS[base]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                s.set_reg(reg, builder(a.regs[reg]))
+                s.set_reg(unary_reg, unary_builder(a.regs[unary_reg]))
 
         # --- fxch: swap two slots ---
         elif base == "fxch":
@@ -3736,30 +3742,30 @@ class X86Arch(Arch):
                 outputs.append(stack_loc)
             is_store = True
             clobbers = [src]
-            itype = fpu_int_type(width)
+            store_itype = fpu_int_type(width)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                casted = handle_convert(a.regs[src], itype, Type.floatish())
-                store = mem_store(a, 0, casted, None, itype)
+                casted = handle_convert(a.regs[src], store_itype, Type.floatish())
+                store = mem_store(a, 0, casted, None, store_itype)
                 if store is not None:
                     s.store_memory(store, src)
                 del s.regs[src]
 
         # --- Integer-operand arithmetic: top op (float)int_load ---
         elif base in ("fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr"):
-            dst = args[0]
-            assert isinstance(dst, Register)
-            inputs = [dst]
+            int_arith_dst = args[0]
+            assert isinstance(int_arith_dst, Register)
+            inputs = [int_arith_dst]
             add_operand_inputs(args[1])
-            outputs = [dst]
+            outputs = [int_arith_dst]
             is_load = True
             op, reverse = FPU_ARITH_OPS[base]
             itype = fpu_int_type(width)
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                lhs = a.regs[dst]
+                lhs = a.regs[int_arith_dst]
                 rhs = handle_convert(mem_load(a, 1, itype), Type.floatish(), itype)
-                s.set_reg(dst, fpu_binop(op, lhs, rhs, reverse=reverse))
+                s.set_reg(int_arith_dst, fpu_binop(op, lhs, rhs, reverse=reverse))
 
         # --- Control word: kept as visible intrinsics. The rounding/precision
         # mode is not modeled, so surface the load/store so a human sees the
@@ -3793,16 +3799,16 @@ class X86Arch(Arch):
         elif base in FPU_BINARY_OPS:
             st0, st1 = args
             assert isinstance(st0, Register) and isinstance(st1, Register)
-            builder, dst_idx, pop = FPU_BINARY_OPS[base]
-            dst = st1 if dst_idx == 1 else st0
+            binary_builder, dst_idx, pop = FPU_BINARY_OPS[base]
+            binary_dst = st1 if dst_idx == 1 else st0
             inputs = [st0, st1] if st0 != st1 else [st0]
-            outputs = [dst]
+            outputs = [binary_dst]
             if pop:
                 clobbers = [st0]  # the top is consumed
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                val = builder(a.regs[st0], a.regs[st1])
-                s.set_reg(dst, val)
+                val = binary_builder(a.regs[st0], a.regs[st1])
+                s.set_reg(binary_dst, val)
                 if pop:
                     del s.regs[st0]
 

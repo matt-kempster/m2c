@@ -3755,19 +3755,19 @@ class NodeState:
         for loc, value in self.subroutine_args.items():
             if not uses_expr(value, expr_filter):
                 continue
-            expr = value
-            while isinstance(expr, Cast):
-                expr = expr.expr
-            if not isinstance(expr, EvalOnceExpr):
-                expr = self._eval_once(
+            pending_expr: Expression = value
+            while isinstance(pending_expr, Cast):
+                pending_expr = pending_expr.expr
+            if not isinstance(pending_expr, EvalOnceExpr):
+                pending_expr = self._eval_once(
                     value,
                     emit_exactly_once=False,
                     transparent=should_wrap_transparently(value),
                     reg=Register.fictive("call_arg", str(loc)),
                     source=self.regs.current_instr_ref(),
                 )
-                self.subroutine_args[loc] = expr
-            expr.force()
+                self.subroutine_args[loc] = pending_expr
+            pending_expr.force()
 
     def prevent_later_value_uses(self, sub_expr: Expression) -> None:
         """Prevent later uses of registers that recursively contain a given

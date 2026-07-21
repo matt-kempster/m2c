@@ -399,6 +399,7 @@ def rewrite_fpu_ops(
     call_deltas: Optional[Dict[str, int]] = None,
 ) -> List[BodyPart]:
     call_deltas = call_deltas or {}
+    resolved_call_deltas: Dict[str, int] = call_deltas
 
     label_pos: Dict[str, int] = {}
     for i, part in enumerate(body):
@@ -464,7 +465,7 @@ def rewrite_fpu_ops(
                 )
             return 1 - helper[1]  # 2-arg -> -1, 1-arg -> 0
         key = _call_key(body, index)
-        return call_deltas.get(key, 0) if key is not None else 0
+        return resolved_call_deltas.get(key, 0) if key is not None else 0
 
     def depth_delta(index: int, item: Instruction, base: str) -> int:
         if base in FPU_UNSUPPORTED:
@@ -594,13 +595,13 @@ def rewrite_fpu_ops(
         if not isinstance(part, Instruction):
             new_body.append(part)
             continue
-        depth = states[i]
+        emit_depth = states[i]
         base, _ = split_width_suffix(part.mnemonic)
         # Annotate a call that pushes (delta +1) or consumes (delta -1) a
         # float: append the pushed virtual register index (fpret) and the
         # consumed one (or -1). parse() turns these into call outputs/inputs.
         if (
-            depth is not None
+            emit_depth is not None
             and base == "call"
             and part.function_target is not None
             and len(part.args) == 3
@@ -612,37 +613,39 @@ def rewrite_fpu_ops(
                 # into its fictive FPU op reading st(0)[/st(1)] and producing the
                 # result in place (1-arg) or in st(1) with a pop (2-arg).
                 fictive, nargs = helper
-                if depth < nargs:
+                if emit_depth < nargs:
                     raise X87StackError(
-                        f"x87 stack underflow (depth {depth}) calling {sym}: "
+                        f"x87 stack underflow (depth {emit_depth}) calling {sym}: "
                         f"{instr_str(part)}",
                         i,
                         "underflow",
                     )
-                slots = [Register(f"f{depth - 1 - k}") for k in range(nargs)]
+                slots = [Register(f"f{emit_depth - 1 - k}") for k in range(nargs)]
                 emit(fictive, list(slots), part.meta)
                 continue
             delta = call_delta(i, part, base)
             if delta != 0:
-                fpret_out = depth if delta == 1 else -1
-                fconsume_in = depth - 1 if delta == -1 else -1
+                fpret_out = emit_depth if delta == 1 else -1
+                fconsume_in = emit_depth - 1 if delta == -1 else -1
                 emit(
                     "call",
                     list(part.args) + [AsmLiteral(fpret_out), AsmLiteral(fconsume_in)],
                     part.meta,
                 )
                 continue
-        if depth is None or not is_fpu_mnemonic(base):
+        if emit_depth is None or not is_fpu_mnemonic(base):
             # Unreachable code, or a non-x87 instruction: pass through.
             new_body.append(part)
             continue
         if base in FPU_DROP:
             continue
+        assert emit_depth is not None
+        current_depth: int = emit_depth
         args = part.args
         meta = part.meta
         mnemonic = data_sized_mnemonic(part.mnemonic, args)
 
-        def flat(st_i: int, *, at: int = depth, fault: int = i) -> Register:
+        def flat(st_i: int, *, at: int = current_depth, fault: int = i) -> Register:
             """The virtual register for physical `st(st_i)` at depth `at`."""
             idx = at - 1 - st_i
             if idx < 0 or idx > 7:
@@ -655,20 +658,20 @@ def rewrite_fpu_ops(
             return Register(f"f{idx}")
 
         # `flat(0)` (the current top of stack) is only valid at depth >= 1;
-        # the pushes below define f{depth} and never read it.
+        # the pushes below define f{current_depth} and never read it.
 
         # --- Pushes: a new value appears at f{depth}. ---
         if base == "fld":
             # `fld m` (load) or `fld st(i)` (duplicate).
             st_i = _st_index(args[0])
             if st_i is not None:
-                emit("fmov", [Register(f"f{depth}"), flat(st_i)], meta)
+                emit("fmov", [Register(f"f{current_depth}"), flat(st_i)], meta)
             else:
-                emit(mnemonic, [Register(f"f{depth}"), args[0]], meta)
+                emit(mnemonic, [Register(f"f{current_depth}"), args[0]], meta)
         elif base == "fild":
-            emit(mnemonic, [Register(f"f{depth}"), args[0]], meta)
+            emit(mnemonic, [Register(f"f{current_depth}"), args[0]], meta)
         elif base in ("fld1", "fldz", "fldpi", "fldl2e", "fldl2t", "fldlg2", "fldln2"):
-            emit(base, [Register(f"f{depth}")], meta)
+            emit(base, [Register(f"f{current_depth}")], meta)
 
         # --- Stores from the top of stack. ---
         elif base in ("fst", "fstp", "fistp"):
@@ -724,17 +727,17 @@ def rewrite_fpu_ops(
         # top-of-stack forms to the eval layer, which raises a clean
         # DecompFailure for anything not implemented. ---
         elif base in ("fcom", "fcomp", "fucom", "fucomp"):
-            src: Argument
+            compare_src: Argument
             if args and _st_index(args[0]) is None:
-                src = args[0]  # memory operand
+                compare_src = args[0]  # memory operand
             elif args:
-                src = flat(_st_index(args[0]) or 0)
+                compare_src = flat(_st_index(args[0]) or 0)
             else:
-                src = flat(1)  # bare form compares st0 with st1
+                compare_src = flat(1)  # bare form compares st0 with st1
             # Keep the width-suffixed mnemonic (like fld/fadd): a memory-operand
             # compare (`fcomp qword`) must read the operand at its real width,
             # or an f64 constant/local is truncated to f32.
-            emit(mnemonic, [flat(0), src], meta)
+            emit(mnemonic, [flat(0), compare_src], meta)
         elif base in ("fcompp", "fucompp"):
             emit(base, [flat(0), flat(1)], meta)
         elif base == "ftst":

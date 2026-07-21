@@ -1172,13 +1172,13 @@ def compute_relations(nodes: List[Node]) -> None:
         # `(x >> i & 1)` is 1 if `i_to_node[i]` is included in the set.
         # On a large function with 2000 basic blocks, this improved performance
         # of this phase by about a factor 25.
-        doms = {n: 0 for n in nodes}
+        dom_bits = {n: 0 for n in nodes}
 
         for i, n in i_to_node.items():
             if n == entry:
-                doms[n] = 1 << i
+                dom_bits[n] = 1 << i
             else:
-                doms[n] = (1 << nnodes) - 1
+                dom_bits[n] = (1 << nnodes) - 1
 
         changes = True
         while changes:
@@ -1186,17 +1186,17 @@ def compute_relations(nodes: List[Node]) -> None:
             for i, node in i_to_node.items():
                 if node == entry:
                     continue
-                nset = doms[node]
+                nset = dom_bits[node]
                 for parent in parents(node):
-                    nset = nset & doms[parent]
+                    nset = nset & dom_bits[parent]
                 nset |= 1 << i
-                if nset != doms[node]:
-                    assert nset & doms[node] == nset
-                    doms[node] = nset
+                if nset != dom_bits[node]:
+                    assert nset & dom_bits[node] == nset
+                    dom_bits[node] = nset
                     changes = True
 
         for n in nodes:
-            bitset = doms[n]
+            bitset = dom_bits[n]
             nodeset = dominators(n)
             nodeset.clear()
             while bitset:
@@ -1208,14 +1208,17 @@ def compute_relations(nodes: List[Node]) -> None:
         for node in nodes:
             immediately_dominates(node).clear()
         for node in nodes:
-            doms = dominators(node).difference({node})
+            strict_dominators = dominators(node).difference({node})
             # If `node == entry` or the flow graph is not reducible, `doms` may be empty.
             # TODO: Infinite loops could be made reducible by introducing
             # branches like `if (false) { return; }` without breaking semantics
-            if doms:
+            if strict_dominators:
                 # There should be a unique max `len(dominators(d))` if the flowgraph
                 # is reducible. Fall back to largest index for irreducible graphs.
-                imdom = max(doms, key=lambda d: (len(dominators(d)), d.block.index))
+                imdom = max(
+                    strict_dominators,
+                    key=lambda d: (len(dominators(d)), d.block.index),
+                )
                 immediately_dominates(imdom).append(node)
                 set_immediate_dominator(node, imdom)
             else:
@@ -1461,7 +1464,7 @@ class FlowGraph:
         # all edges backwards, to ensure that it is possible to reach the exit
         # from every node. We don't need to look for loops this time.
         seen = set()
-        queue = {self.terminal_node()}
+        queue: Set[Node] = {self.terminal_node()}
         while queue:
             n = queue.pop()
             seen.add(n)

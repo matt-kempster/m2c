@@ -651,9 +651,10 @@ def make_store_real(
     assert size is not None
     is_stack = isinstance(target, AddressMode) and stack_info.is_stack_reg(target.base)
     if (
-        is_stack
+        isinstance(target, AddressMode)
+        and is_stack
         and source_raw is not None
-        and stack_info.should_save(source_raw, target.offset)
+        and (stack_info.should_save(source_raw, target.offset))
     ):
         # Elide register preserval.
         return None

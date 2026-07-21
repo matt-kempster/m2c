@@ -331,15 +331,18 @@ def decode_text_section(cap: cs.Cs, section: CoffSection) -> List[Element]:
         insn = insns[0]
         elements.append(Insn(insn, insn.address, insn.bytes))
         for reloc_offset in range(offset, offset + insn.size):
-            reloc = section.relocations.get(reloc_offset)
-            if reloc is None:
+            instruction_reloc = section.relocations.get(reloc_offset)
+            if instruction_reloc is None:
                 continue
             consumed_relocs.add(reloc_offset)
             if (
-                reloc.relocation_type in (IMAGE_REL_I386_DIR32, IMAGE_REL_I386_DIR32NB)
-                and reloc.symbol.section is section
+                instruction_reloc.relocation_type
+                in (IMAGE_REL_I386_DIR32, IMAGE_REL_I386_DIR32NB)
+                and instruction_reloc.symbol.section is section
             ):
-                data_bases.add(reloc.symbol.offset + reloc.symbol_offset)
+                data_bases.add(
+                    instruction_reloc.symbol.offset + instruction_reloc.symbol_offset
+                )
         offset += insn.size
 
     dropped = reloc_offsets - consumed_relocs

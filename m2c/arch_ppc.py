@@ -1403,8 +1403,8 @@ class PpcArch(Arch):
                     src_out = BinaryOp.int(src_out, "-", Literal(adj.value))
                 count = a.reg(4)
                 if isinstance(count, Literal):
-                    incr_size = Literal(count.value * width.value)
-                    copy_size = Literal(count.value * width.value + tail)
+                    incr_size: Expression = Literal(count.value * width.value)
+                    copy_size: Expression = Literal(count.value * width.value + tail)
                 else:
                     incr_size = BinaryOp.int(count, "*", Literal(width.value))
                     copy_size = incr_size
