@@ -10,12 +10,17 @@
 # License: BSD
 #-----------------------------------------------------------------
 
-# Insert '.' and '..' as first entries to the search path for modules.
-# Restricted environments like embeddable python do not include the
-# current working directory on startup.
 import importlib
+import os
 import sys
-sys.path[0:0] = ['.', '..']
+
+# Insert the script's directory and its parent at the front of the search path
+# for modules. Restricted environments like embeddable python do not include
+# the current working directory on startup. Use absolute paths to avoid
+# hijacking module imports from untrusted working directories.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_parent_dir = os.path.dirname(_script_dir)
+sys.path[0:0] = [_script_dir, _parent_dir]
 
 # Generate c_ast.py
 from _ast_gen import ASTCodeGenerator
