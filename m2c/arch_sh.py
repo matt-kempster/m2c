@@ -472,6 +472,21 @@ class Sh2Arch(Arch):
                     s.set_reg(Register("condition_bit"), carry)
                 s.set_reg(a.reg_ref(0), cls.instrs_shift[mnemonic](a))
 
+        elif mnemonic == "dt":
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            outputs = [args[0], Register("condition_bit")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                value = s.set_reg(
+                    a.reg_ref(0),
+                    BinaryOp.intptr(a.reg(0), "-", Literal(1)),
+                )
+                s.set_reg(
+                    Register("condition_bit"),
+                    BinaryOp.icmp(value, "==", Literal(0)),
+                )
+
         elif mnemonic == "tst":
             assert (
                 len(args) == 2
@@ -493,15 +508,19 @@ class Sh2Arch(Arch):
                     BinaryOp.icmp(value, "==", Literal(0)),
                 )
 
-        elif mnemonic == "bt.s":
+        elif mnemonic in ("bf.s", "bt.s"):
             assert len(args) == 1
             inputs = [Register("condition_bit")]
             jump_target = get_jump_target(args[0])
             is_conditional = True
             has_delay_slot = True
-            eval_fn = lambda s, a: s.set_branch_condition(
-                condition_from_expr(a.regs[Register("condition_bit")])
-            )
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                condition = condition_from_expr(a.regs[Register("condition_bit")])
+                if mnemonic == "bf.s":
+                    condition = condition.negated()
+                s.set_branch_condition(condition)
+
         elif mnemonic == "bra":
             assert len(args) == 1
             jump_target = get_jump_target(args[0])
