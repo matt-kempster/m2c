@@ -273,18 +273,6 @@ There currently is a pseudo-macro in lieu of a full preprocessor that allows for
 
 Any other macros besides `#ifdef M2C` currently will fail, and you also need the `#else` between `#ifdef M2C` and `#endif` for the pattern to match.
 
-### Migrating from `mips_to_c.py`
-
-This tool was originally known as `mips_to_c`. As part of the rename, deprecated command line arguments were removed.
-
-When migrating to `m2c`, note the following changes to the CLI:
-
-- Entrypoint rename: `./mips_to_c.py` becomes `./m2c.py`
-- To limit decompilation to a [single function](#multiple-function): use `-f FN, --function FN`
-- `--rodata` is [no longer needed](#multiple-functions): `my_text.s --rodata my_data.s` becomes `my_text.s my_data.s`
-- `--compiler` has been replaced by [`--target`](#target-architecture--compiler--language): `--compiler gcc` becomes `--target mips-gcc-c`
-- `--structs` is now the [default behavior](#struct-field-inference): remove `--structs` from the arguments
-
 ## Contributing
 
 There is much low-hanging fruit still. Take a look at the issues if you want to help out.
