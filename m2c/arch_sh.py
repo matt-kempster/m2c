@@ -23,6 +23,7 @@ from .asm_pattern import (
     AsmMatcher,
     AsmPattern,
     Replacement,
+    ReplacementPart,
     SimpleAsmPattern,
     make_pattern,
 )
@@ -195,77 +196,41 @@ class DivisionHelperPattern(SimpleAsmPattern):
         return Replacement([delay_slot, division], 3)
 
 
-class ShModuloPattern(AsmPattern):
-    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
-        body = matcher.input[matcher.index : matcher.index + 11]
-        if len(body) < 10 or not all(isinstance(x, Instruction) for x in body):
-            return None
-        instrs = [x for x in body if isinstance(x, Instruction)]
-        if [x.mnemonic for x in instrs[:9]] != [
-            "mov",
-            "mov.l",
-            "jsr",
-            "mov",
-            "mul.l",
-            "lds.l",
-            "mov.l",
-            "sts",
-            "sub",
-        ]:
-            return None
-        save_lhs, load, call, save_rhs, mul, restore_pr, restore_fp, sts, sub = instrs[
-            :9
-        ]
-        replacement_tail: List[AsmInstruction] = []
-        if instrs[9].mnemonic == "mov" and instrs[9].args == [
-            save_lhs.args[1],
-            Register("r0"),
-        ]:
-            consumed = 10
-        elif (
-            len(instrs) == 11
-            and instrs[9].mnemonic == "rts"
-            and instrs[10].mnemonic == "mov"
-            and instrs[10].args == [save_lhs.args[1], Register("r0")]
-        ):
-            consumed = 11
-            replacement_tail = [
-                AsmInstruction("rts", []),
-                AsmInstruction("nop", []),
-            ]
-        else:
-            return None
-        if (
-            len(save_lhs.args) != 2
-            or not all(isinstance(arg, Register) for arg in save_lhs.args)
-            or len(load.args) != 2
-            or not isinstance(load.args[0], AsmGlobalSymbol)
-            or not isinstance(load.args[1], Register)
-            or len(call.args) != 1
-            or not isinstance(call.args[0], AsmAddressMode)
-            or call.args[0].base != load.args[1]
-            or len(save_rhs.args) != 2
-            or not all(isinstance(arg, Register) for arg in save_rhs.args)
-            or mul.args != [save_rhs.args[1], Register("r0")]
-            or len(sts.args) != 2
-            or sts.args[0] != Register("macl")
-            or sub.args != [sts.args[1], save_lhs.args[1]]
-        ):
-            return None
+class ShModuloPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "mov $a, $l",
+        "mov.l _, $t",
+        "jsr @$t",
+        "mov $b, $r",
+        "mul.l $r, $r0",
+        "lds.l @$r15+, $pr",
+        "mov.l @$r15+, $r14",
+        "sts $macl, $m",
+        "sub $m, $l",
+        "rts?",
+        "mov $l, $r0",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        # Both helpers return the quotient in r0, which the sequence multiplies back
+        # and subtracts to recover the remainder. Testing showed gcc kept the dividend
+        # in a callee-saved register only for the signed helper, which is what we key
+        # on to tell the two apart.
         mnemonic = (
-            "smod.fictive" if save_lhs.args[1] in Sh2Arch.saved_regs else "umod.fictive"
+            "smod.fictive" if m.regs["l"] in Sh2Arch.saved_regs else "umod.fictive"
         )
+        restore_pr, restore_fp = m.body[5], m.body[6]
+        tail: List[ReplacementPart] = []
+        if len(m.body) == 11:
+            tail = [AsmInstruction("rts", []), AsmInstruction("nop", [])]
         return Replacement(
             [
-                AsmInstruction(
-                    mnemonic,
-                    [Register("r0"), save_lhs.args[0], save_rhs.args[0]],
-                ),
-                AsmInstruction(restore_pr.mnemonic, restore_pr.args),
-                AsmInstruction(restore_fp.mnemonic, restore_fp.args),
-                *replacement_tail,
+                AsmInstruction(mnemonic, [Register("r0"), m.regs["a"], m.regs["b"]]),
+                restore_pr,
+                restore_fp,
+                *tail,
             ],
-            consumed,
+            len(m.body),
         )
 
 
