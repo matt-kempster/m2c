@@ -60,9 +60,11 @@ from .evaluate import (
     handle_addi,
     handle_bitinv,
     handle_load,
+    handle_loadx,
     handle_or,
     handle_sub,
     make_store,
+    make_storex,
 )
 
 from .types import FunctionSignature, Type
@@ -313,12 +315,29 @@ class Sh2Arch(Arch):
             if isinstance(args[0], Register):
                 assert isinstance(args[1], AsmAddressMode)
                 inputs = [args[0], args[1].base]
+                if isinstance(args[1].addend, Register):
+                    inputs.append(args[1].addend)
                 is_store = True
                 if args[1].writeback is None:
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
                         store_type = cls.mov_type(mnemonic)
-                        store = make_store(a, store_type)
+                        address = a.raw_arg(1)
+                        assert isinstance(address, AsmAddressMode)
+                        if isinstance(address.addend, Register):
+                            store = make_storex(
+                                replace(
+                                    a,
+                                    raw_args=[
+                                        a.raw_arg(0),
+                                        address.base,
+                                        address.addend,
+                                    ],
+                                ),
+                                store_type,
+                            )
+                        else:
+                            store = make_store(a, store_type)
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
 
@@ -343,16 +362,38 @@ class Sh2Arch(Arch):
                     # it for other registers), and then only during the epilogue, which
                     # we don't emit any code for.
                     inputs = [args[0].base]
+                    if isinstance(args[0].addend, Register):
+                        inputs.append(args[0].addend)
                 outputs = [args[1]]
                 is_load = True
                 load_type = cls.mov_type(mnemonic)
-                eval_fn = lambda s, a: s.set_reg(
-                    a.reg_ref(1),
-                    handle_load(
-                        replace(a, raw_args=[a.raw_arg(1), a.raw_arg(0)]),
-                        type=load_type,
-                    ),
-                )
+                if isinstance(args[0], AsmAddressMode) and isinstance(
+                    args[0].addend, Register
+                ):
+                    indexed_base = args[0].base
+                    indexed_addend = args[0].addend
+                    eval_fn = lambda s, a: s.set_reg(
+                        a.reg_ref(1),
+                        handle_loadx(
+                            replace(
+                                a,
+                                raw_args=[
+                                    a.raw_arg(1),
+                                    indexed_base,
+                                    indexed_addend,
+                                ],
+                            ),
+                            type=load_type,
+                        ),
+                    )
+                else:
+                    eval_fn = lambda s, a: s.set_reg(
+                        a.reg_ref(1),
+                        handle_load(
+                            replace(a, raw_args=[a.raw_arg(1), a.raw_arg(0)]),
+                            type=load_type,
+                        ),
+                    )
         elif mnemonic == "sts.l":
             assert (
                 len(args) == 2
