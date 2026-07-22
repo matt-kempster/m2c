@@ -140,18 +140,15 @@ class Sh2AddrModeWritebackPattern(AsmPattern):
                 f"for instruction: {instr}"
             )
 
+        assert addr.addend == AsmLiteral(0)
+
         new_args = list(instr.args)
-        new_args[addr_arg] = replace(addr, writeback=None, addend=AsmLiteral(0))
+        new_args[addr_arg] = replace(addr, writeback=None)
+        stride = Sh2Arch.mov_stride(instr.mnemonic)
         if addr.writeback == Writeback.PRE:
             return Replacement(
                 [
-                    AsmInstruction(
-                        "add",
-                        [
-                            AsmLiteral(-Sh2Arch.mov_stride(instr.mnemonic)),
-                            addr.base,
-                        ],
-                    ),
+                    AsmInstruction("add", [AsmLiteral(-stride), addr.base]),
                     AsmInstruction(instr.mnemonic, new_args),
                 ],
                 1,
@@ -160,10 +157,7 @@ class Sh2AddrModeWritebackPattern(AsmPattern):
         return Replacement(
             [
                 AsmInstruction(instr.mnemonic, new_args),
-                AsmInstruction(
-                    "add",
-                    [AsmLiteral(Sh2Arch.mov_stride(instr.mnemonic)), addr.base],
-                ),
+                AsmInstruction("add", [AsmLiteral(stride), addr.base]),
             ],
             1,
         )
@@ -246,16 +240,16 @@ class Sh2Arch(Arch):
         ]
     )
 
-    @classmethod
-    def mov_type(cls, mnemonic: str) -> Type:
+    @staticmethod
+    def mov_type(mnemonic: str) -> Type:
         return {
             "mov.b": Type.s8(),
             "mov.w": Type.s16(),
             "mov.l": Type.reg32(likely_float=False),
         }[mnemonic]
 
-    @classmethod
-    def mov_stride(cls, mnemonic: str) -> int:
+    @staticmethod
+    def mov_stride(mnemonic: str) -> int:
         return {
             "mov.b": 1,
             "mov.w": 2,
@@ -328,10 +322,8 @@ class Sh2Arch(Arch):
                         if store is not None:
                             s.store_memory(store, a.reg_ref(0))
 
-                elif (
-                    args[1].writeback == Writeback.PRE
-                    and args[1].base == cls.stack_pointer_reg
-                ):
+                elif args[1].base == cls.stack_pointer_reg:
+                    assert args[1].writeback == Writeback.PRE
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
                         source_raw = a.regs.get_raw(a.reg_ref(0))
@@ -339,11 +331,21 @@ class Sh2Arch(Arch):
                         if not s.stack_info.should_save(source_raw, None):
                             s.push_subroutine_arg(a.reg(0))
 
-                    assert args[1].base == cls.stack_pointer_reg
-                    assert args[1].writeback == Writeback.PRE
+                else:
+                    # writeback on other registers is rewritten into an explicit
+                    # add by Sh2AddrModeWritebackPattern, so no eval_fn is needed.
+                    pass
             else:
                 assert isinstance(args[1], Register)
                 if isinstance(args[0], AsmAddressMode):
+                    if args[0].base == cls.stack_pointer_reg:
+                        # ex. mov.l @r15+, r14
+                        # we don't do the writeback because setup_initial_registers
+                        # sets sp to a GlobalSymbol that never gets reassigned.
+                        # stack accesses are constant offsets from it and there's
+                        # nowhere to += 4. The frame size comes from get_stack_info
+                        # which doesn't consult the epilogue
+                        assert args[0].writeback in (None, Writeback.POST)
                     inputs = [args[0].base]
                 outputs = [args[1]]
                 is_load = True
