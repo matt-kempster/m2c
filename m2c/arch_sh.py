@@ -338,14 +338,10 @@ class Sh2Arch(Arch):
             else:
                 assert isinstance(args[1], Register)
                 if isinstance(args[0], AsmAddressMode):
-                    if args[0].base == cls.stack_pointer_reg:
-                        # ex. mov.l @r15+, r14
-                        # we don't do the writeback because setup_initial_registers
-                        # sets sp to a GlobalSymbol that never gets reassigned.
-                        # stack accesses are constant offsets from it and there's
-                        # nowhere to += 4. The frame size comes from get_stack_info
-                        # which doesn't consult the epilogue
-                        assert args[0].writeback in (None, Writeback.POST)
+                    # We intentionally ignore args[0].writeback. It can only be non-None
+                    # for stack pointer writes (Sh2AddrModeWritebackPattern gets rid of
+                    # it for other registers), and then only during the epilogue, which
+                    # we don't emit any code for.
                     inputs = [args[0].base]
                 outputs = [args[1]]
                 is_load = True
