@@ -210,6 +210,8 @@ class Sh2Arch(Arch):
     re_comment = r"!.*"
     supports_dollar_regs = False
     supports_at_addressing = True
+    asm_word_size = 2
+
     has_delay_slots = True
 
     home_space_size = 0

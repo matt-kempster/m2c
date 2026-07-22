@@ -163,6 +163,7 @@ class ArchAsm(ArchAsmParsing):
     arch: Target.ArchEnum
 
     re_comment: str
+    asm_word_size: int = 4
 
     stack_pointer_reg: Register
     frame_pointer_regs: List[Register]

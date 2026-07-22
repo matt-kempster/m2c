@@ -505,6 +505,16 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
     re_label = re.compile(r'(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):')
 
     T = TypeVar("T")
+    data_directives = {
+        ".word": arch.asm_word_size,
+        ".gpword": 4,
+        ".4byte": 4,
+        ".long": 4,
+        ".short": 2,
+        ".half": 2,
+        ".2byte": 2,
+        ".byte": 1,
+    }
 
     class LabelKind(Enum):
         GLOBAL = "global"
@@ -733,10 +743,11 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     elif args_str.strip() == "32":
                         asm_state.is_thumb = False
                 elif curr_section in (".rodata", ".data", ".bss", ".text"):
-                    if directive in (".word", ".gpword", ".4byte", ".long"):
+                    if directive in data_directives:
+                        size = data_directives[directive]
                         args = split_arg_list(args_str)
                         for w in args:
-                            emit_word(w, 4)
+                            emit_word(w, size)
                     elif directive == ".rel":
                         # .rel is a common dtk disassembler macro used with jump tables.
                         # ".rel name, label" expands to ".4byte name + (label - name)"
@@ -751,14 +762,6 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                             LabelKind.LOCAL if args[1] == "local" else LabelKind.GLOBAL
                         )
                         process_label(args[0], kind=kind)
-                    elif directive in (".short", ".half", ".2byte"):
-                        args = split_arg_list(args_str)
-                        for w in args:
-                            emit_word(w, 2)
-                    elif directive == ".byte":
-                        args = split_arg_list(args_str)
-                        for w in args:
-                            emit_word(w, 1)
                     elif directive == ".float":
                         args = split_arg_list(args_str)
                         for w in args:
