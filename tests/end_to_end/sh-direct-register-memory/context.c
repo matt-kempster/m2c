@@ -1,0 +1,12 @@
+signed char test(signed char *ptr);
+signed short test_loadw(signed short *ptr);
+signed test_loadl(signed *ptr);
+void test_storeb(signed char *ptr, signed char value);
+void test_storew(signed short *ptr, signed short value);
+void test_storel(signed *ptr, signed value);
+signed char test_loadb_postinc(signed char **ptr);
+signed short test_loadw_postinc(signed short **ptr);
+signed test_loadl_postinc(signed **ptr);
+void test_storeb_predec(signed char **ptr, signed char value);
+void test_storew_predec(signed short **ptr, signed short value);
+void test_storel_predec(signed **ptr, signed value);
