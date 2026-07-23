@@ -540,16 +540,16 @@ class Sh2Arch(Arch):
                 Register("condition_bit"),
                 cls.instrs_compare[mnemonic](a),
             )
-        elif mnemonic in ("bf.s", "bt.s"):
+        elif mnemonic in ("bf", "bf.s", "bt", "bt.s"):
             assert len(args) == 1
             inputs = [Register("condition_bit")]
             jump_target = get_jump_target(args[0])
             is_conditional = True
-            has_delay_slot = True
+            has_delay_slot = mnemonic.endswith(".s")
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 condition = condition_from_expr(a.regs[Register("condition_bit")])
-                if mnemonic == "bf.s":
+                if mnemonic.startswith("bf"):
                     condition = condition.negated()
                 s.set_branch_condition(condition)
 
