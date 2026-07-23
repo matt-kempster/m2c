@@ -510,6 +510,18 @@ class Sh2Arch(Arch):
                     BinaryOp.icmp(value, "==", Literal(0)),
                 )
 
+        elif mnemonic in ("cmp/pl", "cmp/pz"):
+            assert len(args) == 1 and isinstance(args[0], Register)
+            inputs = [args[0]]
+            outputs = [Register("condition_bit")]
+            eval_fn = lambda s, a: s.set_reg(
+                Register("condition_bit"),
+                BinaryOp.scmp(
+                    a.reg(0),
+                    ">" if mnemonic == "cmp/pl" else ">=",
+                    Literal(0),
+                ),
+            )
         elif mnemonic in ("bf.s", "bt.s"):
             assert len(args) == 1
             inputs = [Register("condition_bit")]
