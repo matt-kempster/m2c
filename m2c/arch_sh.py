@@ -311,7 +311,13 @@ class Sh2Arch(Arch):
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.reg(0))
             else:
                 assert isinstance(args[0], AsmLiteral)
-                eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), Literal(a.imm_value(0)))
+
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    value = a.imm_value(0)
+                    if 0x80 <= value <= 0xFF:
+                        value -= 0x100
+                    s.set_reg(a.reg_ref(1), Literal(value))
+
         elif mnemonic in ("mov.b", "mov.l", "mov.w"):
             assert len(args) == 2
             if isinstance(args[0], Register):
