@@ -4,7 +4,7 @@ from typing import Callable, Dict, List, Optional
 
 from .error import DecompFailure
 from .options import Target
-from .asm_file import AsmSymbolicData
+from .asm_file import AsmData, AsmSymbolicData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -22,8 +22,8 @@ from .asm_pattern import (
     AsmMatch,
     AsmMatcher,
     AsmPattern,
+    BodyPart,
     Replacement,
-    ReplacementPart,
     SimpleAsmPattern,
     make_pattern,
 )
@@ -55,6 +55,7 @@ from .translate import (
 
 from .evaluate import (
     condition_from_expr,
+    fold_divmod,
     fold_mul_chains,
     fold_shift_right,
     handle_add,
@@ -166,72 +167,57 @@ class Sh2AddrModeWritebackPattern(AsmPattern):
         )
 
 
-class DivisionHelperPattern(SimpleAsmPattern):
-    pattern = make_pattern("mov.l _, $t", "jsr @$t", "*")
-
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        load = m.body[0]
-        delay_slot = m.wildcard_items[0]
-        assert isinstance(load, Instruction)
-        assert isinstance(load.args[0], AsmGlobalSymbol)
-        if not isinstance(delay_slot, Instruction):
-            return None
-
-        entry = m.asm_data.values.get(load.args[0].symbol_name)
-        if entry is None:
-            return None
-        target = entry.data_at_offset(0, 4)
-        if not isinstance(target, AsmSymbolicData):
-            return None
-        target_name = target.as_symbol_without_addend()
-        if target_name is None:
-            return None
-        mnemonic = {
-            "___sdivsi3": "sdiv.fictive",
-            "___udivsi3": "udiv.fictive",
-        }.get(target_name)
-        if mnemonic is None:
-            return None
-        division = AsmInstruction(mnemonic, [Register("r4"), Register("r5")])
-        return Replacement([delay_slot, division], 3)
+def literal_pool_target(asm_data: AsmData, load: BodyPart) -> Optional[str]:
+    """Return the symbol a `mov.l <label>, rN` literal pool load points at."""
+    if not isinstance(load, Instruction) or not isinstance(
+        load.args[0], AsmGlobalSymbol
+    ):
+        return None
+    entry = asm_data.values.get(load.args[0].symbol_name)
+    if entry is None:
+        return None
+    target = entry.data_at_offset(0, 4)
+    if not isinstance(target, AsmSymbolicData):
+        return None
+    return target.as_symbol_without_addend()
 
 
-class ShModuloPattern(SimpleAsmPattern):
-    pattern = make_pattern(
-        "mov $a, $l",
-        "mov.l _, $t",
-        "jsr @$t",
-        "mov $b, $r",
-        "mul.l $r, $r0",
-        "lds.l @$r15+, $pr",
-        "mov.l @$r15+, $r14",
-        "sts $macl, $m",
-        "sub $m, $l",
-        "rts?",
-        "mov $l, $r0",
-    )
+def sh_sub(lhs: Expression, rhs: Expression) -> Expression:
+    """Subtract, recognizing the `x - (x / y) * y` shape gcc emits for modulo."""
+    expr = handle_sub(lhs, rhs)
+    if isinstance(expr, BinaryOp):
+        return fold_divmod(expr)
+    return expr
 
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        # Both helpers return the quotient in r0, which the sequence multiplies back
-        # and subtracts to recover the remainder. Testing showed gcc kept the dividend
-        # in a callee-saved register only for the signed helper, which is what we key
-        # on to tell the two apart.
-        mnemonic = (
-            "smod.fictive" if m.regs["l"] in Sh2Arch.saved_regs else "umod.fictive"
-        )
-        restore_pr, restore_fp = m.body[5], m.body[6]
-        tail: List[ReplacementPart] = []
-        if len(m.body) == 11:
-            tail = [AsmInstruction("rts", []), AsmInstruction("nop", [])]
-        return Replacement(
-            [
-                AsmInstruction(mnemonic, [Register("r0"), m.regs["a"], m.regs["b"]]),
-                restore_pr,
-                restore_fp,
-                *tail,
-            ],
-            len(m.body),
-        )
+
+class DivisionHelperPattern(AsmPattern):
+    # gcc normally emits the literal pool load right before the call, but the
+    # scheduler is free to slot unrelated instructions into the gap, so allow a
+    # couple. Matching is still safe because the pool entry has to resolve to a
+    # known division helper.
+    patterns = [
+        make_pattern("mov.l _, $t", "jsr @$t", "*"),
+        make_pattern("mov.l _, $t", "*", "jsr @$t", "*"),
+        make_pattern("mov.l _, $t", "*", "*", "jsr @$t", "*"),
+    ]
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        for pattern in self.patterns:
+            m = matcher.try_match(pattern)
+            if m is None:
+                continue
+            mnemonic = {
+                "___sdivsi3": "sdiv.fictive",
+                "___udivsi3": "udiv.fictive",
+            }.get(literal_pool_target(m.asm_data, m.body[0]) or "")
+            if mnemonic is None:
+                continue
+            scheduled = m.wildcard_items
+            if not all(isinstance(x, Instruction) for x in scheduled):
+                continue
+            division = AsmInstruction(mnemonic, [Register("r4"), Register("r5")])
+            return Replacement([*scheduled, division], len(m.body))
+        return None
 
 
 class Sh2Arch(Arch):
@@ -601,21 +587,6 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("r0"), op(a.reg(0), "/", a.reg(1))
             )
-        elif mnemonic in ("smod.fictive", "umod.fictive"):
-            assert (
-                len(args) == 3
-                and isinstance(args[0], Register)
-                and isinstance(args[1], Register)
-                and isinstance(args[2], Register)
-            )
-            inputs = [args[1], args[2]]
-            outputs = [args[0]]
-            eval_fn = lambda s, a: s.set_reg(
-                a.reg_ref(0),
-                (BinaryOp.sint if mnemonic == "smod.fictive" else BinaryOp.uint)(
-                    a.reg(1), "%", a.reg(2)
-                ),
-            )
         elif mnemonic == "tablejmp.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
@@ -686,7 +657,7 @@ class Sh2Arch(Arch):
         "add": lambda a: (
             handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
         )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
-        "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
+        "sub": lambda a: sh_sub(a.reg(1), a.reg(0)),
         "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(0)),
         "or": lambda a: handle_or(a.reg(1), a.reg_or_imm(0)),
         "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(0)),
@@ -740,7 +711,6 @@ class Sh2Arch(Arch):
     }
 
     asm_patterns = [
-        ShModuloPattern(),
         DivisionHelperPattern(),
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
