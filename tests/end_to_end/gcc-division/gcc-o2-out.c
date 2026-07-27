@@ -14,42 +14,48 @@ void test(u32 a) {
     func_00401FC4(a);
 }
 
-void func_00400098(s8 arg0) {
-    foo((u32) ((s32) ((s8) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x18) >> 0x1F)) >> 1), /* extra? */ arg0);
-    foo((u32) (s8) (subroutine_arg4 / 3));
-    foo((u32) (s8) (subroutine_arg4 / 5));
-    foo((u32) (s8) (subroutine_arg4 / 7));
-    foo((u32) (s8) (subroutine_arg4 / 10));
-    foo((u32) (s8) (subroutine_arg4 / 100));
-    foo(subroutine_arg4 / 255);
-    foo((u32) (s8) ((s8) subroutine_arg4 - (((s32) ((s8) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x18) >> 0x1F)) >> 1) * 2)));
-    foo((u32) (s8) (subroutine_arg4 % 3));
-    foo((u32) (s8) (subroutine_arg4 % 5));
-    foo((u32) (s8) (subroutine_arg4 % 7));
-    foo((u32) (s8) (subroutine_arg4 % 10));
-    foo((u32) (s8) (subroutine_arg4 % 100));
-    foo(subroutine_arg4 % 255);
+void func_00400098(u8 arg0) {
+    u8 sp10;
+
+    sp10 = arg0;
+    foo((u32) ((s32) ((s8) sp10 + ((u32) (sp10 << 0x18) >> 0x1F)) >> 1));
+    foo((u32) (s8) (arg0 / 3));
+    foo((u32) (s8) (sp10 / 5));
+    foo((u32) (s8) (sp10 / 7));
+    foo((u32) (s8) (sp10 / 10));
+    foo((u32) (s8) (sp10 / 100));
+    foo(sp10 / 255);
+    foo((u32) (s8) ((s8) sp10 - (((s32) ((s8) sp10 + ((u32) (sp10 << 0x18) >> 0x1F)) >> 1) * 2)));
+    foo((u32) (s8) (sp10 % 3));
+    foo((u32) (s8) (sp10 % 5));
+    foo((u32) (s8) (sp10 % 7));
+    foo((u32) (s8) (sp10 % 10));
+    foo((u32) (s8) (sp10 % 100));
+    foo(sp10 % 255);
 }
 
-void func_004003A8(s16 arg0) {
-    foo((u32) ((s32) ((s16) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x10) >> 0x1F)) >> 1), /* extra? */ arg0);
-    foo((u32) (s16) (subroutine_arg4 / 3));
-    foo((u32) (s16) (subroutine_arg4 / 5));
-    foo((u32) (s16) (subroutine_arg4 / 7));
-    foo((u32) (s16) (subroutine_arg4 / 10));
-    foo((u32) (s16) (subroutine_arg4 / 100));
-    foo((u32) (s16) (subroutine_arg4 / 255));
-    foo((u32) (s16) (subroutine_arg4 / 360));
-    foo(subroutine_arg4 / 65534);
-    foo((u32) (s16) ((s16) subroutine_arg4 - (((s32) ((s16) subroutine_arg4 + ((u32) (subroutine_arg4 << 0x10) >> 0x1F)) >> 1) * 2)));
-    foo((u32) (s16) (subroutine_arg4 % 3));
-    foo((u32) (s16) (subroutine_arg4 % 5));
-    foo((u32) (s16) (subroutine_arg4 % 7));
-    foo((u32) (s16) (subroutine_arg4 % 10));
-    foo((u32) (s16) (subroutine_arg4 % 100));
-    foo((u32) (s16) (subroutine_arg4 % 255));
-    foo((u32) (s16) (subroutine_arg4 % 360));
-    foo(subroutine_arg4 % 65534);
+void func_004003A8(u16 arg0) {
+    u16 sp10;
+
+    sp10 = arg0;
+    foo((u32) ((s32) ((s16) sp10 + ((u32) (sp10 << 0x10) >> 0x1F)) >> 1));
+    foo((u32) (s16) (arg0 / 3));
+    foo((u32) (s16) (sp10 / 5));
+    foo((u32) (s16) (sp10 / 7));
+    foo((u32) (s16) (sp10 / 10));
+    foo((u32) (s16) (sp10 / 100));
+    foo((u32) (s16) (sp10 / 255));
+    foo((u32) (s16) (sp10 / 360));
+    foo(sp10 / 65534);
+    foo((u32) (s16) ((s16) sp10 - (((s32) ((s16) sp10 + ((u32) (sp10 << 0x10) >> 0x1F)) >> 1) * 2)));
+    foo((u32) (s16) (sp10 % 3));
+    foo((u32) (s16) (sp10 % 5));
+    foo((u32) (s16) (sp10 % 7));
+    foo((u32) (s16) (sp10 % 10));
+    foo((u32) (s16) (sp10 % 100));
+    foo((u32) (s16) (sp10 % 255));
+    foo((u32) (s16) (sp10 % 360));
+    foo(sp10 % 65534);
 }
 
 void func_004007C0(u32 arg0) {

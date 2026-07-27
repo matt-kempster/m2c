@@ -995,6 +995,7 @@ class MipsArch(Arch):
         is_branch_likely = False
         is_conditional = False
         is_return = False
+        is_load = False
         is_store = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
@@ -1227,6 +1228,7 @@ class MipsArch(Arch):
             elif mnemonic.startswith("l") and size is not None:
                 # Load instructions
                 assert len(args) == 2
+                is_load = True
                 inputs = make_memory_access(args[1])
                 if isinstance(args[1], AsmAddressMode):
                     inputs.append(args[1].base)
@@ -1339,6 +1341,7 @@ class MipsArch(Arch):
             is_branch_likely=is_branch_likely,
             is_conditional=is_conditional,
             is_return=is_return,
+            is_load=is_load,
             is_store=is_store,
             eval_fn=eval_fn,
         )

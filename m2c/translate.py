@@ -765,21 +765,24 @@ def get_stack_info(
         for node in flow_graph.nodes:
             for inst in node.block.instructions:
                 arch_mnemonic = inst.arch_mnemonic(arch)
-                # TODO: improve this check to cover all loads, not just of words
-                # Can we make use of StackLocation dependencies?
+                # TODO: it would be nice if we could scan inst.output for StackLocation
+                # dependencies here. However, that's not yet implemented for all
+                # architectures, and at the point where those are created, we don't
+                # know if we are using frame pointers... For now, assume that any
+                # AsmAddressMode we see in a load instruction is where we load from.
+                if inst.is_load:
+                    for arg in inst.args:
+                        if isinstance(arg, AsmAddressMode) and info.is_stack_reg(
+                            arg.base
+                        ):
+                            offset = arg.addend_as_literal() & ~3
+                            if offset >= arch.home_space_size:
+                                info.subroutine_arg_top = min(
+                                    info.subroutine_arg_top, offset
+                                )
+                # TODO: do this for sh2 too (more annoying since it involves two
+                # instructions: "mov sp, reg; add imm, reg")
                 if (
-                    (
-                        arch_mnemonic
-                        in ("mips:lw", "mips:lwc1", "mips:ldc1", "ppc:lwz")
-                        or arch_mnemonic.startswith("arm:ldr")
-                    )
-                    and isinstance(inst.args[1], AsmAddressMode)
-                    and info.is_stack_reg(inst.args[1].base)
-                ):
-                    offset = inst.args[1].addend_as_literal()
-                    if offset >= arch.home_space_size:
-                        info.subroutine_arg_top = min(info.subroutine_arg_top, offset)
-                elif (
                     arch_mnemonic in ("mips:addiu", "ppc:addi", "arm:add")
                     and isinstance(inst.args[1], Register)
                     and info.is_stack_reg(inst.args[1])

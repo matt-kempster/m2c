@@ -1009,6 +1009,7 @@ class PpcArch(Arch):
         function_target: Optional[Argument] = None
         is_conditional = False
         is_return = False
+        is_load = False
         is_store = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
@@ -1206,10 +1207,12 @@ class PpcArch(Arch):
                 assert len(args) == 2 + psq_imms
                 if isinstance(args[1], AsmAddressMode):
                     inputs = make_memory_access(args[1], size) + [args[1].base]
+            is_load = True
             outputs = [args[0]]
             eval_fn = lambda s, a: s.set_reg(a.reg_ref(0), cls.instrs_load[mnemonic](a))
         elif mnemonic in cls.instrs_load_update:
             assert isinstance(args[0], Register) and size is not None
+            is_load = True
             if mnemonic.endswith("x"):
                 assert (
                     len(args) == 3 + psq_imms
@@ -1470,6 +1473,7 @@ class PpcArch(Arch):
             function_target=function_target,
             is_conditional=is_conditional,
             is_return=is_return,
+            is_load=is_load,
             is_store=is_store,
             eval_fn=eval_fn,
         )

@@ -127,7 +127,7 @@ class Instruction:
     function_target: Optional[Argument] = None
     is_conditional: bool = False
     is_return: bool = False
-    is_load: bool = False  # only set for ARM at the moment
+    is_load: bool = False
     is_store: bool = False
     is_effectful: bool = True  # only set for ARM at the moment
 
