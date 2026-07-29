@@ -402,27 +402,37 @@ class Sh2Arch(Arch):
                             type=load_type,
                         ),
                     )
-        elif mnemonic == "sts.l":
+        elif mnemonic in ("sts.l", "stc.l"):
             assert (
                 len(args) == 2
-                and args[0] == Register("pr")
+                and isinstance(args[0], Register)
                 and isinstance(args[1], AsmAddressMode)
-                and args[1].base == cls.stack_pointer_reg
                 and args[1].writeback == Writeback.PRE
             )
-            inputs = [args[0], args[1].base]
+            mem = args[1]
+            inputs = [args[0], mem.base]
             is_store = True
-        elif mnemonic == "lds.l":
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                assert args[0] == Register("pr")
+                assert mem.base == cls.stack_pointer_reg
+
+        elif mnemonic in ("lds.l", "ldc.l"):
             assert (
                 len(args) == 2
                 and isinstance(args[0], AsmAddressMode)
-                and args[0].base == cls.stack_pointer_reg
                 and args[0].writeback == Writeback.POST
-                and args[1] == Register("pr")
+                and isinstance(args[1], Register)
             )
-            inputs = [args[0].base]
+            mem = args[0]
+            inputs = [mem.base]
             outputs = [args[1]]
             is_load = True
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                assert args[1] == Register("pr")
+                assert mem.base == cls.stack_pointer_reg
+
         elif mnemonic in cls.instrs_read_modify_write:
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
