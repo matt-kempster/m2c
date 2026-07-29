@@ -2593,6 +2593,12 @@ class InstrArgs:
         ret = literal_expr(arg, self.stack_info)
         return ret
 
+    def s8_imm(self, index: int) -> Expression:
+        ret = self.full_imm(index)
+        if isinstance(ret, Literal):
+            return Literal(((ret.value + 0x80) & 0xFF) - 0x80)
+        return ret
+
     def s16_imm(self, index: int) -> Expression:
         ret = self.full_imm(index)
         if isinstance(ret, Literal):
@@ -2610,6 +2616,12 @@ class InstrArgs:
         if isinstance(arg, Register):
             return self.regs[arg]
         return self.full_imm(index)
+
+    def reg_or_s8_imm(self, index: int) -> Expression:
+        arg = self.raw_arg(index)
+        if isinstance(arg, Register):
+            return self.regs[arg]
+        return self.s8_imm(index)
 
     def hi_imm(self, index: int) -> RawSymbolRef:
         arg = self.raw_arg(index)

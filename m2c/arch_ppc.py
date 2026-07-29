@@ -1616,8 +1616,12 @@ class PpcArch(Arch):
         "addc": lambda a: handle_add(a),
         "adde": lambda a: carry_add_to(handle_add(a)),
         "addze": lambda a: carry_add_to(a.reg(1)),
-        "addi": lambda a: handle_addi(a),
-        "addic": lambda a: handle_addi(a),
+        "addi": lambda a: handle_addi(
+            a.reg_ref(0), a.reg_ref(1), a.reg(1), a.s16_imm(2), a
+        ),
+        "addic": lambda a: handle_addi(
+            a.reg_ref(0), a.reg_ref(1), a.reg(1), a.s16_imm(2), a
+        ),
         "addis": lambda a: handle_addis(a),
         "subf": lambda a: fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1))),
         "subfc": lambda a: fold_divmod(BinaryOp.intptr(a.reg(2), "-", a.reg(1))),
