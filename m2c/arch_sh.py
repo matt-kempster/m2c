@@ -510,6 +510,13 @@ class Sh2Arch(Arch):
                     BinaryOp.icmp(value, "==", Literal(0)),
                 )
 
+        elif mnemonic in cls.instrs_compare:
+            inputs = [arg for arg in args if isinstance(arg, Register)]
+            outputs = [Register("condition_bit")]
+            eval_fn = lambda s, a: s.set_reg(
+                Register("condition_bit"),
+                cls.instrs_compare[mnemonic](a),
+            )
         elif mnemonic in ("bf.s", "bt.s"):
             assert len(args) == 1
             inputs = [Register("condition_bit")]
@@ -575,28 +582,6 @@ class Sh2Arch(Arch):
             is_conditional = True
             has_delay_slot = True
             eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
-        elif mnemonic in ("cmp/eq", "cmp/ge", "cmp/gt", "cmp/hi", "cmp/hs"):
-            assert len(args) == 2 and isinstance(args[1], Register)
-            inputs = [args[1]]
-            if isinstance(args[0], Register):
-                inputs.insert(0, args[0])
-            outputs = [Register("condition_bit")]
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                lhs = a.reg(1)
-                rhs = a.reg_or_imm(0)
-                if mnemonic == "cmp/eq":
-                    condition = BinaryOp.icmp(lhs, "==", rhs)
-                elif mnemonic == "cmp/ge":
-                    condition = BinaryOp.scmp(lhs, ">=", rhs)
-                elif mnemonic == "cmp/gt":
-                    condition = BinaryOp.scmp(lhs, ">", rhs)
-                elif mnemonic == "cmp/hs":
-                    condition = BinaryOp.ucmp(lhs, ">=", rhs)
-                else:
-                    condition = BinaryOp.ucmp(lhs, ">", rhs)
-                s.set_reg(Register("condition_bit"), condition)
-
         elif mnemonic == "movt":
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [Register("condition_bit")]
@@ -627,6 +612,16 @@ class Sh2Arch(Arch):
             is_store=is_store,
             has_delay_slot=has_delay_slot,
         )
+
+    instrs_compare: InstrMap = {
+        "cmp/pl": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
+        "cmp/pz": lambda a: BinaryOp.scmp(a.reg(0), ">=", Literal(0)),
+        "cmp/eq": lambda a: BinaryOp.icmp(a.reg(1), "==", a.reg_or_imm(0)),
+        "cmp/ge": lambda a: BinaryOp.scmp(a.reg(1), ">=", a.reg_or_imm(0)),
+        "cmp/gt": lambda a: BinaryOp.scmp(a.reg(1), ">", a.reg_or_imm(0)),
+        "cmp/hi": lambda a: BinaryOp.ucmp(a.reg(1), ">", a.reg_or_imm(0)),
+        "cmp/hs": lambda a: BinaryOp.ucmp(a.reg(1), ">=", a.reg_or_imm(0)),
+    }
 
     instrs_read_modify_write: InstrMap = {
         # sh2 format is src, dst
