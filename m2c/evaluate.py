@@ -211,10 +211,11 @@ def handle_la(args: InstrArgs) -> Expression:
     stack_info = args.stack_info
     if isinstance(target, AddressMode):
         return handle_addi(
-            replace(
-                args,
-                raw_args=[output_reg, target.base, AsmLiteral(target.offset)],
-            )
+            output_reg,
+            target.base,
+            args.regs[target.base],
+            Literal(target.offset),
+            args,
         )
 
     sym = stack_info.global_info.address_of_gsym(target.sym.symbol_name)
@@ -314,21 +315,18 @@ def handle_xori(args: InstrArgs) -> Expression:
 
 
 def handle_addi(
+    output_reg: Register,
+    source_reg: Register,
+    source: Expression,
+    imm: Expression,
     args: InstrArgs,
+    *,
     arm: bool = False,
-    imm: Optional[Expression] = None,
 ) -> Expression:
-    output_reg = args.reg_ref(0)
-    source_reg = args.reg_ref(1)
-
-    ref = args.maybe_gprel_imm(2)
+    ref = args.maybe_gprel_imm(2) if len(args.raw_args) > 2 else None
     if ref is not None and source_reg == Register("gp"):
         sym = args.stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
         return add_imm(output_reg, sym, Literal(ref.offset), args)
-
-    source = args.reg(1)
-    if imm is None:
-        imm = args.full_imm(2) if arm else args.s16_imm(2)
 
     if imm == Literal(0):
         return source
@@ -1223,7 +1221,14 @@ def handle_add_arm(args: InstrArgs) -> Expression:
     if isinstance(args.raw_arg(2), Register):
         return handle_add(args)
     else:
-        return handle_addi(args, arm=True)
+        return handle_addi(
+            args.reg_ref(0),
+            args.reg_ref(1),
+            args.reg(1),
+            args.full_imm(2),
+            args,
+            arm=True,
+        )
 
 
 def handle_add_real(

@@ -1564,8 +1564,12 @@ class MipsArch(Arch):
         "sltu": lambda a: handle_sltu(a),
         "sltiu": lambda a: handle_sltiu(a),
         # Integer arithmetic
-        "addi": lambda a: handle_addi(a),
-        "addiu": lambda a: handle_addi(a),
+        "addi": lambda a: handle_addi(
+            a.reg_ref(0), a.reg_ref(1), a.reg(1), a.s16_imm(2), a
+        ),
+        "addiu": lambda a: handle_addi(
+            a.reg_ref(0), a.reg_ref(1), a.reg(1), a.s16_imm(2), a
+        ),
         "add": lambda a: handle_add(a),
         "addu": lambda a: handle_add(a),
         "sub": lambda a: (
@@ -1583,8 +1587,12 @@ class MipsArch(Arch):
         "div.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.full_imm(2)),
         # 64-bit integer arithmetic, treated mostly the same as 32-bit for now
-        "daddi": lambda a: handle_addi(a),
-        "daddiu": lambda a: handle_addi(a),
+        "daddi": lambda a: handle_addi(
+            a.reg_ref(0), a.reg_ref(1), a.reg(1), a.s16_imm(2), a
+        ),
+        "daddiu": lambda a: handle_addi(
+            a.reg_ref(0), a.reg_ref(1), a.reg(1), a.s16_imm(2), a
+        ),
         "daddu": lambda a: handle_add(a),
         "dsubu": lambda a: fold_mul_chains(BinaryOp.intptr(a.reg(1), "-", a.reg(2))),
         "dnegu": lambda a: fold_mul_chains(
