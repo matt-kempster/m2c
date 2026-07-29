@@ -1,5 +1,3 @@
-? literal();                                        /* static */
-
-void *test(void) {
-    return literal;
+s32 test(void) {
+    return 0;
 }
