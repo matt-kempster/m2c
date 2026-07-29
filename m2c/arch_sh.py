@@ -630,13 +630,7 @@ class Sh2Arch(Arch):
         "add": lambda a: (
             handle_add(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)]))
             if isinstance(a.raw_arg(0), Register)
-            else handle_addi(
-                a.reg_ref(1),
-                a.reg_ref(1),
-                a.reg(1),
-                a.s8_imm(0),
-                a,
-            )
+            else handle_addi(a.reg_ref(1), a.reg_ref(1), a.reg(1), a.s8_imm(0), a)
         ),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
         "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(0)),
