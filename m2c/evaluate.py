@@ -314,26 +314,37 @@ def handle_xori(args: InstrArgs) -> Expression:
     return BinaryOp.int(left=left, op="^", right=right)
 
 
+def handle_addi_mips(args: InstrArgs) -> Expression:
+    output_reg = args.reg_ref(0)
+    source_reg = args.reg_ref(1)
+    ref = args.maybe_gprel_imm(2)
+    if ref is not None and source_reg == Register("gp"):
+        sym = args.stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
+        return add_imm(output_reg, sym, Literal(ref.offset), args)
+
+    return handle_addi(
+        output_reg,
+        source_reg,
+        args.reg(1),
+        args.s16_imm(2),
+        args,
+    )
+
+
 def handle_addi(
     output_reg: Register,
     source_reg: Register,
     source: Expression,
     imm: Expression,
     args: InstrArgs,
-    *,
-    arm: bool = False,
 ) -> Expression:
-    ref = args.maybe_gprel_imm(2) if len(args.raw_args) > 2 else None
-    if ref is not None and source_reg == Register("gp"):
-        sym = args.stack_info.global_info.address_of_gsym(ref.sym.symbol_name)
-        return add_imm(output_reg, sym, Literal(ref.offset), args)
-
     if imm == Literal(0):
         return source
 
     # `(x + 0xEDCC)` is emitted as `((x + 0x10000) - 0x1234)`,
     # i.e. as an `addis` followed by an `addi`
     # ARM is similar but with (x + 0x344) + 0x12000 or (x + 0x35) + 0x1200
+    arm = args.stack_info.global_info.arch.arch == Target.ArchEnum.ARM
     uw_source = early_unwrap(source)
     if (
         isinstance(uw_source, BinaryOp)
@@ -1227,7 +1238,6 @@ def handle_add_arm(args: InstrArgs) -> Expression:
             args.reg(1),
             args.full_imm(2),
             args,
-            arm=True,
         )
 
 
