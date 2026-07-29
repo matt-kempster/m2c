@@ -617,15 +617,11 @@ class Sh2Arch(Arch):
     instrs_compare: InstrMap = {
         "cmp/pl": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
         "cmp/pz": lambda a: BinaryOp.scmp(a.reg(0), ">=", Literal(0)),
-        "cmp/eq": lambda a: BinaryOp.icmp(
-            a.reg(1),
-            "==",
-            a.reg(0) if isinstance(a.raw_arg(0), Register) else a.s8_imm(0),
-        ),
-        "cmp/ge": lambda a: BinaryOp.scmp(a.reg(1), ">=", a.reg_or_imm(0)),
-        "cmp/gt": lambda a: BinaryOp.scmp(a.reg(1), ">", a.reg_or_imm(0)),
-        "cmp/hi": lambda a: BinaryOp.ucmp(a.reg(1), ">", a.reg_or_imm(0)),
-        "cmp/hs": lambda a: BinaryOp.ucmp(a.reg(1), ">=", a.reg_or_imm(0)),
+        "cmp/eq": lambda a: BinaryOp.icmp(a.reg(1), "==", a.reg_or_s8_imm(0)),
+        "cmp/ge": lambda a: BinaryOp.scmp(a.reg(1), ">=", a.reg(0)),
+        "cmp/gt": lambda a: BinaryOp.scmp(a.reg(1), ">", a.reg(0)),
+        "cmp/hi": lambda a: BinaryOp.ucmp(a.reg(1), ">", a.reg(0)),
+        "cmp/hs": lambda a: BinaryOp.ucmp(a.reg(1), ">=", a.reg(0)),
     }
 
     instrs_read_modify_write: InstrMap = {

@@ -2617,6 +2617,12 @@ class InstrArgs:
             return self.regs[arg]
         return self.full_imm(index)
 
+    def reg_or_s8_imm(self, index: int) -> Expression:
+        arg = self.raw_arg(index)
+        if isinstance(arg, Register):
+            return self.regs[arg]
+        return self.s8_imm(index)
+
     def hi_imm(self, index: int) -> RawSymbolRef:
         arg = self.raw_arg(index)
         if not isinstance(arg, Macro) or arg.macro_name not in ("hi", "ha", "h"):
