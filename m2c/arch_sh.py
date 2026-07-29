@@ -303,7 +303,7 @@ class Sh2Arch(Arch):
             has_delay_slot = True
         elif mnemonic == "nop":
             assert len(args) == 0
-        elif mnemonic == "mov":
+        elif mnemonic in ("mov", "lds", "sts"):
             assert len(args) == 2 and isinstance(args[1], Register)
             outputs = [args[1]]
             if isinstance(args[0], Register):
@@ -407,15 +407,6 @@ class Sh2Arch(Arch):
             )
             inputs = [args[0], args[1].base]
             is_store = True
-        elif mnemonic == "sts":
-            assert (
-                len(args) == 2
-                and args[0] == Register("macl")
-                and isinstance(args[1], Register)
-            )
-            inputs = [args[0]]
-            outputs = [args[1]]
-            eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.reg(0))
         elif mnemonic == "lds.l":
             assert (
                 len(args) == 2
