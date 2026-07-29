@@ -458,6 +458,14 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("macl"), cls.instrs_multiply[mnemonic](a)
             )
+        elif mnemonic == "clrmac":
+            assert not args
+            outputs = [Register("macl"), Register("mach")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(Register("macl"), Literal(0))
+                s.set_reg(Register("mach"), Literal(0))
+
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
@@ -590,6 +598,11 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(0), a.regs[Register("condition_bit")]
             )
+        elif mnemonic in ("clrt", "sett"):
+            assert not args
+            outputs = [Register("condition_bit")]
+            val = 1 if mnemonic == "sett" else 0
+            eval_fn = lambda s, a: s.set_reg(Register("condition_bit"), Literal(val))
         else:
             instr_str = str(AsmInstruction(mnemonic, args))
 
