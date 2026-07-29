@@ -313,7 +313,11 @@ def handle_xori(args: InstrArgs) -> Expression:
     return BinaryOp.int(left=left, op="^", right=right)
 
 
-def handle_addi(args: InstrArgs, arm: bool = False) -> Expression:
+def handle_addi(
+    args: InstrArgs,
+    arm: bool = False,
+    imm: Optional[Expression] = None,
+) -> Expression:
     output_reg = args.reg_ref(0)
     source_reg = args.reg_ref(1)
 
@@ -323,7 +327,8 @@ def handle_addi(args: InstrArgs, arm: bool = False) -> Expression:
         return add_imm(output_reg, sym, Literal(ref.offset), args)
 
     source = args.reg(1)
-    imm = args.full_imm(2) if arm else args.s16_imm(2)
+    if imm is None:
+        imm = args.full_imm(2) if arm else args.s16_imm(2)
 
     if imm == Literal(0):
         return source

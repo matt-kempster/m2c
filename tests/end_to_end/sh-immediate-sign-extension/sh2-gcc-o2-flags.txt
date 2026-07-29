@@ -1,0 +1,1 @@
+--target sh2-gcc-c --function test_min --function test_max --function test_add --function test_compare

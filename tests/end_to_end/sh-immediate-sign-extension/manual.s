@@ -8,12 +8,13 @@ mov #128, r0
 rts
 nop
 
-glabel test_max
-mov #127, r0
+glabel test_add
+mov r4, r0
 rts
-nop
+add #255, r0
 
-glabel test_spelled_negative
-mov #-1, r0
+glabel test_compare
+cmp/eq #255, r4
+movt r0
 rts
 nop

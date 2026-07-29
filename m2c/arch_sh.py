@@ -311,12 +311,7 @@ class Sh2Arch(Arch):
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.reg(0))
             else:
                 assert isinstance(args[0], AsmLiteral)
-
-                def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                    value = a.imm_value(0)
-                    if 0x80 <= value <= 0xFF:
-                        value -= 0x100
-                    s.set_reg(a.reg_ref(1), Literal(value))
+                eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.s8_imm(0))
 
         elif mnemonic in ("mov.b", "mov.l", "mov.w"):
             assert len(args) == 2
@@ -622,7 +617,11 @@ class Sh2Arch(Arch):
     instrs_compare: InstrMap = {
         "cmp/pl": lambda a: BinaryOp.scmp(a.reg(0), ">", Literal(0)),
         "cmp/pz": lambda a: BinaryOp.scmp(a.reg(0), ">=", Literal(0)),
-        "cmp/eq": lambda a: BinaryOp.icmp(a.reg(1), "==", a.reg_or_imm(0)),
+        "cmp/eq": lambda a: BinaryOp.icmp(
+            a.reg(1),
+            "==",
+            a.reg(0) if isinstance(a.raw_arg(0), Register) else a.s8_imm(0),
+        ),
         "cmp/ge": lambda a: BinaryOp.scmp(a.reg(1), ">=", a.reg_or_imm(0)),
         "cmp/gt": lambda a: BinaryOp.scmp(a.reg(1), ">", a.reg_or_imm(0)),
         "cmp/hi": lambda a: BinaryOp.ucmp(a.reg(1), ">", a.reg_or_imm(0)),
@@ -633,8 +632,13 @@ class Sh2Arch(Arch):
         # sh2 format is src, dst
         # add handler is dest, left, right
         "add": lambda a: (
-            handle_add if isinstance(a.raw_arg(0), Register) else handle_addi
-        )(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)])),
+            handle_add(replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)]))
+            if isinstance(a.raw_arg(0), Register)
+            else handle_addi(
+                replace(a, raw_args=[a.raw_arg(1), a.raw_arg(1), a.raw_arg(0)]),
+                imm=a.s8_imm(0),
+            )
+        ),
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
         "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(0)),
         "or": lambda a: handle_or(a.reg(1), a.reg_or_imm(0)),
