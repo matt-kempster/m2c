@@ -318,6 +318,14 @@ class Sh2Arch(Arch):
                 assert isinstance(args[0], AsmLiteral)
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.s8_imm(0))
 
+        elif mnemonic == "mova":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], AsmGlobalSymbol)
+                and args[1] == Register("r0")
+            )
+            outputs = [Register("r0")]
+            eval_fn = lambda s, a: s.set_reg(Register("r0"), a.full_imm(0))
         elif mnemonic in ("mov.b", "mov.l", "mov.w"):
             assert len(args) == 2
             if isinstance(args[0], Register):
