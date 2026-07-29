@@ -55,4 +55,12 @@ typedef s64 M2C_UNK64;
 #define M2C_MEMCPY_UNALIGNED memcpy
 #define M2C_STRUCT_COPY memcpy
 
+/* Sh2 control register loads/stores */
+#define M2C_LOAD_SR() (0)
+#define M2C_LOAD_GBR() (0)
+#define M2C_LOAD_VBR() (0)
+#define M2C_STORE_SR(a)
+#define M2C_STORE_GBR(a)
+#define M2C_STORE_VBR(a)
+
 #endif

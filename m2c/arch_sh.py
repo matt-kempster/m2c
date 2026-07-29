@@ -54,6 +54,7 @@ from .translate import (
 
 from .evaluate import (
     condition_from_expr,
+    fn_op,
     fold_mul_chains,
     fold_shift_right,
     handle_add,
@@ -65,6 +66,7 @@ from .evaluate import (
     handle_sub,
     make_store,
     make_storex,
+    void_fn_op,
 )
 
 from .types import FunctionSignature, Type
@@ -240,6 +242,9 @@ class Sh2Arch(Arch):
             for r in [
                 "mach",
                 "macl",
+                "sr",
+                "gbr",
+                "vbr",
             ]
         ]
     )
@@ -594,6 +599,30 @@ class Sh2Arch(Arch):
             outputs = [Register("condition_bit")]
             val = 1 if mnemonic == "sett" else 0
             eval_fn = lambda s, a: s.set_reg(Register("condition_bit"), Literal(val))
+        elif mnemonic == "stc":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            outputs = [args[1]]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                fn_name = "M2C_LOAD_" + a.reg_ref(0).register_name.upper()
+                s.set_reg(a.reg_ref(1), fn_op(fn_name, [], Type.u32()))
+
+        elif mnemonic == "ldc":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0]]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                fn_name = "M2C_STORE_" + a.reg_ref(1).register_name.upper()
+                s.write_statement(void_fn_op(fn_name, [a.reg(0)]))
+
         else:
             instr_str = str(AsmInstruction(mnemonic, args))
 
