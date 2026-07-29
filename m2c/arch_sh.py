@@ -174,7 +174,8 @@ class DivisionHelperPattern(SimpleAsmPattern):
         load = m.body[0]
         delay_slot = m.wildcard_items[0]
         assert isinstance(load, Instruction)
-        assert isinstance(load.args[0], AsmGlobalSymbol)
+        if not isinstance(load.args[0], AsmGlobalSymbol):
+            return None
         if not isinstance(delay_slot, Instruction):
             return None
 
