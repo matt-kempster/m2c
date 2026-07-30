@@ -304,9 +304,7 @@ def handle_sltiu(args: InstrArgs) -> Expression:
     return BinaryOp.ucmp(left, "<", right)
 
 
-def handle_xori(args: InstrArgs) -> Expression:
-    left = args.reg(1)
-    right = args.u16_imm(2)
+def handle_xor(left: Expression, right: Expression) -> Expression:
     if isinstance(right, Literal) and right.value == 1:
         uw_left = early_unwrap(left)
         if isinstance(uw_left, BinaryOp) and uw_left.is_comparison():

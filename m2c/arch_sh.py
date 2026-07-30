@@ -64,6 +64,7 @@ from .evaluate import (
     handle_loadx,
     handle_or,
     handle_sub,
+    handle_xor,
     make_store,
     make_storex,
     void_fn_op,
@@ -706,7 +707,7 @@ class Sh2Arch(Arch):
         "sub": lambda a: handle_sub(a.reg(1), a.reg(0)),
         "and": lambda a: BinaryOp.int(a.reg(1), "&", a.reg_or_imm(0)),
         "or": lambda a: handle_or(a.reg(1), a.reg_or_imm(0)),
-        "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg_or_imm(0)),
+        "xor": lambda a: handle_xor(a.reg(1), a.reg_or_imm(0)),
     }
 
     instrs_source_dest: InstrMap = {

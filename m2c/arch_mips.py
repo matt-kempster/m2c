@@ -93,7 +93,7 @@ from .evaluate import (
     handle_shift_right,
     handle_sltiu,
     handle_sltu,
-    handle_xori,
+    handle_xor,
     handle_swl,
     handle_swr,
     imm_add_32,
@@ -1636,7 +1636,7 @@ class MipsArch(Arch):
         ),
         "xor": lambda a: BinaryOp.int(a.reg(1), "^", a.reg(2)),
         "andi": lambda a: BinaryOp.int(a.reg(1), "&", a.u16_imm(2)),
-        "xori": lambda a: handle_xori(a),
+        "xori": lambda a: handle_xor(a.reg(1), a.u16_imm(2)),
         # Shifts
         "sll": lambda a: fold_mul_chains(
             BinaryOp.int(a.reg(1), "<<", as_intish(a.s16_imm(2)))
