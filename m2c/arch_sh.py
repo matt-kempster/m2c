@@ -499,13 +499,12 @@ class Sh2Arch(Arch):
             and isinstance(args[0], Register)
             and args[0] == args[1]
         ):
-            inputs = [args[0], Register("condition_bit")]
-            outputs = [args[1], Register("condition_bit")]
+            inputs = [Register("condition_bit")]
+            outputs = [args[1]]
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 carry = a.regs[Register("condition_bit")]
                 s.set_reg(a.reg_ref(1), UnaryOp.sint("-", carry))
-                s.set_reg(Register("condition_bit"), carry)
 
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
