@@ -493,11 +493,25 @@ class Sh2Arch(Arch):
                 s.set_reg(Register("macl"), Literal(0))
                 s.set_reg(Register("mach"), Literal(0))
 
+        elif (
+            mnemonic == "subc"
+            and len(args) == 2
+            and isinstance(args[0], Register)
+            and args[0] == args[1]
+        ):
+            inputs = [args[0], Register("condition_bit")]
+            outputs = [args[1], Register("condition_bit")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                carry = a.regs[Register("condition_bit")]
+                s.set_reg(a.reg_ref(1), UnaryOp.sint("-", carry))
+                s.set_reg(Register("condition_bit"), carry)
+
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
             outputs = [args[0]]
-            if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+            if mnemonic in ("shll", "shlr", "shar", "rotl", "rotr"):
                 outputs.append(Register("condition_bit"))
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
@@ -506,7 +520,7 @@ class Sh2Arch(Arch):
                     carry = BinaryOp.intptr(original, "&", Literal(1))
                 else:
                     carry = BinaryOp.uint(original, ">>", Literal(31))
-                if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+                if mnemonic in ("shll", "shlr", "shar", "rotl", "rotr"):
                     s.set_reg(Register("condition_bit"), carry)
                 s.set_reg(a.reg_ref(0), cls.instrs_shift[mnemonic](a))
 
@@ -731,6 +745,9 @@ class Sh2Arch(Arch):
     }
 
     instrs_shift: InstrMap = {
+        "shll": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(1)), allow_sll_chains=True
+        ),
         "shlr": lambda a: fold_shift_right(a.reg(0), 1, signed=False),
         "shar": lambda a: fold_shift_right(a.reg(0), 1, signed=True),
         "shll2": lambda a: fold_mul_chains(
