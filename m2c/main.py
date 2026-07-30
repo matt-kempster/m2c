@@ -52,6 +52,7 @@ def print_exception(exc: Exception, sanitize: bool) -> None:
             tb = tb.__cause__
         for frame in tb.stack:
             frame.lineno = 0
+            frame.end_lineno = 0
             frame.filename = Path(frame.filename).name
         for line in tb.format(chain=False):
             print(line, end="")
