@@ -229,6 +229,10 @@ def create_project_tests(
             "--unk-underscore",
             "--pointer-style=left",
         ]
+    elif "sotn" in base_dir.parts:
+        asm_dir /= "saturn"
+        file_iter = find_tests_basic(asm_dir)
+        base_flags = ["--target=sh2-gcc-c", "--stack-structs"]
     else:
         file_iter = find_tests_basic(asm_dir)
         base_flags = [
@@ -246,7 +250,7 @@ def create_project_tests(
         if context_file is not None:
             flags.extend(["--context", str(context_file)])
 
-        test_path = file_list[0].relative_to(base_dir / "asm")
+        test_path = file_list[0].relative_to(asm_dir)
         name = f"{name_prefix}:{test_path}"
         output_file = (output_dir / test_path).with_suffix(".c")
 
