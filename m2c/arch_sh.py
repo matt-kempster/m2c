@@ -126,6 +126,20 @@ class NegateTPattern(SimpleAsmPattern):
         return Replacement([AsmInstruction("negatet.fictive", [])], len(m.body))
 
 
+class SubcSelfPattern(SimpleAsmPattern):
+    pattern = make_pattern("subc $r, $r")
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        reg = m.regs["r"]
+        return Replacement(
+            [
+                AsmInstruction("movt", [reg]),
+                AsmInstruction("neg", [reg, reg]),
+            ],
+            len(m.body),
+        )
+
+
 class Sh2AddrModeWritebackPattern(AsmPattern):
     """Replace writebacks in mov address modes by separate add instructions."""
 
@@ -493,19 +507,6 @@ class Sh2Arch(Arch):
                 s.set_reg(Register("macl"), Literal(0))
                 s.set_reg(Register("mach"), Literal(0))
 
-        elif (
-            mnemonic == "subc"
-            and len(args) == 2
-            and isinstance(args[0], Register)
-            and args[0] == args[1]
-        ):
-            inputs = [Register("condition_bit")]
-            outputs = [args[1]]
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                carry = a.regs[Register("condition_bit")]
-                s.set_reg(a.reg_ref(1), UnaryOp.sint("-", carry))
-
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
@@ -778,6 +779,7 @@ class Sh2Arch(Arch):
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
+        SubcSelfPattern(),
     ]
 
     def arg_name(self, loc: ArgLoc) -> str:
