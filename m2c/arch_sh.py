@@ -118,7 +118,7 @@ class JumpTablePattern(SimpleAsmPattern):
 class NegateTPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "rotcl $r",
-        "xor #0x01, $r",
+        "xor #1, $r",
         "rotcr $r",
     )
 
@@ -796,31 +796,62 @@ class Sh2Arch(Arch):
                     )
                 )
 
-            for i, param in enumerate(fn_sig.params):
+            reg_num = 0
+            for param in fn_sig.params:
                 param_type = param.type.decay()
-                reg = Register(f"r{i + 4}") if i < 4 else None
-                stack_offset = None if reg is not None else (i - 4) * 4
-                known_slots.append(
-                    AbiArgSlot(
-                        ArgLoc(stack_offset, i, reg),
-                        param_type,
-                        name=param.name,
+                # (The sh2 ABI we target does not use alignment > 4 anywhere,
+                # so we can ignore that aspect here)
+                size, _ = param_type.get_parameter_size_align_bytes()
+                size_regs = (size + 3) // 4
+                name = param.name
+                for i in range(reg_num, reg_num + size_regs):
+                    unk_offset = 4 * (i - reg_num)
+                    reg = Register(f"r{i + 4}") if i < 4 else None
+                    stack_loc = None if reg is not None else (i - 4) * 4
+                    if size_regs > 1:
+                        name2 = f"{name}_unk{unk_offset:X}" if name else None
+                        sub_type = Type.any()
+                        comment: Optional[str] = f"{param_type}+{unk_offset:#x}"
+                    else:
+                        assert unk_offset == 0
+                        name2 = name
+                        sub_type = param_type
+                        comment = None
+                    known_slots.append(
+                        AbiArgSlot(
+                            ArgLoc(stack_loc, i, reg),
+                            sub_type,
+                            name=name2,
+                            comment=comment,
+                        )
                     )
-                )
+                reg_num += size_regs
+
+            if fn_sig.is_variadic:
+                for i in range(reg_num, 4):
+                    candidate_slots.append(
+                        AbiArgSlot(
+                            ArgLoc(None, i, Register(f"r{i + 4}")), Type.intptr()
+                        )
+                    )
         else:
             candidate_slots = [
                 AbiArgSlot(ArgLoc(None, i, Register(f"r{i + 4}")), Type.intptr())
                 for i in range(4)
             ]
 
-        # argument registers are filled in order, so using a higher register implies
-        # that the preceding registers may also contain arguments
-        highest_used = -1
-        for i, reg in enumerate(self.argument_regs):
-            if likely_regs.get(reg, False):
-                highest_used = i
-        for i, slot in enumerate(candidate_slots):
-            if i <= highest_used:
+        # Skip candidate slots starting from the first unset register, or past
+        # the last likely passed register.
+        highest_likely = -1
+        for i in range(4, 8):
+            if Register(f"r{i}") not in likely_regs:
+                break
+            if likely_regs[Register(f"r{i}")]:
+                highest_likely = i
+
+        for slot in candidate_slots:
+            assert slot.loc.reg is not None
+            if int(slot.loc.reg.register_name[1:]) <= highest_likely:
                 possible_slots.append(slot)
 
         return Abi(
