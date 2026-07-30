@@ -499,6 +499,43 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("macl"), cls.instrs_multiply[mnemonic](a)
             )
+        elif mnemonic in ("dmuls.l", "dmulu.l"):
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0], args[1]]
+            outputs = [Register("mach"), Register("macl")]
+            signed = mnemonic == "dmuls.l"
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                # 64-bit, mach has high part, macl has low part
+                operand_type = Type.s32() if signed else Type.u32()
+                product_type = Type.s64() if signed else Type.u64()
+                lhs = as_type(a.reg(1), operand_type, silent=True)
+                rhs = as_type(a.reg(0), operand_type, silent=True)
+                product = BinaryOp(
+                    as_type(lhs, product_type, silent=False),
+                    "*",
+                    as_type(rhs, product_type, silent=False),
+                    type=product_type,
+                )
+                high = BinaryOp(
+                    product,
+                    ">>",
+                    Literal(32),
+                    type=product_type,
+                )
+                s.set_reg(
+                    Register("mach"),
+                    as_type(high, operand_type, silent=True),
+                )
+                s.set_reg(
+                    Register("macl"),
+                    as_type(product, Type.u32(), silent=True),
+                )
+
         elif mnemonic == "clrmac":
             assert not args
             outputs = [Register("macl"), Register("mach")]
