@@ -525,27 +525,6 @@ class Sh2Arch(Arch):
                     BinaryOp.icmp(value, "==", Literal(0)),
                 )
 
-        elif mnemonic == "tst":
-            assert (
-                len(args) == 2
-                and isinstance(args[0], Register)
-                and isinstance(args[1], Register)
-            )
-            inputs = [args[0], args[1]]
-            outputs = [Register("condition_bit")]
-            same_reg = args[0] == args[1]
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                # tst does '&' but gcc uses it for 'if (x == 0)' as well.
-                # so check if it's the same reg. e.g. 'tst r4, r4'
-                value = (
-                    a.reg(0) if same_reg else BinaryOp.intptr(a.reg(1), "&", a.reg(0))
-                )
-                s.set_reg(
-                    Register("condition_bit"),
-                    BinaryOp.icmp(value, "==", Literal(0)),
-                )
-
         elif mnemonic in cls.instrs_compare:
             inputs = [arg for arg in args if isinstance(arg, Register)]
             outputs = [Register("condition_bit")]
@@ -694,6 +673,13 @@ class Sh2Arch(Arch):
         "cmp/gt": lambda a: BinaryOp.scmp(a.reg(1), ">", a.reg(0)),
         "cmp/hi": lambda a: BinaryOp.ucmp(a.reg(1), ">", a.reg(0)),
         "cmp/hs": lambda a: BinaryOp.ucmp(a.reg(1), ">=", a.reg(0)),
+        "tst": lambda a: (
+            BinaryOp.icmp(a.reg(1), "==", Literal(0))
+            if a.reg_ref(1) == a.raw_arg(0)
+            else BinaryOp.icmp(
+                BinaryOp.intptr(a.reg(1), "&", a.reg_or_s8_imm(0)), "==", Literal(0)
+            )
+        ),
     }
 
     instrs_read_modify_write: InstrMap = {
