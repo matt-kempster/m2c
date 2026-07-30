@@ -772,10 +772,12 @@ def get_stack_info(
                 # AsmAddressMode we see in a load instruction is where we load from.
                 if inst.is_load:
                     for arg in inst.args:
-                        if isinstance(arg, AsmAddressMode) and info.is_stack_reg(
-                            arg.base
+                        if (
+                            isinstance(arg, AsmAddressMode)
+                            and info.is_stack_reg(arg.base)
+                            and isinstance(arg.addend, AsmLiteral)
                         ):
-                            offset = arg.addend_as_literal() & ~3
+                            offset = arg.addend.value & ~3
                             if offset >= arch.home_space_size:
                                 info.subroutine_arg_top = min(
                                     info.subroutine_arg_top, offset
