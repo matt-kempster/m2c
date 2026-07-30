@@ -126,6 +126,20 @@ class NegateTPattern(SimpleAsmPattern):
         return Replacement([AsmInstruction("negatet.fictive", [])], len(m.body))
 
 
+class SubcSelfPattern(SimpleAsmPattern):
+    pattern = make_pattern("subc $r, $r")
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        reg = m.regs["r"]
+        return Replacement(
+            [
+                AsmInstruction("movt", [reg]),
+                AsmInstruction("neg", [reg, reg]),
+            ],
+            len(m.body),
+        )
+
+
 class Sh2AddrModeWritebackPattern(AsmPattern):
     """Replace writebacks in mov address modes by separate add instructions."""
 
@@ -497,7 +511,7 @@ class Sh2Arch(Arch):
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
             outputs = [args[0]]
-            if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+            if mnemonic in ("shll", "shlr", "shar", "rotl", "rotr"):
                 outputs.append(Register("condition_bit"))
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
@@ -506,7 +520,7 @@ class Sh2Arch(Arch):
                     carry = BinaryOp.intptr(original, "&", Literal(1))
                 else:
                     carry = BinaryOp.uint(original, ">>", Literal(31))
-                if mnemonic in ("shlr", "shar", "rotl", "rotr"):
+                if mnemonic in ("shll", "shlr", "shar", "rotl", "rotr"):
                     s.set_reg(Register("condition_bit"), carry)
                 s.set_reg(a.reg_ref(0), cls.instrs_shift[mnemonic](a))
 
@@ -717,6 +731,9 @@ class Sh2Arch(Arch):
     }
 
     instrs_shift: InstrMap = {
+        "shll": lambda a: fold_mul_chains(
+            BinaryOp.int(a.reg(0), "<<", Literal(1)), allow_sll_chains=True
+        ),
         "shlr": lambda a: fold_shift_right(a.reg(0), 1, signed=False),
         "shar": lambda a: fold_shift_right(a.reg(0), 1, signed=True),
         "shll2": lambda a: fold_mul_chains(
@@ -748,6 +765,7 @@ class Sh2Arch(Arch):
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
+        SubcSelfPattern(),
     ]
 
     def arg_name(self, loc: ArgLoc) -> str:
