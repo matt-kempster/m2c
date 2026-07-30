@@ -114,6 +114,17 @@ class JumpTablePattern(SimpleAsmPattern):
         )
 
 
+class NegateTPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "rotcl $r",
+        "xor #0x01, $r",
+        "rotcr $r",
+    )
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        return Replacement([AsmInstruction("negatet.fictive", [])], len(m.body))
+
+
 class Sh2AddrModeWritebackPattern(AsmPattern):
     """Replace writebacks in mov address modes by separate add instructions."""
 
@@ -618,6 +629,14 @@ class Sh2Arch(Arch):
             outputs = [Register("condition_bit")]
             val = 1 if mnemonic == "sett" else 0
             eval_fn = lambda s, a: s.set_reg(Register("condition_bit"), Literal(val))
+        elif mnemonic == "negatet.fictive":
+            assert not args
+            inputs = outputs = [Register("condition_bit")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                condition = condition_from_expr(a.regs[Register("condition_bit")])
+                s.set_reg(Register("condition_bit"), condition.negated())
+
         elif mnemonic == "stc":
             assert (
                 len(args) == 2
@@ -741,6 +760,7 @@ class Sh2Arch(Arch):
         DivisionHelperPattern(),
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
+        NegateTPattern(),
     ]
 
     def arg_name(self, loc: ArgLoc) -> str:
