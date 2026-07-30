@@ -444,8 +444,7 @@ def build_blocks(
             return
 
         if not item.has_delay_slot:
-            block_builder.add_instruction(item)
-            assert not item.is_jump(), "all MIPS jumps have a delay slot"
+            process_no_delay_slots(item)
             return
 
         process_after: List[Union[Instruction, Label]] = []
