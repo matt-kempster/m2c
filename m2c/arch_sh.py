@@ -55,6 +55,7 @@ from .translate import (
 from .evaluate import (
     condition_from_expr,
     fn_op,
+    fold_divmod,
     fold_mul_chains,
     fold_shift_right,
     handle_add,
@@ -507,33 +508,16 @@ class Sh2Arch(Arch):
             )
             inputs = [args[0], args[1]]
             outputs = [Register("mach"), Register("macl")]
-            signed = mnemonic == "dmuls.l"
+            high_op = "MULT_HI" if mnemonic == "dmuls.l" else "MULTU_HI"
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                # 64-bit, mach has high part, macl has low part
-                operand_type = Type.s32() if signed else Type.u32()
-                product_type = Type.s64() if signed else Type.u64()
-                lhs = as_type(a.reg(1), operand_type, silent=True)
-                rhs = as_type(a.reg(0), operand_type, silent=True)
-                product = BinaryOp(
-                    as_type(lhs, product_type, silent=False),
-                    "*",
-                    as_type(rhs, product_type, silent=False),
-                    type=product_type,
-                )
-                high = BinaryOp(
-                    product,
-                    ">>",
-                    Literal(32),
-                    type=product_type,
-                )
                 s.set_reg(
                     Register("mach"),
-                    as_type(high, operand_type, silent=True),
+                    fold_divmod(BinaryOp.int(a.reg(1), high_op, a.reg(0))),
                 )
                 s.set_reg(
                     Register("macl"),
-                    as_type(product, Type.u32(), silent=True),
+                    BinaryOp.int(a.reg(1), "*", a.reg(0)),
                 )
 
         elif mnemonic == "clrmac":
