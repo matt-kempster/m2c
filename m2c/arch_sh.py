@@ -55,6 +55,7 @@ from .translate import (
 from .evaluate import (
     condition_from_expr,
     fn_op,
+    fold_divmod,
     fold_mul_chains,
     fold_shift_right,
     handle_add,
@@ -499,6 +500,26 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("macl"), cls.instrs_multiply[mnemonic](a)
             )
+        elif mnemonic in ("dmuls.l", "dmulu.l"):
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[0], args[1]]
+            outputs = [Register("mach"), Register("macl")]
+            high_op = "MULT_HI" if mnemonic == "dmuls.l" else "MULTU_HI"
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                s.set_reg(
+                    Register("mach"),
+                    fold_divmod(BinaryOp.int(a.reg(1), high_op, a.reg(0))),
+                )
+                s.set_reg(
+                    Register("macl"),
+                    BinaryOp.int(a.reg(1), "*", a.reg(0)),
+                )
+
         elif mnemonic == "clrmac":
             assert not args
             outputs = [Register("macl"), Register("mach")]
