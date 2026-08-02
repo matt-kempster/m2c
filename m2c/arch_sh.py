@@ -79,6 +79,51 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
+class FarJumpPattern(AsmPattern):
+    pattern = make_pattern(
+        "mov.l $t,@-$s",
+        "mov.l _, $t",
+        "jmp @$t",
+        "mov.l @$s+,$t",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        m = matcher.try_match(self.pattern)
+        if m is None:
+            return None
+        if m.regs["s"] != Register("r15"):
+            return None
+        load = m.body[1]
+        assert isinstance(load, Instruction)
+        if not isinstance(load.args[0], AsmGlobalSymbol):
+            return None
+        entry = m.asm_data.values.get(load.args[0].symbol_name)
+        if entry is None:
+            return None
+        target = entry.data_at_offset(0, 4)
+        if isinstance(target, bytes):
+            target_name = f".L{int.from_bytes(target, 'big'):08X}"
+        elif isinstance(target, AsmSymbolicData) and isinstance(
+            target.data, AsmGlobalSymbol
+        ):
+            target_name = target.data.symbol_name
+        elif isinstance(target, AsmSymbolicData) and isinstance(
+            target.data, AsmLiteral
+        ):
+            target_name = f".L{target.data.value:08X}"
+        else:
+            return None
+        if not matcher.is_local_label(target_name):
+            return None
+        return Replacement(
+            [
+                AsmInstruction("bra", [AsmGlobalSymbol(target_name)]),
+                AsmInstruction("nop", []),
+            ],
+            len(m.body),
+        )
+
+
 class JumpTablePattern(AsmPattern):
     pattern1 = make_pattern(
         "mova _, $b",
@@ -864,6 +909,7 @@ class Sh2Arch(Arch):
     }
 
     asm_patterns = [
+        FarJumpPattern(),
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
