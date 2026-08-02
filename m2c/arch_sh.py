@@ -77,6 +77,29 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
+def jump_table_targets(m: AsmMatch, mova_index: int) -> Optional[List[AsmGlobalSymbol]]:
+    mova = m.body[mova_index]
+    assert isinstance(mova, Instruction)
+    assert isinstance(mova.args[0], AsmGlobalSymbol)
+
+    table_name = mova.args[0].symbol_name
+    table = m.asm_data.values.get(table_name)
+    if table is None:
+        return None
+    targets: List[AsmGlobalSymbol] = []
+    for entry in table.data:
+        if (
+            not isinstance(entry, AsmSymbolicData)
+            or not isinstance(entry.data, BinOp)
+            or entry.data.op != "-"
+            or not isinstance(entry.data.lhs, AsmGlobalSymbol)
+            or entry.data.rhs != AsmGlobalSymbol(table_name)
+        ):
+            return None
+        targets.append(entry.data.lhs)
+    return targets or None
+
+
 class JumpTablePattern(SimpleAsmPattern):
     pattern = make_pattern(
         "mova _, $b",
@@ -87,29 +110,40 @@ class JumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        mova = m.body[0]
-        assert isinstance(mova, Instruction)
-        assert isinstance(mova.args[0], AsmGlobalSymbol)
-
-        table_name = mova.args[0].symbol_name
-        table = m.asm_data.values.get(table_name)
-        if table is None:
-            return None
-        targets: List[AsmGlobalSymbol] = []
-        for entry in table.data:
-            if (
-                not isinstance(entry, AsmSymbolicData)
-                or not isinstance(entry.data, BinOp)
-                or entry.data.op != "-"
-                or not isinstance(entry.data.lhs, AsmGlobalSymbol)
-                or entry.data.rhs != AsmGlobalSymbol(table_name)
-            ):
-                return None
-            targets.append(entry.data.lhs)
-        if not targets:
+        targets = jump_table_targets(m, 0)
+        if targets is None:
             return None
         return Replacement(
             [
+                AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
+                AsmInstruction("nop", []),
+            ],
+            len(m.body),
+        )
+
+
+class BranchedDoubledJumpTablePattern(SimpleAsmPattern):
+
+    pattern = make_pattern(
+        "add $i, $i",
+        "mova _, $b",
+        "mov.w @($b,$i),$i",
+        "add $i, $b",
+        "bra .dispatch",
+        "nop",
+        "nop?",
+        ".dispatch:",
+        "jmp @$b",
+        "nop",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        targets = jump_table_targets(m, 1)
+        if targets is None:
+            return None
+        return Replacement(
+            [
+                m.body[0],
                 AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
                 AsmInstruction("nop", []),
             ],
@@ -852,6 +886,7 @@ class Sh2Arch(Arch):
     asm_patterns = [
         DivisionHelperPattern(),
         JumpTablePattern(),
+        BranchedDoubledJumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
         SubcSelfPattern(),
