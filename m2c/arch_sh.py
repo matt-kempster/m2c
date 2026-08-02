@@ -51,6 +51,7 @@ from .translate import (
     as_type,
     as_u16,
     as_u32,
+    early_unwrap,
 )
 
 from .evaluate import (
@@ -76,8 +77,8 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
-def jump_table_targets(m: AsmMatch, mova_index: int) -> Optional[List[AsmGlobalSymbol]]:
-    mova = m.body[mova_index]
+def jump_table_targets(m: AsmMatch) -> Optional[List[AsmGlobalSymbol]]:
+    mova = m.body[0]
     assert isinstance(mova, Instruction)
     assert isinstance(mova.args[0], AsmGlobalSymbol)
 
@@ -101,8 +102,6 @@ def jump_table_targets(m: AsmMatch, mova_index: int) -> Optional[List[AsmGlobalS
 
 class JumpTablePattern(SimpleAsmPattern):
     pattern = make_pattern(
-        "mov $x, $i",
-        "add $i, $i",
         "mova _, $b",
         "mov.w @($b,$i),$i",
         "add $i, $b",
@@ -111,36 +110,11 @@ class JumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        targets = jump_table_targets(m, 2)
+        targets = jump_table_targets(m)
         if targets is None:
             return None
         return Replacement(
             [
-                m.body[0],
-                AsmInstruction("tablejmp.fictive", [m.regs["x"], *targets]),
-                AsmInstruction("nop", []),
-            ],
-            len(m.body),
-        )
-
-
-class DoubledJumpTablePattern(SimpleAsmPattern):
-    pattern = make_pattern(
-        "add $i, $i",
-        "mova _, $b",
-        "mov.w @($b,$i),$i",
-        "add $i, $b",
-        "jmp @$b",
-        "nop",
-    )
-
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        targets = jump_table_targets(m, 1)
-        if targets is None:
-            return None
-        return Replacement(
-            [
-                m.body[0],
                 AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
                 AsmInstruction("nop", []),
             ],
@@ -705,7 +679,7 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("r0"), op(a.reg(0), "/", a.reg(1))
             )
-        elif mnemonic in ("tablejmp.fictive", "tablejmp.doubled.fictive"):
+        elif mnemonic == "tablejmp.doubled.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
             for arg in args[1:]:
@@ -715,12 +689,20 @@ class Sh2Arch(Arch):
             jump_target = targets
             is_conditional = True
             has_delay_slot = True
-            if mnemonic == "tablejmp.doubled.fictive":
-                eval_fn = lambda s, a: s.set_switch_expr(
-                    BinaryOp.uint(a.reg(0), ">>", Literal(1)), just_index=True
-                )
-            else:
-                eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                index = a.reg(0)
+                unwrapped = early_unwrap(index)
+                if (
+                    isinstance(unwrapped, BinaryOp)
+                    and unwrapped.op == "*"
+                    and early_unwrap(unwrapped.right) == Literal(2)
+                ):
+                    index = unwrapped.left
+                else:
+                    index = BinaryOp.uint(index, ">>", Literal(1))
+                s.set_switch_expr(index, just_index=True)
+
         elif mnemonic == "movt":
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [Register("condition_bit")]
@@ -873,7 +855,6 @@ class Sh2Arch(Arch):
     asm_patterns = [
         DivisionHelperPattern(),
         JumpTablePattern(),
-        DoubledJumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
         SubcSelfPattern(),

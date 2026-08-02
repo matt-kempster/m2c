@@ -4,10 +4,7 @@ s32 test(s32 arg0) {
     u32 temp_r0;
 
     temp_r0 = sink() & 0x7F;
-    if (temp_r0 > 0x2BU) {
-        return sink(temp_r0 + 1);
-    }
-    switch ((u32) (temp_r0 * 2) >> 1U) {
+    switch (temp_r0) {                              /* irregular */
     case 0:
         return 0xB;
     case 1:
@@ -96,5 +93,7 @@ s32 test(s32 arg0) {
         return 0x29;
     case 43:
         return 0x4E;
+    default:
+        return sink(temp_r0 + 1);
     }
 }
