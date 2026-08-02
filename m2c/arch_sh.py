@@ -127,7 +127,9 @@ class NegateTPattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Replacement:
-        return Replacement([AsmInstruction("negatet.fictive", [])], len(m.body))
+        return Replacement(
+            [AsmInstruction("negatet.fictive", [])], len(m.body), clobbers=[]
+        )
 
 
 class SubcSelfPattern(SimpleAsmPattern):
@@ -225,7 +227,7 @@ class DivisionHelperPattern(SimpleAsmPattern):
         if mnemonic is None:
             return None
         division = AsmInstruction(mnemonic, [Register("r4"), Register("r5")])
-        return Replacement([delay_slot, division], 3)
+        return Replacement([delay_slot, division], 3, clobbers=[])
 
 
 class Sh2Arch(Arch):
