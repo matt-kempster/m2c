@@ -77,29 +77,6 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
-def jump_table_targets(m: AsmMatch) -> Optional[List[AsmGlobalSymbol]]:
-    mova = m.body[0]
-    assert isinstance(mova, Instruction)
-    assert isinstance(mova.args[0], AsmGlobalSymbol)
-
-    table_name = mova.args[0].symbol_name
-    table = m.asm_data.values.get(table_name)
-    if table is None:
-        return None
-    targets: List[AsmGlobalSymbol] = []
-    for entry in table.data:
-        if (
-            not isinstance(entry, AsmSymbolicData)
-            or not isinstance(entry.data, BinOp)
-            or entry.data.op != "-"
-            or not isinstance(entry.data.lhs, AsmGlobalSymbol)
-            or entry.data.rhs != AsmGlobalSymbol(table_name)
-        ):
-            return None
-        targets.append(entry.data.lhs)
-    return targets or None
-
-
 class JumpTablePattern(SimpleAsmPattern):
     pattern = make_pattern(
         "mova _, $b",
@@ -110,8 +87,26 @@ class JumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        targets = jump_table_targets(m)
-        if targets is None:
+        mova = m.body[0]
+        assert isinstance(mova, Instruction)
+        assert isinstance(mova.args[0], AsmGlobalSymbol)
+
+        table_name = mova.args[0].symbol_name
+        table = m.asm_data.values.get(table_name)
+        if table is None:
+            return None
+        targets: List[AsmGlobalSymbol] = []
+        for entry in table.data:
+            if (
+                not isinstance(entry, AsmSymbolicData)
+                or not isinstance(entry.data, BinOp)
+                or entry.data.op != "-"
+                or not isinstance(entry.data.lhs, AsmGlobalSymbol)
+                or entry.data.rhs != AsmGlobalSymbol(table_name)
+            ):
+                return None
+            targets.append(entry.data.lhs)
+        if not targets:
             return None
         return Replacement(
             [
