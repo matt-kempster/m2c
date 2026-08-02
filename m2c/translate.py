@@ -676,10 +676,10 @@ def get_stack_info(
         elif (
             arch_mnemonic == "sh2:add"
             and isinstance(inst.args[0], AsmLiteral)
-            and inst.args[0].value < 0
+            and inst.args[0].as_s8() < 0
             and inst.args[1] == arch.stack_pointer_reg
         ):
-            info.allocated_stack_size += -inst.args[0].value
+            info.allocated_stack_size += -inst.args[0].as_s8()
         elif (
             arch_mnemonic in ("sh2:mov.l", "sh2:sts.l")
             and isinstance(inst.args[0], Register)

@@ -101,6 +101,9 @@ class AsmLiteral:
     def as_s16(self) -> int:
         return ((self.value + 0x8000) & 0xFFFF) - 0x8000
 
+    def as_s8(self) -> int:
+        return ((self.value + 0x80) & 0xFF) - 0x80
+
     def __str__(self) -> str:
         return hex(self.value)
 
