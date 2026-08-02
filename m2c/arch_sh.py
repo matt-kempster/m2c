@@ -76,6 +76,29 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
+def jump_table_targets(m: AsmMatch, mova_index: int) -> Optional[List[AsmGlobalSymbol]]:
+    mova = m.body[mova_index]
+    assert isinstance(mova, Instruction)
+    assert isinstance(mova.args[0], AsmGlobalSymbol)
+
+    table_name = mova.args[0].symbol_name
+    table = m.asm_data.values.get(table_name)
+    if table is None:
+        return None
+    targets: List[AsmGlobalSymbol] = []
+    for entry in table.data:
+        if (
+            not isinstance(entry, AsmSymbolicData)
+            or not isinstance(entry.data, BinOp)
+            or entry.data.op != "-"
+            or not isinstance(entry.data.lhs, AsmGlobalSymbol)
+            or entry.data.rhs != AsmGlobalSymbol(table_name)
+        ):
+            return None
+        targets.append(entry.data.lhs)
+    return targets or None
+
+
 class JumpTablePattern(SimpleAsmPattern):
     pattern = make_pattern(
         "mov $x, $i",
@@ -88,31 +111,37 @@ class JumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        mova = m.body[2]
-        assert isinstance(mova, Instruction)
-        assert isinstance(mova.args[0], AsmGlobalSymbol)
-
-        table_name = mova.args[0].symbol_name
-        table = m.asm_data.values.get(table_name)
-        if table is None:
-            return None
-        targets: List[AsmGlobalSymbol] = []
-        for entry in table.data:
-            if (
-                not isinstance(entry, AsmSymbolicData)
-                or not isinstance(entry.data, BinOp)
-                or entry.data.op != "-"
-                or not isinstance(entry.data.lhs, AsmGlobalSymbol)
-                or entry.data.rhs != AsmGlobalSymbol(table_name)
-            ):
-                return None
-            targets.append(entry.data.lhs)
-        if not targets:
+        targets = jump_table_targets(m, 2)
+        if targets is None:
             return None
         return Replacement(
             [
                 m.body[0],
                 AsmInstruction("tablejmp.fictive", [m.regs["x"], *targets]),
+                AsmInstruction("nop", []),
+            ],
+            len(m.body),
+        )
+
+
+class DoubledJumpTablePattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "add $i, $i",
+        "mova _, $b",
+        "mov.w @($b,$i),$i",
+        "add $i, $b",
+        "jmp @$b",
+        "nop",
+    )
+
+    def replace(self, m: AsmMatch) -> Optional[Replacement]:
+        targets = jump_table_targets(m, 1)
+        if targets is None:
+            return None
+        return Replacement(
+            [
+                m.body[0],
+                AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
                 AsmInstruction("nop", []),
             ],
             len(m.body),
@@ -676,7 +705,7 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("r0"), op(a.reg(0), "/", a.reg(1))
             )
-        elif mnemonic == "tablejmp.fictive":
+        elif mnemonic in ("tablejmp.fictive", "tablejmp.doubled.fictive"):
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
             for arg in args[1:]:
@@ -686,7 +715,12 @@ class Sh2Arch(Arch):
             jump_target = targets
             is_conditional = True
             has_delay_slot = True
-            eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
+            if mnemonic == "tablejmp.doubled.fictive":
+                eval_fn = lambda s, a: s.set_switch_expr(
+                    BinaryOp.uint(a.reg(0), ">>", Literal(1)), just_index=True
+                )
+            else:
+                eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
         elif mnemonic == "movt":
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [Register("condition_bit")]
@@ -839,6 +873,7 @@ class Sh2Arch(Arch):
     asm_patterns = [
         DivisionHelperPattern(),
         JumpTablePattern(),
+        DoubledJumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
         SubcSelfPattern(),
