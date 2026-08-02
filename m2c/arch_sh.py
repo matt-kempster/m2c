@@ -111,6 +111,7 @@ class JumpTablePattern(SimpleAsmPattern):
             return None
         return Replacement(
             [
+                m.body[0],
                 AsmInstruction("tablejmp.fictive", [m.regs["x"], *targets]),
                 AsmInstruction("nop", []),
             ],
