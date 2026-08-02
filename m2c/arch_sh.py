@@ -487,6 +487,42 @@ class Sh2Arch(Arch):
                 result = s.set_reg(a.reg_ref(1), result)
                 s.set_reg(t_reg, CarryBit(result))
 
+        elif mnemonic == "subc":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            t_reg = Register("condition_bit")
+            inputs = [args[0], args[1], t_reg]
+            outputs = [args[1], t_reg]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                lhs = a.reg(1)
+                rhs = a.reg(0)
+                carry = a.regs[t_reg]
+                result = handle_sub(handle_sub(lhs, rhs), carry)
+
+                if carry == Literal(0):
+                    borrow = BinaryOp.ucmp(lhs, "<", rhs)
+                elif carry == Literal(1):
+                    borrow = BinaryOp.ucmp(lhs, "<=", rhs)
+                else:
+                    borrow = BinaryOp(
+                        left=BinaryOp.ucmp(lhs, "<", rhs),
+                        op="||",
+                        right=BinaryOp(
+                            left=BinaryOp.icmp(lhs, "==", rhs),
+                            op="&&",
+                            right=condition_from_expr(carry),
+                            type=Type.boolean(),
+                        ),
+                        type=Type.boolean(),
+                    )
+
+                s.set_reg(a.reg_ref(1), result)
+                s.set_reg(t_reg, borrow)
+
         elif mnemonic in cls.instrs_read_modify_write:
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
