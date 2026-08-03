@@ -166,8 +166,10 @@ class IrMatch:
             assert False, f"bad pattern expr: {pat}"
 
     def map_reg(self, key: Register) -> Register:
-        if self._is_symbolic_reg(key):
-            return self.symbolic_registers[key.register_name]
+        ret = self.symbolic_registers.get(key.register_name)
+        if ret is not None:
+            return ret
+        assert not self._is_symbolic_reg(key)
         return key
 
     def map_arg(self, key: Argument) -> Argument:
@@ -286,7 +288,9 @@ class TryIrMatch(IrMatch):
         return True
 
     def rename_reg(self, pat: Register, new_reg: Register) -> None:
-        assert pat.register_name in self.symbolic_registers, pat.register_name
+        # Note: this can introduce symbolic register mappings for registers
+        # that are not actually symbolic. These are used only for translating
+        # real registers into fictive ones for the replacement instruction.
         self.symbolic_registers[pat.register_name] = new_reg
 
 
