@@ -51,6 +51,7 @@ from .translate import (
     as_type,
     as_u16,
     as_u32,
+    early_unwrap,
 )
 
 from .evaluate import (
@@ -78,8 +79,6 @@ from .types import FunctionSignature, Type
 
 class JumpTablePattern(SimpleAsmPattern):
     pattern = make_pattern(
-        "mov $x, $i",
-        "add $i, $i",
         "mova _, $b",
         "mov.w @($b,$i),$i",
         "add $i, $b",
@@ -88,7 +87,7 @@ class JumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        mova = m.body[2]
+        mova = m.body[0]
         assert isinstance(mova, Instruction)
         assert isinstance(mova.args[0], AsmGlobalSymbol)
 
@@ -111,8 +110,7 @@ class JumpTablePattern(SimpleAsmPattern):
             return None
         return Replacement(
             [
-                m.body[0],
-                AsmInstruction("tablejmp.fictive", [m.regs["x"], *targets]),
+                AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
                 AsmInstruction("nop", []),
             ],
             len(m.body),
@@ -678,7 +676,7 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 Register("r0"), op(a.reg(0), "/", a.reg(1))
             )
-        elif mnemonic == "tablejmp.fictive":
+        elif mnemonic == "tablejmp.doubled.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
             for arg in args[1:]:
@@ -688,7 +686,20 @@ class Sh2Arch(Arch):
             jump_target = targets
             is_conditional = True
             has_delay_slot = True
-            eval_fn = lambda s, a: s.set_switch_expr(a.reg(0), just_index=True)
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                index = a.reg(0)
+                unwrapped = early_unwrap(index)
+                if (
+                    isinstance(unwrapped, BinaryOp)
+                    and unwrapped.op == "*"
+                    and early_unwrap(unwrapped.right) == Literal(2)
+                ):
+                    index = unwrapped.left
+                else:
+                    index = BinaryOp.uint(index, ">>", Literal(1))
+                s.set_switch_expr(index, just_index=True)
+
         elif mnemonic == "movt":
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [Register("condition_bit")]
