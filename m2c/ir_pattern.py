@@ -295,6 +295,8 @@ def simplify_ir_patterns(
     asm_data: AsmData,
     flow_graph: FlowGraph,
     patterns: List[IrPattern],
+    *,
+    debug_patterns: bool,
 ) -> None:
     # Precompute a RefSet for each mnemonic
     # NB: It's difficult to plainly iterate over all Instruction in the flow_graph
@@ -442,6 +444,17 @@ def simplify_ir_patterns(
                     cand_ref.instruction = replace(
                         cand_ref.instruction, in_pattern=True
                     )
+
+            if debug_patterns:
+                print(f"Rewrote asm using {type(pattern).__name__}:")
+                print()
+                for node in flow_graph.nodes:
+                    instrs = list(node.block.instructions)
+                    if instrs:
+                        print(f"{node.block.approx_label_name}:")
+                        for ins in node.block.instructions:
+                            print(ins)
+                print()
 
     # After all of the rewrites above, verify that the instruction dependency
     # data structures are still consistent

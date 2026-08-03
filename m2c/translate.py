@@ -124,8 +124,12 @@ class Arch(ArchFlowGraph, ArchC):
         """Convert an assembler symbol name to its C spelling."""
         return asm_name
 
-    def simplify_ir(self, asm_data: AsmData, flow_graph: FlowGraph) -> None:
-        simplify_ir_patterns(self, asm_data, flow_graph, self.ir_patterns)
+    def simplify_ir(
+        self, asm_data: AsmData, flow_graph: FlowGraph, *, debug_patterns: bool
+    ) -> None:
+        simplify_ir_patterns(
+            self, asm_data, flow_graph, self.ir_patterns, debug_patterns=debug_patterns
+        )
 
 
 ASSOCIATIVE_OPS: Set[str] = {"+", "&&", "||", "&", "|", "^", "*"}
