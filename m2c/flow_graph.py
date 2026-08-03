@@ -42,7 +42,7 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
-    def simplify_ir(self, flow_graph: FlowGraph) -> None: ...
+    def simplify_ir(self, asm_data: AsmData, flow_graph: FlowGraph) -> None: ...
 
 
 class Reference(abc.ABC):
@@ -1711,6 +1711,6 @@ def build_flowgraph(
         print_warnings_for=function if print_warnings or fragment else None,
     )
     if not fragment:
-        arch.simplify_ir(flow_graph)
+        arch.simplify_ir(asm_data, flow_graph)
 
     return flow_graph

@@ -119,9 +119,11 @@ class IrMatch:
     whereas other registers and symbols are matched literally.
     """
 
+    asm_data: AsmData
     symbolic_registers: Dict[str, Register] = field(default_factory=dict)
     symbolic_args: Dict[str, Argument] = field(default_factory=dict)
     ref_map: Dict[Reference, RefSet] = field(default_factory=dict)
+    body: List[InstrRef] = field(default_factory=list)
 
     @staticmethod
     def _is_symbolic_reg(arg: Register) -> bool:
@@ -289,7 +291,10 @@ class TryIrMatch(IrMatch):
 
 
 def simplify_ir_patterns(
-    arch: ArchFlowGraph, flow_graph: FlowGraph, patterns: List[IrPattern]
+    arch: ArchFlowGraph,
+    asm_data: AsmData,
+    flow_graph: FlowGraph,
+    patterns: List[IrPattern],
 ) -> None:
     # Precompute a RefSet for each mnemonic
     # NB: It's difficult to plainly iterate over all Instruction in the flow_graph
@@ -345,7 +350,7 @@ def simplify_ir_patterns(
 
         # Start matches with a mnemonic match for the last instruction in the pattern
         for cand_tail_ref in refs_by_mnemonic.get(tail_ref.instruction.mnemonic, []):
-            state = TryIrMatch()
+            state = TryIrMatch(asm_data=asm_data)
             if not state.match_refset(tail_ref, RefSet([cand_tail_ref])):
                 continue
 
@@ -365,8 +370,16 @@ def simplify_ir_patterns(
                     is_match = False
                     break
 
+            if not is_match:
+                continue
+
+            # At this point, all instructions in the patterns are guaranteed to map
+            # one source instruction. Create a list of those, for use by `check`.
+            for pat_ref in body_refs + [tail_ref]:
+                state.body.append(state.map_ref(pat_ref))
+
             # Perform any additional pattern-specific validation
-            if not is_match or not pattern.source.check(state, arch, flow_graph):
+            if not pattern.source.check(state, arch, flow_graph):
                 continue
 
             # Create temporary registers for the inputs to the replacement_instr.

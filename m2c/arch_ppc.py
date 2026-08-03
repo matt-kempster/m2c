@@ -647,16 +647,8 @@ class LoopStructCopySetupPattern(IrPattern):
         offset = offset.value
         tail_size = 0
 
-        for src in m.ref_map:
-            if (
-                isinstance(src, InstrRef)
-                and src.instruction.mnemonic == "loopstructcopy.fictive"
-            ):
-                ref = m.map_ref(src)
-                break
-        else:
-            assert False, "failed to find mapping for loopstructcopy.fictive"
-
+        ref = m.body[2]
+        assert ref.instruction.mnemonic == "loopstructcopy.fictive"
         dst = m.symbolic_registers["a"]
         src = m.symbolic_registers["b"]
         dst_refs_by_offset = self._by_offset(flow_graph.instr_uses[ref].get(dst))
