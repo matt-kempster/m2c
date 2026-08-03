@@ -417,19 +417,20 @@ def build_blocks(
     fragment: bool,
     debug_patterns: bool,
 ) -> List[Block]:
-    if arch.has_delay_slots:
-        verify_no_trailing_delay_slot(function)
+    if not fragment:
+        if arch.has_delay_slots:
+            verify_no_trailing_delay_slot(function)
 
-    if arch.arch == Target.ArchEnum.MIPS:
+        if arch.arch == Target.ArchEnum.MIPS:
+            function = minimize_labels(function, asm_data)
+            function = normalize_gcc_likely_branches(function, arch)
+            function = normalize_ido_likely_branches(function, arch)
+
         function = minimize_labels(function, asm_data)
-        function = normalize_gcc_likely_branches(function, arch)
-        function = normalize_ido_likely_branches(function, arch)
-
-    function = minimize_labels(function, asm_data)
-    function = simplify_standard_patterns(
-        function, asm_data, arch, debug_patterns=debug_patterns
-    )
-    function = minimize_labels(function, asm_data)
+        function = simplify_standard_patterns(
+            function, asm_data, arch, debug_patterns=debug_patterns
+        )
+        function = minimize_labels(function, asm_data)
 
     block_builder = BlockBuilder()
 
@@ -612,10 +613,11 @@ def build_blocks(
         if item.is_jump():
             block_builder.new_block()
 
-    for item in body_iter:
-        if arch.has_delay_slots:
+    if arch.has_delay_slots and not fragment:
+        for item in body_iter:
             process_delay_slots(item)
-        else:
+    else:
+        for item in body_iter:
             process_no_delay_slots(item)
 
     if block_builder.is_empty():
