@@ -619,13 +619,14 @@ class Sh2Arch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 original = a.reg(0)
-                if mnemonic in ("shlr", "shar", "rotr"):
-                    carry = BinaryOp.intptr(original, "&", Literal(1))
-                else:
-                    carry = BinaryOp.uint(original, ">>", Literal(31))
-                if mnemonic in ("shll", "shlr", "shar", "rotl", "rotr"):
-                    s.set_reg(Register("condition_bit"), carry)
                 s.set_reg(a.reg_ref(0), cls.instrs_shift[mnemonic](a))
+                if mnemonic in ("shll", "shlr", "shar", "rotl", "rotr"):
+                    if mnemonic in ("shlr", "shar", "rotr"):
+                        carry = BinaryOp.intptr(original, "&", Literal(1))
+                    else:
+                        as_u32 = as_type(original, Type.u32(), silent=True, unify=False)
+                        carry = BinaryOp.uint(as_u32, ">>", Literal(31))
+                    s.set_reg(Register("condition_bit"), carry)
 
         elif mnemonic == "dt":
             assert len(args) == 1 and isinstance(args[0], Register)

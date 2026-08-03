@@ -54,7 +54,6 @@ from .translate import (
     Arch,
     BinaryOp,
     CarryBit,
-    Cast,
     Condition,
     ErrorExpr,
     ExprStmt,

@@ -1,6 +1,6 @@
-extern u32 _y;
+extern s32 _y;
 
-void test(u32 arg0) {
+void test(s32 arg0) {
     y = arg0;
     y = arg0 * 2;
     y = arg0 * 3;
