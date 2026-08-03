@@ -77,8 +77,8 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
-def jump_table_targets(m: AsmMatch, mova_index: int) -> Optional[List[AsmGlobalSymbol]]:
-    mova = m.body[mova_index]
+def jump_table_targets(m: AsmMatch) -> Optional[List[AsmGlobalSymbol]]:
+    mova = m.body[0]
     assert isinstance(mova, Instruction)
     assert isinstance(mova.args[0], AsmGlobalSymbol)
 
@@ -110,7 +110,7 @@ class JumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        targets = jump_table_targets(m, 0)
+        targets = jump_table_targets(m)
         if targets is None:
             return None
         return Replacement(
@@ -125,7 +125,6 @@ class JumpTablePattern(SimpleAsmPattern):
 class BranchedDoubledJumpTablePattern(SimpleAsmPattern):
 
     pattern = make_pattern(
-        "add $i, $i",
         "mova _, $b",
         "mov.w @($b,$i),$i",
         "add $i, $b",
@@ -138,12 +137,11 @@ class BranchedDoubledJumpTablePattern(SimpleAsmPattern):
     )
 
     def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        targets = jump_table_targets(m, 1)
+        targets = jump_table_targets(m)
         if targets is None:
             return None
         return Replacement(
             [
-                m.body[0],
                 AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
                 AsmInstruction("nop", []),
             ],
