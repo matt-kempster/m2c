@@ -1672,9 +1672,13 @@ class GlobalSymbol(Expression):
     type_provided: bool = False
     initializer_in_typemap: bool = False
     demangled_str: Optional[str] = None
+    is_referenced: bool = False
 
     def dependencies(self) -> List[Expression]:
         return []
+
+    def use(self) -> None:
+        self.is_referenced = True
 
     def is_string_constant(self) -> bool:
         ent = self.asm_data_entry
@@ -4422,7 +4426,9 @@ class GlobalInfo:
                 return None
 
             data.pop(0)
-            return self.address_of_gsym(label)
+            expr = self.address_of_gsym(label)
+            expr.use()
+            return expr
 
         def for_type(type: Type) -> str:
             """Return the initializer for a single element of type `type`"""
@@ -4515,7 +4521,9 @@ class GlobalInfo:
         lines = []
         processed_names: Set[str] = set()
         while True:
-            names: Set[str] = set(self.global_symbol_map.keys())
+            names: Set[str] = {
+                n for n, s in self.global_symbol_map.items() if s.is_referenced
+            }
             if decls == Options.GlobalDeclsEnum.ALL:
                 for name, ent in self.asm_data.values.items():
                     if not ent.is_text:
