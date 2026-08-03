@@ -81,17 +81,15 @@ from .types import FunctionSignature, Type
 
 class FarJumpPattern(AsmPattern):
     pattern = make_pattern(
-        "mov.l $t,@-$s",
+        "mov.l $t,@-$r15",
         "mov.l _, $t",
         "jmp @$t",
-        "mov.l @$s+,$t",
+        "mov.l @$r15+,$t",
     )
 
     def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
         m = matcher.try_match(self.pattern)
         if m is None:
-            return None
-        if m.regs["s"] != Register("r15"):
             return None
         load = m.body[1]
         assert isinstance(load, Instruction)
@@ -101,9 +99,7 @@ class FarJumpPattern(AsmPattern):
         if entry is None:
             return None
         target = entry.data_at_offset(0, 4)
-        if isinstance(target, bytes):
-            target_name = f".L{int.from_bytes(target, 'big'):08X}"
-        elif isinstance(target, AsmSymbolicData) and isinstance(
+        if isinstance(target, AsmSymbolicData) and isinstance(
             target.data, AsmGlobalSymbol
         ):
             target_name = target.data.symbol_name
