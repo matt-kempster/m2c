@@ -79,8 +79,8 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
-class JumpTablePattern(SimpleAsmPattern):
-    pattern = make_pattern(
+class JumpTablePattern(AsmPattern):
+    pattern1 = make_pattern(
         "mova _, $b",
         "mov.w @($b,$i),$i",
         "add $i, $b",
@@ -88,35 +88,53 @@ class JumpTablePattern(SimpleAsmPattern):
         "nop",
     )
 
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        mova = m.body[0]
-        assert isinstance(mova, Instruction)
-        assert isinstance(mova.args[0], AsmGlobalSymbol)
+    pattern2 = make_pattern(
+        "mova _, $b",
+        "mov.w @($b,$i),$i",
+        "add $i, $b",
+        "bra .dispatch",
+        "nop",
+        "nop?",
+        ".dispatch:",
+        "jmp @$b",
+        "nop",
+    )
 
-        table_name = mova.args[0].symbol_name
-        table = m.asm_data.values.get(table_name)
-        if table is None:
-            return None
-        targets: List[AsmGlobalSymbol] = []
-        for entry in table.data:
-            if (
-                not isinstance(entry, AsmSymbolicData)
-                or not isinstance(entry.data, BinOp)
-                or entry.data.op != "-"
-                or not isinstance(entry.data.lhs, AsmGlobalSymbol)
-                or entry.data.rhs != AsmGlobalSymbol(table_name)
-            ):
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        for pattern in (self.pattern1, self.pattern2):
+            m = matcher.try_match(pattern)
+            if not m:
+                continue
+
+            mova = m.body[0]
+            assert isinstance(mova, Instruction)
+            assert isinstance(mova.args[0], AsmGlobalSymbol)
+
+            table_name = mova.args[0].symbol_name
+            table = m.asm_data.values.get(table_name)
+            if table is None:
                 return None
-            targets.append(entry.data.lhs)
-        if not targets:
-            return None
-        return Replacement(
-            [
-                AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
-                AsmInstruction("nop", []),
-            ],
-            len(m.body),
-        )
+            targets: List[AsmGlobalSymbol] = []
+            for entry in table.data:
+                if (
+                    not isinstance(entry, AsmSymbolicData)
+                    or not isinstance(entry.data, BinOp)
+                    or entry.data.op != "-"
+                    or not isinstance(entry.data.lhs, AsmGlobalSymbol)
+                    or entry.data.rhs != AsmGlobalSymbol(table_name)
+                ):
+                    return None
+                targets.append(entry.data.lhs)
+            if not targets:
+                return None
+            return Replacement(
+                [
+                    AsmInstruction("tablejmp.doubled.fictive", [m.regs["i"], *targets]),
+                    AsmInstruction("nop", []),
+                ],
+                len(m.body),
+            )
+        return None
 
 
 class NegateTPattern(SimpleAsmPattern):
