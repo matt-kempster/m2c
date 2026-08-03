@@ -26,11 +26,13 @@ from .asm_pattern import (
     SimpleAsmPattern,
     make_pattern,
 )
+from .flow_graph import ArchFlowGraph, FlowGraph
 from .instruction import (
     Instruction,
     InstructionMeta,
     Location,
 )
+from .ir_pattern import IrMatch, IrPattern
 from .translate import (
     Abi,
     AbiArgSlot,
@@ -197,35 +199,34 @@ class Sh2AddrModeWritebackPattern(AsmPattern):
         )
 
 
-class DivisionHelperPattern(SimpleAsmPattern):
-    pattern = make_pattern("mov.l _, $t", "jsr @$t", "*")
+class DivisionHelperPattern(IrPattern):
+    replacement = "div.fictive $r4, $r5, S"
+    parts = [
+        "mov.l T, $t",
+        "jsr @$t",
+    ]
 
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        load = m.body[0]
-        delay_slot = m.wildcard_items[0]
-        assert isinstance(load, Instruction)
-        if not isinstance(load.args[0], AsmGlobalSymbol):
-            return None
-        if not isinstance(delay_slot, Instruction):
-            return None
-
-        entry = m.asm_data.values.get(load.args[0].symbol_name)
+    def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
+        arg = m.symbolic_args["T"]
+        if not isinstance(arg, AsmGlobalSymbol):
+            return False
+        entry = m.asm_data.values.get(arg.symbol_name)
         if entry is None:
-            return None
+            return False
         target = entry.data_at_offset(0, 4)
         if not isinstance(target, AsmSymbolicData):
-            return None
+            return False
         target_name = target.as_symbol_without_addend()
         if target_name is None:
-            return None
-        mnemonic = {
-            "___sdivsi3": "sdiv.fictive",
-            "___udivsi3": "udiv.fictive",
+            return False
+        signed = {
+            "___sdivsi3": True,
+            "___udivsi3": False,
         }.get(target_name)
-        if mnemonic is None:
-            return None
-        division = AsmInstruction(mnemonic, [Register("r4"), Register("r5")])
-        return Replacement([delay_slot, division], 3, clobbers=[])
+        if signed is None:
+            return False
+        m.symbolic_args["S"] = AsmLiteral(int(signed))
+        return True
 
 
 class Sh2Arch(Arch):
@@ -321,7 +322,7 @@ class Sh2Arch(Arch):
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
         inputs: List[Location] = []
-        clobbers: List[Location] = []
+        late_clobbers: List[Location] = []
         outputs: List[Location] = []
         is_return = False
         is_load = False
@@ -348,7 +349,15 @@ class Sh2Arch(Arch):
             else:
                 assert isinstance(args[0], AsmLiteral)
                 eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.s8_imm(0))
-
+        elif mnemonic == "move.fictive":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            inputs = [args[1]]
+            outputs = [args[0]]
+            eval_fn = lambda s, a: s.set_reg(a.reg_ref(0), a.reg(1))
         elif mnemonic == "mova":
             assert (
                 len(args) == 2
@@ -664,18 +673,29 @@ class Sh2Arch(Arch):
             target_reg = args[0].base
             inputs = [*cls.argument_regs, target_reg]
             outputs = list(cls.all_return_regs)
-            clobbers = list(cls.temp_regs)
+            # Use late_clobbers here to aid DivisionHelperPattern, which uses a
+            # function that does not follow regular calling convention.
+            late_clobbers = list(cls.temp_regs)
             function_target = target_reg
             has_delay_slot = True
             eval_fn = lambda s, a: s.make_function_call(a.regs[target_reg], outputs)
-        elif mnemonic in ("sdiv.fictive", "udiv.fictive"):
-            assert args == [Register("r4"), Register("r5")]
-            inputs = [Register("r4"), Register("r5")]
-            outputs = [Register("r0")]
-            op = BinaryOp.sint if mnemonic == "sdiv.fictive" else BinaryOp.uint
-            eval_fn = lambda s, a: s.set_reg(
-                Register("r0"), op(a.reg(0), "/", a.reg(1))
+        elif mnemonic == "div.fictive":
+            assert (
+                len(args) == 3
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
             )
+            inputs = [args[0], args[1]]
+            outputs = [Register("r0"), Register("r1")]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                op = BinaryOp.sint if a.imm_value(2) == 1 else BinaryOp.uint
+                s.set_reg(Register("r0"), op(a.reg(0), "/", a.reg(1)))
+                # Unfortunately, we need to produce output for r1 to be compatible
+                # with the original jsr instruction...
+                err = "r1 clobbered by division intrinsic; this is an m2c limitation"
+                s.set_reg(Register("r1"), ErrorExpr(err))
+
         elif mnemonic == "tablejmp.doubled.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
@@ -756,7 +776,8 @@ class Sh2Arch(Arch):
             args=args,
             meta=meta,
             inputs=inputs,
-            clobbers=clobbers,
+            clobbers=[],
+            late_clobbers=late_clobbers,
             outputs=outputs,
             eval_fn=eval_fn,
             jump_target=jump_target,
@@ -850,11 +871,14 @@ class Sh2Arch(Arch):
     }
 
     asm_patterns = [
-        DivisionHelperPattern(),
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
         SubcSelfPattern(),
+    ]
+
+    ir_patterns = [
+        DivisionHelperPattern(),
     ]
 
     def arg_name(self, loc: ArgLoc) -> str:
