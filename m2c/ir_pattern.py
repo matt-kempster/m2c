@@ -63,7 +63,7 @@ class IrPattern(abc.ABC):
 
     def compile(self, arch: ArchFlowGraph) -> CompiledIrPattern:
         missing_meta = InstructionMeta.missing()
-        asm_state = AsmState()
+        asm_state = AsmState(is_pattern=True)
         replacement_instr = parse_instruction(
             self.replacement, missing_meta, arch, asm_state
         )

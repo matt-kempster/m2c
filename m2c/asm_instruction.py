@@ -238,6 +238,7 @@ class AsmState:
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
     is_thumb: bool = False
     is_unified: bool = False
+    is_pattern: bool = False
 
 
 valid_word = string.ascii_letters + string.digits + "_$."
@@ -328,6 +329,7 @@ def parse_arg_elems(
     precedence_cap: int = MAX_PRECEDENCE,
 ) -> Argument:
     value: Optional[Argument] = None
+    supports_dollar_regs = arch.supports_dollar_regs or asm_state.is_pattern
 
     def consume_ws() -> None:
         while arg_elems and arg_elems[0].isspace():
@@ -341,7 +343,7 @@ def parse_arg_elems(
 
     def parse_sh_register() -> Register:
         word = parse_word(arg_elems)
-        if word.startswith("$") and arch.supports_dollar_regs:
+        if word.startswith("$") and supports_dollar_regs:
             return asm_state.reg_formatter.parse_and_store(word[1:], arch)
         reg = replace_bare_reg(AsmGlobalSymbol(word), arch, asm_state)
         assert isinstance(reg, Register)
@@ -354,7 +356,7 @@ def parse_arg_elems(
         tok: str = arg_elems[0]
         if tok == ",":
             break
-        elif tok == "$" and arch.supports_dollar_regs:
+        elif tok == "$" and supports_dollar_regs:
             # Register.
             assert value is None
             word = parse_word(arg_elems)
