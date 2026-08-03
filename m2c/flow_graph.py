@@ -93,7 +93,8 @@ class InstrRef(Reference):
         old_instr = self.instruction
         new_instr = arch.parse(new_asm.mnemonic, new_asm.args, old_instr.meta.derived())
 
-        # Copy over old outputs/clobbers into new_instr.clobbers
+        # Copy over old outputs/clobbers into new_instr.clobbers.
+        # Do not copy over late clobbers: they vanish on instruction replacement.
         for loc in old_instr.outputs + old_instr.clobbers:
             if loc not in new_instr.clobbers:
                 new_instr.clobbers.append(loc)
@@ -552,7 +553,11 @@ def build_blocks(
         elif item.function_target is not None:
             # Move the delay slot instruction to before the call so it
             # passes correct arguments.
-            if len(item.args) >= 2 and item.args[1] in next_item.outputs:
+            if len(item.args) >= 2 and (
+                item.args[1] in next_item.outputs
+                or item.args[1] in next_item.clobbers
+                or item.args[1] in next_item.late_clobbers
+            ):
                 raise DecompFailure(
                     f"Instruction after {item.mnemonic} clobbers its source\n"
                     "register, which is currently not supported.\n\n"
@@ -1584,14 +1589,14 @@ def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
     return clobbered
 
 
-def nodes_to_flowgraph(
-    nodes: List[Node],
-    function: Function,
+def compute_flow_graph_uses(
+    flow_graph: FlowGraph,
     arch: ArchFlowGraph,
     *,
-    print_warnings: bool = False,
-) -> FlowGraph:
-    flow_graph = FlowGraph(nodes)
+    print_warnings_for: Optional[Function],
+) -> None:
+    flow_graph.instr_inputs.clear()
+    flow_graph.instr_uses.clear()
     missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
@@ -1662,14 +1667,13 @@ def nodes_to_flowgraph(
     entry_node = flow_graph.entry_node()
     process_node(entry_node, entry_reg_srcs)
 
-    if print_warnings and missing_regs:
+    if print_warnings_for is not None and missing_regs:
+        fn_name = print_warnings_for.name
         print("/*")
-        print(f"Warning: in {function.name}, regs were read before being written to:")
+        print(f"Warning: in {fn_name}, regs were read before being written to:")
         for reg, ref in missing_regs:
             print(f"   {reg} at {ref}: {ref.instruction}")
         print("*/")
-
-    return flow_graph
 
 
 def build_flowgraph(
@@ -1700,8 +1704,11 @@ def build_flowgraph(
     if not fragment:
         terminate_infinite_loops(nodes)
 
-    flow_graph = nodes_to_flowgraph(
-        nodes, function, arch, print_warnings=print_warnings or fragment
+    flow_graph = FlowGraph(nodes)
+    compute_flow_graph_uses(
+        flow_graph,
+        arch,
+        print_warnings_for=function if print_warnings or fragment else None,
     )
     if not fragment:
         arch.simplify_ir(flow_graph)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import abc
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, Iterator, List, Optional, Union
 
 from .error import DecompFailure
@@ -111,17 +111,19 @@ class Instruction:
 
     # Track register and stack dependencies
     # An Instruction evaluates by reading from `inputs`, invalidating `clobbers`,
-    # then writing to `outputs` (in that order)
+    # then writing to `outputs` (in that order). `late_clobbers` are clobbers
+    # that only appear after IR patterns have been handled.
     inputs: List[Location]
-    clobbers: List[Location]
     outputs: List[Location]
+    clobbers: List[Location]
+    late_clobbers: List[Location] = field(default_factory=list)
 
     # This should be typed as `eval_fn: Optional[Callable[[NodeState, InstrArgs], object]]`
     # but this use classes that are defined in translate.py. We're unable to use correct
     # types here without creating circular dependencies.
     # The return value is ignored, but is typed as `object` so lambdas are more ergonomic.
     # This member should only be accessed by `evaluate_instruction`.
-    eval_fn: Optional[Callable[..., object]]
+    eval_fn: Optional[Callable[..., object]] = None
 
     jump_target: Optional[Union[JumpTarget, Register, List[JumpTarget]]] = None
     function_target: Optional[Argument] = None
