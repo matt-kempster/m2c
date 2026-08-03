@@ -247,6 +247,14 @@ class DivisionHelperPattern(IrPattern):
         return True
 
 
+class Shar16Pattern(IrPattern):
+    replacement = "shar16.fictive $i, $o"
+    parts = [
+        "swap.w $i, $t",
+        "exts.w $t, $o",
+    ]
+
+
 class Sh2Arch(Arch):
     arch = Target.ArchEnum.SH2
 
@@ -851,6 +859,7 @@ class Sh2Arch(Arch):
             "|",
             BinaryOp.uint(a.reg(0), ">>", Literal(16)),
         ),
+        "shar16.fictive": lambda a: fold_shift_right(a.reg(0), 16, signed=True),
     }
 
     instrs_multiply: InstrMap = {
@@ -898,6 +907,7 @@ class Sh2Arch(Arch):
 
     ir_patterns = [
         DivisionHelperPattern(),
+        Shar16Pattern(),
     ]
 
     def arg_name(self, loc: ArgLoc) -> str:
