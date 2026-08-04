@@ -15,7 +15,6 @@ from .flow_graph import (
     Reference,
     TerminalNode,
     build_flowgraph,
-    compute_flow_graph_uses,
 )
 from .asm_file import AsmData, Function
 from .asm_instruction import (
@@ -463,15 +462,3 @@ def simplify_ir_patterns(
     # After all of the rewrites above, verify that the instruction dependency
     # data structures are still consistent
     flow_graph.validate_instruction_graph()
-
-    # Add late clobbers that should appear only after IR pattern matching
-    any_late_clobbers = False
-    for node in flow_graph.nodes:
-        for ins in node.block.instructions:
-            for loc in ins.late_clobbers:
-                if loc not in ins.clobbers:
-                    ins.clobbers.append(loc)
-                    any_late_clobbers = True
-            ins.late_clobbers.clear()
-    if any_late_clobbers:
-        compute_flow_graph_uses(flow_graph, arch, print_warnings_for=None)
