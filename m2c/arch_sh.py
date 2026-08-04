@@ -94,9 +94,7 @@ class FarJumpPattern(AsmPattern):
         load = m.body[1]
         assert isinstance(load, Instruction)
         target_name = get_literal_pool_symbol(load.args[0], m.asm_data)
-        if target_name is None:
-            return None
-        if not matcher.is_local_label(target_name):
+        if target_name is None or not matcher.is_local_label(target_name):
             return None
         return Replacement(
             [
@@ -178,15 +176,20 @@ class NegateTPattern(SimpleAsmPattern):
         )
 
 
-class SubcSelfPattern(SimpleAsmPattern):
-    pattern = make_pattern("subc $r, $r")
+class Shar31Pattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "shll $r",
+        "subc $r, $r",
+    )
 
     def replace(self, m: AsmMatch) -> Replacement:
         reg = m.regs["r"]
+        temp = Register.fictive(reg.register_name)
         return Replacement(
             [
-                AsmInstruction("movt", [reg]),
-                AsmInstruction("neg", [reg, reg]),
+                AsmInstruction("move.fictive", [temp, reg]),
+                AsmInstruction("shll", [temp]),
+                AsmInstruction("shar.fictive", [reg, reg, AsmLiteral(31)]),
             ],
             len(m.body),
         )
@@ -898,7 +901,7 @@ class Sh2Arch(Arch):
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
-        SubcSelfPattern(),
+        Shar31Pattern(),
     ]
 
     ir_patterns = [

@@ -1,3 +1,3 @@
-s32 test(u32 arg0) {
-    return -(s32) (arg0 >> 0x1FU);
+s32 test(s32 arg0) {
+    return arg0 >> 0x1F;
 }
