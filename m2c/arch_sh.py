@@ -820,6 +820,9 @@ class Sh2Arch(Arch):
     }
 
     instrs_intrinsics: InstrMap = {
+        "shar.fictive": lambda a: fold_shift_right(
+            a.reg(1), a.imm_value(2), signed=True
+        ),
         "divs.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "divu.fictive": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
     }
@@ -892,6 +895,11 @@ class Sh2Arch(Arch):
             if div_mn is not None:
                 return AsmInstruction(
                     div_mn, [Register("r0"), Register("r4"), Register("r5")]
+                )
+            if fn_name.startswith("___ashiftrt_r4_"):
+                shift = int(fn_name[len("___ashiftrt_r4_") :])
+                return AsmInstruction(
+                    "shar.fictive", [Register("r4"), Register("r4"), AsmLiteral(shift)]
                 )
             return None
 
