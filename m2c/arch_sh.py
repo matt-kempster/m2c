@@ -103,10 +103,6 @@ class FarJumpPattern(AsmPattern):
             target.data, AsmGlobalSymbol
         ):
             target_name = target.data.symbol_name
-        elif isinstance(target, AsmSymbolicData) and isinstance(
-            target.data, AsmLiteral
-        ):
-            target_name = f".L{target.data.value:08X}"
         else:
             return None
         if not matcher.is_local_label(target_name):
