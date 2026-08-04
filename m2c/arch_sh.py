@@ -1,10 +1,10 @@
 from __future__ import annotations
 from dataclasses import replace
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 from .error import DecompFailure
 from .options import Target
-from .asm_file import AsmSymbolicData
+from .asm_file import AsmData, AsmSymbolicData
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -26,7 +26,7 @@ from .asm_pattern import (
     SimpleAsmPattern,
     make_pattern,
 )
-from .flow_graph import ArchFlowGraph, FlowGraph
+from .flow_graph import ArchFlowGraph, FlowGraph, Node, get_literal_pool_symbol
 from .instruction import (
     Instruction,
     InstructionMeta,
@@ -217,36 +217,6 @@ class Sh2AddrModeWritebackPattern(AsmPattern):
         )
 
 
-class DivisionHelperPattern(IrPattern):
-    replacement = "div.fictive $r4, $r5, S"
-    parts = [
-        "mov.l T, $t",
-        "jsr @$t",
-    ]
-
-    def check(self, m: IrMatch, arch: ArchFlowGraph, flow_graph: FlowGraph) -> bool:
-        arg = m.symbolic_args["T"]
-        if not isinstance(arg, AsmGlobalSymbol):
-            return False
-        entry = m.asm_data.values.get(arg.symbol_name)
-        if entry is None:
-            return False
-        target = entry.data_at_offset(0, 4)
-        if not isinstance(target, AsmSymbolicData):
-            return False
-        target_name = target.as_symbol_without_addend()
-        if target_name is None:
-            return False
-        signed = {
-            "___sdivsi3": True,
-            "___udivsi3": False,
-        }.get(target_name)
-        if signed is None:
-            return False
-        m.symbolic_args["S"] = AsmLiteral(int(signed))
-        return True
-
-
 class Shar16Pattern(IrPattern):
     replacement = "shar16.fictive $i, $o"
     parts = [
@@ -348,7 +318,7 @@ class Sh2Arch(Arch):
         cls, mnemonic: str, args: List[Argument], meta: InstructionMeta
     ) -> Instruction:
         inputs: List[Location] = []
-        late_clobbers: List[Location] = []
+        clobbers: List[Location] = []
         outputs: List[Location] = []
         is_return = False
         is_load = False
@@ -579,6 +549,13 @@ class Sh2Arch(Arch):
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(1), cls.instrs_source_dest[mnemonic](a)
             )
+        elif mnemonic in cls.instrs_intrinsics:
+            assert isinstance(args[0], Register)
+            inputs = [arg for arg in args[1:] if isinstance(arg, Register)]
+            outputs = [args[0]]
+            eval_fn = lambda s, a: s.set_reg(
+                a.reg_ref(0), cls.instrs_intrinsics[mnemonic](a)
+            )
         elif mnemonic in cls.instrs_multiply:
             assert (
                 len(args) == 2
@@ -700,29 +677,10 @@ class Sh2Arch(Arch):
             target_reg = args[0].base
             inputs = [*cls.argument_regs, target_reg]
             outputs = list(cls.all_return_regs)
-            # Use late_clobbers here to aid DivisionHelperPattern, which uses a
-            # function that does not follow regular calling convention.
-            late_clobbers = list(cls.temp_regs)
+            clobbers = list(cls.temp_regs)
             function_target = target_reg
             has_delay_slot = True
             eval_fn = lambda s, a: s.make_function_call(a.regs[target_reg], outputs)
-        elif mnemonic == "div.fictive":
-            assert (
-                len(args) == 3
-                and isinstance(args[0], Register)
-                and isinstance(args[1], Register)
-            )
-            inputs = [args[0], args[1]]
-            outputs = [Register("r0"), Register("r1")]
-
-            def eval_fn(s: NodeState, a: InstrArgs) -> None:
-                op = BinaryOp.sint if a.imm_value(2) == 1 else BinaryOp.uint
-                s.set_reg(Register("r0"), op(a.reg(0), "/", a.reg(1)))
-                # Unfortunately, we need to produce output for r1 to be compatible
-                # with the original jsr instruction...
-                err = "r1 clobbered by division intrinsic; this is an m2c limitation"
-                s.set_reg(Register("r1"), ErrorExpr(err))
-
         elif mnemonic == "tablejmp.doubled.fictive":
             assert len(args) >= 2 and isinstance(args[0], Register)
             targets = []
@@ -803,8 +761,7 @@ class Sh2Arch(Arch):
             args=args,
             meta=meta,
             inputs=inputs,
-            clobbers=[],
-            late_clobbers=late_clobbers,
+            clobbers=clobbers,
             outputs=outputs,
             eval_fn=eval_fn,
             jump_target=jump_target,
@@ -862,6 +819,11 @@ class Sh2Arch(Arch):
         "shar16.fictive": lambda a: fold_shift_right(a.reg(0), 16, signed=True),
     }
 
+    instrs_intrinsics: InstrMap = {
+        "divs.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
+        "divu.fictive": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
+    }
+
     instrs_multiply: InstrMap = {
         "mul.l": lambda a: BinaryOp.int(a.reg(1), "*", a.reg(0)),
         "muls": lambda a: BinaryOp.sint(as_s16(a.reg(1)), "*", as_s16(a.reg(0))),
@@ -906,9 +868,60 @@ class Sh2Arch(Arch):
     ]
 
     ir_patterns = [
-        DivisionHelperPattern(),
         Shar16Pattern(),
     ]
+
+    def process_flowgraph(self, asm_data: AsmData, flow_graph: FlowGraph) -> None:
+        # Find intrinsic functions and replace them by fake instructions. To do
+        # this, we traverse the flow graph and symbolically execute instructions,
+        # tracking register values (limited to ones containing addresses of
+        # symbols), and check for `jsr` instructions if their targets resolve to
+        # known intrinsics. We skip back edges, under the assumption that a `jsr`
+        # target is either an intrinsic along all control flow paths, or none.
+        #
+        # Note that this cannot be done as an IR pattern, since that assumes
+        # perfect knowledge of instruction inputs/outputs, which we do not have
+        # until we have resolved intrinsics (which use ad-hoc ABIs).
+        seen: Set[Node] = set()
+
+        def make_intrinsic_instruction(fn_name: str) -> Optional[AsmInstruction]:
+            div_mn = {
+                "___sdivsi3": "divs.fictive",
+                "___udivsi3": "divu.fictive",
+            }.get(fn_name)
+            if div_mn is not None:
+                return AsmInstruction(
+                    div_mn, [Register("r0"), Register("r4"), Register("r5")]
+                )
+            return None
+
+        def rec(node: Node, reg_sym_values: Dict[Register, str]) -> None:
+            if node in seen:
+                return
+            seen.add(node)
+            for ref in node.block.instruction_refs:
+                ins = ref.instruction
+                if ins.mnemonic == "mov.l" and isinstance(ins.args[1], Register):
+                    target = get_literal_pool_symbol(ins.args[0], asm_data)
+                    if target is not None:
+                        reg_sym_values[ins.args[1]] = target
+                        continue
+                if ins.mnemonic == "jsr":
+                    assert isinstance(ins.function_target, Register)
+                    target = reg_sym_values.get(ins.function_target)
+                    new_ins = make_intrinsic_instruction(target or "")
+                    if new_ins is not None:
+                        ref.replace_instruction(new_ins, self)
+                        ref.instruction.clobbers.clear()
+                        continue
+                for loc in ins.clobbers + ins.outputs:
+                    if isinstance(loc, Register) and loc in reg_sym_values:
+                        del reg_sym_values[loc]
+
+            for child in node.children():
+                rec(child, reg_sym_values.copy())
+
+        rec(flow_graph.entry_node(), {})
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:

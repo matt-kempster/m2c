@@ -42,6 +42,9 @@ from .asm_pattern import simplify_patterns, AsmPattern
 class ArchFlowGraph(ArchAsm):
     asm_patterns: List[AsmPattern] = []
 
+    def process_flowgraph(self, asm_data: AsmData, flow_graph: FlowGraph) -> None:
+        pass
+
     def simplify_ir(
         self, asm_data: AsmData, flow_graph: FlowGraph, *, debug_patterns: bool
     ) -> None: ...
@@ -825,7 +828,7 @@ class NaturalLoop:
     backedges: Set[Node] = field(default_factory=set)
 
 
-def arm_jtbl_for_ldr(arg: Argument, asm_data: AsmData) -> Optional[str]:
+def get_literal_pool_symbol(arg: Argument, asm_data: AsmData) -> Optional[str]:
     offset = 0
     if isinstance(arg, BinOp) and arg.op == "+" and isinstance(arg.rhs, AsmLiteral):
         offset = arg.rhs.value
@@ -833,17 +836,17 @@ def arm_jtbl_for_ldr(arg: Argument, asm_data: AsmData) -> Optional[str]:
 
     if not isinstance(arg, AsmGlobalSymbol):
         return None
-
-    sym_name = arg.symbol_name
-    ent = asm_data.values.get(sym_name)
+    ent = asm_data.values.get(arg.symbol_name)
     if ent is None or not ent.is_text:
         return None
-
     data = ent.data_at_offset(offset, 4)
     if not isinstance(data, AsmSymbolicData):
         return None
+    return data.as_symbol_without_addend()
 
-    jtbl_name = data.as_symbol_without_addend()
+
+def arm_jtbl_for_ldr(arg: Argument, asm_data: AsmData) -> Optional[str]:
+    jtbl_name = get_literal_pool_symbol(arg, asm_data)
     if jtbl_name is None:
         return None
 
