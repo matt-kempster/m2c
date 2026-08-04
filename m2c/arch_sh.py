@@ -79,6 +79,34 @@ from .evaluate import (
 from .types import FunctionSignature, Type
 
 
+class FarJumpPattern(AsmPattern):
+    pattern = make_pattern(
+        "mov.l $t,@-$r15",
+        "mov.l _, $t",
+        "jmp @$t",
+        "mov.l @$r15+,$t",
+    )
+
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        m = matcher.try_match(self.pattern)
+        if m is None:
+            return None
+        load = m.body[1]
+        assert isinstance(load, Instruction)
+        target_name = get_literal_pool_symbol(load.args[0], m.asm_data)
+        if target_name is None:
+            return None
+        if not matcher.is_local_label(target_name):
+            return None
+        return Replacement(
+            [
+                AsmInstruction("bra", [AsmGlobalSymbol(target_name)]),
+                AsmInstruction("nop", []),
+            ],
+            len(m.body),
+        )
+
+
 class JumpTablePattern(AsmPattern):
     pattern1 = make_pattern(
         "mova _, $b",
@@ -864,6 +892,7 @@ class Sh2Arch(Arch):
     }
 
     asm_patterns = [
+        FarJumpPattern(),
         JumpTablePattern(),
         Sh2AddrModeWritebackPattern(),
         NegateTPattern(),
