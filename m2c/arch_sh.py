@@ -851,6 +851,8 @@ class Sh2Arch(Arch):
         "shar.fictive": lambda a: fold_shift_right(
             a.reg(1), a.imm_value(2), signed=True
         ),
+        "vshar.fictive": lambda a: BinaryOp.sint(a.reg(1), ">>", a.reg(2)),
+        "vshl.fictive": lambda a: BinaryOp.int(a.reg(1), "<<", a.reg(2)),
         "divs.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "divu.fictive": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
     }
@@ -917,13 +919,15 @@ class Sh2Arch(Arch):
         seen: Set[Node] = set()
 
         def make_intrinsic_instruction(fn_name: str) -> Optional[AsmInstruction]:
-            div_mn = {
+            mn = {
                 "___sdivsi3": "divs.fictive",
                 "___udivsi3": "divu.fictive",
+                "___ashrsi3": "vshar.fictive",
+                "___ashlsi3": "vshl.fictive",
             }.get(fn_name)
-            if div_mn is not None:
+            if mn is not None:
                 return AsmInstruction(
-                    div_mn, [Register("r0"), Register("r4"), Register("r5")]
+                    mn, [Register("r0"), Register("r4"), Register("r5")]
                 )
             if fn_name.startswith("___ashiftrt_r4_"):
                 shift = int(fn_name[len("___ashiftrt_r4_") :])
