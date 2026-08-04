@@ -93,17 +93,8 @@ class FarJumpPattern(AsmPattern):
             return None
         load = m.body[1]
         assert isinstance(load, Instruction)
-        if not isinstance(load.args[0], AsmGlobalSymbol):
-            return None
-        entry = m.asm_data.values.get(load.args[0].symbol_name)
-        if entry is None:
-            return None
-        target = entry.data_at_offset(0, 4)
-        if isinstance(target, AsmSymbolicData) and isinstance(
-            target.data, AsmGlobalSymbol
-        ):
-            target_name = target.data.symbol_name
-        else:
+        target_name = get_literal_pool_symbol(load.args[0], m.asm_data)
+        if target_name is None:
             return None
         if not matcher.is_local_label(target_name):
             return None
