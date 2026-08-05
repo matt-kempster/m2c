@@ -561,6 +561,36 @@ class Sh2Arch(Arch):
                 s.set_reg(a.reg_ref(1), result)
                 s.set_reg(t_reg, borrow)
 
+        elif mnemonic == "negc":
+            assert (
+                len(args) == 2
+                and isinstance(args[0], Register)
+                and isinstance(args[1], Register)
+            )
+            t_reg = Register("condition_bit")
+            inputs = [args[0], t_reg]
+            outputs = [args[1], t_reg]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                value = a.reg(0)
+                carry = a.regs[t_reg]
+                result = handle_sub(UnaryOp.sint("-", value), carry)
+
+                if carry == Literal(0):
+                    borrow = BinaryOp.icmp(value, "!=", Literal(0))
+                elif carry == Literal(1):
+                    borrow = Literal(1)
+                else:
+                    borrow = BinaryOp(
+                        left=BinaryOp.icmp(value, "!=", Literal(0)),
+                        op="||",
+                        right=condition_from_expr(carry),
+                        type=Type.boolean(),
+                    )
+
+                s.set_reg(a.reg_ref(1), result)
+                s.set_reg(t_reg, borrow)
+
         elif mnemonic in cls.instrs_read_modify_write:
             assert len(args) == 2 and isinstance(args[1], Register)
             inputs = [args[1]]
