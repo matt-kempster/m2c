@@ -55,5 +55,5 @@ u32 test_extuw(u16 value) {
 }
 
 u32 test_swapw(u32 value) {
-    return (value << 0x10U) | (value >> 0x10U);
+    return (value << 0x10) | (value >> 0x10);
 }

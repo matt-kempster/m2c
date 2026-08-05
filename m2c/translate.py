@@ -1132,6 +1132,18 @@ class BinaryOp(Condition):
         )
 
     @staticmethod
+    def sshift(left: Expression, op: str, right: Expression) -> BinaryOp:
+        return BinaryOp(
+            left=as_sintish(left), op=op, right=as_intish(right), type=Type.s32()
+        )
+
+    @staticmethod
+    def ushift(left: Expression, op: str, right: Expression) -> BinaryOp:
+        return BinaryOp(
+            left=as_uintish(left), op=op, right=as_intish(right), type=Type.u32()
+        )
+
+    @staticmethod
     def s64(left: Expression, op: str, right: Expression) -> BinaryOp:
         return BinaryOp(left=as_s64(left), op=op, right=as_s64(right), type=Type.s64())
 

@@ -1674,22 +1674,8 @@ class PpcArch(Arch):
         "slw": lambda a: fold_mul_chains(
             BinaryOp.int(a.reg(1), "<<", as_intish(a.reg(2)))
         ),
-        "srw": lambda a: fold_divmod(
-            BinaryOp(
-                as_uintish(a.reg(1)),
-                ">>",
-                as_intish(a.reg(2)),
-                type=Type.u32(),
-            )
-        ),
-        "sraw": lambda a: fold_divmod(
-            BinaryOp(
-                as_sintish(a.reg(1)),
-                ">>",
-                as_intish(a.reg(2)),
-                type=Type.s32(),
-            )
-        ),
+        "srw": lambda a: fold_divmod(BinaryOp.ushift(a.reg(1), ">>", a.reg(2))),
+        "sraw": lambda a: fold_divmod(BinaryOp.sshift(a.reg(1), ">>", a.reg(2))),
         "srawi": lambda a: handle_shift_right(a, signed=True),
         "extsb": lambda a: as_type(a.reg(1), Type.s8(), silent=False),
         "extsh": lambda a: as_type(a.reg(1), Type.s16(), silent=False),

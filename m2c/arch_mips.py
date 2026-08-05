@@ -1638,37 +1638,12 @@ class MipsArch(Arch):
         "andi": lambda a: BinaryOp.int(a.reg(1), "&", a.u16_imm(2)),
         "xori": lambda a: handle_xor(a.reg(1), a.u16_imm(2)),
         # Shifts
-        "sll": lambda a: fold_mul_chains(
-            BinaryOp.int(a.reg(1), "<<", as_intish(a.s16_imm(2)))
-        ),
-        "sllv": lambda a: fold_mul_chains(
-            BinaryOp.int(a.reg(1), "<<", as_intish(a.reg(2)))
-        ),
-        "srl": lambda a: fold_divmod(
-            BinaryOp(
-                as_uintish(a.reg(1)),
-                ">>",
-                as_intish(a.s16_imm(2)),
-                type=Type.u32(),
-            )
-        ),
-        "srlv": lambda a: fold_divmod(
-            BinaryOp(
-                as_uintish(a.reg(1)),
-                ">>",
-                as_intish(a.reg(2)),
-                type=Type.u32(),
-            )
-        ),
+        "sll": lambda a: fold_mul_chains(BinaryOp.int(a.reg(1), "<<", a.s16_imm(2))),
+        "sllv": lambda a: fold_mul_chains(BinaryOp.int(a.reg(1), "<<", a.reg(2))),
+        "srl": lambda a: fold_divmod(BinaryOp.ushift(a.reg(1), ">>", a.s16_imm(2))),
+        "srlv": lambda a: fold_divmod(BinaryOp.ushift(a.reg(1), ">>", a.reg(2))),
         "sra": lambda a: handle_shift_right(a, signed=True),
-        "srav": lambda a: fold_divmod(
-            BinaryOp(
-                as_sintish(a.reg(1)),
-                ">>",
-                as_intish(a.reg(2)),
-                type=Type.s32(),
-            )
-        ),
+        "srav": lambda a: fold_divmod(BinaryOp.sshift(a.reg(1), ">>", a.reg(2))),
         # 64-bit shifts
         "dsll": lambda a: fold_mul_chains(
             BinaryOp.int64(a.reg(1), "<<", as_intish(a.s16_imm(2)))

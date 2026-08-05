@@ -704,11 +704,9 @@ def handle_shift_right(
                 mul = BinaryOp.int(expr.left, "*", Literal(value=rhs // pow2))
                 return as_type(mul, tp, silent=False)
     if signed:
-        return fold_divmod(
-            BinaryOp(as_sintish(lhs), ">>", as_intish(shift), type=Type.s32())
-        )
+        return fold_divmod(BinaryOp.sshift(lhs, ">>", shift))
     else:
-        return BinaryOp(as_uintish(lhs), ">>", as_intish(shift), type=Type.u32())
+        return BinaryOp.ushift(lhs, ">>", shift)
 
 
 def handle_sll(args: InstrArgs, *, arm: bool = False) -> Expression:
@@ -1055,8 +1053,9 @@ def fold_shift_right(expr: Expression, shift: int, *, signed: bool) -> Expressio
         expr = inner.left
         shift += inner.right.value
     if signed:
-        return BinaryOp.sint(expr, ">>", Literal(shift))
-    return BinaryOp.uint(expr, ">>", Literal(shift))
+        return BinaryOp.sshift(expr, ">>", Literal(shift))
+    else:
+        return BinaryOp.ushift(expr, ">>", Literal(shift))
 
 
 def array_access_from_add(

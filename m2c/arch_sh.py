@@ -641,7 +641,7 @@ class Sh2Arch(Arch):
                         carry = BinaryOp.intptr(original, "&", Literal(1))
                     else:
                         as_u32 = as_type(original, Type.u32(), silent=True, unify=False)
-                        carry = BinaryOp.uint(as_u32, ">>", Literal(31))
+                        carry = BinaryOp.int(as_u32, ">>", Literal(31))
                     s.set_reg(Register("condition_bit"), carry)
 
         elif mnemonic == "dt":
@@ -733,7 +733,7 @@ class Sh2Arch(Arch):
                 ):
                     index = unwrapped.left
                 else:
-                    index = BinaryOp.uint(index, ">>", Literal(1))
+                    index = BinaryOp.ushift(index, ">>", Literal(1))
                 s.set_switch_expr(index, just_index=True)
 
         elif mnemonic == "movt":
@@ -843,9 +843,9 @@ class Sh2Arch(Arch):
         "extu.b": lambda a: as_type(a.reg(0), Type.u8(), silent=False),
         "extu.w": lambda a: as_type(a.reg(0), Type.u16(), silent=False),
         "swap.w": lambda a: BinaryOp.int(
-            BinaryOp.uint(a.reg(0), "<<", Literal(16)),
+            BinaryOp.ushift(a.reg(0), "<<", Literal(16)),
             "|",
-            BinaryOp.uint(a.reg(0), ">>", Literal(16)),
+            BinaryOp.ushift(a.reg(0), ">>", Literal(16)),
         ),
         "shar16.fictive": lambda a: fold_shift_right(a.reg(0), 16, signed=True),
     }
@@ -854,8 +854,8 @@ class Sh2Arch(Arch):
         "shar.fictive": lambda a: fold_shift_right(
             a.reg(1), a.imm_value(2), signed=True
         ),
-        "vshar.fictive": lambda a: BinaryOp.sint(a.reg(1), ">>", a.reg(2)),
-        "vshlr.fictive": lambda a: BinaryOp.uint(a.reg(1), ">>", a.reg(2)),
+        "vshar.fictive": lambda a: BinaryOp.sshift(a.reg(1), ">>", a.reg(2)),
+        "vshlr.fictive": lambda a: BinaryOp.ushift(a.reg(1), ">>", a.reg(2)),
         "vshl.fictive": lambda a: BinaryOp.int(a.reg(1), "<<", a.reg(2)),
         "divs.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "divu.fictive": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
@@ -886,14 +886,14 @@ class Sh2Arch(Arch):
         ),
         "shlr16": lambda a: fold_shift_right(a.reg(0), 16, signed=False),
         "rotl": lambda a: BinaryOp.uint(
-            BinaryOp.uint(a.reg(0), "<<", Literal(1)),
+            BinaryOp.ushift(a.reg(0), "<<", Literal(1)),
             "|",
-            BinaryOp.uint(a.reg(0), ">>", Literal(31)),
+            BinaryOp.ushift(a.reg(0), ">>", Literal(31)),
         ),
         "rotr": lambda a: BinaryOp.uint(
-            BinaryOp.uint(a.reg(0), ">>", Literal(1)),
+            BinaryOp.ushift(a.reg(0), ">>", Literal(1)),
             "|",
-            BinaryOp.uint(a.reg(0), "<<", Literal(31)),
+            BinaryOp.ushift(a.reg(0), "<<", Literal(31)),
         ),
     }
 
