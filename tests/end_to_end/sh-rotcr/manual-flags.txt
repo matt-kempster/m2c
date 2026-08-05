@@ -1,0 +1,1 @@
+--context manual-context.c --target sh2-gcc-c -f test_set -f test_chain
