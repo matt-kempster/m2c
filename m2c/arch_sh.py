@@ -855,6 +855,7 @@ class Sh2Arch(Arch):
             a.reg(1), a.imm_value(2), signed=True
         ),
         "vshar.fictive": lambda a: BinaryOp.sint(a.reg(1), ">>", a.reg(2)),
+        "vshlr.fictive": lambda a: BinaryOp.uint(a.reg(1), ">>", a.reg(2)),
         "vshl.fictive": lambda a: BinaryOp.int(a.reg(1), "<<", a.reg(2)),
         "divs.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.reg(2)),
         "divu.fictive": lambda a: BinaryOp.uint(a.reg(1), "/", a.reg(2)),
@@ -927,6 +928,7 @@ class Sh2Arch(Arch):
                 "___udivsi3": "divu.fictive",
                 "___ashrsi3": "vshar.fictive",
                 "___ashlsi3": "vshl.fictive",
+                "___lshrsi3": "vshlr.fictive",
             }.get(fn_name)
             if mn is not None:
                 return AsmInstruction(
