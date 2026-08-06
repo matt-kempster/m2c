@@ -429,8 +429,9 @@ class Sh2Arch(Arch):
 
                     def eval_fn(s: NodeState, a: InstrArgs) -> None:
                         source_raw = a.regs.get_raw(a.reg_ref(0))
-                        assert source_raw is not None
-                        if not s.stack_info.should_save(source_raw, None):
+                        if source_raw is None or not s.stack_info.should_save(
+                            source_raw, None
+                        ):
                             s.push_subroutine_arg(a.reg(0))
 
                 else:
