@@ -634,20 +634,17 @@ class Sh2Arch(Arch):
 
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 original = a.reg(0)
-                unsigned = as_type(original, Type.u32(), silent=True)
-                shifted = fold_mul_chains(
-                    BinaryOp.int(unsigned, "<<", Literal(1)),
-                    allow_sll_chains=True,
-                )
+                shifted = BinaryOp.ushift(original, "<<", Literal(1))
+
                 carry_in = a.regs[t_reg]
                 result = (
-                    as_type(shifted, Type.u32(), silent=True)
+                    shifted
                     if carry_in == Literal(0)
                     else BinaryOp.uint(shifted, "|", carry_in)
                 )
-                s.set_reg(a.reg_ref(0), result)
-                carry = BinaryOp.uint(unsigned, ">>", Literal(31))
-                s.set_reg(t_reg, carry)
+
+                result = s.set_reg(a.reg_ref(0), result)
+                s.set_reg(t_reg, CarryBit(result))
 
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
