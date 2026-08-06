@@ -1,7 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Union
-
 import m2c_pycparser.c_ast as ca
 
 from .c_types import (
@@ -11,6 +10,7 @@ from .c_types import (
     TypeMap,
     UndefinedStructError,
     is_unk_type,
+    parse_c,
     parse_constant_int,
     parse_function,
     parse_struct,
@@ -44,6 +44,27 @@ class TypePool:
     unknown_decls: Dict[str, Type] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     union_field_overrides: Dict[str, str] = field(default_factory=dict)
+    void_var_type_overrides: Dict[str, str] = field(default_factory=dict)
+
+    def parse_type_string(
+        self, type_str: str, typemap: Optional[TypeMap]
+    ) -> Optional[Type]:
+        type_str = type_str.strip()
+        if not type_str:
+            return None
+
+        # Try parsing as-is first, then with "struct" prefix for struct names
+        scope = typemap.cparser_scope if typemap else dict()
+        for type_variant in [type_str, f"struct {type_str}"]:
+            try:
+                typedef_decl = f"typedef {type_variant} __m2c_parsed_type__;"
+                ast, _ = parse_c(typedef_decl, scope)
+                if ast.ext and isinstance(ast.ext[0], ca.Typedef):
+                    ctype = ast.ext[0].type
+                    return Type.ctype(ctype, typemap or TypeMap(), self)
+            except Exception:
+                continue
+        return None
 
     def get_struct_for_ctype(
         self,
