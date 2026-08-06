@@ -1,8 +1,11 @@
 from __future__ import annotations
 import argparse
+import contextlib
 from dataclasses import dataclass
 import gc
+import io
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -38,6 +41,45 @@ class DecompilationState:
 
     function: Function
     state: Union[Valid, Exception]
+
+
+@dataclass
+class BrowserResult:
+    returncode: int
+    output: str
+
+
+def decompile_for_browser(
+    source: str, context: str, flags: List[str]
+) -> BrowserResult:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with tempfile.TemporaryDirectory(prefix="m2c-browser-") as tmpdir:
+        base_path = Path(tmpdir)
+        asm_path = base_path / "input.s"
+        asm_path.write_text(source, encoding="utf-8")
+
+        argv = flags + ["--no-cache", "--visualize-format=dot"]
+        if context:
+            context_path = base_path / "context.c"
+            context_path.write_text(context, encoding="utf-8")
+            argv.extend(["--context", str(context_path)])
+        argv.append(str(asm_path))
+
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            options = parse_flags(argv)
+            returncode = run(options)
+
+    err = stderr.getvalue()
+    if err and (options.visualize_flowgraph is None or returncode != 0):
+        stdout.write(err)
+    output = stdout.getvalue()
+    if options.visualize_flowgraph is not None and returncode == 0:
+        dot_start = output.find("digraph {")
+        if dot_start != -1:
+            output = output[dot_start:]
+    return BrowserResult(returncode, output)
 
 
 def print_exception(exc: Exception, sanitize: bool) -> None:

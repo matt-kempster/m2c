@@ -10,7 +10,7 @@ form {
     flex-direction: row;
     overflow: hidden;
 }
-textarea, .sidebar iframe, #output-graph {
+textarea, #output-graph {
     width: 100%;
     height: 100%;
     border: 1px solid #bbb;
@@ -22,10 +22,10 @@ label {
 #decompile, #visualize {
     min-width: 112px;
 }
-[data-regvars]:not([data-regvars=custom]) [name=regvars] {
+[data-regvars]:not([data-regvars=custom]) #regvars {
     display: none;
 }
-[name=regvars] {
+#regvars {
     width: 150px;
 }
 .main, .sidebar {
