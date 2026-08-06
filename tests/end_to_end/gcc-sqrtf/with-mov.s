@@ -8,7 +8,7 @@ sw      $ra,0x10($sp)
 jal     sqrtf
 nop
 mov.s   $f2,$f0
-.label_24
+.label_24:
 lui     $at,0x3f00
 mtc1    $at,$f0
 nop

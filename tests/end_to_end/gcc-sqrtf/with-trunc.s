@@ -7,7 +7,7 @@ bc1t    .label_20
 sw      $ra,0x10($sp)
 jal     sqrtf
 nop
-.label_20
+.label_20:
 lw $ra, 0x10($sp)
 trunc.w.s $f2, $f0
 mfc1 $v0, $f2
