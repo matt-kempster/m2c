@@ -3,9 +3,9 @@ u32 test(u32 value) {
 }
 
 u32 test_set(u32 value) {
-    return (u32) (value << 1) | 1U;
+    return (value << 1) | 1;
 }
 
 u32 test_chain(u32 low, u32 high) {
-    return (u32) (high << 1) | (u32) M2C_CARRY((low << 1));
+    return (high << 1) | M2C_CARRY((low << 1));
 }

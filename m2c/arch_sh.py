@@ -640,7 +640,7 @@ class Sh2Arch(Arch):
                 result = (
                     shifted
                     if carry_in == Literal(0)
-                    else BinaryOp.uint(shifted, "|", carry_in)
+                    else BinaryOp.int(shifted, "|", carry_in)
                 )
 
                 result = s.set_reg(a.reg_ref(0), result)
