@@ -626,6 +626,26 @@ class Sh2Arch(Arch):
                 s.set_reg(Register("macl"), Literal(0))
                 s.set_reg(Register("mach"), Literal(0))
 
+        elif mnemonic == "rotcl":
+            assert len(args) == 1 and isinstance(args[0], Register)
+            t_reg = Register("condition_bit")
+            inputs = [args[0], t_reg]
+            outputs = [args[0], t_reg]
+
+            def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                original = a.reg(0)
+                shifted = BinaryOp.ushift(original, "<<", Literal(1))
+
+                carry_in = a.regs[t_reg]
+                result = (
+                    shifted
+                    if carry_in == Literal(0)
+                    else BinaryOp.int(shifted, "|", carry_in)
+                )
+
+                result = s.set_reg(a.reg_ref(0), result)
+                s.set_reg(t_reg, CarryBit(result))
+
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
             inputs = [args[0]]
