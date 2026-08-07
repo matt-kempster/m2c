@@ -63,7 +63,7 @@ def write_vendor_paths(lock: dict[str, object]) -> None:
     paths = {
         "pyodideIndexURL": browser_dist_path(pyodide_root),
         "pyodideScript": browser_dist_path(pyodide_script),
-        "vizModule": browser_dist_path(vendor_path(lock, "/viz.mjs")),
+        "vizModule": browser_dist_path(vendor_path(lock, "/viz.js")),
     }
 
     print(f"Writing to {VENDOR_PATHS_JS}...")
