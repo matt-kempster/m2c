@@ -258,7 +258,9 @@ def normalize_gcc_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
     return new_function
 
 
-def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Function:
+def normalize_ido_likely_branches(
+    function: Function, asm_data: AsmData, arch: ArchFlowGraph
+) -> Function:
     """Branch-likely instructions only evaluate their delay slots when they are
     taken, making control flow more complex. However, on the IDO compiler they
     only occur in a very specific pattern:
@@ -276,8 +278,12 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
 
     Branch-likely instructions that do not appear in this pattern are kept.
 
-    We also do this for b instructions, which sometimes occur in the same pattern."""
+    We also do this for b instructions (and bra on sh2), which sometimes occur
+    in the same pattern. For sh2 gcc this could probably be extended into a more
+    general pattern that covers more than one instruction and is not restricted
+    to just bra branches."""
     seen_instrs: Set[Instruction] = set()
+    label_names: Dict[str, Set[str]] = {}
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
     label_before_instr: Dict[Instruction, str] = {}
     instr_before_instr: Dict[Instruction, Instruction] = {}
@@ -297,70 +303,110 @@ def normalize_ido_likely_branches(function: Function, arch: ArchFlowGraph) -> Fu
         elif isinstance(item, Label):
             for name in item.names:
                 label_prev_instr[name] = prev_instr
+                label_names[name] = set(item.names)
             prev_label = item
             prev_instr = None
         prev_item = item
+
+    untouched_targets = set()
+
+    def may_transform_branch(
+        item: Instruction,
+        next_item: Instruction,
+        before_target: Instruction,
+        pre: bool = False,
+    ) -> bool:
+        if item.is_conditional and not item.is_branch_likely:
+            return False
+        if before_target is next_item:
+            return False
+        if str(before_target) != str(next_item):
+            return False
+
+        next_mn = next_item.mnemonic
+        if not item.is_branch_likely and next_mn == "nop":
+            return False
+
+        if arch.arch == Target.ArchEnum.SH2:
+            assert isinstance(item.jump_target, JumpTarget)
+            label = item.jump_target.target
+            if not (next_mn.startswith("cmp/") or next_mn == "tst"):
+                # Only do the transformation for compare instructions for now;
+                # other ones carry too much risk of being false positives.
+                return False
+            if label in untouched_targets and not pre:
+                # Don't change the branch target unless it would leave the old
+                # label untargetted.
+                return False
+        else:
+            # MIPS
+            if item.mnemonic == "j":
+                return False
+
+        if not item.is_conditional:
+            before_before_target = instr_before_instr.get(before_target)
+            if before_before_target is not None and before_before_target.has_delay_slot:
+                # Don't treat unconditional branch instructions as branch likelies if
+                # doing so would introduce a label in a delay slot.
+                return False
+        return True
+
+    if arch.arch == Target.ArchEnum.SH2:
+        for label in asm_data.mentioned_labels:
+            untouched_targets |= label_names.get(label, set())
+        for item, next_item in zip(function.body, function.body[1:]):
+            if not isinstance(item, Instruction):
+                continue
+            if isinstance(item.jump_target, list):
+                for target in item.jump_target:
+                    untouched_targets |= label_names.get(target.target, set())
+            elif isinstance(item.jump_target, JumpTarget):
+                before_target = label_prev_instr.get(item.jump_target.target)
+                if (
+                    isinstance(next_item, Instruction)
+                    and before_target is not None
+                    and may_transform_branch(item, next_item, before_target, pre=True)
+                ):
+                    continue
+                untouched_targets |= label_names.get(item.jump_target.target, set())
 
     insert_label_before: Dict[Instruction, str] = {}
     new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
 
     body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
     for item in body_iter:
-        orig_item = item
-        if isinstance(item, Instruction) and (
-            item.is_branch_likely or item.mnemonic == "b"
+        if not isinstance(item, Instruction) or not isinstance(
+            item.jump_target, JumpTarget
         ):
-            assert isinstance(item.jump_target, JumpTarget)
-            old_label = item.jump_target.target
-            if old_label not in label_prev_instr:
-                raise DecompFailure(
-                    f"Unable to parse branch: label {old_label} does not exist in function {function.name}"
-                )
-            before_target = label_prev_instr[old_label]
-            before_before_target = (
-                instr_before_instr.get(before_target)
-                if before_target is not None
-                else None
+            new_body.append((item, item))
+            continue
+        next_item = next(body_iter)
+        before_target = label_prev_instr.get(item.jump_target.target)
+        if (
+            isinstance(next_item, Instruction)
+            and before_target is not None
+            and may_transform_branch(item, next_item, before_target)
+        ):
+            # Handle the IDO pattern.
+            if before_target not in label_before_instr:
+                label = item.jump_target.target
+                new_label = internal_label("before", item.jump_target.target)
+                label_before_instr[before_target] = new_label
+                insert_label_before[before_target] = new_label
+            new_target = label_before_instr[before_target]
+            mn = item.mnemonic
+            mn_unlikely = mn[:-1] if item.is_branch_likely else mn
+            new_item = arch.parse(
+                mn_unlikely,
+                item.args[:-1] + [AsmGlobalSymbol(new_target)],
+                item.meta.derived(),
             )
-            next_item = next(body_iter)
-            orig_next_item = next_item
-            if (
-                item.mnemonic == "b"
-                and before_before_target is not None
-                and before_before_target.has_delay_slot
-            ):
-                # Don't treat 'b' instructions as branch likelies if doing so would
-                # introduce a label in a delay slot.
-                new_body.append((item, item))
-                new_body.append((next_item, next_item))
-            elif (
-                isinstance(next_item, Instruction)
-                and before_target is not None
-                and before_target is not next_item
-                and str(before_target) == str(next_item)
-                and (item.mnemonic != "b" or next_item.mnemonic != "nop")
-            ):
-                # Handle the IDO pattern.
-                if before_target not in label_before_instr:
-                    new_label = internal_label("before", old_label)
-                    label_before_instr[before_target] = new_label
-                    insert_label_before[before_target] = new_label
-                new_target = label_before_instr[before_target]
-                mn_unlikely = item.mnemonic[:-1] or "b"
-                item = arch.parse(
-                    mn_unlikely,
-                    item.args[:-1] + [AsmGlobalSymbol(new_target)],
-                    item.meta.derived(),
-                )
-                next_item = arch.parse("nop", [], item.meta.derived())
-                new_body.append((orig_item, item))
-                new_body.append((orig_next_item, next_item))
-            else:
-                # Fall back to not transforming the branch likely at all.
-                new_body.append((item, item))
-                new_body.append((next_item, next_item))
+            new_next_item = arch.parse("nop", [], new_item.meta.derived())
+            new_body.append((item, new_item))
+            new_body.append((next_item, new_next_item))
         else:
-            new_body.append((orig_item, item))
+            new_body.append((item, item))
+            new_body.append((next_item, next_item))
 
     new_function = function.bodyless_copy()
     for orig_item, new_item in new_body:
@@ -425,10 +471,10 @@ def build_blocks(
         if arch.has_delay_slots:
             verify_no_trailing_delay_slot(function)
 
-        if arch.arch == Target.ArchEnum.MIPS:
             function = minimize_labels(function, asm_data)
-            function = normalize_gcc_likely_branches(function, arch)
-            function = normalize_ido_likely_branches(function, arch)
+            if arch.arch == Target.ArchEnum.MIPS:
+                function = normalize_gcc_likely_branches(function, arch)
+            function = normalize_ido_likely_branches(function, asm_data, arch)
 
         function = minimize_labels(function, asm_data)
         function = simplify_standard_patterns(
