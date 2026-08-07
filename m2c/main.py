@@ -49,9 +49,7 @@ class BrowserResult:
     output: str
 
 
-def decompile_for_browser(
-    source: str, context: str, flags: List[str]
-) -> BrowserResult:
+def decompile_for_browser(source: str, context: str, flags: List[str]) -> BrowserResult:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
