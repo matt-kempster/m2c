@@ -1,7 +1,7 @@
 [project]
 name = "m2c"
 version = "0.1.0"
-description = "MIPS, ARM and PowerPC decompiler"
+description = "MIPS, ARM, PowerPC and SuperH decompiler"
 maintainers = [
     {name = "Simon Lindholm", email = "simon.lindholm10@gmail.com"},
 ]

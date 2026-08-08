@@ -1,5 +1,5 @@
 # `m2c` Decompiler
-`m2c` ("*Machine code to C*") is a decompiler for 32-bit MIPS, ARM and PowerPC assembly that produces C code, with partial support for C++.
+`m2c` ("*Machine code to C*") is a decompiler for 32-bit MIPS, ARM, PowerPC and SuperH assembly that produces C code, with partial support for C++.
 
 This project, initially named `mips_to_c`, has the goal to support decompilation projects, which aim to write source code that yields byte-identical output when compiled with a particular build system.
 It originally targeted popular compilers of the late 1990's, but it also works well with newer compilers or hand-written assembly.
@@ -25,7 +25,7 @@ Context files provided with `--context` are parsed and cached, so subsequent run
 
 ### Target Architecture / Compiler / Language
 
-`m2c` has support for MIPS, ARM and PowerPC assembly.
+`m2c` has support for MIPS, ARM, PowerPC and SuperH assembly.
 It also has some compiler-specific heuristics and language-specific behavior.
 For example, it can demangle C++ symbol names as used by CodeWarrior.
 
@@ -39,6 +39,7 @@ The following platforms are supported:
 - `ppc`: PowerPC (big endian)
 - `arm`: ARM (little endian)
 - `gba`: ARM (with APCS, little endian)
+- `sh2`: SuperH (big endian)
 
 The following compilers are supported:
 - `ido`: Integrated Development Option (MIPS compiler from SGI)
