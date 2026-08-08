@@ -229,15 +229,30 @@ def run_compile(in_file: Path, out_file: Path, compiler: Compiler) -> None:
                         disassemble_ppc_elf(o_f, out_f)
             else:
                 assert False, compiler.name
-    logger.info(f"Successfully wrote disassembly to {out_file}.")
+    logger.info(f"Successfully wrote disassembly to {out_file}")
 
 
 def add_test_from_file(
-    orig_file: Path, env_vars: PathsToBinaries, compilers: List[Tuple[str, Compiler]]
+    orig_file: Path,
+    env_vars: PathsToBinaries,
+    compilers: List[Tuple[str, Compiler]],
+    update: bool,
+    target: Optional[str],
 ) -> None:
     test_dir = orig_file.parent
     for asm_filename, compiler in compilers:
+        if target is not None and asm_filename != target:
+            continue
         asm_file_path = test_dir / (asm_filename + ".s")
+        if update and not asm_file_path.exists():
+            logger.info(f"Skipped missing file {asm_file_path}.")
+            continue
+        if not update and asm_file_path.exists():
+            logger.info(
+                f"Skipped updating {asm_file_path} because it already exists "
+                "(pass -u to overwrite)."
+            )
+            continue
         try:
             run_compile(orig_file, asm_file_path, compiler)
             if compiler.name in ("mwcc", "agbcc", "sh-gcc"):
@@ -256,6 +271,12 @@ def add_test_from_file(
 
 
 def main() -> int:
+    env_vars = get_environment_variables()
+    compilers = get_compilers(env_vars)
+    if not compilers:
+        return 2
+    targets = [filename for filename, _ in compilers]
+
     parser = argparse.ArgumentParser(
         description="Add or update end-to-end decompiler tests."
     )
@@ -269,16 +290,25 @@ def main() -> int:
         nargs="+",
     )
     parser.add_argument(
-        "--debug", dest="debug", help="print debug info", action="store_true"
+        "--debug", "-v", dest="debug", help="print debug info", action="store_true"
+    )
+    parser.add_argument(
+        "--target",
+        "-t",
+        dest="target",
+        help="add/update individual arch (options: %(choices)s)",
+        choices=targets,
+    )
+    parser.add_argument(
+        "--update",
+        "-u",
+        dest="update",
+        help="update existing files",
+        action="store_true",
     )
 
     args = parser.parse_args()
     set_up_logging(args.debug)
-
-    env_vars = get_environment_variables()
-    compilers = get_compilers(env_vars)
-    if not compilers:
-        return 2
 
     for orig_filename in args.files:
         orig_file = Path(orig_filename).resolve()
@@ -294,7 +324,7 @@ def main() -> int:
                 f"`{orig_file}` does not have a path of the form `{expected_c_file}` or `{expected_cpp_file}`! Skipping."
             )
             continue
-        add_test_from_file(orig_file, env_vars, compilers)
+        add_test_from_file(orig_file, env_vars, compilers, args.update, args.target)
 
     return 0
 
