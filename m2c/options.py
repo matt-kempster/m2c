@@ -116,12 +116,10 @@ class Target:
                 compiler = Target.CompilerEnum(terms[1])
             elif arch == Target.ArchEnum.PPC:
                 compiler = Target.CompilerEnum.MWCC
-            elif arch == Target.ArchEnum.ARM:
-                compiler = Target.CompilerEnum.GCC
-            elif arch == Target.ArchEnum.SH2:
-                compiler = Target.CompilerEnum.GCC
-            else:
+            elif arch == Target.ArchEnum.MIPS and endian == Target.EndianEnum.BIG:
                 compiler = Target.CompilerEnum.IDO
+            else:
+                compiler = Target.CompilerEnum.GCC
 
             if len(terms) >= 3:
                 language = Target.LanguageEnum(terms[2])
