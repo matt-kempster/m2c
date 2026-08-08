@@ -48,7 +48,11 @@ class Label:
     # labels, and to deal with this we allow for consecutive labels to be
     # merged together. As a consequence, we allow a Label to have more than one
     # name. When we need a single name to refer to one, we use the first one.
-    names: List[str]
+    names: Tuple[str, ...]
+
+    @staticmethod
+    def new(name: str) -> Label:
+        return Label((name,))
 
     def __str__(self) -> str:
         return self.names[0]
@@ -64,7 +68,7 @@ class Function:
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
     def new_label(self, name: str) -> None:
-        label = Label([name])
+        label = Label.new(name)
         if self.body and self.body[-1] == label:
             # Skip repeated labels
             return

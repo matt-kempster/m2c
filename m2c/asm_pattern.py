@@ -41,7 +41,7 @@ def make_pattern(*parts: str) -> Pattern:
         if part == "*":
             ret.append((None, optional))
         elif part.endswith(":"):
-            ret.append((Label([part[:-1]]), optional))
+            ret.append((Label.new(part[:-1]), optional))
         else:
             ins = parse_asm_instruction(part, NaiveParsingArch(), AsmState())
             ret.append((ins, optional))

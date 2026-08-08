@@ -449,11 +449,11 @@ def minimize_labels(function: Function, asm_data: AsmData) -> Function:
             cur_label.extend(name for name in item.names if name in labels_used)
         else:
             if cur_label:
-                new_function.body.append(Label(cur_label))
+                new_function.body.append(Label(tuple(cur_label)))
                 cur_label = []
             new_function.body.append(item)
     if cur_label:
-        new_function.body.append(Label(cur_label))
+        new_function.body.append(Label(tuple(cur_label)))
 
     return new_function
 
@@ -572,7 +572,7 @@ def build_blocks(
                 )
                 block_builder.add_instruction(nop.clone())
                 block_builder.new_block()
-                block_builder.set_label(Label([temp_label]))
+                block_builder.set_label(Label.new(temp_label))
                 block_builder.add_instruction(
                     arch.parse("b", [AsmGlobalSymbol(target)], item.meta.derived())
                 )
@@ -609,7 +609,7 @@ def build_blocks(
             )
             block_builder.add_instruction(nop.clone())
             block_builder.new_block()
-            block_builder.set_label(Label([temp_label]))
+            block_builder.set_label(Label.new(temp_label))
             block_builder.add_instruction(nop.clone())
         elif item.function_target is not None:
             # Move the delay slot instruction to before the call so it
@@ -699,7 +699,7 @@ def build_blocks(
 
     if cond_return_target is not None:
         # Add an empty return block at the end of the function
-        block_builder.set_label(Label([cond_return_target]))
+        block_builder.set_label(Label.new(cond_return_target))
         for instr in arch.missing_return():
             block_builder.add_instruction(instr)
         block_builder.new_block()
