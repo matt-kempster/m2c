@@ -279,7 +279,7 @@ def normalize_ido_likely_branches(
     Branch-likely instructions that do not appear in this pattern are kept.
 
     We also do this for b instructions, which sometimes occur in the same
-    pattern. For Super-H we do it for all branches, but restricted to compare
+    pattern. For SuperH we do it for all branches, but restricted to compare
     instructions. This could possibly be extended to a more general pattern
     that covers more than one instruction and is not restricted to compares."""
     seen_instrs: Set[Instruction] = set()
@@ -316,6 +316,8 @@ def normalize_ido_likely_branches(
         before_target: Instruction,
         pre: bool = False,
     ) -> bool:
+        if not item.has_delay_slot:
+            return False
         if before_target is next_item:
             return False
         if str(before_target) != str(next_item):
@@ -403,7 +405,7 @@ def normalize_ido_likely_branches(
                 item.meta.derived(),
             )
             if item.is_conditional and not item.is_branch_likely:
-                # For regular conditional branches (on Super-H) we cannot replace
+                # For regular conditional branches (on SuperH) we cannot replace
                 # the delay slot by a nop, since it will execute in the branch-
                 # not-taken case. `may_transform_branch` ensures that the delay
                 # slot instruction is idempotent in this case.
