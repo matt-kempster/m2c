@@ -278,10 +278,10 @@ def normalize_ido_likely_branches(
 
     Branch-likely instructions that do not appear in this pattern are kept.
 
-    We also do this for b instructions (and bra on sh2), which sometimes occur
-    in the same pattern. For sh2 gcc this could probably be extended into a more
-    general pattern that covers more than one instruction and is not restricted
-    to just bra branches."""
+    We also do this for b instructions, which sometimes occur in the same
+    pattern. For Super-H we do it for all branches, but restricted to compare
+    instructions. This could possibly be extended to a more general pattern
+    that covers more than one instruction and is not restricted to compares."""
     seen_instrs: Set[Instruction] = set()
     label_names: Dict[str, Set[str]] = {}
     label_prev_instr: Dict[str, Optional[Instruction]] = {}
@@ -316,8 +316,6 @@ def normalize_ido_likely_branches(
         before_target: Instruction,
         pre: bool = False,
     ) -> bool:
-        if item.is_conditional and not item.is_branch_likely:
-            return False
         if before_target is next_item:
             return False
         if str(before_target) != str(next_item):
@@ -333,6 +331,9 @@ def normalize_ido_likely_branches(
             if not (next_mn.startswith("cmp/") or next_mn == "tst"):
                 # Only do the transformation for compare instructions for now;
                 # other ones carry too much risk of being false positives.
+                # Also, since compare instructions are idempotent, it is fine
+                # to allow the transform even for conditional branches whose
+                # delay slots we cannot replace by nops.
                 return False
             if label in untouched_targets and not pre:
                 # Don't change the branch target unless it would leave the old
@@ -340,7 +341,7 @@ def normalize_ido_likely_branches(
                 return False
         else:
             # MIPS
-            if item.mnemonic == "j":
+            if not item.is_branch_likely and item.mnemonic != "b":
                 return False
 
         if not item.is_conditional:
@@ -401,7 +402,14 @@ def normalize_ido_likely_branches(
                 item.args[:-1] + [AsmGlobalSymbol(new_target)],
                 item.meta.derived(),
             )
-            new_next_item = arch.parse("nop", [], new_item.meta.derived())
+            if item.is_conditional and not item.is_branch_likely:
+                # For regular conditional branches (on Super-H) we cannot replace
+                # the delay slot by a nop, since it will execute in the branch-
+                # not-taken case. `may_transform_branch` ensures that the delay
+                # slot instruction is idempotent in this case.
+                new_next_item = next_item
+            else:
+                new_next_item = arch.parse("nop", [], new_item.meta.derived())
             new_body.append((item, new_item))
             new_body.append((next_item, new_next_item))
         else:
