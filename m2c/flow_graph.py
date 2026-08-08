@@ -19,7 +19,7 @@ from typing import (
 
 from .error import DecompFailure
 from .options import Formatter, Options, Target
-from .asm_file import AsmData, AsmSymbolicData, Function, Label
+from .asm_file import AsmData, AsmSymbolicData, BodyPart, Function, Label
 from .asm_instruction import (
     Argument,
     AsmAddressMode,
@@ -289,7 +289,7 @@ def normalize_ido_likely_branches(
     instr_before_instr: Dict[Instruction, Instruction] = {}
     prev_instr: Optional[Instruction] = None
     prev_label: Optional[Label] = None
-    prev_item: Union[Instruction, Label, None] = None
+    prev_item: Optional[BodyPart] = None
     for item in function.body:
         if isinstance(item, Instruction):
             assert item not in seen_instrs
@@ -374,9 +374,9 @@ def normalize_ido_likely_branches(
                 untouched_targets |= label_names.get(item.jump_target.target, set())
 
     insert_label_before: Dict[Instruction, str] = {}
-    new_body: List[Tuple[Union[Instruction, Label], Union[Instruction, Label]]] = []
+    new_body: List[Tuple[BodyPart, BodyPart]] = []
 
-    body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
+    body_iter: Iterator[BodyPart] = iter(function.body)
     for item in body_iter:
         if not isinstance(item, Instruction) or not isinstance(
             item.jump_target, JumpTarget
@@ -494,11 +494,11 @@ def build_blocks(
 
     block_builder = BlockBuilder()
 
-    body_iter: Iterator[Union[Instruction, Label]] = iter(function.body)
+    body_iter: Iterator[BodyPart] = iter(function.body)
     branch_likely_counts: CounterPy38[str] = Counter()
     cond_return_target: Optional[str] = None
 
-    def process_delay_slots(item: Union[Instruction, Label]) -> None:
+    def process_delay_slots(item: BodyPart) -> None:
         if isinstance(item, Label):
             # Split blocks at labels.
             block_builder.new_block()
@@ -509,7 +509,7 @@ def build_blocks(
             process_no_delay_slots(item)
             return
 
-        process_after: List[Union[Instruction, Label]] = []
+        process_after: List[BodyPart] = []
         next_item = next(body_iter)
 
         if isinstance(next_item, Label):
@@ -635,7 +635,7 @@ def build_blocks(
         for item in process_after:
             process_delay_slots(item)
 
-    def process_no_delay_slots(item: Union[Instruction, Label]) -> None:
+    def process_no_delay_slots(item: BodyPart) -> None:
         nonlocal cond_return_target
 
         if isinstance(item, Label):

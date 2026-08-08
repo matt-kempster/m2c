@@ -54,10 +54,13 @@ class Label:
         return self.names[0]
 
 
+BodyPart = Union[Instruction, Label]
+
+
 @dataclass
 class Function:
     name: str
-    body: List[Union[Instruction, Label]] = field(default_factory=list)
+    body: List[BodyPart] = field(default_factory=list)
     reg_formatter: RegFormatter = field(default_factory=RegFormatter)
 
     def new_label(self, name: str) -> None:

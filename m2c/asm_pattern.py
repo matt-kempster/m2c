@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
-from .asm_file import AsmData, Label
+from .asm_file import AsmData, BodyPart, Label
 from .asm_instruction import (
     ARM_BARREL_SHIFTER_OPS,
     Argument,
@@ -28,7 +28,6 @@ from .instruction import (
 )
 
 
-BodyPart = Union[Instruction, Label]
 ReplacementPart = Union[AsmInstruction, Instruction, Label]
 PatternPart = Union[AsmInstruction, Label, None]
 Pattern = List[Tuple[PatternPart, bool]]
