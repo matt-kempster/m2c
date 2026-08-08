@@ -19,3 +19,12 @@ _test_chain:
     rotcl r5
     rts
     mov r5,r0
+
+.global _test_rotate_low
+_test_rotate_low:
+    mov r5,r0
+    shll r0
+    rotcl r4
+    rotcl r5
+    rts
+    mov r4,r0

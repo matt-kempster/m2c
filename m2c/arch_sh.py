@@ -640,9 +640,11 @@ class Sh2Arch(Arch):
                 if mnemonic == "rotcl":
                     shifted = BinaryOp.ushift(original, "<<", Literal(1))
                     incoming_bit = carry_in
+                    carry_out = CarryBit(shifted)
                 else:
                     shifted = BinaryOp.ushift(original, ">>", Literal(1))
                     incoming_bit = BinaryOp.uint(carry_in, "<<", Literal(31))
+                    carry_out = BinaryOp.int(original, "&", Literal(1))
 
                 result = (
                     shifted
@@ -651,7 +653,7 @@ class Sh2Arch(Arch):
                 )
 
                 s.set_reg(a.reg_ref(0), result)
-                s.set_reg(t_reg, CarryBit(shifted))
+                s.set_reg(t_reg, carry_out)
 
         elif mnemonic in cls.instrs_shift:
             assert len(args) == 1 and isinstance(args[0], Register)
