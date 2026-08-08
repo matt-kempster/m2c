@@ -1574,12 +1574,8 @@ class MipsArch(Arch):
         "subu": lambda a: (
             fold_mul_chains(fold_divmod(BinaryOp.intptr(a.reg(1), "-", a.reg(2))))
         ),
-        "negu": lambda a: fold_mul_chains(
-            UnaryOp.sint("-", a.reg(1)),
-        ),
-        "neg": lambda a: fold_mul_chains(
-            UnaryOp.sint("-", a.reg(1)),
-        ),
+        "negu": lambda a: fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
+        "neg": lambda a: fold_mul_chains(UnaryOp.sint("-", a.reg(1))),
         "div.fictive": lambda a: BinaryOp.sint(a.reg(1), "/", a.full_imm(2)),
         "mod.fictive": lambda a: BinaryOp.sint(a.reg(1), "%", a.full_imm(2)),
         # 64-bit integer arithmetic, treated mostly the same as 32-bit for now

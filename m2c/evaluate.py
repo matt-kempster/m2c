@@ -378,7 +378,7 @@ def handle_sub(lhs: Expression, rhs: Expression) -> Expression:
         return s32_literal(lhs.value - rhs.value)
     if rhs == Literal(0):
         return lhs
-    return BinaryOp.intptr(lhs, "-", rhs)
+    return fold_mul_chains(fold_divmod(BinaryOp.intptr(lhs, "-", rhs)))
 
 
 def handle_addis(args: InstrArgs) -> Expression:
@@ -1053,9 +1053,10 @@ def fold_shift_right(expr: Expression, shift: int, *, signed: bool) -> Expressio
         expr = inner.left
         shift += inner.right.value
     if signed:
-        return BinaryOp.sshift(expr, ">>", Literal(shift))
+        ret = BinaryOp.sshift(expr, ">>", Literal(shift))
     else:
-        return BinaryOp.ushift(expr, ">>", Literal(shift))
+        ret = BinaryOp.ushift(expr, ">>", Literal(shift))
+    return fold_divmod(ret)
 
 
 def array_access_from_add(
