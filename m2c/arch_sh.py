@@ -574,7 +574,7 @@ class Sh2Arch(Arch):
             def eval_fn(s: NodeState, a: InstrArgs) -> None:
                 value = a.reg(0)
                 carry = a.regs[t_reg]
-                result = handle_sub(UnaryOp.sint("-", value), carry)
+                result = handle_sub(UnaryOp.int("-", value), carry)
 
                 if carry == Literal(0):
                     borrow = BinaryOp.icmp(value, "!=", Literal(0))
