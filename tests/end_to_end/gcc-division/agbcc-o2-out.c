@@ -8,21 +8,21 @@ void test(u32 a) {
 }
 
 void test_s8(s8 c) {
-    unksp0 = c;
-    foo((u8) unksp0 >> 1);
-    foo((u32) (u8) ((u8) unksp0 / 3U));
-    foo((u32) (u8) ((u8) unksp0 / 5U));
-    foo((u32) (u8) ((u8) unksp0 / 7U));
-    foo((u32) (u8) ((u8) unksp0 / 10U));
-    foo((u32) (u8) ((u8) unksp0 / 100U));
-    foo((u32) (u8) ((u8) unksp0 / 255U));
-    foo(1 & (u8) unksp0);
-    foo((u32) (u8) ((u8) unksp0 % 3U));
-    foo((u32) (u8) ((u8) unksp0 % 5U));
-    foo((u32) (u8) ((u8) unksp0 % 7U));
-    foo((u32) (u8) ((u8) unksp0 % 10U));
-    foo((u32) (u8) ((u8) unksp0 % 100U));
-    foo((u32) (u8) ((u8) unksp0 % 255U));
+    subroutine_arg0 = c;
+    foo((u8) subroutine_arg0 >> 1);
+    foo((u32) (u8) ((u8) subroutine_arg0 / 3U));
+    foo((u32) (u8) ((u8) subroutine_arg0 / 5U));
+    foo((u32) (u8) ((u8) subroutine_arg0 / 7U));
+    foo((u32) (u8) ((u8) subroutine_arg0 / 10U));
+    foo((u32) (u8) ((u8) subroutine_arg0 / 100U));
+    foo((u32) (u8) ((u8) subroutine_arg0 / 255U));
+    foo(1 & (u8) subroutine_arg0);
+    foo((u32) (u8) ((u8) subroutine_arg0 % 3U));
+    foo((u32) (u8) ((u8) subroutine_arg0 % 5U));
+    foo((u32) (u8) ((u8) subroutine_arg0 % 7U));
+    foo((u32) (u8) ((u8) subroutine_arg0 % 10U));
+    foo((u32) (u8) ((u8) subroutine_arg0 % 100U));
+    foo((u32) (u8) ((u8) subroutine_arg0 % 255U));
 }
 
 void test_s16(s16 h) {
@@ -30,31 +30,32 @@ void test_s16(s16 h) {
     u16 temp_r1;
     u16 temp_r1_2;
 
-    unksp0 = h;
-    temp_r1 = (u16) unksp0;
+    subroutine_arg0 = h;
+    temp_r1 = (u16) subroutine_arg0;
     foo((u32) ((s32) ((s16) temp_r1 + ((u32) (temp_r1 << 0x10) >> 0x1F)) >> 1));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 3));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 5));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 7));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 10));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 100));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 255));
-    foo((u32) (s16) ((s16) (u16) unksp0 / 360));
-    foo((u32) ((s16) (u16) unksp0 / 65534));
-    temp_r1_2 = (u16) unksp0;
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 3));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 5));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 7));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 10));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 100));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 255));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 360));
+    foo((u32) ((s16) (u16) subroutine_arg0 / 65534));
+    temp_r1_2 = (u16) subroutine_arg0;
     temp_r0 = (s16) temp_r1_2;
     foo((u32) (s16) (temp_r0 - (((s32) (temp_r0 + ((u32) (temp_r1_2 << 0x10) >> 0x1F)) >> 1) * 2)));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 3));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 5));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 7));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 10));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 100));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 255));
-    foo((u32) (s16) ((s16) (u16) unksp0 % 360));
-    foo((u32) ((s16) (u16) unksp0 % 65534));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 3));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 5));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 7));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 10));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 100));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 255));
+    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 360));
+    foo((u32) ((s16) (u16) subroutine_arg0 % 65534));
 }
 
 void test_s32_div(s32 d) {
+    s32 sp0;
     s32 var_r0;
     s32 var_r0_2;
     s32 var_r0_3;
@@ -62,7 +63,7 @@ void test_s32_div(s32 d) {
     s32 var_r0_5;
     s32 var_r0_6;
 
-    unksp0 = d;
+    sp0 = d;
     foo((u32) d);
     foo((u32) ((s32) (d + ((u32) d >> 0x1F)) >> 1));
     foo((u32) (d / 3));
@@ -71,84 +72,85 @@ void test_s32_div(s32 d) {
         var_r0 += 3;
     }
     foo((u32) (var_r0 >> 2));
-    foo((u32) (unksp0 / 5));
-    foo((u32) (unksp0 / 6));
-    foo((u32) (unksp0 / 7));
-    var_r0_2 = unksp0;
+    foo((u32) (sp0 / 5));
+    foo((u32) (sp0 / 6));
+    foo((u32) (sp0 / 7));
+    var_r0_2 = sp0;
     if (var_r0_2 < 0) {
         var_r0_2 += 7;
     }
     foo((u32) (var_r0_2 >> 3));
-    foo((u32) (unksp0 / 9));
-    foo((u32) (unksp0 / 10));
-    foo((u32) (unksp0 / 11));
-    foo((u32) (unksp0 / 12));
-    foo((u32) (unksp0 / 13));
-    foo((u32) (unksp0 / 14));
-    foo((u32) (unksp0 / 15));
-    var_r0_3 = unksp0;
+    foo((u32) (sp0 / 9));
+    foo((u32) (sp0 / 10));
+    foo((u32) (sp0 / 11));
+    foo((u32) (sp0 / 12));
+    foo((u32) (sp0 / 13));
+    foo((u32) (sp0 / 14));
+    foo((u32) (sp0 / 15));
+    var_r0_3 = sp0;
     if (var_r0_3 < 0) {
         var_r0_3 += 0xF;
     }
     foo((u32) (var_r0_3 >> 4));
-    foo((u32) (unksp0 / 17));
-    foo((u32) (unksp0 / 18));
-    foo((u32) (unksp0 / 19));
-    foo((u32) (unksp0 / 20));
-    foo((u32) (unksp0 / 21));
-    foo((u32) (unksp0 / 22));
-    foo((u32) (unksp0 / 23));
-    foo((u32) (unksp0 / 24));
-    foo((u32) (unksp0 / 25));
-    foo((u32) (unksp0 / 26));
-    foo((u32) (unksp0 / 27));
-    foo((u32) (unksp0 / 28));
-    foo((u32) (unksp0 / 29));
-    foo((u32) (unksp0 / 30));
-    foo((u32) (unksp0 / 31));
-    var_r0_4 = unksp0;
+    foo((u32) (sp0 / 17));
+    foo((u32) (sp0 / 18));
+    foo((u32) (sp0 / 19));
+    foo((u32) (sp0 / 20));
+    foo((u32) (sp0 / 21));
+    foo((u32) (sp0 / 22));
+    foo((u32) (sp0 / 23));
+    foo((u32) (sp0 / 24));
+    foo((u32) (sp0 / 25));
+    foo((u32) (sp0 / 26));
+    foo((u32) (sp0 / 27));
+    foo((u32) (sp0 / 28));
+    foo((u32) (sp0 / 29));
+    foo((u32) (sp0 / 30));
+    foo((u32) (sp0 / 31));
+    var_r0_4 = sp0;
     if (var_r0_4 < 0) {
         var_r0_4 += 0x1F;
     }
     foo((u32) (var_r0_4 >> 5));
-    foo((u32) (unksp0 / 33));
-    foo((u32) (unksp0 / 100));
-    foo((u32) (unksp0 / 255));
-    foo((u32) (unksp0 / 360));
-    foo((u32) (unksp0 / 1000));
-    foo((u32) (unksp0 / 10000));
-    foo((u32) (unksp0 / 100000));
-    foo((u32) (unksp0 / 1000000));
-    foo((u32) (unksp0 / 10000000));
-    foo((u32) (unksp0 / 100000000));
-    foo((u32) (unksp0 / 1073741822));
-    foo((u32) (unksp0 / 1073741823));
-    var_r0_5 = unksp0;
+    foo((u32) (sp0 / 33));
+    foo((u32) (sp0 / 100));
+    foo((u32) (sp0 / 255));
+    foo((u32) (sp0 / 360));
+    foo((u32) (sp0 / 1000));
+    foo((u32) (sp0 / 10000));
+    foo((u32) (sp0 / 100000));
+    foo((u32) (sp0 / 1000000));
+    foo((u32) (sp0 / 10000000));
+    foo((u32) (sp0 / 100000000));
+    foo((u32) (sp0 / 1073741822));
+    foo((u32) (sp0 / 1073741823));
+    var_r0_5 = sp0;
     if (var_r0_5 < 0) {
         var_r0_5 += 0x3FFFFFFF;
     }
     foo((u32) (var_r0_5 >> 0x1E));
-    foo((u32) (unksp0 / 1073741825));
-    foo((u32) (unksp0 / 2147483645));
-    foo((u32) (unksp0 / 2147483646));
-    foo((u32) (unksp0 / 2147483647));
-    foo(unksp0 >> 0x1F);
-    foo((u32) (unksp0 / 2147483649));
-    foo((u32) (unksp0 / 2147483650));
-    foo((u32) (unksp0 / -10));
-    foo((u32) (unksp0 / -7));
-    foo((u32) (unksp0 / -5));
-    var_r0_6 = unksp0;
+    foo((u32) (sp0 / 1073741825));
+    foo((u32) (sp0 / 2147483645));
+    foo((u32) (sp0 / 2147483646));
+    foo((u32) (sp0 / 2147483647));
+    foo((u32) sp0 >> 0x1F);
+    foo((u32) (sp0 / 2147483649));
+    foo((u32) (sp0 / 2147483650));
+    foo((u32) (sp0 / -10));
+    foo((u32) (sp0 / -7));
+    foo((u32) (sp0 / -5));
+    var_r0_6 = sp0;
     if (var_r0_6 < 0) {
         var_r0_6 += 3;
     }
     foo(0 - (var_r0_6 >> 2));
-    foo((u32) (unksp0 / -3));
-    foo(0 - ((s32) (unksp0 + (unksp0 >> 0x1F)) >> 1));
-    foo(0 - unksp0);
+    foo((u32) (sp0 / -3));
+    foo(0 - ((s32) (sp0 + ((u32) sp0 >> 0x1F)) >> 1));
+    foo(0 - sp0);
 }
 
 void test_s32_mod(s32 d) {
+    s32 sp0;
     s32 var_r0;
     s32 var_r0_2;
     s32 var_r0_3;
@@ -156,94 +158,96 @@ void test_s32_mod(s32 d) {
     s32 var_r0_5;
     s32 var_r0_6;
 
-    unksp0 = d;
+    sp0 = d;
     foo(0U);
     foo(d - (((s32) (d + ((u32) d >> 0x1F)) >> 1) * 2));
     foo((u32) (d % 3));
-    var_r0 = unksp0;
-    if (unksp0 < 0) {
-        var_r0 = unksp0 + 3;
+    var_r0 = sp0;
+    if (sp0 < 0) {
+        var_r0 = sp0 + 3;
     }
-    foo(unksp0 - ((var_r0 >> 2) * 4));
-    foo((u32) (unksp0 % 5));
-    foo((u32) (unksp0 % 6));
-    foo((u32) (unksp0 % 7));
-    var_r0_2 = unksp0;
-    if (unksp0 < 0) {
-        var_r0_2 = unksp0 + 7;
+    foo(sp0 - ((var_r0 >> 2) * 4));
+    foo((u32) (sp0 % 5));
+    foo((u32) (sp0 % 6));
+    foo((u32) (sp0 % 7));
+    var_r0_2 = sp0;
+    if (sp0 < 0) {
+        var_r0_2 = sp0 + 7;
     }
-    foo(unksp0 - ((var_r0_2 >> 3) * 8));
-    foo((u32) (unksp0 % 9));
-    foo((u32) (unksp0 % 10));
-    foo((u32) (unksp0 % 11));
-    foo((u32) (unksp0 % 12));
-    foo((u32) (unksp0 % 13));
-    foo((u32) (unksp0 % 14));
-    foo((u32) (unksp0 % 15));
-    var_r0_3 = unksp0;
-    if (unksp0 < 0) {
+    foo(sp0 - ((var_r0_2 >> 3) * 8));
+    foo((u32) (sp0 % 9));
+    foo((u32) (sp0 % 10));
+    foo((u32) (sp0 % 11));
+    foo((u32) (sp0 % 12));
+    foo((u32) (sp0 % 13));
+    foo((u32) (sp0 % 14));
+    foo((u32) (sp0 % 15));
+    var_r0_3 = sp0;
+    if (sp0 < 0) {
         var_r0_3 += 0xF;
     }
-    foo(unksp0 - ((var_r0_3 >> 4) * 0x10));
-    foo((u32) (unksp0 % 17));
-    foo((u32) (unksp0 % 18));
-    foo((u32) (unksp0 % 19));
-    foo((u32) (unksp0 % 20));
-    foo((u32) (unksp0 % 21));
-    foo((u32) (unksp0 % 22));
-    foo((u32) (unksp0 % 23));
-    foo((u32) (unksp0 % 24));
-    foo((u32) (unksp0 % 25));
-    foo((u32) (unksp0 % 26));
-    foo((u32) (unksp0 % 27));
-    foo((u32) (unksp0 % 28));
-    foo((u32) (unksp0 % 29));
-    foo((u32) (unksp0 % 30));
-    foo((u32) (unksp0 % 31));
-    var_r0_4 = unksp0;
-    if (unksp0 < 0) {
+    foo(sp0 - ((var_r0_3 >> 4) * 0x10));
+    foo((u32) (sp0 % 17));
+    foo((u32) (sp0 % 18));
+    foo((u32) (sp0 % 19));
+    foo((u32) (sp0 % 20));
+    foo((u32) (sp0 % 21));
+    foo((u32) (sp0 % 22));
+    foo((u32) (sp0 % 23));
+    foo((u32) (sp0 % 24));
+    foo((u32) (sp0 % 25));
+    foo((u32) (sp0 % 26));
+    foo((u32) (sp0 % 27));
+    foo((u32) (sp0 % 28));
+    foo((u32) (sp0 % 29));
+    foo((u32) (sp0 % 30));
+    foo((u32) (sp0 % 31));
+    var_r0_4 = sp0;
+    if (sp0 < 0) {
         var_r0_4 += 0x1F;
     }
-    foo(unksp0 - ((var_r0_4 >> 5) << 5));
-    foo((u32) (unksp0 % 33));
-    foo((u32) (unksp0 % 100));
-    foo((u32) (unksp0 % 255));
-    foo((u32) (unksp0 % 360));
-    foo((u32) (unksp0 % 1000));
-    foo((u32) (unksp0 % 10000));
-    foo((u32) (unksp0 % 100000));
-    foo((u32) (unksp0 % 1000000));
-    foo((u32) (unksp0 % 10000000));
-    foo((u32) (unksp0 % 100000000));
-    foo((u32) (unksp0 % 1073741822));
-    foo((u32) (unksp0 % 1073741823));
-    var_r0_5 = unksp0;
-    if (unksp0 < 0) {
-        var_r0_5 = unksp0 + 0x3FFFFFFF;
+    foo(sp0 - ((var_r0_4 >> 5) << 5));
+    foo((u32) (sp0 % 33));
+    foo((u32) (sp0 % 100));
+    foo((u32) (sp0 % 255));
+    foo((u32) (sp0 % 360));
+    foo((u32) (sp0 % 1000));
+    foo((u32) (sp0 % 10000));
+    foo((u32) (sp0 % 100000));
+    foo((u32) (sp0 % 1000000));
+    foo((u32) (sp0 % 10000000));
+    foo((u32) (sp0 % 100000000));
+    foo((u32) (sp0 % 1073741822));
+    foo((u32) (sp0 % 1073741823));
+    var_r0_5 = sp0;
+    if (sp0 < 0) {
+        var_r0_5 = sp0 + 0x3FFFFFFF;
     }
-    foo(unksp0 - ((var_r0_5 >> 0x1E) << 0x1E));
-    foo((u32) (unksp0 % 1073741825));
-    foo((u32) (unksp0 % 2147483645));
-    foo((u32) (unksp0 % 2147483646));
-    foo((u32) (unksp0 % 2147483647));
-    foo(unksp0 & 0x7FFFFFFF);
-    foo((u32) (unksp0 % 2147483647));
-    foo((u32) (unksp0 % 2147483646));
-    foo((u32) (unksp0 % 10));
-    foo((u32) (unksp0 % 7));
-    foo((u32) (unksp0 % 5));
-    var_r0_6 = unksp0;
-    if (unksp0 < 0) {
-        var_r0_6 = unksp0 + 3;
+    foo(sp0 - ((var_r0_5 >> 0x1E) << 0x1E));
+    foo((u32) (sp0 % 1073741825));
+    foo((u32) (sp0 % 2147483645));
+    foo((u32) (sp0 % 2147483646));
+    foo((u32) (sp0 % 2147483647));
+    foo(sp0 & 0x7FFFFFFF);
+    foo((u32) (sp0 % 2147483647));
+    foo((u32) (sp0 % 2147483646));
+    foo((u32) (sp0 % 10));
+    foo((u32) (sp0 % 7));
+    foo((u32) (sp0 % 5));
+    var_r0_6 = sp0;
+    if (sp0 < 0) {
+        var_r0_6 = sp0 + 3;
     }
-    foo(unksp0 - ((var_r0_6 >> 2) * 4));
-    foo((u32) (unksp0 % 3));
-    foo(unksp0 - (((s32) (unksp0 + (unksp0 >> 0x1F)) >> 1) * 2));
+    foo(sp0 - ((var_r0_6 >> 2) * 4));
+    foo((u32) (sp0 % 3));
+    foo(sp0 - (((s32) (sp0 + ((u32) sp0 >> 0x1F)) >> 1) * 2));
     foo(0U);
 }
 
 void test_u32_div(u32 u) {
-    unksp0 = u;
+    u32 sp0;
+
+    sp0 = u;
     foo(u);
     foo(u >> 1);
     foo(u / 3U);
@@ -297,7 +301,9 @@ void test_u32_div(u32 u) {
 }
 
 void test_u32_mod(u32 u) {
-    unksp0 = u;
+    u32 sp0;
+
+    sp0 = u;
     foo(0U);
     foo(u & 1);
     foo(u % 3U);

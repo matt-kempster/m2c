@@ -655,12 +655,13 @@ def get_stack_info(
                 if reg == Register("lr"):
                     info.is_leaf = False
         elif (
-            arch_mnemonic == "arm:sub"
+            arch_mnemonic in ("arm:sub", "arm:add")
             and inst.args[0] == arch.stack_pointer_reg
             and inst.args[1] == arch.stack_pointer_reg
             and isinstance(inst.args[2], AsmLiteral)
         ):
-            info.allocated_stack_size += inst.args[2].value
+            imm = inst.args[2].value * (-1 if arch_mnemonic == "arm:add" else 1)
+            info.allocated_stack_size += max(imm, 0)
         elif (
             arch_mnemonic in ("mips:move", "arm:mov", "ppc:mr")
             and isinstance(inst.args[0], Register)

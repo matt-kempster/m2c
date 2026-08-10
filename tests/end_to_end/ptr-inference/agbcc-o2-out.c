@@ -1,3 +1,5 @@
-void test(struct A *arg4) {
-    foo(&unksp0, &arg4);
+void test(void) {
+    struct A *sp4;
+
+    foo(&subroutine_arg0, &sp4);
 }
