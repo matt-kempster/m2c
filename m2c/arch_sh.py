@@ -1015,7 +1015,9 @@ class Sh2Arch(Arch):
             return None
 
         def rec(
-            node: Node, reg_sym_values: Dict[Location, str], stack_regs: Set[Register]
+            node: Node,
+            reg_sym_values: Dict[Location, AsmInstruction],
+            stack_regs: Set[Register],
         ) -> None:
             if node in seen:
                 return
@@ -1032,20 +1034,23 @@ class Sh2Arch(Arch):
                     if isinstance(dst, Register):
                         target = get_literal_pool_symbol(src, asm_data)
                         if target is not None:
-                            reg_sym_values[dst] = target
-                            continue
+                            intrinsic = make_intrinsic_instruction(target)
+                            if intrinsic is not None:
+                                reg_sym_values[dst] = intrinsic
+                                ref.instruction = replace(ins, in_pattern=True)
+                                continue
                     src_loc = loc_from_mov_operand(src, stack_regs)
                     dst_loc = loc_from_mov_operand(dst, stack_regs)
                     if src_loc is not None and dst_loc is not None:
                         if src_loc in reg_sym_values:
                             reg_sym_values[dst_loc] = reg_sym_values[src_loc]
+                            ref.instruction = replace(ins, in_pattern=True)
                         elif dst_loc in reg_sym_values:
                             del reg_sym_values[dst_loc]
                         continue
                 if ins.mnemonic == "jsr":
                     assert isinstance(ins.function_target, Register)
-                    target = reg_sym_values.get(ins.function_target)
-                    new_ins = make_intrinsic_instruction(target or "")
+                    new_ins = reg_sym_values.get(ins.function_target)
                     if new_ins is not None:
                         ref.replace_instruction(new_ins, self)
                         ref.instruction.clobbers.clear()
