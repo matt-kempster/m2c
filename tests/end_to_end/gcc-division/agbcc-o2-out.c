@@ -8,50 +8,53 @@ void test(u32 a) {
 }
 
 void test_s8(s8 c) {
-    subroutine_arg0 = c;
-    foo((u8) subroutine_arg0 >> 1);
-    foo((u32) (u8) ((u8) subroutine_arg0 / 3U));
-    foo((u32) (u8) ((u8) subroutine_arg0 / 5U));
-    foo((u32) (u8) ((u8) subroutine_arg0 / 7U));
-    foo((u32) (u8) ((u8) subroutine_arg0 / 10U));
-    foo((u32) (u8) ((u8) subroutine_arg0 / 100U));
-    foo((u32) (u8) ((u8) subroutine_arg0 / 255U));
-    foo(1 & (u8) subroutine_arg0);
-    foo((u32) (u8) ((u8) subroutine_arg0 % 3U));
-    foo((u32) (u8) ((u8) subroutine_arg0 % 5U));
-    foo((u32) (u8) ((u8) subroutine_arg0 % 7U));
-    foo((u32) (u8) ((u8) subroutine_arg0 % 10U));
-    foo((u32) (u8) ((u8) subroutine_arg0 % 100U));
-    foo((u32) (u8) ((u8) subroutine_arg0 % 255U));
+    s8 sp0;
+
+    sp0 = c;
+    foo((u8) sp0 >> 1);
+    foo((u32) (u8) ((u8) sp0 / 3U));
+    foo((u32) (u8) ((u8) sp0 / 5U));
+    foo((u32) (u8) ((u8) sp0 / 7U));
+    foo((u32) (u8) ((u8) sp0 / 10U));
+    foo((u32) (u8) ((u8) sp0 / 100U));
+    foo((u32) (u8) ((u8) sp0 / 255U));
+    foo(1 & (u8) sp0);
+    foo((u32) (u8) ((u8) sp0 % 3U));
+    foo((u32) (u8) ((u8) sp0 % 5U));
+    foo((u32) (u8) ((u8) sp0 % 7U));
+    foo((u32) (u8) ((u8) sp0 % 10U));
+    foo((u32) (u8) ((u8) sp0 % 100U));
+    foo((u32) (u8) ((u8) sp0 % 255U));
 }
 
 void test_s16(s16 h) {
+    s16 sp0;
     s16 temp_r0;
     u16 temp_r1;
     u16 temp_r1_2;
 
-    subroutine_arg0 = h;
-    temp_r1 = (u16) subroutine_arg0;
+    sp0 = h;
+    temp_r1 = (u16) sp0;
     foo((u32) ((s32) ((s16) temp_r1 + ((u32) (temp_r1 << 0x10) >> 0x1F)) >> 1));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 3));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 5));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 7));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 10));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 100));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 255));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 / 360));
-    foo((u32) ((s16) (u16) subroutine_arg0 / 65534));
-    temp_r1_2 = (u16) subroutine_arg0;
+    foo((u32) (s16) ((s16) (u16) sp0 / 3));
+    foo((u32) (s16) ((s16) (u16) sp0 / 5));
+    foo((u32) (s16) ((s16) (u16) sp0 / 7));
+    foo((u32) (s16) ((s16) (u16) sp0 / 10));
+    foo((u32) (s16) ((s16) (u16) sp0 / 100));
+    foo((u32) (s16) ((s16) (u16) sp0 / 255));
+    foo((u32) (s16) ((s16) (u16) sp0 / 360));
+    foo((u32) ((s16) (u16) sp0 / 65534));
+    temp_r1_2 = (u16) sp0;
     temp_r0 = (s16) temp_r1_2;
     foo((u32) (s16) (temp_r0 - (((s32) (temp_r0 + ((u32) (temp_r1_2 << 0x10) >> 0x1F)) >> 1) * 2)));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 3));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 5));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 7));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 10));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 100));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 255));
-    foo((u32) (s16) ((s16) (u16) subroutine_arg0 % 360));
-    foo((u32) ((s16) (u16) subroutine_arg0 % 65534));
+    foo((u32) (s16) ((s16) (u16) sp0 % 3));
+    foo((u32) (s16) ((s16) (u16) sp0 % 5));
+    foo((u32) (s16) ((s16) (u16) sp0 % 7));
+    foo((u32) (s16) ((s16) (u16) sp0 % 10));
+    foo((u32) (s16) ((s16) (u16) sp0 % 100));
+    foo((u32) (s16) ((s16) (u16) sp0 % 255));
+    foo((u32) (s16) ((s16) (u16) sp0 % 360));
+    foo((u32) ((s16) (u16) sp0 % 65534));
 }
 
 void test_s32_div(s32 d) {

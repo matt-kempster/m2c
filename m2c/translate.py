@@ -801,6 +801,14 @@ def get_stack_info(
                     info.subroutine_arg_top = min(
                         info.subroutine_arg_top, inst.args[2].value
                     )
+                if (
+                    arch_mnemonic == "arm:mov"
+                    and isinstance(inst.args[1], Register)
+                    and info.is_stack_reg(inst.args[1])
+                    and isinstance(inst.args[0], Register)
+                    and not info.is_stack_reg(inst.args[0])
+                ):
+                    info.subroutine_arg_top = 0
 
     # Compute the bounds of the callee-saved register region, including padding
     if callee_saved_offsets:
