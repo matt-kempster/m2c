@@ -1393,9 +1393,6 @@ def build_body(context: Context, options: Options) -> Body:
     terminal_node: Node = context.flow_graph.terminal_node()
     is_reducible = context.flow_graph.is_reducible()
 
-    if options.debug:
-        print("Here's the whole function!\n")
-
     body: Body
     if options.ifs and is_reducible:
         body = build_flowgraph_between(context, start_node, terminal_node)
@@ -1436,6 +1433,9 @@ def get_function_text(function_info: FunctionInfo, options: Options) -> str:
     body: Body = build_body(context, options)
 
     function_lines: List[str] = []
+
+    if options.debug:
+        function_lines.append("Here's the whole function!\n")
 
     for warning in function_info.stack_info.warnings:
         line = fmt.with_comments("", [f"Warning: {warning}"])
