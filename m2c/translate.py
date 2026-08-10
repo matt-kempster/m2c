@@ -3822,6 +3822,7 @@ class NodeState:
         fn_sig = fn_target.type.get_function_pointer_signature()
         assert fn_sig is not None, "known function pointers must have a signature"
 
+        instr_inputs = self.stack_info.flow_graph.instr_inputs[call_instr]
         likely_regs: Dict[Register, bool] = {}
         for reg, data in self.regs.contents.items():
             # We use a much stricter filter for PPC than MIPS, because the same
@@ -3846,7 +3847,9 @@ class NodeState:
             # Implementation note: the `meta.function_return` bit is only accurate for
             # registers set within this basic block, because `propagate_register_meta`
             # has not yet been called. However, it's only in that case we read it.
-            if (
+            if reg not in arch.argument_regs:
+                likely_regs[reg] = False
+            elif (
                 arch.arch in (Target.ArchEnum.PPC, Target.ArchEnum.ARM)
                 and not fn_sig.is_variadic
                 and (
@@ -3857,11 +3860,10 @@ class NodeState:
                 and not self._reg_probably_meant_as_function_argument(reg, call_instr)
             ):
                 likely_regs[reg] = False
-            elif data.meta.in_pattern:
-                # Like `meta.function_return` mentioned above, `meta.in_pattern` will only be
-                # accurate for registers set within this basic block.
-                likely_regs[reg] = False
-            elif data.meta.initial:
+            elif all(
+                not isinstance(source, InstrRef) or source.instruction.in_pattern
+                for source in instr_inputs.get(reg)
+            ):
                 likely_regs[reg] = False
             else:
                 likely_regs[reg] = True
