@@ -31,6 +31,7 @@ from .instruction import (
     Instruction,
     InstructionMeta,
     Location,
+    StackLocation,
 )
 from .ir_pattern import IrMatch, IrPattern
 from .translate import (
@@ -1000,16 +1001,46 @@ class Sh2Arch(Arch):
                 )
             return None
 
-        def rec(node: Node, reg_sym_values: Dict[Register, str]) -> None:
+        def loc_from_mov_operand(
+            arg: Argument, stack_regs: Set[Register]
+        ) -> Optional[Location]:
+            if isinstance(arg, Register):
+                return arg
+            if (
+                isinstance(arg, AsmAddressMode)
+                and arg.base in stack_regs
+                and arg.writeback is None
+            ):
+                return StackLocation.from_offset(arg.addend)
+            return None
+
+        def rec(
+            node: Node, reg_sym_values: Dict[Location, str], stack_regs: Set[Register]
+        ) -> None:
             if node in seen:
                 return
             seen.add(node)
             for ref in node.block.instruction_refs:
                 ins = ref.instruction
-                if ins.mnemonic == "mov.l" and isinstance(ins.args[1], Register):
-                    target = get_literal_pool_symbol(ins.args[0], asm_data)
-                    if target is not None:
-                        reg_sym_values[ins.args[1]] = target
+                if ins.mnemonic == "mov" and ins.args[0] == self.stack_pointer_reg:
+                    assert isinstance(ins.args[1], Register)
+                    stack_regs = stack_regs | {ins.args[1]}
+                    continue
+                if ins.mnemonic == "mov.l":
+                    src = ins.args[0]
+                    dst = ins.args[1]
+                    if isinstance(dst, Register):
+                        target = get_literal_pool_symbol(src, asm_data)
+                        if target is not None:
+                            reg_sym_values[dst] = target
+                            continue
+                    src_loc = loc_from_mov_operand(src, stack_regs)
+                    dst_loc = loc_from_mov_operand(dst, stack_regs)
+                    if src_loc is not None and dst_loc is not None:
+                        if src_loc in reg_sym_values:
+                            reg_sym_values[dst_loc] = reg_sym_values[src_loc]
+                        elif dst_loc in reg_sym_values:
+                            del reg_sym_values[dst_loc]
                         continue
                 if ins.mnemonic == "jsr":
                     assert isinstance(ins.function_target, Register)
@@ -1020,13 +1051,16 @@ class Sh2Arch(Arch):
                         ref.instruction.clobbers.clear()
                         continue
                 for loc in ins.clobbers + ins.outputs:
-                    if isinstance(loc, Register) and loc in reg_sym_values:
-                        del reg_sym_values[loc]
+                    if isinstance(loc, Register):
+                        if loc in reg_sym_values:
+                            del reg_sym_values[loc]
+                        if loc in stack_regs and loc != self.stack_pointer_reg:
+                            stack_regs = stack_regs.difference({loc})
 
             for child in node.children():
-                rec(child, reg_sym_values.copy())
+                rec(child, reg_sym_values.copy(), stack_regs)
 
-        rec(flow_graph.entry_node(), {})
+        rec(flow_graph.entry_node(), {}, {self.stack_pointer_reg})
 
     def arg_name(self, loc: ArgLoc) -> str:
         if loc.offset is not None:
