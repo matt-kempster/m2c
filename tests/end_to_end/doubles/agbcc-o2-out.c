@@ -8,7 +8,7 @@ s32 __muldf3(s32, s32, s32, s32);                   /* extern */
 s32 __subdf3(s32, s32, s32, s32);                   /* extern */
 extern ? global;
 
-void test(s32 arg0, s32 arg1, s32 arg2, s32 arg3, s32 arg4) {
+s32 test(s32 arg0, s32 arg1, s32 arg2, s32 arg3, s32 arg4) {
     s32 sp14;
     s32 temp_r0;
     s32 temp_r1;
@@ -38,5 +38,5 @@ void test(s32 arg0, s32 arg1, s32 arg2, s32 arg3, s32 arg4) {
     }
     global.unk0 = var_r1;
     global.unk4 = 0;
-    M2C_ERROR(/* Read from unset register $r3 */)(var_r1, 0);
+    return var_r1;
 }
