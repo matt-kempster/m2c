@@ -1649,14 +1649,13 @@ def locs_clobbered_until_dominator(node: Node) -> Set[Location]:
     return clobbered
 
 
-def nodes_to_flowgraph(
-    nodes: List[Node],
+def compute_flowgraph_inputs_uses(
+    flow_graph: FlowGraph,
     function: Function,
     arch: ArchFlowGraph,
     *,
     print_warnings: bool = False,
-) -> FlowGraph:
-    flow_graph = FlowGraph(nodes)
+) -> None:
     missing_regs = []
 
     def process_node(node: Node, loc_srcs: LocationRefSetDict) -> None:
@@ -1731,10 +1730,8 @@ def nodes_to_flowgraph(
         print("/*")
         print(f"Warning: in {function.name}, regs were read before being written to:")
         for reg, ref in missing_regs:
-            print(f"   {reg} at {ref}: {ref.instruction}")
+            print(f"   {reg} {ref.instruction.meta.loc_str()}: {ref.instruction}")
         print("*/")
-
-    return flow_graph
 
 
 def build_flowgraph(
@@ -1765,11 +1762,13 @@ def build_flowgraph(
     if not fragment:
         terminate_infinite_loops(nodes)
 
-    flow_graph = nodes_to_flowgraph(
-        nodes, function, arch, print_warnings=print_warnings or fragment
-    )
+    flow_graph = FlowGraph(nodes)
     if not fragment:
         arch.process_flowgraph(asm_data, flow_graph)
+    compute_flowgraph_inputs_uses(
+        flow_graph, function, arch, print_warnings=print_warnings or fragment
+    )
+    if not fragment:
         arch.simplify_ir(asm_data, flow_graph, debug_patterns=debug_patterns)
 
     return flow_graph
