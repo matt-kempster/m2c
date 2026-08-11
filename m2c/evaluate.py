@@ -127,6 +127,12 @@ def deref(
     stack_info.record_struct_access(var, offset)
     type: Type = stack_info.unique_type_for("struct", (uw_var, offset), Type.any())
 
+    if offset >= 0x200000:
+        # Structs realistically aren't larger than 2 MB. The offset is more likely
+        # to be a raw memory address.
+        var = BinaryOp.int(Literal(offset), "+", var)
+        offset = 0
+
     # Struct access with type information.
     array_expr = array_access_from_add(
         var, offset, stack_info, target_size=size, ptr=False
