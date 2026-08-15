@@ -4416,7 +4416,7 @@ class GlobalInfo:
 
         def read_uint(n: int) -> int:
             """Read the next `n` bytes from `data` as an (long) integer"""
-            assert 0 < n <= 8
+            assert 0 < n <= 16
             if not data:
                 raise FailedToGenerateInitializer("not enough data")
             if not isinstance(data[0], bytes):
