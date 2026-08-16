@@ -506,6 +506,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
+    # Keep these in sync with reLocalLabel and reLabel in browser/app.js.
     re_local_label = re.compile(
         "loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|LF?[0-9]+$|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
     )

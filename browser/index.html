@@ -1,0 +1,102 @@
+<!DOCTYPE html><html>
+<head>
+<meta charset="utf-8">
+<title>m2c</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<form>
+<div class="main">
+  <div>
+    Assembly:
+  </div>
+  <div style="flex: 20;">
+    <textarea id="source" spellcheck="false"></textarea>
+  </div>
+  <div style="margin-top: 10px;">
+    Existing C source, preprocessed (optional):
+  </div>
+  <div style="flex: 11;">
+    <textarea id="context" spellcheck="false"></textarea>
+  </div>
+  <div style="margin-top: 10px;" id="options">
+    <input id="decompile" type="submit" value="Decompile" disabled>
+    <input id="visualize" type="submit" value="Visualize" disabled>
+    <label>Function: <select id="function"></select></label>
+    <label>Global declarations:
+    <select id="globals">
+    <option value="used">used</option>
+    <option value="all">all</option>
+    <option value="none">none</option>
+    </select>
+    </label>
+    <label>Target platform &amp; compiler:
+    <select id="target">
+    <option value="mips-ido-c">MIPS, IDO</option>
+    <option value="mips-gcc-c">MIPS, GCC</option>
+    <option value="mipsel-gcc-c">MIPSEL, GCC</option>
+    <option value="mipsee-gcc-c">MIPSEE, GCC</option>
+    <option value="ppc-mwcc-c++">PPC, MWCC</option>
+    <option value="gba-gcc-c">ARM, agbcc</option>
+    <option value="arm-gcc-c">ARM, GCC</option>
+    <option value="arm-mwcc-c++">ARM, MWCC</option>
+    </select>
+    </label>
+    <label>Comment style:
+    <select id="comment-style">
+    <option value="multiline">/* ... */, aligned</option>
+    <option value="multiline_unaligned">/* ... */, unaligned</option>
+    <option value="oneline">// ..., aligned</option>
+    <option value="oneline_unaligned">// ..., unaligned</option>
+    <option value="none">no comments</option>
+    </select>
+    </label>
+    <label>Use single let for:
+    <select id="regvars-select">
+    <option value="none">none</option>
+    <option value="saved">saved regs</option>
+    <option value="all">all regs</option>
+    <option value="custom">custom</option>
+    </select>
+    </label>
+    <input id="regvars" value="">
+    <label><input id="void" type="checkbox">Force void return type</label>
+    <label><input id="debug" type="checkbox">Debug info</label>
+    <label><input id="noandor" type="checkbox">Disable &amp;&amp;/||</label>
+    <label><input id="nocasts" type="checkbox">Hide type casts</label>
+    <label><input id="allman" type="checkbox">Allman braces</label>
+    <label><input id="knr" type="checkbox">K&amp;R braces</label>
+    <label><input id="extraswitchindent" type="checkbox">Indent switch contents an extra level</label>
+    <label><input id="leftptr" type="checkbox">* to the left</label>
+    <label><input id="zfillconstants" type="checkbox">0-fill constants</label>
+    <label><input id="noifs" type="checkbox">Use gotos for everything</label> (to use a goto for a single branch, add "# GOTO" to the asm)
+    <label><input id="noswitches" type="checkbox">Disable irregular switch detection</label>
+    <label><input id="nounkinference" type="checkbox">Disable unknown struct/type inference</label>
+    <label><input id="stackstructs" type="checkbox">Stack struct templates</label>
+    <label><input id="nostackspill" type="checkbox">Disable stack spilling detection</label>
+    <label><input id="descendingregs" type="checkbox">Sort variables in descending order</label>
+    <label><input id="backwardsbss" type="checkbox">Sort bss in descending order</label>
+    <label><input id="dark" type="checkbox">Dark mode</label>
+  </div>
+</div>
+<div class="sidebar">
+  <div>
+    Output:
+  </div>
+  <div class="output-pane">
+    <textarea id="output" spellcheck="false" readonly></textarea>
+    <div id="output-graph"></div>
+  </div>
+</div>
+<script src="dist/vendor-paths.js"></script>
+<script type="module">
+window.m2cVizReady = (async function () {
+  let viz = await import(window.M2C_VENDOR_PATHS.vizModule);
+  return await viz.instance();
+})();
+</script>
+<script src="dist/m2c.js"></script>
+<script src="app.js"></script>
+</form>
+</body>
+</html>
