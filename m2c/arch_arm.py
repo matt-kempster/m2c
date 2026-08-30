@@ -897,6 +897,16 @@ class PopAndReturnPattern(SimpleAsmPattern):
         return Replacement([AsmInstruction("bx", [Register("lr")])], len(m.body))
 
 
+class OldThumbBlxPattern(SimpleAsmPattern):
+    pattern = make_pattern(
+        "mov $lr, $pc",
+        "bx $x",
+    )
+
+    def replace(self, m: AsmMatch) -> Replacement:
+        return Replacement([AsmInstruction("blx", [m.regs["x"]])], len(m.body))
+
+
 class IndirectTailCallPattern(SimpleAsmPattern):
     pattern = make_pattern(
         "bx $x",
@@ -1741,6 +1751,7 @@ class ArmArch(Arch):
         AddrModeWritebackPattern(),
         RegRegAddrModePattern(),
         PopAndReturnPattern(),
+        OldThumbBlxPattern(),
         IndirectTailCallPattern(),
         TailCallPattern(),
         BlBranchPattern(),
