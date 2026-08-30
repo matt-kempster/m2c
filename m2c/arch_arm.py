@@ -1021,7 +1021,7 @@ class MagicFuncPattern(SimpleAsmPattern):
         if target in MAGIC_FUNCTIONS:
             mn, arg_str = MAGIC_FUNCTIONS[target]
             args: List[Argument] = [Register("r" + x) for x in arg_str]
-            return Replacement([AsmInstruction(mn, args)], 1)
+            return Replacement([AsmInstruction(mn, args)], 1, clobbers=[])
         return None
 
 
