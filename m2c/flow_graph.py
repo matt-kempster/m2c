@@ -469,6 +469,49 @@ def simplify_standard_patterns(
     return new_function
 
 
+def insert_self_relative_jtbl_labels(function: Function, asm_data: AsmData) -> Function:
+    """Some toolchains (e.g. MWCC via decomp-toolkit) emit jump table
+    entries as `<function symbol>+<byte offset>` rather than a dedicated
+    label per switch-case target, when the target doesn't otherwise need
+    its own global/local label. minimize_labels only keeps labels that are
+    either real branch targets or bare symbols referenced from data
+    (asm_data.mentioned_labels) - neither covers this case - so without
+    this pass, such jump table targets have no label at all to resolve to,
+    and the switch-case blocks never get split out.
+
+    Scan all known data blobs for self-referential `function.name+offset`
+    entries, and splice in synthetic labels at the right instruction
+    boundaries (computed from the function's own raw, untransformed body,
+    before any instruction-count-changing passes run) so the normal
+    label-based jump table resolution in build_graph_from_block can handle
+    them like any other case target."""
+    target_offsets: Set[int] = set()
+    for entry in asm_data.values.values():
+        for item in entry.data:
+            if isinstance(item, bytes):
+                continue
+            ref = get_symbol_plus_offset(item.data)
+            if ref is not None and ref[0] == function.name and ref[1] > 0:
+                target_offsets.add(ref[1])
+
+    if not target_offsets:
+        return function
+
+    new_function = function.bodyless_copy()
+    offset = 0
+    for item in function.body:
+        if offset in target_offsets:
+            label_name = f"{function.name}_jtbl_{offset:x}"
+            new_function.body.append(Label.new(label_name))
+            asm_data.mentioned_labels.add(label_name)
+            target_offsets.discard(offset)
+        new_function.body.append(item)
+        if isinstance(item, Instruction):
+            offset += 4
+
+    return new_function
+
+
 def build_blocks(
     function: Function,
     asm_data: AsmData,
@@ -478,6 +521,8 @@ def build_blocks(
     debug_patterns: bool,
 ) -> List[Block]:
     if not fragment:
+        function = insert_self_relative_jtbl_labels(function, asm_data)
+
         if arch.has_delay_slots:
             verify_no_trailing_delay_slot(function)
 
@@ -907,6 +952,22 @@ def get_literal_pool_symbol(arg: Argument, asm_data: AsmData) -> Optional[str]:
     return data.as_symbol_without_addend()
 
 
+def get_symbol_plus_offset(arg: Argument) -> Optional[Tuple[str, int]]:
+    """If `arg` is a bare symbol plus a compile-time-constant byte offset
+    (e.g. `some_func+0x38`), return (symbol_name, offset). This shows up in
+    jump tables emitted by toolchains that don't synthesize a dedicated
+    label for every switch-case target, instead referencing the enclosing
+    function symbol with an offset."""
+    if (
+        isinstance(arg, BinOp)
+        and arg.op == "+"
+        and isinstance(arg.lhs, AsmGlobalSymbol)
+        and isinstance(arg.rhs, AsmLiteral)
+    ):
+        return (arg.lhs.symbol_name, arg.rhs.value)
+    return None
+
+
 def arm_jtbl_for_ldr(arg: Argument, asm_data: AsmData) -> Optional[str]:
     jtbl_name = get_literal_pool_symbol(arg, asm_data)
     if jtbl_name is None:
@@ -1040,12 +1101,29 @@ def build_graph_from_block(
                     # We have entered padding, stop reading.
                     break
                 sym = entry.as_symbol_without_addend()
-                if sym is None:
-                    # Also possibly padding
-                    break
-                case_block = find_block_by_label(sym)
-                if case_block is None:
-                    raise DecompFailure(f"Cannot find jtbl target {sym}")
+                if sym is not None:
+                    case_block = find_block_by_label(sym)
+                    if case_block is None:
+                        raise DecompFailure(f"Cannot find jtbl target {sym}")
+                else:
+                    # Some toolchains (e.g. MWCC via decomp-toolkit) don't
+                    # synthesize a dedicated label for every switch-case
+                    # target; instead the jump table entry references the
+                    # enclosing function symbol plus a byte offset.
+                    # insert_self_relative_jtbl_labels (in build_blocks)
+                    # already spliced in a synthetic label for every such
+                    # offset, named this same way - look it up normally.
+                    self_ref = get_symbol_plus_offset(entry.data)
+                    if self_ref is None:
+                        # Also possibly padding
+                        break
+                    base_symbol, addend = self_ref
+                    synthetic_label = f"{base_symbol}_jtbl_{addend:x}"
+                    case_block = find_block_by_label(synthetic_label)
+                    if case_block is None:
+                        raise DecompFailure(
+                            f"Cannot find jtbl target {base_symbol}+{addend:#x}"
+                        )
                 case_node = build_graph_from_block(
                     case_block, blocks, parent_blocks + [block], nodes, asm_data, arch
                 )
