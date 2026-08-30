@@ -1704,7 +1704,7 @@ class ArmArch(Arch):
             is_effectful = False
         else:
             # If the mnemonic is unsupported, guess if it is destination-first
-            if args and isinstance(args[0], Register):
+            if args and isinstance(args[0], Register) and base != "bx":
                 inputs = [r for r in args[1:] if isinstance(r, Register)]
                 outputs = [args[0]]
                 maybe_dest_first = True
