@@ -91,36 +91,26 @@ def convert_line(line: str) -> str:
     if not s:
         return ""
 
-    if s.upper().startswith((".EXPORT", ".IMPORT")):
-        is_export = s.upper().startswith(".EXPORT")
-        n = 7
+    parts = s.split(None, 1)
+    directive = parts[0].upper()
+    rest = parts[1] if len(parts) > 1 else ""
 
-        if len(s) > n and s[n].isspace():
-            arg = s[n:].strip()
+    if directive in (".EXPORT", ".IMPORT") and rest:
+        is_export = directive == ".EXPORT"
+        return (".globl " if is_export else ".extern ") + rest
 
-            if arg:
-                return (".globl " if is_export else ".extern ") + arg
-
-    if s.upper().startswith(".SECTION") and len(s) > 8 and s[8].isspace():
-        rest = s[8:].strip()
-        comma1 = rest.find(",")
-
-        if comma1 == -1:
-            if rest and not any(c in " \t\r\n," for c in rest):
+    if directive == ".SECTION" and rest:
+        parts = [p.strip() for p in rest.split(",")]
+        assert 1 <= len(parts) <= 3, s
+        if len(parts) == 1:
+            if not any(c in " \t\r\n," for c in rest):
                 flags = ',"ax",@progbits' if rest.upper() == "P" else ',"aw",@progbits'
 
                 return ".section " + gas_section_name(rest) + flags
 
         else:
-            name = rest[:comma1].strip()
-            after = rest[comma1 + 1 :].strip()
-
-            comma2 = after.find(",")
-
-            if comma2 == -1:
-                kind = after.strip()
-            else:
-                kind = after[:comma2].strip()
+            name = parts[0]
+            kind = parts[1]
 
             if name and kind.upper() in ("CODE", "DATA"):
                 result = ".section " + gas_section_name(name)
@@ -130,8 +120,8 @@ def convert_line(line: str) -> str:
                 else:
                     result += ',"aw",@progbits'
 
-                if comma2 != -1:
-                    tail = after[comma2 + 1 :].strip()
+                if len(parts) == 3:
+                    tail = parts[2]
 
                     if tail.upper().startswith("ALIGN="):
                         align = parse_uint(tail[6:])
@@ -141,41 +131,25 @@ def convert_line(line: str) -> str:
 
                 return result
 
-    if (
-        len(s) >= 8
-        and s.upper().startswith(".DATA.")
-        and s[6].upper() in ("B", "W", "L")
-        and s[7].isspace()
-    ):
-        size = s[6].upper()
-        val = s[7:].strip()
+    if directive in (".DATA.B", ".DATA.W", ".DATA.L"):
+        directive = {"B": ".byte", "W": ".word", "L": ".long"}[directive[-1]]
+        return directive + " " + hex_converted(rest)
 
-        bang = val.find("!")
+    if directive in (".RES.B", ".RES.W", ".RES.L"):
+        wsize = {"B": 1, "W": 2, "L": 4}[directive[-1]]
+        return f".space {wsize} * {hex_converted(rest)}"
 
-        if bang != -1:
-            val = val[:bang].strip()
-
-        if size == "B":
-            directive = ".byte "
-        elif size == "W":
-            directive = ".word "
-        else:
-            directive = ".long "
-
-        return directive + hex_converted(val)
-
-    if s.upper().startswith(".END") and (
-        len(s) == 4 or (len(s) > 4 and s[4].isspace())
-    ):
+    if directive == ".END":
         return ""
 
-    if s.startswith("."):
+    if directive.startswith("."):
         raise ValueError("unsupported SHC directive: " + line)
 
     return hex_converted(convert_fmov_reg_reg(line))
 
 
 def convert(text: str) -> str:
+    text = text.replace("\n+", "")
     return "".join(convert_line(line) + "\n" for line in text.splitlines())
 
 
