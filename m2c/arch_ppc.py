@@ -1576,9 +1576,6 @@ class PpcArch(Arch):
 
     instrs_branches: Dict[str, str] = {
         # Branch instructions/pseudoinstructions
-        # Technically `bge` is defined as `cr0_gt || cr0_eq`; not as `!cr0_lt`
-        # This assumption may not hold if the bits are modified with instructions like
-        # `crand` which modify individual bits in CR.
         # The `!` indicates that the condition in the register is negated
         "beq": "cr0_eq",
         "bge": "!cr0_lt",
