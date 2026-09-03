@@ -149,10 +149,7 @@ class CGenerator(object):
         if n.asmlabel:
             s += ' asm(' + self.visit(n.asmlabel) + ')'
         if n.gcc_attributes:
-            if no_type:
-                s += self._generate_attrs(n.gcc_attributes, ' ', '')
-            else:
-                s = self._generate_attrs(n.gcc_attributes, '', ' ') + s
+            s += self._generate_attrs(n.gcc_attributes, ' ', '')
         if n.bitsize: s += ' : ' + self.visit(n.bitsize)
         if n.init:
             s += ' = ' + self._visit_expr(n.init)
