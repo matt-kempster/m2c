@@ -385,6 +385,20 @@ class TestCtoC(unittest.TestCase):
     def test_enum_typedef(self):
         self._assert_ctoc_correct('typedef enum EnumName EnumTypedefName;')
 
+    def test_struct_union_enum_attributes(self):
+        self._assert_ctoc_correct(r'''
+            struct ForwardDeclaration __attribute__((packed));
+        ''')
+        self._assert_ctoc_correct(r'''
+            struct StructName { int member; } __attribute__((packed));
+        ''')
+        self._assert_ctoc_correct(r'''
+            union UnionName { int member; } __attribute__((packed));
+        ''')
+        self._assert_ctoc_correct(r'''
+            enum EnumName { ENUM_VALUE } __attribute__((packed));
+        ''')
+
     def test_generate_struct_union_enum_exception(self):
         generator = c_generator.CGenerator()
         self.assertRaises(

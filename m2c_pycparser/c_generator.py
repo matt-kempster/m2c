@@ -149,10 +149,7 @@ class CGenerator(object):
         if n.asmlabel:
             s += ' asm(' + self.visit(n.asmlabel) + ')'
         if n.gcc_attributes:
-            if no_type:
-                s += self._generate_attrs(n.gcc_attributes, ' ', '')
-            else:
-                s = self._generate_attrs(n.gcc_attributes, '', ' ') + s
+            s += self._generate_attrs(n.gcc_attributes)
         if n.bitsize: s += ' : ' + self.visit(n.bitsize)
         if n.init:
             s += ' = ' + self._visit_expr(n.init)
@@ -197,14 +194,14 @@ class CGenerator(object):
         if not n.value:
             return '{indent}{name}{attrs},\n'.format(
                 indent=self._make_indent(),
-                attrs=self._generate_attrs(n.gcc_attributes, ' ', ''),
+                attrs=self._generate_attrs(n.gcc_attributes),
                 name=n.name,
             )
         else:
             return '{indent}{name}{attrs} = {value},\n'.format(
                 indent=self._make_indent(),
                 name=n.name,
-                attrs=self._generate_attrs(n.gcc_attributes, ' ', ''),
+                attrs=self._generate_attrs(n.gcc_attributes),
                 value=self.visit(n.value),
             )
 
@@ -242,7 +239,7 @@ class CGenerator(object):
         return '(' + self.visit(n.type) + '){' + self.visit(n.init) + '}'
 
     def visit_GccAttributeStatement(self, n):
-        return self._generate_attrs(n.attrs, '', '') + ';'
+        return self._generate_attrs(n.attrs).lstrip() + ';'
 
     def visit_EmptyStatement(self, n):
         return ';'
@@ -411,8 +408,7 @@ class CGenerator(object):
             assert name == 'enum'
             members = None if n.values is None else n.values.enumerators
             body_function = self._generate_enum_body
-        s = name + self._generate_attrs(n.gcc_attributes, ' ', '')
-        s += ' ' + (n.name or '')
+        s = name + ' ' + (n.name or '')
         if members is not None:
             # None means no members
             # Empty sequence means an empty list of members
@@ -423,6 +419,7 @@ class CGenerator(object):
             s += body_function(members)
             self.indent_level -= 2
             s += self._make_indent() + '}'
+        s += self._generate_attrs(n.gcc_attributes)
         return s
 
     def _generate_struct_union_body(self, members):
@@ -525,11 +522,11 @@ class CGenerator(object):
         else:
             return self.visit(n)
 
-    def _generate_attrs(self, attrs, pre, post):
+    def _generate_attrs(self, attrs):
         if not attrs:
             return ''
         li = [self.visit(attr) for attr in attrs]
-        return pre + '__attribute__((' + ', '.join(li) + '))' + post
+        return ' __attribute__((' + ', '.join(li) + '))'
 
     def _parenthesize_if(self, n, condition):
         """ Visits 'n' and returns its string representation, parenthesized
