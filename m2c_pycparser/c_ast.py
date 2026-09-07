@@ -826,6 +826,23 @@ class Goto(Node):
 
     attr_names = ('name', )
 
+class IndirectGoto(Node):
+    __slots__ = ('expr', 'coord', '__weakref__')
+    def __init__(self, expr, coord=None):
+        self.expr = expr
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        if self.expr is not None: nodelist.append(("expr", self.expr))
+        return tuple(nodelist)
+
+    def __iter__(self):
+        if self.expr is not None:
+            yield self.expr
+
+    attr_names = ()
+
 class ID(Node):
     __slots__ = ('name', 'coord', '__weakref__')
     def __init__(self, name, coord=None):
@@ -916,6 +933,22 @@ class Label(Node):
     def __iter__(self):
         if self.stmt is not None:
             yield self.stmt
+
+    attr_names = ('name', )
+
+class LabelAddress(Node):
+    __slots__ = ('name', 'coord', '__weakref__')
+    def __init__(self, name, coord=None):
+        self.name = name
+        self.coord = coord
+
+    def children(self):
+        nodelist = []
+        return tuple(nodelist)
+
+    def __iter__(self):
+        return
+        yield
 
     attr_names = ('name', )
 

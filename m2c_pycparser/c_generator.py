@@ -332,6 +332,12 @@ class CGenerator(object):
     def visit_Goto(self, n):
         return 'goto ' + n.name + ';'
 
+    def visit_IndirectGoto(self, n):
+        return 'goto *' + self._visit_expr(n.expr) + ';'
+
+    def visit_LabelAddress(self, n):
+        return '&&' + n.name
+
     def visit_EllipsisParam(self, n):
         return '...'
 
@@ -443,7 +449,7 @@ class CGenerator(object):
                 c_ast.Decl, c_ast.Assignment, c_ast.Cast, c_ast.UnaryOp,
                 c_ast.BinaryOp, c_ast.TernaryOp, c_ast.FuncCall, c_ast.ArrayRef,
                 c_ast.StructRef, c_ast.Constant, c_ast.ID, c_ast.Typedef,
-                c_ast.ExprList):
+                c_ast.ExprList, c_ast.LabelAddress):
             # These can also appear in an expression context so no semicolon
             # is added to them automatically
             #

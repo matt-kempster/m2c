@@ -1733,6 +1733,16 @@ class CParser(PLYParser):
         """
         p[0] = c_ast.Goto(p[2], self._token_coord(p, 1))
 
+    def p_jump_statement_indirect(self, p):
+        """ jump_statement : GOTO TIMES expression SEMI """
+        p[0] = c_ast.IndirectGoto(p[3], self._token_coord(p, 1))
+
+    def p_unary_label_address(self, p):
+        """ unary_expression : LAND ID
+                             | LAND TYPEID
+        """
+        p[0] = c_ast.LabelAddress(p[2], self._token_coord(p, 1))
+
     def p_jump_statement_2(self, p):
         """ jump_statement  : BREAK SEMI """
         p[0] = c_ast.Break(self._token_coord(p, 1))

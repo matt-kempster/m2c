@@ -37,6 +37,7 @@ Expression = Union_[
     "ExprList",
     "FuncCall",
     "ID",
+    "LabelAddress",
     "StructRef",
     "TernaryOp",
     "UnaryOp",
@@ -55,6 +56,7 @@ Statement = Union_[
     "For",
     "GccAttributeStatement",
     "Goto",
+    "IndirectGoto",
     "If",
     "Label",
     "Return",
@@ -121,6 +123,8 @@ class NodeVisitor:
     def visit_GccAttribute(self, node: GccAttribute) -> None: ...
     def visit_GccAttributeStatement(self, node: GccAttributeStatement) -> None: ...
     def visit_Goto(self, node: Goto) -> None: ...
+    def visit_IndirectGoto(self, node: IndirectGoto) -> None: ...
+    def visit_LabelAddress(self, node: LabelAddress) -> None: ...
     def visit_ID(self, node: ID) -> None: ...
     def visit_IdentifierType(self, node: IdentifierType) -> None: ...
     def visit_If(self, node: If) -> None: ...
@@ -428,6 +432,16 @@ class GccAttributeStatement(Node):
     def __init__(self, attrs: List[GccAttribute], coord: Optional[Coord] = None): ...
 
 class Goto(Node):
+    name: str
+
+    def __init__(self, name: str, coord: Optional[Coord] = None): ...
+
+class IndirectGoto(Node):
+    expr: Expression
+
+    def __init__(self, expr: Expression, coord: Optional[Coord] = None): ...
+
+class LabelAddress(Node):
     name: str
 
     def __init__(self, name: str, coord: Optional[Coord] = None): ...
