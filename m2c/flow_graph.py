@@ -1091,7 +1091,7 @@ def build_graph_from_block(
                     if case_block is None:
                         raise DecompFailure(f"Cannot find jtbl target {sym}")
                 else:
-                    # Check for synthetic labels from `insert_self_relative_jtbl_labels`.
+                    # Check for a synthetic label from `insert_self_relative_jtbl_labels` and resolve it, if one exists.
                     self_ref = get_symbol_plus_offset(entry.data)
                     if self_ref is None:
                         # Also possibly padding
