@@ -1,9 +1,5 @@
-# Real MWCC/decomp-toolkit output (renamed to the conventional `test`).
 # Regression fixture for a jump-table dispatch whose entries are emitted as
-# `<enclosing function>+<offset>` rather than dedicated case labels - some
-# of these targets have no other label at all (they alias the switch's own
-# post-dispatch continuation point). Previously crashed with
-# `AssertionError: jtbl list must not be empty` in if_statements.py.
+# `<enclosing function>+<offset>` rather than dedicated case labels.
 .include "macros.inc"
 
 .text

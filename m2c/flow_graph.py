@@ -470,21 +470,9 @@ def simplify_standard_patterns(
 
 
 def insert_self_relative_jtbl_labels(function: Function, asm_data: AsmData) -> Function:
-    """Some toolchains (e.g. MWCC via decomp-toolkit) emit jump table
-    entries as `<function symbol>+<byte offset>` rather than a dedicated
-    label per switch-case target, when the target doesn't otherwise need
-    its own global/local label. minimize_labels only keeps labels that are
-    either real branch targets or bare symbols referenced from data
-    (asm_data.mentioned_labels) - neither covers this case - so without
-    this pass, such jump table targets have no label at all to resolve to,
-    and the switch-case blocks never get split out.
-
-    Scan all known data blobs for self-referential `function.name+offset`
-    entries, and splice in synthetic labels at the right instruction
-    boundaries (computed from the function's own raw, untransformed body,
-    before any instruction-count-changing passes run) so the normal
-    label-based jump table resolution in build_graph_from_block can handle
-    them like any other case target."""
+    """Some toolchains (e.g. MWCC via decomp-toolkit) occasionally emit jump table
+    entries as `<function symbol>+<byte offset>`. Our jump-table resolver only looks for
+    normal labels, so we synthesize new labels here as needed."""
     target_offsets: Set[int] = set()
     for entry in asm_data.values.values():
         for item in entry.data:
@@ -954,10 +942,7 @@ def get_literal_pool_symbol(arg: Argument, asm_data: AsmData) -> Optional[str]:
 
 def get_symbol_plus_offset(arg: Argument) -> Optional[Tuple[str, int]]:
     """If `arg` is a bare symbol plus a compile-time-constant byte offset
-    (e.g. `some_func+0x38`), return (symbol_name, offset). This shows up in
-    jump tables emitted by toolchains that don't synthesize a dedicated
-    label for every switch-case target, instead referencing the enclosing
-    function symbol with an offset."""
+    (e.g. `some_func+0x38`), returns (symbol_name, offset). Otherwise, returns None."""
     if (
         isinstance(arg, BinOp)
         and arg.op == "+"
@@ -1106,13 +1091,7 @@ def build_graph_from_block(
                     if case_block is None:
                         raise DecompFailure(f"Cannot find jtbl target {sym}")
                 else:
-                    # Some toolchains (e.g. MWCC via decomp-toolkit) don't
-                    # synthesize a dedicated label for every switch-case
-                    # target; instead the jump table entry references the
-                    # enclosing function symbol plus a byte offset.
-                    # insert_self_relative_jtbl_labels (in build_blocks)
-                    # already spliced in a synthetic label for every such
-                    # offset, named this same way - look it up normally.
+                    # Check for synthetic labels from `insert_self_relative_jtbl_labels`.
                     self_ref = get_symbol_plus_offset(entry.data)
                     if self_ref is None:
                         # Also possibly padding
