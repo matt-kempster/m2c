@@ -1454,6 +1454,8 @@ class PpcArch(Arch):
                 else:
                     s.write_statement(ExprStmt(error))
 
+        assert Register("zero") not in outputs
+        assert Register("zero") not in clobbers
         return Instruction(
             mnemonic=mnemonic,
             args=args,
@@ -1593,6 +1595,30 @@ class PpcArch(Arch):
     instrs_no_dest: StmtInstrMap = {
         "sync": lambda a: void_fn_op("M2C_SYNC", []),
         "isync": lambda a: void_fn_op("M2C_SYNC", []),
+        "dcbf": lambda a: void_fn_op(
+            "M2C_DCACHE_CLEAN_INVALIDATE", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "dcbi": lambda a: void_fn_op(
+            "M2C_DCACHE_INVALIDATE", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "dcbst": lambda a: void_fn_op(
+            "M2C_DCACHE_CLEAN", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "dcbt": lambda a: void_fn_op(
+            "M2C_PREFETCH", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "dcbtst": lambda a: void_fn_op(
+            "M2C_PREFETCH_STORE", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "dcbz": lambda a: void_fn_op(
+            "M2C_DCACHE_BLOCK_SETZERO", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "dcbz_l": lambda a: void_fn_op(
+            "M2C_DCACHE_BLOCK_SETZERO_LOCKED", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
+        "icbi": lambda a: void_fn_op(
+            "M2C_ICACHE_INVALIDATE", [handle_add_real(a.reg(0), a.reg(1), a)]
+        ),
         "structcopy.fictive": lambda a: void_fn_op(
             "M2C_STRUCT_COPY", [a.reg(0), a.reg(1), a.full_imm(2)]
         ),
