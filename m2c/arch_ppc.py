@@ -873,10 +873,11 @@ class PpcArch(Arch):
         if instr.mnemonic.startswith("b") and (
             instr.mnemonic.endswith("+") or instr.mnemonic.endswith("-")
         ):
-            return PpcArch.normalize_instruction(
-                AsmInstruction(instr.mnemonic[:-1], instr.args),
-                asm_state,
-            )
+            instr = replace(instr, mnemonic=instr.mnemonic[:-1])
+        # Alternative branch condition spellings
+        for a, b in (("bun", "bso"), ("bnu", "bns"), ("bnl", "bge"), ("bng", "ble")):
+            if instr.mnemonic.startswith(a):
+                instr = replace(instr, mnemonic=b + instr.mnemonic[3:])
 
         args = instr.args
         base_mnemonic = instr.mnemonic.rstrip(".")
