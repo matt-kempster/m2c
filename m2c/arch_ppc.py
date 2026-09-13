@@ -975,12 +975,12 @@ class PpcArch(Arch):
             if (
                 instr.mnemonic == "lis"
                 and isinstance(args[1], Macro)
-                and args[1].macro_name == "ha"
+                and args[1].macro_name in ("h", "ha")
                 and isinstance(args[1].argument, AsmLiteral)
             ):
                 # The @ha macro compensates for the sign bit of the corresponding @l
                 value = args[1].argument.value
-                if value & 0x8000:
+                if args[1].macro_name == "ha" and value & 0x8000:
                     value += 0x10000
                 val = lit(value & 0xFFFF0000)
                 return AsmInstruction("li", [args[0], val])
