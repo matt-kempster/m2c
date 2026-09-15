@@ -198,25 +198,24 @@ def decompile_from_json(options_json: str) -> str:
     if (savedSource) sourceEl.value = savedSource;
     if (savedContext) contextEl.value = savedContext;
 
-    if (!savedOptions) {
-      return {};
-    }
-    try {
-      const options = JSON.parse(savedOptions);
-      for (const key in options) {
-        const el = document.getElementById(key);
-        if (!el) {
-          continue;
+    if (savedOptions) {
+      try {
+        const options = JSON.parse(savedOptions);
+        for (const key in options) {
+          const el = document.getElementById(key);
+          if (!el) {
+            continue;
+          }
+          if (el.type === "checkbox") {
+            el.checked = options[key] === "yes";
+          } else {
+            el.value = options[key];
+          }
         }
-        if (el.type === "checkbox") {
-          el.checked = options[key] === "yes";
-        } else {
-          el.value = options[key];
-        }
+        return options;
+      } catch (err) {
+        console.warn("Unable to restore saved m2c browser state", err);
       }
-      return options;
-    } catch (err) {
-      console.warn("Unable to restore saved m2c browser state", err);
     }
     return {};
   }
@@ -432,7 +431,6 @@ def decompile_from_json(options_json: str) -> str:
     updateFunctions();
     saveSource();
   });
-  sourceEl.addEventListener("change", saveSource);
   contextEl.addEventListener("change", saveContext);
   document.getElementById("options").addEventListener("change", function () {
     updateRegvars();
