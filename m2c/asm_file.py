@@ -506,6 +506,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
 
     re_whitespace_or_string = re.compile(r'\s+|"(?:\\.|[^\\"])*"')
     re_local_glabel = re.compile("L(_.*_)?[0-9A-F]{7,8}")
+    # Keep these in sync with reLocalLabel and reLabel in browser/app.js.
     re_local_label = re.compile(
         "loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|LF?[0-9]+$|_[0-9A-Fa-f]{7,8}(?:_.*)?$"
     )
@@ -697,6 +698,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
             elif directive == ".endm":
                 ifdef_level -= 1
             elif directive == ".fn":
+                # Also listed in functionStartDirectives in browser/app.js.
                 args = split_quotable_arg_list(args_str)
                 asm_file.new_function(args[0])
             elif ifdef_level == 0:
@@ -824,6 +826,7 @@ def parse_file(f: typing.TextIO, arch: ArchAsm, options: Options) -> AsmFile:
                     process_label(args[0], kind=LabelKind.JUMP_TARGET)
 
             elif directive in (
+                # Keep in sync with functionStartDirectives in browser/app.js.
                 "glabel",
                 "dlabel",
                 "arm_func_start",
