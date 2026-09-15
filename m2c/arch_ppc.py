@@ -308,6 +308,17 @@ class CmpltPattern2(IrPattern):
     ]
 
 
+class CmpltPattern3(IrPattern):
+    replacement = "cmplt.fictive $o, $x, $y"
+    parts = [
+        "xor $a, $x, $y",  # swapped operand order
+        "srawi $b, $a, 1",
+        "and $c, $a, $y",
+        "subf $d, $c, $b",
+        "srwi $o, $d, 31",
+    ]
+
+
 class CmpleuPattern1(IrPattern):
     replacement = "cmpleu.fictive $o, $x, $y"
     parts = [
@@ -341,6 +352,16 @@ class CmpltuPattern2(IrPattern):
     replacement = "cmpltu.fictive $o, $x, $y"
     parts = [
         "xor $a, $y, $x",
+        "cntlzw $b, $a",
+        "slw $c, $y, $b",
+        "srwi $o, $c, 31",
+    ]
+
+
+class CmpltuPattern3(IrPattern):
+    replacement = "cmpltu.fictive $o, $x, $y"
+    parts = [
+        "xor $a, $x, $y",  # swapped operand order
         "cntlzw $b, $a",
         "slw $c, $y, $b",
         "srwi $o, $c, 31",
@@ -1488,10 +1509,12 @@ class PpcArch(Arch):
         CmplePattern(),
         CmpltPattern1(),
         CmpltPattern2(),
+        CmpltPattern3(),
         CmpleuPattern1(),
         CmpleuPattern2(),
         CmpltuPattern1(),
         CmpltuPattern2(),
+        CmpltuPattern3(),
     ]
 
     asm_patterns = [
