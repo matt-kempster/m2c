@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import Dict, TypedDict, cast
 from urllib.request import urlopen
 
 
@@ -20,7 +21,16 @@ INCLUDE_DIRS = (
 )
 
 
-def iter_python_files() -> list[Path]:
+class FileLockJson(TypedDict):
+    url: str
+    sha256: str
+
+
+class LockJson(TypedDict):
+    files: Dict[str, FileLockJson]
+
+
+def python_files() -> list[Path]:
     files: list[Path] = []
     for directory in INCLUDE_DIRS:
         files.extend(sorted(directory.glob("*.py")))
@@ -33,18 +43,19 @@ def sha256(data: bytes) -> str:
 
 def download_file(url: str) -> bytes:
     with urlopen(url, timeout=60) as response:
-        return response.read()
+        data: bytes = response.read()
+        return data
 
 
-def read_vendor_lock() -> dict[str, object]:
-    return json.loads(LOCKFILE.read_text(encoding="utf-8"))
+def read_vendor_lock() -> LockJson:
+    return cast(LockJson, json.loads(LOCKFILE.read_text(encoding="utf-8")))
 
 
 def browser_dist_path(relative_path: str) -> str:
     return "./dist/" + relative_path
 
 
-def vendor_path(lock: dict[str, object], suffix: str) -> str:
+def vendor_path(lock: LockJson, suffix: str) -> str:
     matches = [
         relative_path
         for relative_path in lock["files"]
@@ -57,7 +68,7 @@ def vendor_path(lock: dict[str, object], suffix: str) -> str:
     return matches[0]
 
 
-def write_vendor_paths(lock: dict[str, object]) -> None:
+def write_vendor_paths(lock: LockJson) -> None:
     pyodide_script = vendor_path(lock, "/pyodide.js")
     pyodide_root = pyodide_script.rsplit("/", 1)[0] + "/"
     paths = {
@@ -75,21 +86,20 @@ def write_vendor_paths(lock: dict[str, object]) -> None:
     )
 
 
-def write_vendor_lock(lock: dict[str, object]) -> None:
+def write_vendor_lock(lock: LockJson) -> None:
     LOCKFILE.write_text(
         json.dumps(lock, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
 
-def update_vendor_lock() -> None:
-    lock = read_vendor_lock()
-
+def update_vendor_lock(lock: LockJson) -> None:
     for relative_path, metadata in sorted(lock["files"].items()):
         output_path = DIST_DIR / relative_path
+        url = metadata["url"]
 
-        print(f"Downloading {metadata['url']}...")
-        data = download_file(metadata["url"])
+        print(f"Downloading {url}...")
+        data = download_file(url)
         metadata["sha256"] = sha256(data)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,12 +108,11 @@ def update_vendor_lock() -> None:
     write_vendor_lock(lock)
 
 
-def update_vendor_files() -> None:
-    lock = read_vendor_lock()
-
+def update_vendor_files(lock: LockJson) -> None:
     for relative_path, metadata in sorted(lock["files"].items()):
         output_path = DIST_DIR / relative_path
         expected_hash = metadata["sha256"]
+        url = metadata["url"]
 
         if output_path.exists():
             data = output_path.read_bytes()
@@ -112,12 +121,12 @@ def update_vendor_files() -> None:
                 continue
             print(f"Hash mismatch for {output_path}, re-downloading...")
 
-        print(f"Downloading {metadata['url']}...")
-        data = download_file(metadata["url"])
+        print(f"Downloading {url}...")
+        data = download_file(url)
         actual_hash = sha256(data)
         if actual_hash != expected_hash:
             raise RuntimeError(
-                f"Hash mismatch for {metadata['url']}: "
+                f"Hash mismatch for {url}: "
                 f"expected {expected_hash}, got {actual_hash}"
             )
 
@@ -137,16 +146,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.update_vendor_lock:
-        update_vendor_lock()
-
-    update_vendor_files()
     lock = read_vendor_lock()
+    if args.update_vendor_lock:
+        update_vendor_lock(lock)
+
+    update_vendor_files(lock)
     write_vendor_paths(lock)
 
     bundle = {
         str(path.relative_to(ROOT)): path.read_text(encoding="utf-8")
-        for path in iter_python_files()
+        for path in python_files()
     }
 
     print(f"Writing to {M2C_JS}...")

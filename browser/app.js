@@ -1,25 +1,25 @@
 (function () {
   let pyodide = null;
   let ready = false;
-  let appRoot = "/tmp/m2c-browser-root";
+  const appRoot = "/tmp/m2c-browser-root";
 
-  let sourceEl = document.getElementById("source");
-  let contextEl = document.getElementById("context");
-  let outputEl = document.getElementById("output");
-  let graphEl = document.getElementById("output-graph");
-  let buttonEl = document.getElementById("decompile");
-  let visualizeEl = document.getElementById("visualize");
-  let functionEl = document.getElementById("function");
-  let regvarsSelectEl = document.getElementById("regvars-select");
-  let regvarsEl = document.getElementById("regvars");
-  let formEl = document.getElementsByTagName("form")[0];
-  let darkModeCheckbox = document.getElementById("dark");
-  let browserPython = String.raw`
+  const sourceEl = document.getElementById("source");
+  const contextEl = document.getElementById("context");
+  const outputEl = document.getElementById("output");
+  const graphEl = document.getElementById("output-graph");
+  const buttonEl = document.getElementById("decompile");
+  const visualizeEl = document.getElementById("visualize");
+  const functionEl = document.getElementById("function");
+  const regvarsSelectEl = document.getElementById("regvars-select");
+  const regvarsEl = document.getElementById("regvars");
+  const formEl = document.getElementsByTagName("form")[0];
+  const darkModeCheckbox = document.getElementById("dark");
+  const browserPython = String.raw`
 from __future__ import annotations
 
 import json
 
-from .main import BrowserResult, decompile_for_browser
+from m2c.main import BrowserResult, decompile_for_browser
 
 
 def decompile_from_json(options_json: str) -> str:
@@ -38,7 +38,9 @@ def decompile_from_json(options_json: str) -> str:
         result = BrowserResult(1, f"Internal browser wrapper error:\n{exc}\n")
     return json.dumps({"returncode": result.returncode, "output": result.output})
 `;
-  let functionStartDirectives = [
+  // Keep in sync with the function-start directives in m2c/asm_file.py (the
+  // .fn directive and the tuple at the end of parse_file).
+  const functionStartDirectives = [
     "glabel",
     "arm_func_start",
     "thumb_func_start",
@@ -49,10 +51,11 @@ def decompile_from_json(options_json: str) -> str:
     ".fn"
   ];
   // Keep these in sync with re_local_label and re_label in m2c/asm_file.py.
-  let reLocalLabel = /^(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|LF?[0-9]+$|_[0-9A-Fa-f]{7,8}(?:_.*)?$)/;
-  let reLabel = /^(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):/;
+  const reLocalLabel = /^(?:loc_|locret_|def_|lbl_|LAB_|switchD_|jump_|LF?[0-9]+$|_[0-9A-Fa-f]{7,8}(?:_.*)?$)/;
+  const reLabel = /^(?:([a-zA-Z0-9_.$]+)|"([a-zA-Z0-9_.$<>@,-]+)"):/;
+  const reFunctionDirective = /^(\S+)\s+([^,\s]+)/;
 
-  let optionIds = [
+  const optionIds = [
     "globals",
     "target",
     "comment-style",
@@ -110,41 +113,46 @@ def decompile_from_json(options_json: str) -> str:
     return message;
   }
 
+  // Mirror m2c's comment handling (see re_comment_or_string in m2c/asm_file.py):
+  // strip comments but keep quoted strings intact, since those may contain
+  // comment syntax. Note that `!` is a comment char for sh2.
+  const reCommentOrString = /("(?:\\.|[^\\"])*"|[#;@!].*|\/\*.*?\*\/)/g;
+
   function getFunctionNames(source) {
-    let names = [];
-    for (let line of source.split(/\r?\n/)) {
-      let stripped = line.replace(/[#;@].*$/, "").replace(/\/\/.*$/, "").trim();
+    const names = [];
+    for (const line of source.split("\n")) {
+      let stripped = line
+        .replace(reCommentOrString, function (match, quoted) {
+          return quoted.charAt(0) === '"' ? quoted : " ";
+        })
+        .trim();
       let labelMatch;
       while ((labelMatch = stripped.match(reLabel)) !== null) {
-        let label = labelMatch[1] || labelMatch[2];
+        const label = labelMatch[1] || labelMatch[2];
         stripped = stripped.slice(labelMatch[0].length).trim();
         if (label.charAt(0) !== "." && !reLocalLabel.test(label)) {
           names.push(label);
         }
       }
-      let directiveMatch = stripped.match(/^(\S+)\s+([^,\s]+)/);
-      if (directiveMatch && functionStartDirectives.indexOf(directiveMatch[1]) !== -1) {
+      const directiveMatch = stripped.match(reFunctionDirective);
+      if (directiveMatch && functionStartDirectives.includes(directiveMatch[1])) {
         names.push(directiveMatch[2]);
       }
     }
     return names;
   }
 
-  function sourceWithDefaultFunction() {
-    return getFunctionNames(sourceEl.value).length ? sourceEl.value : "glabel foo\n" + sourceEl.value;
-  }
-
   function updateFunctions() {
-    let previous = functionEl.value;
+    const previous = functionEl.value;
     functionEl.replaceChildren();
 
-    let allOption = document.createElement("option");
+    const allOption = document.createElement("option");
     allOption.value = "all";
     allOption.textContent = "all functions";
     functionEl.appendChild(allOption);
 
-    for (let name of getFunctionNames(sourceEl.value)) {
-      let option = document.createElement("option");
+    for (const name of getFunctionNames(sourceEl.value)) {
+      const option = document.createElement("option");
       option.value = name;
       option.textContent = name;
       functionEl.appendChild(option);
@@ -163,23 +171,29 @@ def decompile_from_json(options_json: str) -> str:
     }
   }
 
-  function saveState() {
-    let options = {};
+  function saveSource() {
+    localStorage.m2c_saved_source = sourceEl.value;
+  }
 
-    for (let id of optionIds) {
-      let el = document.getElementById(id);
+  function saveContext() {
+    localStorage.m2c_saved_context = contextEl.value;
+  }
+
+  function saveOptions() {
+    const options = {};
+
+    for (const id of optionIds) {
+      const el = document.getElementById(id);
       options[id] = el.type === "checkbox" ? (el.checked ? "yes" : "no") : el.value;
     }
 
-    localStorage.m2c_saved_source = sourceEl.value;
-    localStorage.m2c_saved_context = contextEl.value;
     localStorage.m2c_saved_options = JSON.stringify(options);
   }
 
   function restoreState() {
-    let savedSource = localStorage.m2c_saved_source;
-    let savedContext = localStorage.m2c_saved_context;
-    let savedOptions = localStorage.m2c_saved_options;
+    const savedSource = localStorage.m2c_saved_source;
+    const savedContext = localStorage.m2c_saved_context;
+    const savedOptions = localStorage.m2c_saved_options;
 
     if (savedSource) sourceEl.value = savedSource;
     if (savedContext) contextEl.value = savedContext;
@@ -188,9 +202,9 @@ def decompile_from_json(options_json: str) -> str:
       return {};
     }
     try {
-      let options = JSON.parse(savedOptions);
-      for (let key in options) {
-        let el = document.getElementById(key);
+      const options = JSON.parse(savedOptions);
+      for (const key in options) {
+        const el = document.getElementById(key);
         if (!el) {
           continue;
         }
@@ -235,32 +249,31 @@ def decompile_from_json(options_json: str) -> str:
 
   function normalizeDotForBrowser(dotSource) {
     // Force font to ensure boxes are drawn large enough for contents
-    return dotSource
-      .replace(
-        /fontname="Monospace"/g,
-        'fontname="Courier"'
-      )
+    return dotSource.replace(
+      /fontname="Monospace"/g,
+      'fontname="Courier"'
+    );
   }
 
   function buildFlags() {
-    let flags = [];
-    let globals = document.getElementById("globals").value;
-    let target = document.getElementById("target").value;
-    let commentStyle = document.getElementById("comment-style").value;
-    let regvarsSelect = regvarsSelectEl.value;
+    const flags = [];
+    const globals = document.getElementById("globals").value;
+    const target = document.getElementById("target").value;
+    const commentStyle = document.getElementById("comment-style").value;
+    const regvarsSelect = regvarsSelectEl.value;
 
     flags.push("--globals=" + globals);
     flags.push("--target=" + target);
 
     if (commentStyle === "none") {
       flags.push("--comment-style=none");
-    } else if (commentStyle.indexOf("oneline") === 0) {
+    } else if (commentStyle.startsWith("oneline")) {
       flags.push("--comment-style=oneline");
     } else {
       flags.push("--comment-style=multiline");
     }
 
-    if (commentStyle.indexOf("unaligned") !== -1) {
+    if (commentStyle.includes("unaligned")) {
       flags.push("--comment-column=0");
     }
 
@@ -274,7 +287,7 @@ def decompile_from_json(options_json: str) -> str:
       flags.push("--reg-vars=" + regvarsEl.value.trim());
     }
 
-    let boolFlags = {
+    const boolFlags = {
       void: "--void", debug: "--debug", noandor: "--no-andor",
       nocasts: "--no-casts", allman: "--allman", knr: "--knr",
       extraswitchindent: "--indent-switch-contents",
@@ -284,7 +297,7 @@ def decompile_from_json(options_json: str) -> str:
       nostackspill: "--no-stack-spill", descendingregs: "--descending-regs",
       backwardsbss: "--backwards-bss"
     };
-    for (let id in boolFlags) {
+    for (const id in boolFlags) {
       if (document.getElementById(id).checked) flags.push(boolFlags[id]);
     }
 
@@ -293,39 +306,30 @@ def decompile_from_json(options_json: str) -> str:
 
   function writeBrowserFiles(files) {
     function mkdirp(path) {
-      let parts = path.split("/");
+      const parts = path.split("/");
       let current = "";
-      for (let i = 0; i < parts.length; i += 1) {
-        if (!parts[i]) {
+      for (const part of parts) {
+        if (!part) {
           continue;
         }
-        current += "/" + parts[i];
-        if (pyodide.FS.analyzePath(current).exists) {
-          continue;
-        }
-        try {
+        current += "/" + part;
+        if (!pyodide.FS.analyzePath(current).exists) {
           pyodide.FS.mkdir(current);
-        } catch (err) {
-          if (!pyodide.FS.analyzePath(current).exists) {
-            throw err;
-          }
         }
       }
     }
 
-    for (let path in files) {
-      let fullPath = appRoot + "/" + path;
-      let dirPath = fullPath.split("/").slice(0, -1).join("/");
+    for (const path in files) {
+      const fullPath = appRoot + "/" + path;
+      const dirPath = fullPath.split("/").slice(0, -1).join("/");
       mkdirp(dirPath);
       pyodide.FS.writeFile(fullPath, files[path], { encoding: "utf8" });
     }
-
-    pyodide.FS.writeFile(appRoot + "/m2c/browser.py", browserPython, { encoding: "utf8" });
   }
 
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
-      let script = document.createElement("script");
+      const script = document.createElement("script");
       script.src = src;
       script.onload = resolve;
       script.onerror = reject;
@@ -339,7 +343,7 @@ def decompile_from_json(options_json: str) -> str:
         throw new Error("vendor-paths.js was not loaded");
       }
       if (!window.M2C_PYTHON_FILES) {
-        throw new Error("m2c.generated.js was not loaded");
+        throw new Error("m2c.js was not loaded");
       }
 
       setBusyButton("decompile", "Loading...");
@@ -349,18 +353,22 @@ def decompile_from_json(options_json: str) -> str:
       });
       setBusyButton("decompile", "Installing...");
       writeBrowserFiles(window.M2C_PYTHON_FILES);
-      await pyodide.runPythonAsync("import json\nimport sys\nsys.path.insert(0, '/tmp/m2c-browser-root')\nsys.setrecursionlimit(min(2**31 - 1, 10 * sys.getrecursionlimit()))\nfrom m2c.browser import decompile_from_json\n");
+      await pyodide.runPythonAsync(
+        "import sys\nsys.path.insert(0, '/tmp/m2c-browser-root')\n"
+        + "sys.setrecursionlimit(min(2**31 - 1, 10 * sys.getrecursionlimit()))\n"
+      );
+      await pyodide.runPythonAsync(browserPython);
       ready = true;
       buttonEl.disabled = false;
       visualizeEl.disabled = false;
       resetButtonLabels();
-      let autorun = new URLSearchParams(window.location.search).get("autorun");
+      const autorun = new URLSearchParams(window.location.search).get("autorun");
       if (autorun !== null) {
         runM2c(autorun === "visualize");
       }
     } catch (err) {
       console.error(err);
-      let message = formatError(err);
+      const message = formatError(err);
       setBusyButton("decompile", "Failed");
       showTextOutput(message);
     }
@@ -377,23 +385,26 @@ def decompile_from_json(options_json: str) -> str:
     setBusyButton(visualize ? "visualize" : "decompile", visualize ? "Visualizing..." : "Decompiling...");
 
     try {
-      let flags = buildFlags();
+      const flags = buildFlags();
       if (visualize) {
         flags.push("--visualize");
       }
 
+      const source = getFunctionNames(sourceEl.value).length
+        ? sourceEl.value
+        : "glabel foo\n" + sourceEl.value;
       pyodide.globals.set("m2c_options_json", JSON.stringify({
-        source: sourceWithDefaultFunction(),
+        source: source,
         context: contextEl.value,
         flags: flags
       }));
-      let result = JSON.parse(await pyodide.runPythonAsync("decompile_from_json(m2c_options_json)"));
-      let returncode = result.returncode;
-      let output = result.output;
+      const result = JSON.parse(await pyodide.runPythonAsync("decompile_from_json(m2c_options_json)"));
+      const returncode = result.returncode;
+      const output = result.output;
 
       if (returncode === 0 && visualize) {
         setBusyButton("visualize", "Rendering...");
-        let viz = await window.m2cVizReady;
+        const viz = await window.m2cVizReady;
         showGraphOutput(viz.renderSVGElement(normalizeDotForBrowser(output)));
       } else {
         showTextOutput(output);
@@ -408,7 +419,7 @@ def decompile_from_json(options_json: str) -> str:
     }
   }
 
-  let restoredOptions = restoreState();
+  const restoredOptions = restoreState();
   clearOutput();
   if (!("dark" in restoredOptions)) {
     darkModeCheckbox.checked = window.matchMedia("prefers-color-scheme: dark").matches;
@@ -419,14 +430,14 @@ def decompile_from_json(options_json: str) -> str:
 
   sourceEl.addEventListener("blur", function () {
     updateFunctions();
-    saveState();
+    saveSource();
   });
-  sourceEl.addEventListener("change", saveState);
-  contextEl.addEventListener("change", saveState);
+  sourceEl.addEventListener("change", saveSource);
+  contextEl.addEventListener("change", saveContext);
   document.getElementById("options").addEventListener("change", function () {
     updateRegvars();
     updateDarkMode();
-    saveState();
+    saveOptions();
   });
   formEl.addEventListener("submit", function (event) {
     event.preventDefault();
