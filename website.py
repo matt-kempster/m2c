@@ -66,14 +66,16 @@ if "source" in form:
     if "target" in form:
         value = form.getfirst("target")
         if value in (
-            "ppc-mwcc-c++",
-            "gba-gcc-c",
-            "arm-gcc-c",
-            "arm-mwcc-c++",
             "mips-ido-c",
             "mips-gcc-c",
             "mipsel-gcc-c",
             "mipsee-gcc-c",
+            "ppc-mwcc-c++",
+            "gba-gcc-c",
+            "arm-gcc-c",
+            "arm-mwcc-c++",
+            "sh2-gcc-c",
+            "sh4-shc-c",
         ):
             cmd.extend(["--target", value])
     if "nounkinference" in form:
@@ -263,6 +265,8 @@ label {
     <option value="gba-gcc-c">ARM, agbcc</option>
     <option value="arm-gcc-c">ARM, GCC</option>
     <option value="arm-mwcc-c++">ARM, MWCC</option>
+    <option value="sh2-gcc-c">SH2, GCC</option>
+    <option value="sh4-shc-c">SH4, SHC</option>
     </select>
     </label>
     <label>Comment style:
