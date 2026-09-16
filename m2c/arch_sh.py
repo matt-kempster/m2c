@@ -1321,6 +1321,8 @@ class Sh4Arch(Sh2Arch):
         inputs: List[Location] = []
         clobbers: List[Location] = []
         outputs: List[Location] = []
+        is_load = False
+        is_store = False
         eval_fn: Optional[Callable[[NodeState, InstrArgs], object]] = None
 
         if mnemonic in cls.instrs_load_const:
@@ -1329,6 +1331,43 @@ class Sh4Arch(Sh2Arch):
             eval_fn = lambda s, a: s.set_reg(
                 a.reg_ref(0), cls.instrs_load_const[mnemonic](a)
             )
+        elif mnemonic in ("fmov", "fmov.s"):
+            assert len(args) == 2
+            if isinstance(args[0], Register) and isinstance(args[1], Register):
+                inputs = [args[0]]
+                outputs = [args[1]]
+                eval_fn = lambda s, a: s.set_reg(a.reg_ref(1), a.reg(0))
+            elif isinstance(args[0], Register):
+                assert (
+                    isinstance(args[1], AsmAddressMode)
+                    and args[1].addend == AsmLiteral(0)
+                    and args[1].writeback is None
+                )
+                inputs = [args[0], args[1].base]
+                is_store = True
+
+                def eval_fn(s: NodeState, a: InstrArgs) -> None:
+                    store = make_store(a, Type.f32())
+                    if store is not None:
+                        s.store_memory(store, a.reg_ref(0))
+
+            else:
+                assert (
+                    isinstance(args[0], AsmAddressMode)
+                    and args[0].addend == AsmLiteral(0)
+                    and args[0].writeback is None
+                    and isinstance(args[1], Register)
+                )
+                inputs = [args[0].base]
+                outputs = [args[1]]
+                is_load = True
+                eval_fn = lambda s, a: s.set_reg(
+                    a.reg_ref(1),
+                    handle_load(
+                        replace(a, raw_args=[a.raw_arg(1), a.raw_arg(0)]),
+                        type=Type.f32(),
+                    ),
+                )
 
         if eval_fn is not None:
             return Instruction(
@@ -1339,6 +1378,8 @@ class Sh4Arch(Sh2Arch):
                 clobbers=clobbers,
                 outputs=outputs,
                 eval_fn=eval_fn,
+                is_load=is_load,
+                is_store=is_store,
             )
 
         return super().parse(mnemonic, args, meta)
