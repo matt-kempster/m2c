@@ -99,29 +99,39 @@ from .flow_graph import ArchFlowGraph, FlowGraph, InstrRef, RefSet
 from .types import FunctionSignature, Type
 
 
-class FcmpoCrorPattern(SimpleAsmPattern):
+class FcmpoCrorPattern(AsmPattern):
     """
     For floating point, `x <= y` and `x >= y` use `cror` to OR together the `cr0_eq`
     bit with either `cr0_lt` or `cr0_gt`. Instead of implementing `cror`, we detect
     this pattern and and directly compute the two registers.
+
+    The `cror` operands may be written numerically (`cror 2, 0/1, 2`) or, as some
+    disassemblers (e.g. decomp-toolkit) emit, symbolically (`cror eq, lt/gt, eq`).
+    Both spellings are equivalent, since within cr0, eq/lt/gt are bits 2/0/1.
     """
 
-    pattern = make_pattern(
-        "fcmpo $cr0, $x, $y",
-        "cror 2, N, 2",
-    )
+    lte_patterns = [
+        make_pattern("fcmpo $cr0, $x, $y", "cror 2, 0, 2"),
+        make_pattern("fcmpo $cr0, $x, $y", "cror eq, lt, eq"),
+    ]
+    gte_patterns = [
+        make_pattern("fcmpo $cr0, $x, $y", "cror 2, 1, 2"),
+        make_pattern("fcmpo $cr0, $x, $y", "cror eq, gt, eq"),
+    ]
 
-    def replace(self, m: AsmMatch) -> Optional[Replacement]:
-        fcmpo = m.body[0]
-        assert isinstance(fcmpo, Instruction)
-        if m.literals["N"] == 0:
-            return Replacement(
-                [AsmInstruction("fcmpo.lte.fictive", fcmpo.args)], len(m.body)
-            )
-        elif m.literals["N"] == 1:
-            return Replacement(
-                [AsmInstruction("fcmpo.gte.fictive", fcmpo.args)], len(m.body)
-            )
+    def match(self, matcher: AsmMatcher) -> Optional[Replacement]:
+        for mnemonic, patterns in (
+            ("fcmpo.lte.fictive", self.lte_patterns),
+            ("fcmpo.gte.fictive", self.gte_patterns),
+        ):
+            for pattern in patterns:
+                m = matcher.try_match(pattern)
+                if m is not None:
+                    fcmpo = m.body[0]
+                    assert isinstance(fcmpo, Instruction)
+                    return Replacement(
+                        [AsmInstruction(mnemonic, fcmpo.args)], len(m.body)
+                    )
         return None
 
 
