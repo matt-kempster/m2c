@@ -1161,7 +1161,7 @@ def warn_on_safeguard_use(
         label = node.block.approx_label_name
         return_instrs = arch.missing_return()
         print(
-            f'Warning: missing "{return_instrs[0]}" in last block of {function.name} ({label}).\n'
+            f'/* Warning: missing "{return_instrs[0]}" in last block of {function.name} ({label}). */\n'
         )
 
 

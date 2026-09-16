@@ -1,4 +1,4 @@
-Warning: missing "jr $ra" in last block of test (jumptarget_label).
+/* Warning: missing "jr $ra" in last block of test (jumptarget_label). */
 
 extern s32 more special;
 static s16 special !@#$%^chars[2] = { 0, 0x1234 };  /* const */
