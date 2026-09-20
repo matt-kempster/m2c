@@ -65,6 +65,8 @@ from .instruction import (
 )
 from .types import (
     AccessPath,
+    ArchAbi,
+    ArgLoc,
     FunctionParam,
     FunctionSignature,
     StructDeclaration,
@@ -78,30 +80,11 @@ CmpInstrMap = Mapping[str, Callable[["InstrArgs"], "Condition"]]
 StoreInstrMap = Mapping[str, Callable[["InstrArgs"], Optional["StoreStmt"]]]
 
 
-class Arch(ArchFlowGraph, ArchC):
+class Arch(ArchFlowGraph, ArchC, ArchAbi):
     """Arch-specific information that relates to the translation level.
     Extends ArchFlowGraph."""
 
     home_space_size: int
-    base_return_regs: List[Tuple[Register, bool]]
-
-    @abc.abstractmethod
-    def arg_name(self, loc: ArgLoc) -> str: ...
-
-    @abc.abstractmethod
-    def function_abi(
-        self,
-        fn_sig: FunctionSignature,
-        likely_regs: Dict[Register, bool],
-        *,
-        for_call: bool,
-    ) -> Abi:
-        """
-        Compute stack positions/registers used by a function based on its type
-        information. Also computes a list of registers that may contain arguments,
-        if the function has varargs or an unknown/incomplete type.
-        """
-        ...
 
     @abc.abstractmethod
     def function_return(self, expr: Expression) -> Dict[Register, Expression]:
@@ -117,12 +100,12 @@ class Arch(ArchFlowGraph, ArchC):
     def is_likely_partial_offset(self, addend: int) -> bool:
         return 0 <= addend < 0x1000000 and addend % 2**15 in (0, 2**15 - 1)
 
-    # These are defined here to avoid a circular import in flow_graph.py
-    ir_patterns: List[IrPattern] = []
-
     def c_symbol_name(self, asm_name: str) -> str:
         """Convert an assembler symbol name to its C spelling."""
         return asm_name
+
+    # These are defined here to avoid a circular import in flow_graph.py
+    ir_patterns: List[IrPattern] = []
 
     def simplify_ir(
         self, asm_data: AsmData, flow_graph: FlowGraph, *, debug_patterns: bool
@@ -237,9 +220,6 @@ def as_ptr(expr: Expression) -> Expression:
 
 def as_function_ptr(expr: Expression) -> Expression:
     return as_type(expr, Type.ptr(Type.function()), True)
-
-
-InstructionSource = Optional[Instruction]
 
 
 @dataclass(eq=False)
@@ -362,7 +342,7 @@ class StackInfo:
             namespace = self.function.name.partition("_")[0]
             base_struct_type = type.get_pointer_target()
             self_struct = self.global_info.typepool.get_struct_by_tag_name(
-                namespace, self.global_info.typemap
+                namespace, self.global_info.arch, self.global_info.typemap
             )
             if (
                 self_struct is not None
@@ -848,7 +828,7 @@ def get_stack_info(
     # its fields will be used for variable types & names.
     stack_struct_name = f"_m2c_stack_{function.name}"
     stack_struct = global_info.typepool.get_struct_by_tag_name(
-        stack_struct_name, global_info.typemap
+        stack_struct_name, global_info.arch, global_info.typemap
     )
     if stack_struct is not None:
         if stack_struct.size != info.allocated_stack_size:
@@ -3186,61 +3166,6 @@ def strip_macros(arg: Argument) -> Argument:
         return arg
 
 
-@dataclass(frozen=True)
-class ArgLoc:
-    # offset represents the offset above the stack where the argument is loaded from.
-    # reg represents the register the argument is loaded from.
-    # Either value or reg will always be non-None. In the case of MIPS with
-    # arguments with home space, both will be.
-    # sort_index represents a sort index for argument registers, and is always set
-    # when reg is, and may be set in other cases as well for known prototypes.
-    offset: Optional[int]
-    sort_index: Optional[int]
-    reg: Optional[Register]
-
-    def __lt__(self, other: object) -> bool:
-        if not isinstance(other, ArgLoc):
-            return NotImplemented
-        if self.sort_index is not None:
-            if other.sort_index is None:
-                return True
-            return self.sort_index < other.sort_index
-        else:
-            if other.sort_index is not None:
-                return False
-            assert self.offset is not None
-            assert other.offset is not None
-            return self.offset < other.offset
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ArgLoc):
-            return NotImplemented
-        if self.offset is not None:
-            return other.offset == self.offset
-        else:
-            return other.offset is None and self.reg == other.reg
-
-    def __hash__(self) -> int:
-        if self.offset is not None:
-            return hash(self.offset)
-        else:
-            return hash(self.reg)
-
-
-@dataclass
-class AbiArgSlot:
-    loc: ArgLoc
-    type: Type
-    name: Optional[str] = None
-    comment: Optional[str] = None
-
-
-@dataclass
-class Abi:
-    arg_slots: List[AbiArgSlot]
-    possible_slots: List[AbiArgSlot]
-
-
 def find_clobbers_until_dominator(
     stack_info: StackInfo, node: Node
 ) -> Tuple[Set[Var], bool]:
@@ -4341,7 +4266,7 @@ class GlobalInfo:
                 if self.typepool.unk_inference and is_unk_type(ctype, self.typemap):
                     type = Type.gsym_unk_ctype(ctype, self.typemap, self.typepool)
                 else:
-                    type = Type.ctype(ctype, self.typemap, self.typepool)
+                    type = Type.ctype(ctype, self.arch, self.typemap, self.typepool)
                 sym.type.unify(type)
                 if c_sym_name not in self.typepool.unknown_decls:
                     sym.type_provided = True
@@ -4351,7 +4276,9 @@ class GlobalInfo:
             # Do this after unifying the type in the typemap, so that it has lower precedence
             if demangled_symbol is not None:
                 sym.type.unify(
-                    Type.demangled_symbol(self.typemap, self.typepool, demangled_symbol)
+                    Type.demangled_symbol(
+                        self.arch, self.typemap, self.typepool, demangled_symbol
+                    )
                 )
 
         return AddressOf(sym, type=sym.type.reference())

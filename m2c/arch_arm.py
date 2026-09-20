@@ -47,10 +47,7 @@ from .instruction import (
     StackLocation,
 )
 from .translate import (
-    Abi,
-    AbiArgSlot,
     AddressMode,
-    ArgLoc,
     Arch,
     BinaryOp,
     CarryBit,
@@ -104,7 +101,13 @@ from .evaluate import (
     set_arm_flags_from_add,
     void_fn_op,
 )
-from .types import FunctionSignature, Type
+from .types import (
+    Abi,
+    AbiArgSlot,
+    ArgLoc,
+    FunctionSignature,
+    Type,
+)
 
 
 SUFFIXABLE_INSTRUCTIONS: Set[str] = {

@@ -40,10 +40,7 @@ from .asm_pattern import (
     make_pattern,
 )
 from .translate import (
-    Abi,
-    AbiArgSlot,
     Arch,
-    ArgLoc,
     BinaryOp,
     Cast,
     CmpInstrMap,
@@ -101,7 +98,13 @@ from .evaluate import (
     make_store,
     void_fn_op,
 )
-from .types import FunctionSignature, Type
+from .types import (
+    Abi,
+    AbiArgSlot,
+    ArgLoc,
+    FunctionSignature,
+    Type,
+)
 
 
 LENGTH_TWO: Set[str] = {

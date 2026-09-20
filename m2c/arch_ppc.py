@@ -41,11 +41,8 @@ from .asm_pattern import (
     make_pattern,
 )
 from .translate import (
-    Abi,
-    AbiArgSlot,
     AddressMode,
     Arch,
-    ArgLoc,
     BinaryOp,
     Cast,
     ErrorExpr,
@@ -96,7 +93,13 @@ from .evaluate import (
     void_fn_op,
 )
 from .flow_graph import ArchFlowGraph, FlowGraph, InstrRef, RefSet
-from .types import FunctionSignature, Type
+from .types import (
+    Abi,
+    AbiArgSlot,
+    ArgLoc,
+    FunctionSignature,
+    Type,
+)
 
 
 class FcmpoCrorPattern(SimpleAsmPattern):

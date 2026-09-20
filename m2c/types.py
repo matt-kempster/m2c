@@ -1,9 +1,11 @@
 from __future__ import annotations
+import abc
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 import m2c_pycparser.c_ast as ca
 
+from .asm_instruction import Register
 from .c_types import (
     CType,
     Enum,
@@ -26,6 +28,83 @@ from .options import Formatter
 # AccessPath represents a struct/array path, with ints for array access, and
 # strs for struct fields. Ex: `["foo", 3, "bar"]` represents `.foo[3].bar`
 AccessPath = List[Union[str, int]]
+
+
+@dataclass(frozen=True)
+class ArgLoc:
+    # offset represents the offset above the stack where the argument is loaded from.
+    # reg represents the register the argument is loaded from.
+    # Either value or reg will always be non-None. In the case of MIPS with
+    # arguments with home space, both will be.
+    # sort_index represents a sort index for argument registers, and is always set
+    # when reg is, and may be set in other cases as well for known prototypes.
+    offset: Optional[int]
+    sort_index: Optional[int]
+    reg: Optional[Register]
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, ArgLoc):
+            return NotImplemented
+        if self.sort_index is not None:
+            if other.sort_index is None:
+                return True
+            return self.sort_index < other.sort_index
+        else:
+            if other.sort_index is not None:
+                return False
+            assert self.offset is not None
+            assert other.offset is not None
+            return self.offset < other.offset
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ArgLoc):
+            return NotImplemented
+        if self.offset is not None:
+            return other.offset == self.offset
+        else:
+            return other.offset is None and self.reg == other.reg
+
+    def __hash__(self) -> int:
+        if self.offset is not None:
+            return hash(self.offset)
+        else:
+            return hash(self.reg)
+
+
+@dataclass
+class AbiArgSlot:
+    loc: ArgLoc
+    type: Type
+    name: Optional[str] = None
+    comment: Optional[str] = None
+
+
+@dataclass
+class Abi:
+    arg_slots: List[AbiArgSlot]
+    possible_slots: List[AbiArgSlot]
+
+
+class ArchAbi(abc.ABC):
+    base_return_regs: List[Tuple[Register, bool]]
+
+    @abc.abstractmethod
+    def arg_name(self, loc: ArgLoc) -> str: ...
+
+    @abc.abstractmethod
+    def function_abi(
+        self,
+        fn_sig: FunctionSignature,
+        likely_regs: Dict[Register, bool],
+        *,
+        for_call: bool,
+    ) -> Abi:
+        """
+        Compute stack positions/registers used by a function based on its type
+        information. Also computes a list of registers that may contain arguments,
+        if the function has varargs or an unknown/incomplete type.
+        """
+        ...
 
 
 @dataclass
@@ -60,12 +139,13 @@ class TypePool:
     def get_or_create_struct_by_tag_name(
         self,
         tag_name: str,
+        arch: ArchAbi,
         typemap: Optional[TypeMap],
         *,
         size: Optional[int] = None,
         with_typedef: bool = False,
     ) -> StructDeclaration:
-        struct = self.get_struct_by_tag_name(tag_name, typemap)
+        struct = self.get_struct_by_tag_name(tag_name, arch, typemap)
         if struct is not None:
             return struct
         struct = StructDeclaration.unknown(self, size, tag_name, align=4)
@@ -76,6 +156,7 @@ class TypePool:
     def get_struct_by_tag_name(
         self,
         tag_name: str,
+        arch: ArchAbi,
         typemap: Optional[TypeMap],
     ) -> Optional[StructDeclaration]:
         """
@@ -88,7 +169,7 @@ class TypePool:
         if typemap is not None:
             cstruct = typemap.structs.get(tag_name)
             if cstruct is not None:
-                type = Type.ctype(cstruct.type, typemap, self)
+                type = Type.ctype(cstruct.type, arch, typemap, self)
                 return type.get_struct_declaration()
         return None
 
@@ -1013,7 +1094,12 @@ class Type:
 
     @staticmethod
     def ctype(
-        ctype: CType, typemap: TypeMap, typepool: TypePool, *, in_struct: bool = False
+        ctype: CType,
+        arch: ArchAbi,
+        typemap: TypeMap,
+        typepool: TypePool,
+        *,
+        in_struct: bool = False,
     ) -> Type:
         real_ctype, _ = resolve_typedefs(ctype, typemap)
 
@@ -1027,10 +1113,10 @@ class Type:
                     dim = 1
             except DecompFailure:
                 pass
-            elem_type = Type.ctype(real_ctype.type, typemap, typepool)
+            elem_type = Type.ctype(real_ctype.type, arch, typemap, typepool)
             return Type.array(elem_type, dim)
         if isinstance(real_ctype, ca.PtrDecl):
-            return Type.ptr(Type.ctype(real_ctype.type, typemap, typepool))
+            return Type.ptr(Type.ctype(real_ctype.type, arch, typemap, typepool))
         if isinstance(real_ctype, ca.FuncDecl):
             fn = parse_function(real_ctype)
             assert fn is not None
@@ -1039,12 +1125,12 @@ class Type:
                 is_variadic=fn.is_variadic,
             )
             if fn.ret_type is not None:
-                fn_sig.return_type = Type.ctype(fn.ret_type, typemap, typepool)
+                fn_sig.return_type = Type.ctype(fn.ret_type, arch, typemap, typepool)
             if fn.params is not None:
                 fn_sig.params = [
                     FunctionParam(
                         name=param.name or "",
-                        type=Type.ctype(param.type, typemap, typepool),
+                        type=Type.ctype(param.type, arch, typemap, typepool),
                     )
                     for param in fn.params
                 ]
@@ -1054,7 +1140,7 @@ class Type:
             inner_type = real_ctype.type
             if isinstance(inner_type, (ca.Struct, ca.Union)):
                 return Type.struct(
-                    StructDeclaration.from_ctype(inner_type, typemap, typepool)
+                    StructDeclaration.from_ctype(inner_type, arch, typemap, typepool)
                 )
             if isinstance(inner_type, ca.Enum):
                 enum = None
@@ -1086,13 +1172,16 @@ class Type:
         assert_never(real_ctype)
 
     @staticmethod
-    def demangled_symbol(typemap: TypeMap, typepool: TypePool, sym: CxxSymbol) -> Type:
+    def demangled_symbol(
+        arch: ArchAbi, typemap: TypeMap, typepool: TypePool, sym: CxxSymbol
+    ) -> Type:
         return Type.demangled_type(
-            typemap, typepool, sym_type=sym.type, sym_name=sym.name
+            arch, typemap, typepool, sym_type=sym.type, sym_name=sym.name
         )
 
     @staticmethod
     def demangled_type(
+        arch: ArchAbi,
         typemap: TypeMap,
         typepool: TypePool,
         sym_type: CxxType,
@@ -1103,7 +1192,7 @@ class Type:
             # Maybe this seperator should depend on the --valid-syntax option?
             class_name = "::".join(str(n) for n in qualified_name)
             class_struct = typepool.get_or_create_struct_by_tag_name(
-                class_name, typemap, size=None, with_typedef=True
+                class_name, arch, typemap, size=None, with_typedef=True
             )
             return Type.struct(class_struct)
 
@@ -1124,7 +1213,7 @@ class Type:
         # RTTI data from MWCC is an 8-byte struct
         if final_name == "__RTTI":
             return Type.struct(
-                typepool.get_or_create_struct_by_tag_name("RTTI", typemap, size=8)
+                typepool.get_or_create_struct_by_tag_name("RTTI", arch, typemap, size=8)
             )
 
         type = Type.any()
@@ -1184,14 +1273,16 @@ class Type:
                     else:
                         params.append(
                             FunctionParam(
-                                type=Type.demangled_type(typemap, typepool, param_type),
+                                type=Type.demangled_type(
+                                    arch, typemap, typepool, param_type
+                                ),
                                 name=name,
                             )
                         )
                 return_type = Type.any()
                 if term.function_return is not None:
                     return_type = Type.demangled_type(
-                        typemap, typepool, term.function_return
+                        arch, typemap, typepool, term.function_return
                     )
                 elif final_name in ("__ct", "__dt"):
                     return_type = Type.ptr()
@@ -1584,7 +1675,7 @@ class StructDeclaration:
 
     @staticmethod
     def from_ctype(
-        ctype: CStructUnion, typemap: TypeMap, typepool: TypePool
+        ctype: CStructUnion, arch: ArchAbi, typemap: TypeMap, typepool: TypePool
     ) -> StructDeclaration:
         """
         Return StructDeclaration for a given ctype struct or union, constructing it
@@ -1661,7 +1752,9 @@ class StructDeclaration:
             for field in fields:
                 if typepool.unk_inference and is_unk_type(field.type, typemap):
                     continue
-                field_type = Type.ctype(field.type, typemap, typepool, in_struct=True)
+                field_type = Type.ctype(
+                    field.type, arch, typemap, typepool, in_struct=True
+                )
                 assert field.size == field_type.get_size_bytes(), (
                     field.size,
                     field_type.get_size_bytes(),

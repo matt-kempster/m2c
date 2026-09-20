@@ -1148,7 +1148,7 @@ def array_access_from_add(
             # common to be an array of structs.
             struct_name = f"_struct_{uw_base.expr.c_symbol_name}_0x{scale:X}"
             struct = typepool.get_struct_by_tag_name(
-                struct_name, stack_info.global_info.typemap
+                struct_name, stack_info.global_info.arch, stack_info.global_info.typemap
             )
             if struct is None:
                 struct = StructDeclaration.unknown(

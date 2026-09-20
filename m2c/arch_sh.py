@@ -41,10 +41,7 @@ from .instruction import (
 )
 from .ir_pattern import IrMatch, IrPattern
 from .translate import (
-    Abi,
-    AbiArgSlot,
     Arch,
-    ArgLoc,
     BinaryOp,
     CarryBit,
     Cast,
@@ -62,7 +59,6 @@ from .translate import (
     as_u32,
     early_unwrap,
 )
-
 from .evaluate import (
     condition_from_expr,
     fn_op,
@@ -82,8 +78,13 @@ from .evaluate import (
     make_storex,
     void_fn_op,
 )
-
-from .types import FunctionSignature, Type
+from .types import (
+    Abi,
+    AbiArgSlot,
+    ArgLoc,
+    FunctionSignature,
+    Type,
+)
 
 
 class FarJumpPattern(AsmPattern):
