@@ -140,7 +140,7 @@ class TypePool:
         self,
         tag_name: str,
         arch: ArchAbi,
-        typemap: Optional[TypeMap],
+        typemap: TypeMap,
         *,
         size: Optional[int] = None,
         with_typedef: bool = False,
@@ -157,7 +157,7 @@ class TypePool:
         self,
         tag_name: str,
         arch: ArchAbi,
-        typemap: Optional[TypeMap],
+        typemap: TypeMap,
     ) -> Optional[StructDeclaration]:
         """
         Return the StructDeclaration with the given tag name, if available.
@@ -166,11 +166,10 @@ class TypePool:
         struct = self.structs_by_tag_name.get(tag_name)
         if struct is not None:
             return struct
-        if typemap is not None:
-            cstruct = typemap.structs.get(tag_name)
-            if cstruct is not None:
-                type = Type.ctype(cstruct.type, arch, typemap, self)
-                return type.get_struct_declaration()
+        cstruct = typemap.structs.get(tag_name)
+        if cstruct is not None:
+            type = Type.ctype(cstruct.type, arch, typemap, self)
+            return type.get_struct_declaration()
         return None
 
     def add_struct(
