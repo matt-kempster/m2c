@@ -4782,8 +4782,8 @@ def translate_to_ast(
     fn_sym = global_info.address_of_gsym(function.name).expr
     assert isinstance(fn_sym, GlobalSymbol)
 
-    fn_type = fn_sym.type
-    fn_type.unify(Type.function())
+    fn_type = Type.function()
+    fn_type.unify(fn_sym.type)
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"
     stack_info.is_variadic = fn_sig.is_variadic
