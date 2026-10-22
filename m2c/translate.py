@@ -4856,7 +4856,19 @@ def translate_to_ast(
     assert isinstance(fn_sym, GlobalSymbol)
 
     fn_type = fn_sym.type
-    fn_type.unify(Type.function())
+    if not fn_type.unify(Type.function()):
+        # The symbol's declared type (typically from the context) is not
+        # compatible with a function: for example, a project may declare a
+        # still-undecompiled function as a variable (`extern u8 f;`) so that
+        # already-matched code can take its address as data. Fall back to an
+        # unknown signature, as for a symbol the context does not mention at
+        # all, rather than failing to decompile the function at all.
+        global_info.typepool.warnings.append(
+            f"Warning: {function.name} is declared as a non-function"
+            " in the context; ignoring the declared type"
+        )
+        fn_sym.type = Type.function()
+        fn_type = fn_sym.type
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"
     stack_info.is_variadic = fn_sig.is_variadic
