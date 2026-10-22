@@ -755,6 +755,19 @@ class TailCallPattern(AsmPattern):
             and isinstance(instr.args[0], AsmGlobalSymbol)
             and not matcher.is_local_label(instr.args[0].symbol_name)
         ):
+            # Keep the delay slot instruction in the delay slot of the jal,
+            # since it may set up arguments for the call.
+            delay_slot = matcher.input[matcher.index + 1 : matcher.index + 2]
+            if delay_slot and isinstance(delay_slot[0], Instruction):
+                return Replacement(
+                    [
+                        AsmInstruction("jal", instr.args),
+                        delay_slot[0],
+                        AsmInstruction("jr", [Register("ra")]),
+                        AsmInstruction("nop", []),
+                    ],
+                    2,
+                )
             return Replacement(
                 [
                     AsmInstruction("jal", instr.args),
