@@ -4856,7 +4856,16 @@ def translate_to_ast(
     assert isinstance(fn_sym, GlobalSymbol)
 
     fn_type = fn_sym.type
-    fn_type.unify(Type.function())
+    if not fn_type.unify(Type.function()):
+        # The context declares the function as something that isn't a function
+        # (e.g. `extern u8 func;`, used to take its address as data). Ignore the
+        # declaration and infer the signature from the asm instead.
+        global_info.typepool.warnings.append(
+            f"Warning: ignoring context declaration of {fn_sym.c_symbol_name}, "
+            "since it is not declared as a function"
+        )
+        fn_type = fn_sym.type = Type.function()
+        fn_sym.type_provided = False
     fn_sig = Type.ptr(fn_type).get_function_pointer_signature()
     assert fn_sig is not None, "fn_type is known to be a function"
     stack_info.is_variadic = fn_sig.is_variadic
