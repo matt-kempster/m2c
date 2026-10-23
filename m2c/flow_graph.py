@@ -469,6 +469,37 @@ def simplify_standard_patterns(
     return new_function
 
 
+def insert_self_relative_jtbl_labels(function: Function, asm_data: AsmData) -> Function:
+    """Some toolchains (e.g. MWCC via decomp-toolkit) occasionally emit jump table
+    entries as `<function symbol>+<byte offset>`. Our jump-table resolver only looks for
+    normal labels, so we synthesize new labels here as needed."""
+    target_offsets: Set[int] = set()
+    for entry in asm_data.values.values():
+        for item in entry.data:
+            if isinstance(item, bytes):
+                continue
+            ref = get_symbol_plus_offset(item.data)
+            if ref is not None and ref[0] == function.name and ref[1] > 0:
+                target_offsets.add(ref[1])
+
+    if not target_offsets:
+        return function
+
+    new_function = function.bodyless_copy()
+    offset = 0
+    for item in function.body:
+        if offset in target_offsets:
+            label_name = f"{function.name}_jtbl_{offset:x}"
+            new_function.body.append(Label.new(label_name))
+            asm_data.mentioned_labels.add(label_name)
+            target_offsets.discard(offset)
+        new_function.body.append(item)
+        if isinstance(item, Instruction):
+            offset += 4
+
+    return new_function
+
+
 def build_blocks(
     function: Function,
     asm_data: AsmData,
@@ -478,6 +509,8 @@ def build_blocks(
     debug_patterns: bool,
 ) -> List[Block]:
     if not fragment:
+        function = insert_self_relative_jtbl_labels(function, asm_data)
+
         if arch.has_delay_slots:
             verify_no_trailing_delay_slot(function)
 
@@ -907,6 +940,19 @@ def get_literal_pool_symbol(arg: Argument, asm_data: AsmData) -> Optional[str]:
     return data.as_symbol_without_addend()
 
 
+def get_symbol_plus_offset(arg: Argument) -> Optional[Tuple[str, int]]:
+    """If `arg` is a bare symbol plus a compile-time-constant byte offset
+    (e.g. `some_func+0x38`), returns (symbol_name, offset). Otherwise, returns None."""
+    if (
+        isinstance(arg, BinOp)
+        and arg.op == "+"
+        and isinstance(arg.lhs, AsmGlobalSymbol)
+        and isinstance(arg.rhs, AsmLiteral)
+    ):
+        return (arg.lhs.symbol_name, arg.rhs.value)
+    return None
+
+
 def arm_jtbl_for_ldr(arg: Argument, asm_data: AsmData) -> Optional[str]:
     jtbl_name = get_literal_pool_symbol(arg, asm_data)
     if jtbl_name is None:
@@ -1040,12 +1086,23 @@ def build_graph_from_block(
                     # We have entered padding, stop reading.
                     break
                 sym = entry.as_symbol_without_addend()
-                if sym is None:
-                    # Also possibly padding
-                    break
-                case_block = find_block_by_label(sym)
-                if case_block is None:
-                    raise DecompFailure(f"Cannot find jtbl target {sym}")
+                if sym is not None:
+                    case_block = find_block_by_label(sym)
+                    if case_block is None:
+                        raise DecompFailure(f"Cannot find jtbl target {sym}")
+                else:
+                    # Check for a synthetic label from `insert_self_relative_jtbl_labels` and resolve it, if one exists.
+                    self_ref = get_symbol_plus_offset(entry.data)
+                    if self_ref is None:
+                        # Also possibly padding
+                        break
+                    base_symbol, addend = self_ref
+                    synthetic_label = f"{base_symbol}_jtbl_{addend:x}"
+                    case_block = find_block_by_label(synthetic_label)
+                    if case_block is None:
+                        raise DecompFailure(
+                            f"Cannot find jtbl target {base_symbol}+{addend:#x}"
+                        )
                 case_node = build_graph_from_block(
                     case_block, blocks, parent_blocks + [block], nodes, asm_data, arch
                 )
