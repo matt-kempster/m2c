@@ -78,6 +78,7 @@ from .evaluate import (
     handle_add_float,
     handle_add_real,
     handle_addi_mips,
+    handle_addi_real,
     handle_bgez,
     handle_conditional_move,
     handle_convert,
@@ -935,7 +936,7 @@ class MipsArch(Arch):
                 return AsmInstruction("not", [args[0], args[2]])
             if instr.mnemonic == "nor" and args[2] == Register("zero"):
                 return AsmInstruction("not", [args[0], args[1]])
-            if instr.mnemonic == "addiu" and args[2] == AsmLiteral(0):
+            if instr.mnemonic in ("addiu", "daddiu") and args[2] == AsmLiteral(0):
                 return AsmInstruction("move", args[:2])
             if instr.mnemonic == "paddub" and args[2] == Register("zero"):
                 return AsmInstruction("move", args[:2])
@@ -1670,7 +1671,12 @@ class MipsArch(Arch):
             as_s64(a.reg(1)), ">>", as_intish(a.reg(2)), type=Type.s64()
         ),
         # Move pseudoinstruction
-        "move": lambda a: a.reg(1),
+        # A copy alone does not establish a local in the outgoing argument area.
+        "move": lambda a: (
+            a.reg(1)
+            if a.stack_info.in_subroutine_arg_region(0)
+            else handle_addi_real(a.reg_ref(0), a.reg_ref(1), a.reg(1), Literal(0), a)
+        ),
         "move.fictive": lambda a: a.reg(1),
         # Floating point moving instructions
         "mfc1": lambda a: a.reg(1),
