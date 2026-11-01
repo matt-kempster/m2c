@@ -1,9 +1,10 @@
-? foo(void *, ? *, s32, s32);                       /* extern */
+? foo(? *, ? *, s32, s32);                          /* extern */
 
 void test(s32 arg2, s32 arg3) {
     ? sp4;
+    ? sp0;
     s32 temp_a2;
 
     temp_a2 = arg2 * 2;
-    foo(sp, &sp4, temp_a2, arg3 + (temp_a2 * 2));
+    foo(&sp0, &sp4, temp_a2, arg3 + (temp_a2 * 2));
 }

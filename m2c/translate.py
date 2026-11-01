@@ -782,7 +782,7 @@ def get_stack_info(
                         info.subroutine_arg_top, inst.args[2].value
                     )
                 if (
-                    arch_mnemonic == "arm:mov"
+                    arch_mnemonic in ("mips:move", "arm:mov")
                     and isinstance(inst.args[1], Register)
                     and info.is_stack_reg(inst.args[1])
                     and isinstance(inst.args[0], Register)
